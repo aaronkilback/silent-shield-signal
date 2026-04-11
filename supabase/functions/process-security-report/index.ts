@@ -88,127 +88,97 @@ async function extractTextFromWord(blob: Blob, _apiKey: string, filename?: strin
 // We can safely handle up to ~50MB PDFs with some buffer
 const MAX_OCR_SIZE = 50 * 1024 * 1024;
 
-// OCR using Gemini Vision - must use base64 data URL (URLs don't work for PDFs)
+// OCR using OpenAI Files API + Responses API (the only correct way to OCR a PDF with OpenAI)
 async function extractTextWithOCR(
-  pdfBlob: Blob, 
-  apiKey: string
+  pdfBlob: Blob,
+  apiKey: string,
+  filename = 'document.pdf'
 ): Promise<string> {
-  console.log('Starting OCR extraction using Gemini Vision...');
-  
   const fileSizeMB = pdfBlob.size / (1024 * 1024);
-  console.log(`PDF size for OCR: ${fileSizeMB.toFixed(2)}MB`);
-  
-  // Check size limit
+  console.log(`Starting OCR via Files API + Responses API (${fileSizeMB.toFixed(2)}MB)...`);
+
   if (pdfBlob.size > MAX_OCR_SIZE) {
-    throw new Error(`PDF is too large for OCR (${fileSizeMB.toFixed(1)}MB). Maximum supported size is ${MAX_OCR_SIZE / (1024 * 1024)}MB. Please split the document into smaller files.`);
+    throw new Error(`PDF is too large for OCR (${fileSizeMB.toFixed(1)}MB). Max is ${MAX_OCR_SIZE / (1024 * 1024)}MB.`);
   }
-  
-  // Convert to base64 - this is required for PDFs (URLs only work for images)
-  console.log(`Converting PDF to base64 for AI processing...`);
-  const arrayBuffer = await pdfBlob.arrayBuffer();
-  const uint8Array = new Uint8Array(arrayBuffer);
-  const base64Pdf = uint8ToBase64(uint8Array);
-  const documentRef = `data:application/pdf;base64,${base64Pdf}`;
-  console.log(`Base64 conversion complete (${(base64Pdf.length / 1024 / 1024).toFixed(1)}MB encoded)`);
-  
-  const maxRetries = 3;
-  let lastError: Error | null = null;
-  
-  // Use Pro model for larger files (better at handling complex documents)
-  const model = pdfBlob.size > 10 * 1024 * 1024 ? 'gpt-4o-mini' : 'gpt-4o-mini';
-  console.log(`Using model: ${model}`);
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`OCR attempt ${attempt}/${maxRetries}...`);
-      
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: `You are an OCR system. Extract ALL text from this PDF document.
 
-INSTRUCTIONS:
-- Extract every word, number, and piece of text visible in the document
-- Preserve the general structure (paragraphs, sections, headers)
-- Include tables, lists, and any formatted content
-- Do NOT summarize or interpret - just extract the raw text
-- If there are multiple pages, extract text from all of them
-- Maintain the reading order (top to bottom, left to right)
+  // Step 1: Upload to OpenAI Files API
+  const formData = new FormData();
+  formData.append('file', pdfBlob, filename);
+  formData.append('purpose', 'user_data');
 
-Output ONLY the extracted text, nothing else.`
-                },
-                {
-                  type: 'image_url',
-                  image_url: {
-                    url: documentRef
-                  }
-                }
-              ]
-            }
-          ],
-          max_tokens: 16000,
-        })
-      });
+  const uploadResp = await fetch('https://api.openai.com/v1/files', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}` },
+    body: formData,
+  });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`OCR attempt ${attempt} failed:`, response.status, errorText.slice(0, 300));
-        
-        if (response.status >= 500 && attempt < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, attempt * 2000));
-          continue;
-        }
-        
-        // Check for specific error messages
-        if (errorText.includes('too large') || errorText.includes('exceeds')) {
-          throw new Error(`PDF is too large for AI processing. Please split the document into smaller files.`);
-        }
-        
-        throw new Error(`AI service error (${response.status})`);
-      }
+  if (!uploadResp.ok) {
+    const err = await uploadResp.text();
+    throw new Error(`Files API upload failed (${uploadResp.status}): ${err.slice(0, 200)}`);
+  }
 
-      const result = await response.json();
-      const extractedText = result.choices?.[0]?.message?.content || '';
-      
-      if (!extractedText || extractedText.length < 100) {
-        throw new Error('OCR produced insufficient text. The document may be unreadable or corrupted.');
-      }
-      
-      console.log(`OCR extracted ${extractedText.length} characters`);
-      return normalizeExtractedText(extractedText);
-      
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      
-      // Don't retry for content issues or size issues
-      if (lastError.message.includes('insufficient') || 
-          lastError.message.includes('unreadable') ||
-          lastError.message.includes('too large')) {
-        throw lastError;
-      }
-      
-      if (attempt < maxRetries) {
-        console.log(`Retrying after error: ${lastError.message.slice(0, 100)}`);
-        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
-        continue;
-      }
-      
-      throw lastError;
+  const uploadData = await uploadResp.json();
+  const fileId = uploadData.id;
+  console.log(`Uploaded to Files API: ${fileId}`);
+
+  // Step 2: Poll until processed (usually 2–10s)
+  let fileReady = false;
+  for (let poll = 0; poll < 10; poll++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const statusResp = await fetch(`https://api.openai.com/v1/files/${fileId}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+    if (statusResp.ok) {
+      const s = await statusResp.json();
+      if (s.status === 'processed') { fileReady = true; break; }
+      if (s.status === 'error') break;
     }
   }
-  
-  throw lastError || new Error('OCR failed after all retries');
+
+  // Clean up file regardless of outcome
+  const cleanup = () => fetch(`https://api.openai.com/v1/files/${fileId}`, {
+    method: 'DELETE', headers: { 'Authorization': `Bearer ${apiKey}` },
+  }).catch(() => {});
+
+  if (!fileReady) {
+    cleanup();
+    throw new Error('PDF file was not processed by OpenAI in time. Try again.');
+  }
+
+  // Step 3: Extract text via Responses API with input_file
+  const ocrResp = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: `Extract ALL readable text from this PDF document "${filename}". Preserve headings, paragraphs, tables, and lists. Return ONLY the extracted text.` },
+          { type: 'input_file', file_id: fileId },
+        ],
+      }],
+      max_output_tokens: 16000,
+    }),
+  });
+
+  cleanup();
+
+  if (!ocrResp.ok) {
+    const err = await ocrResp.text();
+    throw new Error(`Responses API OCR failed (${ocrResp.status}): ${err.slice(0, 200)}`);
+  }
+
+  const ocrData = await ocrResp.json();
+  const outputMessage = ocrData.output?.find((o: any) => o.type === 'message');
+  const extractedText = outputMessage?.content?.find((c: any) => c.type === 'output_text')?.text?.trim() || '';
+
+  if (!extractedText || extractedText.length < 100) {
+    throw new Error('OCR produced insufficient text. The document may be unreadable or corrupted.');
+  }
+
+  console.log(`OCR extracted ${extractedText.length} characters`);
+  return normalizeExtractedText(extractedText);
 }
 
 // PDF text extraction - uses heuristic parsing (pdfjs has worker issues in Deno)
@@ -355,12 +325,18 @@ Deno.serve(async (req) => {
         // Need to extract text from file
         console.log('Content not extracted yet, downloading file...');
         
-        const { data: fileData, error: downloadError } = await supabase.storage
-          .from('archival-documents')
-          .download(doc.storage_path);
-
-        if (downloadError) {
-          throw new Error(`Failed to download file: ${downloadError.message}`);
+        // Resolve bucket — AEGIS chat uploads land in ai-chat-attachments, not archival-documents
+        const preferredBucket = (doc.metadata as any)?.storage_bucket || 'archival-documents';
+        const bucketsToTry = Array.from(new Set([preferredBucket, 'ai-chat-attachments', 'archival-documents']));
+        let fileData: Blob | null = null;
+        let downloadError: any = null;
+        for (const bucket of bucketsToTry) {
+          const { data, error } = await supabase.storage.from(bucket).download(doc.storage_path);
+          if (!error && data) { fileData = data; downloadError = null; break; }
+          downloadError = error;
+        }
+        if (!fileData) {
+          throw new Error(`Failed to download file: ${downloadError?.message} (tried: ${bucketsToTry.join(', ')})`);
         }
 
         // Extract text based on file type
@@ -941,8 +917,75 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
 
     console.log('Processing complete:', results);
 
+    // Write document intelligence to expert_knowledge so agents can build beliefs from it.
+    // Each document becomes a knowledge entry attributed to 'document:{documentId}'.
+    if (content && content.length > 200 && documentId) {
+      try {
+        const docFilename = (document as any)?.filename || 'document';
+        const riskDomain = (() => {
+          const ra = intelligence.risk_assessment;
+          const deductions = (ra?.deductions || '').toLowerCase();
+          if (deductions.includes('cyber') || deductions.includes('malware') || deductions.includes('phish')) return 'cyber_security';
+          if (deductions.includes('protest') || deductions.includes('indigenous') || deductions.includes('pipeline')) return 'physical_security';
+          if (deductions.includes('travel') || deductions.includes('journey')) return 'travel_security';
+          if (deductions.includes('executive') || deductions.includes('vip') || deductions.includes('protection')) return 'executive_protection';
+          return 'threat_intelligence';
+        })();
+
+        const knowledgeEntries = [
+          {
+            expert_name: `document:${documentId}`,
+            domain: riskDomain,
+            subdomain: 'document_intelligence',
+            knowledge_type: 'report_analysis',
+            title: `Security Report: ${docFilename}`,
+            content: content.slice(0, 8000),
+            confidence_score: 0.75,
+            source_type: 'archival_document',
+            source_url: null,
+            is_active: true,
+          },
+        ];
+
+        // Add risk assessment as a separate entry if meaningful
+        const riskText = intelligence.risk_assessment?.deductions;
+        if (riskText && riskText.length > 100) {
+          knowledgeEntries.push({
+            expert_name: `document:${documentId}`,
+            domain: riskDomain,
+            subdomain: 'risk_assessment',
+            knowledge_type: 'analytical_conclusion',
+            title: `Risk Assessment: ${docFilename}`,
+            content: riskText.slice(0, 4000),
+            confidence_score: 0.80,
+            source_type: 'archival_document',
+            source_url: null,
+            is_active: true,
+          });
+        }
+
+        // Delete any prior entries for this document so re-processing replaces them cleanly
+        await supabase.from('expert_knowledge').delete().eq('expert_name', `document:${documentId}`);
+        const { error: kErr } = await supabase.from('expert_knowledge').insert(knowledgeEntries);
+        if (kErr) console.warn('[process-security-report] expert_knowledge write failed (non-fatal):', kErr.message);
+        else {
+          console.log(`[process-security-report] Wrote ${knowledgeEntries.length} entries to expert_knowledge for agent belief synthesis`);
+          // Fire belief synthesis in background so agents pick up this document's intelligence
+          const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+          const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+          fetch(`${supabaseUrl}/functions/v1/knowledge-synthesizer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+            body: JSON.stringify({ mode: 'beliefs', since_hours: 1, include_human_experts: true }),
+          }).catch(() => {});
+        }
+      } catch (kEx) {
+        console.warn('[process-security-report] expert_knowledge pipeline failed (non-fatal):', kEx);
+      }
+    }
+
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         success: true,
         message: 'Security report processed successfully',
         results,

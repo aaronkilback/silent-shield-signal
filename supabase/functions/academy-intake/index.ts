@@ -14,6 +14,10 @@
  */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { Resend } from "npm:resend@2.0.0";
+
+const ADMIN_EMAIL = "ak@silentshieldsecurity.com";
+const FROM_EMAIL  = "fortress@silentshieldsecurity.com";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -122,7 +126,9 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const resendKey   = Deno.env.get("RESEND_API_KEY");
   const supabase    = createClient(supabaseUrl, serviceKey);
+  const resend      = resendKey ? new Resend(resendKey) : null;
 
   try {
     const { userId, answers, contact } = await req.json();
@@ -150,6 +156,12 @@ Deno.serve(async (req: Request) => {
         primary_domain:   primaryDomain,
         matched_agent:    matchedAgent,
         matched_tier:     tier,
+        full_name:        contact?.full_name  || null,
+        email:            contact?.email      || null,
+        phone:            contact?.phone      || null,
+        address:          contact?.address    || null,
+        city:             contact?.city       || null,
+        country:          contact?.country    || null,
         updated_at:       new Date().toISOString(),
       }, { onConflict: "user_id" })
       .select("id")
@@ -203,6 +215,34 @@ Deno.serve(async (req: Request) => {
       await supabase
         .from("academy_judgment_progress")
         .upsert(progressInserts, { onConflict: "user_id,course_id", ignoreDuplicates: true });
+    }
+
+    // Notify admin of new enrollment
+    if (resend && contact?.full_name) {
+      await resend.emails.send({
+        from:    FROM_EMAIL,
+        to:      ADMIN_EMAIL,
+        subject: `New Academy Enrollment: ${contact.full_name}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #1e293b;">New Fortress Academy Enrollment</h2>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 16px 0;">
+              <p><strong>Name:</strong> ${contact.full_name}</p>
+              <p><strong>Email:</strong> ${contact.email || "—"}</p>
+              <p><strong>Phone:</strong> ${contact.phone || "—"}</p>
+              <p><strong>Location:</strong> ${[contact.address, contact.city, contact.country].filter(Boolean).join(", ") || "—"}</p>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 16px 0;">
+              <p><strong>Experience:</strong> ${answers.q1}</p>
+              <p><strong>Domain:</strong> ${primaryDomain.replace(/_/g, " ")}</p>
+              <p><strong>Tier matched:</strong> ${tier}</p>
+              <p><strong>Agent matched:</strong> ${matchedAgent}</p>
+              <p><strong>Courses enrolled:</strong> ${finalRecommended.length}</p>
+            </div>
+            <p style="color: #64748b; font-size: 12px;">Fortress Academy — ${new Date().toLocaleString()}</p>
+          </div>
+        `,
+      }).catch(e => console.warn("[academy-intake] Email notify failed:", e));
     }
 
     return new Response(JSON.stringify({

@@ -28,6 +28,10 @@
  */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { Resend } from "npm:resend@2.0.0";
+
+const ADMIN_EMAIL = "ak@silentshieldsecurity.com";
+const FROM_EMAIL  = "fortress@silentshieldsecurity.com";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -134,7 +138,9 @@ Deno.serve(async (req: Request) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const openAiKey   = Deno.env.get("OPENAI_API_KEY")!;
+  const resendKey   = Deno.env.get("RESEND_API_KEY");
   const supabase    = createClient(supabaseUrl, serviceKey);
+  const resend      = resendKey ? new Resend(resendKey) : null;
 
   try {
     const {
@@ -280,6 +286,45 @@ Deno.serve(async (req: Request) => {
             last_updated_at:     now,
           }, { onConflict: "agent_call_sign,domain" });
       }
+    }
+
+    // Notify admin on post-test completion
+    if (resend && (stage === "post" || stage === "30day")) {
+      const { data: learner } = await supabase
+        .from("academy_learner_profiles")
+        .select("full_name, email, phone, city, country")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      const stageName = stage === "post" ? "Post-Test" : "30-Day Retention Check";
+      const deltaLine = progressUpdate.judgment_delta !== undefined
+        ? `<p><strong>Judgment Delta:</strong> ${progressUpdate.judgment_delta >= 0 ? "+" : ""}${(progressUpdate.judgment_delta * 100).toFixed(0)}%</p>`
+        : "";
+
+      await resend.emails.send({
+        from:    FROM_EMAIL,
+        to:      ADMIN_EMAIL,
+        subject: `Academy ${stageName} Complete: ${learner?.full_name || userId}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #1e293b;">Fortress Academy — ${stageName} Complete</h2>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 16px 0;">
+              <p><strong>Student:</strong> ${learner?.full_name || "Unknown"}</p>
+              <p><strong>Email:</strong> ${learner?.email || "—"}</p>
+              <p><strong>Phone:</strong> ${learner?.phone || "—"}</p>
+              <p><strong>Location:</strong> ${[learner?.city, learner?.country].filter(Boolean).join(", ") || "—"}</p>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 16px 0;">
+              <p><strong>Stage:</strong> ${stageName}</p>
+              <p><strong>Score:</strong> ${(totalScore * 100).toFixed(0)}%</p>
+              <p><strong>Choice:</strong> ${selectedOption.toUpperCase()} — ${progressUpdate.isOptimal ? "Optimal" : progressUpdate.isMostDangerous ? "Most Dangerous" : "Defensible"}</p>
+              ${deltaLine}
+              <p><strong>Status:</strong> ${progressUpdate.status}</p>
+            </div>
+            <p style="color: #64748b; font-size: 12px;">Fortress Academy — ${new Date().toLocaleString()}</p>
+          </div>
+        `,
+      }).catch(e => console.warn("[academy-score] Email notify failed:", e));
     }
 
     return new Response(JSON.stringify({

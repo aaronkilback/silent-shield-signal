@@ -1,7 +1,7 @@
 -- Fortress Academy: Judgment Training & Decision Validation System
 -- Built: 2026-04-10
 
--- ── Extend academy_courses with agent assignment ──────────────────────────────
+-- Extend academy_courses with agent assignment
 ALTER TABLE academy_courses
   ADD COLUMN IF NOT EXISTS agent_call_sign     TEXT,
   ADD COLUMN IF NOT EXISTS scenario_domain     TEXT,
@@ -19,7 +19,7 @@ UPDATE academy_courses SET agent_call_sign = 'PEARSON',        scenario_domain =
 UPDATE academy_courses SET agent_call_sign = 'SENT-2',         scenario_domain = 'cyber_threat_intel'     WHERE topic_cluster = 'cyber_threat_intelligence';
 UPDATE academy_courses SET agent_call_sign = 'SHERLOCK',       scenario_domain = 'intelligence_tradecraft' WHERE topic_cluster = 'personal_intelligence_tradecraft';
 
--- ── Scenario storage ──────────────────────────────────────────────────────────
+-- 
 CREATE TABLE IF NOT EXISTS academy_scenarios (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   course_id               UUID NOT NULL REFERENCES academy_courses(id) ON DELETE CASCADE,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS academy_scenarios (
   created_at              TIMESTAMPTZ DEFAULT now()
 );
 
--- ── Learner intake profiles ───────────────────────────────────────────────────
+-- 
 CREATE TABLE IF NOT EXISTS academy_learner_profiles (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id          UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS academy_learner_profiles (
   UNIQUE(user_id)
 );
 
--- ── Response capture (pre / post / 30day) ────────────────────────────────────
+-- 
 CREATE TABLE IF NOT EXISTS academy_responses (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id           UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS academy_responses (
   created_at        TIMESTAMPTZ DEFAULT now()
 );
 
--- ── Progress tracking (one row per user+course) ───────────────────────────────
+-- 
 CREATE TABLE IF NOT EXISTS academy_progress (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id               UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS academy_progress (
   UNIQUE(user_id, course_id)
 );
 
--- ── Agent teaching performance ────────────────────────────────────────────────
+-- 
 CREATE TABLE IF NOT EXISTS academy_agent_scores (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   agent_call_sign     TEXT NOT NULL,
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS academy_agent_scores (
   UNIQUE(agent_call_sign, domain)
 );
 
--- ── Indexes ───────────────────────────────────────────────────────────────────
+-- 
 CREATE INDEX IF NOT EXISTS idx_academy_scenarios_course    ON academy_scenarios(course_id);
 CREATE INDEX IF NOT EXISTS idx_academy_scenarios_agent     ON academy_scenarios(agent_call_sign);
 CREATE INDEX IF NOT EXISTS idx_academy_responses_user      ON academy_responses(user_id);

@@ -1,0 +1,9 @@
+{
+  "run_at": "2026-04-10T21:18:24.740Z",
+  "total": 85,
+  "passed": 85,
+  "failed": 0,
+  "skipped": 30,
+  "avg_ms": 938,
+  "failures": []
+}

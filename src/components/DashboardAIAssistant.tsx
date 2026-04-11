@@ -717,35 +717,32 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
                 body: { documentId: archivalDoc.id, storagePath: storageData.path, sync: true }
               });
 
-              if (error) {
-                console.error(`[AEGIS upload] process-stored-document failed for ${file.name}:`);
-                console.error('[AEGIS upload] error object:', JSON.stringify(error, null, 2));
-                console.error('[AEGIS upload] error.message:', error?.message);
-                console.error('[AEGIS upload] error.context:', (error as any)?.context);
-                console.error('[AEGIS upload] data alongside error:', JSON.stringify(data, null, 2));
-                
-                // Update record to reflect failure
-                await supabase
-                  .from('archival_documents')
-                  .update({
-                    content_text: `[Processing failed for ${file.name}: ${error.message}. The file is stored and can be manually processed later.]`,
-                    metadata: {
-                      source: 'ai-chat',
-                      original_name: file.name,
-                      storage_bucket: 'ai-chat-attachments',
-                      processing_status: 'failed',
-                      processing_error: error.message,
-                      processed_at: new Date().toISOString(),
-                    },
-                  })
-                  .eq('id', archivalDoc.id);
-                
+              const skipped = (data as { skipped?: boolean })?.skipped;
+              const needsSecurityReport = error || skipped;
+
+              if (needsSecurityReport && isPDF) {
+                // process-stored-document failed or skipped (large/scanned PDF) — fall back to
+                // process-security-report which handles larger files, scanned PDFs, and also
+                // writes content to expert_knowledge so agents can build beliefs from it.
+                debug(`Falling back to process-security-report for ${file.name}`);
+                toast.info(`Extracting intelligence from ${file.name}...`);
+                try {
+                  const { data: srData, error: srError } = await supabase.functions.invoke('process-security-report', {
+                    body: { documentId: archivalDoc.id }
+                  });
+                  if (srError) throw srError;
+                  if ((srData as any)?.isImageBased) {
+                    toast.info(`${file.name} is a scanned document — OCR in progress. Analysis will be available shortly.`);
+                  } else {
+                    toast.success(`${file.name} processed and ready for analysis`);
+                  }
+                } catch (srErr: any) {
+                  console.error(`[AEGIS upload] process-security-report fallback failed:`, srErr);
+                  toast.error(`Processing failed for ${file.name}. File saved — try the 🧠 button in the Document Library.`);
+                }
+              } else if (error) {
+                console.error(`[AEGIS upload] process-stored-document failed for ${file.name}:`, error?.message);
                 toast.error(`Processing failed for ${file.name}. File saved for manual review.`);
-              } else if ((data as { skipped?: boolean })?.skipped) {
-                // Large file was stored but OCR skipped - this is NOT a failure
-                const resp = data as { skipped?: boolean; reason?: string; message?: string };
-                debug(`Document ${file.name} stored but processing skipped:`, resp.reason);
-                toast.info(`${file.name} stored successfully. ${resp.message || 'Processing skipped due to size.'}`);
               } else {
                 debug(`Document ${file.name} processed successfully:`, data);
                 toast.success(`${file.name} processed and ready for analysis`);

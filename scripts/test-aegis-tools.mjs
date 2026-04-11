@@ -12,7 +12,7 @@
  */
 
 const SUPABASE_URL = "https://kpuqukppbmwebiptqmog.supabase.co";
-const SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwdXF1a3BwYm13ZWJpcHRxbW9nIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMTE3NTk1NiwiZXhwIjoyMDQ2NzUxOTU2fQ.QRqDeRDfYFjCT8f6sPmMuoK03nj0CmGEXCXKGVPQg48";
+const SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwdXF1a3BwYm13ZWJpcHRxbW9nIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjY2MzAyMCwiZXhwIjoyMDg4MjM5MDIwfQ.2dYlHHA0NMu3-X5Q9-HmqG8xoX9KqsxqaciSHwsGXZs";
 const ENDPOINT = `${SUPABASE_URL}/functions/v1/dashboard-ai-assistant`;
 const PECL_CLIENT_ID = "0f5c809d-c928-4cae-b9c7-72b8ae2ef565";
 

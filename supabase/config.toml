@@ -590,10 +590,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.academy-intake]
-verify_jwt = true
+verify_jwt = false
 
 [functions.academy-score]
-verify_jwt = true
+verify_jwt = false
 
 [functions.academy-followup]
 verify_jwt = false

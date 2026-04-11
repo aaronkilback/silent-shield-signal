@@ -137,6 +137,41 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - WATCHDOG MONITORS: \`signals WHERE signal_type = 'historical'\` count growing = gate working. Any incidents linked to signals with \`signal_type = 'historical'\` = gate regression.
 - EXPECTED: Historical signals accumulate without generating incidents. Active feed stays clean.
 
+### Expert Auto-Discovery & Belief Synthesis (April 10, 2026) — COMPLETE
+
+#### Expert Profile Network
+- \`agent-knowledge-seeker\` practitioners angle now auto-discovers named experts from Perplexity responses
+- \`autoDiscoverExperts()\` extracts up to 3 named practitioners per run, checks \`expert_profiles\` for duplicates, inserts new profiles, fires background \`ingest-expert-media\`
+- New columns on \`expert_profiles\`: \`auto_discovered BOOLEAN DEFAULT false\`, \`discovered_by_agent TEXT\`
+- Migration \`20260410000005\` required — must be applied manually in Supabase SQL editor
+- Seed expert added: Kyle Scott (CEO Golden Ridge Protection, Iraq combat vet, executive_protection domain)
+- WATCHDOG MONITORS: \`expert_profiles WHERE auto_discovered = true\` count growing = auto-discovery firing correctly
+
+#### Human Expert → Agent Belief Pipeline
+- Gap closed April 10: previously \`knowledge-synthesizer\` only processed \`expert_name LIKE 'agent:%'\` entries; human expert knowledge was stored but never synthesized into beliefs
+- \`ingest-expert-media\` now fires background \`knowledge-synthesizer\` with \`{ mode: 'beliefs', since_hours: 3, include_human_experts: true }\` after each sweep
+- \`knowledge-synthesizer\` new params: \`since_hours\` (overrides \`since_days\`), \`include_human_experts\` (loads human entries, domain-matches to relevant agents)
+- Human entries filtered: \`expert_name NOT LIKE 'agent:%'\`, \`confidence_score >= 0.65\`
+- Minimum entry gate changed from 3 to 2 to accommodate human expert sets
+- WATCHDOG MONITORS: \`agent_beliefs WHERE source_type LIKE '%expert%'\` OR \`supporting_entry_ids\` containing human expert entries = human knowledge flowing into beliefs
+
+#### Operational Belief Synthesis
+- \`synthesizeOperationalBeliefs()\` new function in \`knowledge-synthesizer\` — runs as part of \`mode: 'all'\` and \`mode: 'operational'\`
+- Pulls live signals, incidents, entities, travel_alerts per agent domain
+- \`DOMAIN_SIGNAL_CATEGORIES\` maps 12 agent domains → relevant signal category lists
+- Signal quality gates (SQL layer): \`composite_confidence >= 0.45\`, \`relevance_score >= 20\`, \`severity != 'low'\`, \`is_test = false\`, \`deleted_at IS NULL\`
+- Evidence gate (code layer): \`domainSignals.length + incidents.length < 3\` → skip, no belief formed
+- Prompt hardening (AI layer): calibrated confidence scale, explicit \`[]\` return if < 3 independent signals, no extrapolation rule
+- WATCHDOG MONITORS: \`agent_beliefs WHERE belief_type = 'operational_pattern'\` count growing = operational synthesis running; zero after 7 days = synthesis not firing
+
+#### Belief Quality Gates — Three-Layer Protection
+1. **SQL gate**: composite_confidence, relevance_score, severity, is_test, deleted_at filters prevent low-quality signals reaching synthesis
+2. **Evidence gate**: minimum 3 signals + incidents required before any belief is formed for a domain
+3. **Prompt gate**: GPT-4o-mini instructed to return [] for thin data; calibrated confidence bands (0.60–0.70 = emerging 2-4 signals, 0.71–0.85 = established 5+, 0.86+ = high)
+- WATCHDOG MONITORS: \`agent_beliefs WHERE confidence < 0.6\` growing fast = quality gates weakening; \`agent_beliefs WHERE evolution_log IS NULL\` = beliefs formed without evidence trail
+- EXPECTED: New beliefs arrive within 3h of expert media ingestion. Operational beliefs arrive within 24h of qualifying signal clusters.
+- REMEDIATION: \`trigger_belief_synthesis\` — fire \`knowledge-synthesizer\` with \`{ mode: 'all', include_human_experts: true }\`
+
 ### Phase 5 Tier 2 Signal Review Agent (April 9, 2026) — COMPLETE
 - Signals with composite_confidence in [0.60, 0.75) now receive async contextual review by \`review-signal-agent\`
 - Tier 1 (unchanged): inline AI model gates in \`ingest-signal\` + \`ai-decision-engine\` (fast path)
@@ -421,13 +456,13 @@ Respond with ONLY valid JSON (no markdown):
   "severity": "healthy" | "monitoring" | "degraded" | "critical",
   "findings": [
     {
-      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration" | "Dead Letter Queue" | "Schema Validation" | "Entity Health",
+      "category": "Signal Pipeline" | "AEGIS AI" | "AEGIS Behavior" | "Daily Briefing" | "Edge Functions" | "Data Integrity" | "Bug Reports" | "Database" | "Autonomous Ops" | "E2E Scan" | "Communications" | "Investigation Autopilot" | "Signal Contradictions" | "Knowledge Freshness" | "Analyst Calibration" | "Dead Letter Queue" | "Schema Validation" | "Entity Health" | "Expert Learning",
       "severity": "critical" | "warning" | "info",
       "title": "Short title",
       "analysis": "What you observed and WHY it matters (2-3 sentences). Reference learnings if relevant.",
       "recommendation": "What action to take. If past remediations failed, suggest alternatives.",
       "canAutoRemediate": true/false,
-      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "retry_exhausted_dlq" | "cleanup_exhausted_dlq" | "reset_circuit_breakers" | "run_entity_quality_backfill" | "none",
+      "remediationAction": "stale_sources_rescan" | "trigger_briefing" | "fix_orphaned_signals" | "fix_orphaned_entities" | "close_stale_bugs" | "trigger_autonomous_loop" | "adjust_thresholds" | "fix_aegis_drift" | "fix_orphaned_feedback" | "fix_stale_source_timestamps" | "fix_orphaned_comms" | "fix_stalled_autopilot_tasks" | "fix_orphaned_autopilot_tasks" | "run_contradiction_scan" | "run_knowledge_freshness_audit" | "calibrate_analyst_accuracy" | "retry_exhausted_dlq" | "cleanup_exhausted_dlq" | "reset_circuit_breakers" | "run_entity_quality_backfill" | "trigger_belief_synthesis" | "none",
       "isRecurring": true/false,
       "learningNote": "What you learned about this issue from history (or 'First occurrence')",
       "thresholdAdjustment": null | { "metric": "string", "currentValue": number, "suggestedValue": number, "reason": "string" },
@@ -631,6 +666,18 @@ interface TelemetryData {
     incidentOutcomesWritten24h: number;
     softDeletedSignals: number;
     confidenceThresholdFiring: boolean;
+  };
+  expertLearning: {
+    totalExpertProfiles: number;
+    autoDiscoveredProfiles: number;
+    totalKnowledgeEntries: number;
+    humanExpertEntries: number;
+    totalBeliefs: number;
+    beliefsFormedLast7Days: number;
+    avgBeliefConfidence: number;
+    lowConfidenceBeliefs: number;
+    operationalBeliefs: number;
+    lastSynthesisRun: string | null;
   };
 }
 
@@ -1140,6 +1187,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     circuitBreakers: await collectCircuitBreakerTelemetry(supabase),
     selfValidation: await collectSelfValidation(supabase),
     entityHealth: await collectEntityHealthTelemetry(supabase),
+    expertLearning: await collectExpertLearningTelemetry(supabase),
   };
 }
 
@@ -1336,6 +1384,56 @@ async function collectEntityHealthTelemetry(supabase: any): Promise<TelemetryDat
     lastArchiveRun: lastArchiveResult.data?.[0]?.last_run_at || null,
   };
 }
+
+async function collectExpertLearningTelemetry(supabase: any): Promise<TelemetryData['expertLearning']> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+
+  const [
+    totalProfilesResult,
+    autoDiscoveredResult,
+    totalKnowledgeResult,
+    humanKnowledgeResult,
+    totalBeliefsResult,
+    recentBeliefsResult,
+    lowConfBeliefsResult,
+    operationalBeliefsResult,
+    lastSynthesisResult,
+  ] = await Promise.all([
+    supabase.from('expert_profiles').select('*', { count: 'exact', head: true }),
+    supabase.from('expert_profiles').select('*', { count: 'exact', head: true }).eq('auto_discovered', true),
+    supabase.from('expert_knowledge').select('*', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('expert_knowledge').select('*', { count: 'exact', head: true }).eq('is_active', true).not('expert_name', 'like', 'agent:%'),
+    supabase.from('agent_beliefs').select('*', { count: 'exact', head: true }),
+    supabase.from('agent_beliefs').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo),
+    supabase.from('agent_beliefs').select('*', { count: 'exact', head: true }).lt('confidence', 0.6),
+    supabase.from('agent_beliefs').select('*', { count: 'exact', head: true }).eq('belief_type', 'operational_pattern'),
+    supabase.from('cron_job_registry').select('last_run_at').eq('job_name', 'knowledge-synthesizer-nightly').limit(1),
+  ]);
+
+  // Compute average belief confidence
+  let avgBeliefConfidence = 0;
+  const { data: beliefConfs } = await supabase
+    .from('agent_beliefs')
+    .select('confidence')
+    .limit(200);
+  if (beliefConfs && beliefConfs.length > 0) {
+    avgBeliefConfidence = beliefConfs.reduce((sum: number, b: any) => sum + (b.confidence || 0), 0) / beliefConfs.length;
+  }
+
+  return {
+    totalExpertProfiles: totalProfilesResult.count || 0,
+    autoDiscoveredProfiles: autoDiscoveredResult.count || 0,
+    totalKnowledgeEntries: totalKnowledgeResult.count || 0,
+    humanExpertEntries: humanKnowledgeResult.count || 0,
+    totalBeliefs: totalBeliefsResult.count || 0,
+    beliefsFormedLast7Days: recentBeliefsResult.count || 0,
+    avgBeliefConfidence: Math.round(avgBeliefConfidence * 100) / 100,
+    lowConfidenceBeliefs: lowConfBeliefsResult.count || 0,
+    operationalBeliefs: operationalBeliefsResult.count || 0,
+    lastSynthesisRun: lastSynthesisResult.data?.[0]?.last_run_at || null,
+  };
+}
+
 
 // âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 //              AEGIS BEHAVIORAL COMPLIANCE MONITOR
@@ -2041,6 +2139,24 @@ This correction was triggered because compliance score dropped below threshold. 
           };
         } catch (err) {
           return { action, finding, success: false, details: `Entity quality backfill error: ${err instanceof Error ? err.message : err}` };
+        }
+      }
+
+      case 'trigger_belief_synthesis': {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 30000);
+          const resp = await fetch(`${supabaseUrl}/functions/v1/knowledge-synthesizer`, {
+            method: 'POST',
+            headers: { 'apikey': anonKey, 'Authorization': `Bearer ${anonKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'all', include_human_experts: true, triggered_by: 'watchdog' }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          const ok = resp.status >= 200 && resp.status < 300;
+          return { action, finding, success: ok, details: `knowledge-synthesizer responded ${resp.status}` };
+        } catch (err) {
+          return { action, finding, success: false, details: `Belief synthesis trigger failed: ${err instanceof Error ? err.message : err}` };
         }
       }
 

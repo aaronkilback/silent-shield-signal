@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { PageLayout } from "@/components/PageLayout";
-import { GraduationCap, Loader2 } from "lucide-react";
+import { GraduationCap, Loader2, Users, Mail, Phone, MapPin, TrendingUp } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
@@ -11,7 +11,10 @@ import { AcademyScenario } from "@/components/academy/AcademyScenario";
 import { AcademyTrainingBridge } from "@/components/academy/AcademyTrainingBridge";
 import { AcademyResults } from "@/components/academy/AcademyResults";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNavigate } from "react-router-dom";
+import { useUserRole } from "@/hooks/useUserRole";
 
 type PageState =
   | { view: "loading" }
@@ -48,8 +51,22 @@ async function callEdgeFunction(name: string, body: object) {
 export default function Academy() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { isAdmin, isSuperAdmin } = useUserRole();
+  const isStaff = isAdmin || isSuperAdmin;
   const [pageState, setPageState] = useState<PageState>({ view: "loading" });
   const [submitting, setSubmitting] = useState(false);
+
+  const { data: learners } = useQuery({
+    queryKey: ["academy-learners"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("academy_learner_profiles")
+        .select("id, full_name, email, phone, city, country, matched_tier, matched_agent, primary_domain, created_at")
+        .order("created_at", { ascending: false });
+      return data || [];
+    },
+    enabled: isStaff,
+  });
 
   // Load learner profile and courses
   const { isLoading: profileLoading } = useQuery({
@@ -262,24 +279,85 @@ export default function Academy() {
     if (pageState.view === "browse") {
       const { courses, progress } = pageState;
       return (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {courses.map(course => (
-              <AcademyCourseCard
-                key={course.id}
-                course={course}
-                progress={progress[course.id]}
-                onStart={handleStartCourse}
-              />
-            ))}
-          </div>
-          {courses.length === 0 && (
-            <div className="text-center py-16 text-muted-foreground">
-              <GraduationCap className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              <p>No courses available yet. Scenarios are being generated.</p>
-            </div>
+        <Tabs defaultValue="courses">
+          {isStaff && (
+            <TabsList className="mb-6">
+              <TabsTrigger value="courses" className="gap-2">
+                <GraduationCap className="w-4 h-4" /> Courses
+              </TabsTrigger>
+              <TabsTrigger value="learners" className="gap-2">
+                <Users className="w-4 h-4" /> Learners
+                {learners && learners.length > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">{learners.length}</Badge>
+                )}
+              </TabsTrigger>
+            </TabsList>
           )}
-        </div>
+
+          <TabsContent value="courses">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {courses.map(course => (
+                <AcademyCourseCard
+                  key={course.id}
+                  course={course}
+                  progress={progress[course.id]}
+                  onStart={handleStartCourse}
+                />
+              ))}
+            </div>
+            {courses.length === 0 && (
+              <div className="text-center py-16 text-muted-foreground">
+                <GraduationCap className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                <p>No courses available yet. Scenarios are being generated.</p>
+              </div>
+            )}
+          </TabsContent>
+
+          {isStaff && (
+            <TabsContent value="learners">
+              <div className="space-y-3">
+                {!learners || learners.length === 0 ? (
+                  <div className="text-center py-16 text-muted-foreground">
+                    <Users className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                    <p>No learners enrolled yet.</p>
+                  </div>
+                ) : (
+                  learners.map(l => (
+                    <div key={l.id} className="rounded-lg border border-border bg-card/60 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                      <div className="flex-1 space-y-1">
+                        <div className="font-semibold text-foreground">{l.full_name || "Unknown"}</div>
+                        <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                          {l.email && (
+                            <a href={`mailto:${l.email}`} className="flex items-center gap-1 hover:text-primary">
+                              <Mail className="w-3.5 h-3.5" />{l.email}
+                            </a>
+                          )}
+                          {l.phone && (
+                            <a href={`tel:${l.phone}`} className="flex items-center gap-1 hover:text-primary">
+                              <Phone className="w-3.5 h-3.5" />{l.phone}
+                            </a>
+                          )}
+                          {(l.city || l.country) && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5" />{[l.city, l.country].filter(Boolean).join(", ")}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" className="text-xs capitalize">{l.matched_tier || "—"}</Badge>
+                        <Badge variant="outline" className="text-xs">{l.matched_agent || "—"}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(l.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </TabsContent>
+          )}
+        </Tabs>
       );
     }
 

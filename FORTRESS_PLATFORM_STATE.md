@@ -576,3 +576,265 @@ Not acceptable:
 - Summarising what a result probably says without seeing it
 
 This rule applies to every change, every session, every claim. No exceptions.
+
+---
+
+## 22. INTELLIGENCE IMPROVEMENT BACKLOG
+
+Ideas queued for intentional build sessions — not to be worked on during stabilisation or fix sessions.
+
+### HIGH VALUE
+
+**Hypothesis-before-classification in `ai-decision-engine`**
+Source: Scanner.dev "Building Your First AI SOC Agents" (Part 1, April 7, 2026)
+Problem it solves: Signals currently classified without first generating a benign explanation. This caused `active_threat` misclassification of historical CGL content (April 10). Scanner validated that hypothesis-driven investigation improved accuracy 71% → 78% and eliminated false Malicious calls.
+Fix: Add a hypothesis generation step to the classification prompt in `ai-decision-engine` before assigning category/severity. Prompt should require: (1) most likely benign explanation, (2) most likely malicious explanation, (3) which hypothesis the content supports. Prompt change only — no architecture change.
+Effort: Low (prompt edit in `ai-decision-engine/index.ts`)
+
+**Analyst questions on signals (Unmatched tab)**
+Source: Scanner.dev "Building Your First AI SOC Agents" (Part 1, April 7, 2026)
+Problem it solves: Unmatched tab shows signals with Assign/Dismiss/Noise buttons but no context about what to investigate. Analysts face a queue with no guidance.
+Fix: Generate 2-3 analyst questions at ingest time and store on signal. Surface in Unmatched tab card. Scanner found that questions outperform prescribed next steps — analysts engage with evidence rather than following instructions blindly.
+Effort: Medium (ingest-signal prompt addition + UI card update)
+
+### MEDIUM VALUE
+
+**WRAITH Tool 2 live signal verification**
+Problem: `analyze_signal_threat_dna` built and wired into ingest-signal but never verified on a real signal. `wraith_signal_threat_scores` table may be empty.
+Fix: Inject a test signal with synthetic characteristics and confirm a row appears in `wraith_signal_threat_scores`. Verification only — not a build task.
+Effort: Low
+
+**WRAITH Tool 1 first live run**
+Problem: `run_vulnerability_scan` cron scheduled but never run against live data. `wraith_vulnerability_findings` may be empty.
+Fix: Manually trigger `wraith-security-advisor` with `{"action": "run_vulnerability_scan"}` and confirm findings written. Review output before trusting the nightly schedule.
+Effort: Low
+
+**Close one incident to exercise Phase 3 feedback loop**
+Problem: `incident_outcomes` has 0 rows. Bayesian learning loop cannot run. Source credibility scores stuck at 0.65 default.
+Fix: Close one of the 3 open PETRONAS incidents via UI. Verify `incident_outcomes` gets a row. Verify `source-credibility-updater` fires and updates at least one source score.
+Effort: Low (UI action + verification)
+
+### LOW VALUE / FUTURE
+
+**Signal verification gate (LOCUS-INTEL)**
+Problem: Executive report narrative can go beyond what source signals say. No step anchors claims to cited signals.
+Fix: Before report assembly, verify each narrative claim against its cited signal. Flag unanchored claims.
+Effort: High (architectural)
+
+**BC Energy Regulator RSS URL**
+Problem: BC Oil Gas Commission renamed to BCER. Source paused with old URL.
+Fix: Find new BCER RSS feed URL and update source config.
+Effort: Minimal
+
+**YouTube source channel IDs**
+Problem: 6 YouTube sources paused with wrong channel IDs.
+Fix: Visit each channel page, find `externalChannelId` in page source, update `config.feed_url`.
+Effort: Low (manual lookup × 6)
+
+---
+
+## 23. EXTERNAL RESEARCH BACKLOG
+
+Open source projects and research worth reviewing before the next intentional build session. Do not act on these during stabilisation or fix sessions.
+
+**Vigil (DeepTempo) — AI SOC architecture**
+Source: https://github.com/deeptempo/vigil — Apache 2.0, launched RSA 2026
+Why relevant: First open-source AI SOC built with Claude as intelligence layer. Ships with 13 specialised agents, 30+ integrations, and four production-tested multi-agent workflows (incident response, investigation, threat hunting, forensic analysis). Trail of Bits skills repository integration — reusable Claude skill definitions for cyber-specific reasoning — directly applicable to AEGIS tool design.
+What to review: Agent skill definition patterns, multi-agent workflow orchestration, how they handle tool trust spectrum.
+Effort: Review only — no build action until architecture is understood.
+
+**OWASP Agentic AI Top 10 (December 2025) — WRAITH gap check**
+Source: https://owasp.org/www-project-top-10-for-large-language-model-applications/ (Agentic AI section)
+Why relevant: First formal taxonomy of risks specific to autonomous AI agents. WRAITH currently covers: prompt injection (Tool 3 ✅), signal threat DNA / synthetic content (Tool 2 — unverified), vulnerability scanning (Tool 1 — unverified). Not yet addressed: memory poisoning, cascading failures, goal hijacking, identity abuse.
+What to review: Map all 10 risks against current WRAITH coverage. Identify gaps. Prioritise which gaps matter most for Fortress's threat model (PETRONAS operational intelligence platform).
+Effort: Review + gap mapping only — no build action until gaps are documented.
+
+**SamiGPT (M507/AI-SOC-Agent) — Tiered runbook patterns**
+Source: https://github.com/M507/ai-soc-agent — Black Hat 2025
+Why relevant: SOC1/SOC2 tiered agent profiles with specialised runbooks per tier. Fortress currently has one AEGIS agent handling all query types. Tiered runbooks (triage vs investigation vs response) would match how PECL actually uses the platform — different depth for different signal types.
+What to review: Runbook structure, how SOC1 vs SOC2 agent profiles are defined, how handoff between tiers works.
+Effort: Review only.
+
+---
+
+### INTELLIGENCE PIPELINE & ENTITY GRAPH
+
+**OpenCTI — Entity graph, confidence scoring, relationship inference**
+Source: https://github.com/OpenCTI-Platform/opencti — Apache 2.0, maintained by Filigran + ANSSI + CERT-EU
+Why relevant: Production-grade open source platform solving exactly the problems Fortress is still working through — how to link signals to source evidence, confidence scoring on relationships, and inferring new relationships from existing ones. Built as a knowledge graph using STIX2 standards. Tracks first/last seen dates, confidence levels, and source provenance on every piece of intelligence. Used in production by French national cybersecurity agency (ANSSI) and CERT-EU.
+What to review: Confidence scoring implementation on relationships, how inferred relationships propagate, how the data pipeline handles qualification → analysis → publication control, connector architecture for adding new intelligence sources.
+Fortress differentiator: OpenCTI is generic cyber threat intelligence. Fortress is domain-specific (PETRONAS, BC energy sector, Indigenous governance) and agentic. The entity graph and confidence scoring patterns are directly reusable; the domain content is not.
+Effort: Review only — focus on confidence scoring and relationship inference modules.
+
+**World Monitor — Hybrid keyword/LLM classification pipeline**
+Source: https://github.com/AshishKaushik1/world-monitor (41k stars)
+Why relevant: Solves the same pipeline problem as Fortress's monitor-rss-sources → ingest-signal chain, with a key architectural difference: keyword classifier fires instantly and the LLM classifier fires asynchronously, overriding the keyword result only if its confidence is higher. Fortress currently runs LLM classification on every signal regardless. The hybrid approach would reduce latency and cost significantly while maintaining quality on ambiguous signals. Also implements source tiering, propaganda flagging, and headline hash caching (Redis, 24h TTL) for deduplication.
+What to review: Two-stage classification pipeline design, source tiering logic, headline hash deduplication pattern.
+Effort: Review only — focus on the async LLM override pattern.
+
+**MISP — Data pipeline workflow and publication control**
+Source: https://github.com/MISP/MISP — GNU AGPL v3, actively maintained
+Why relevant: MISP's data pipeline model — qualify → analyse → modify → publish control — maps directly to Fortress's signal pipeline but adds a concept Fortress doesn't formally have: publication control (intelligence graduating through states before becoming actionable). MISP has solved data qualification workflows, automated analysis triggers, and modification pipelines at production scale across hundreds of organisations.
+What to review: Workflow system for data qualification and publication control, how MISP handles the state machine for intelligence objects moving from raw input to published intelligence.
+Effort: Review only — focus on workflow/state machine design, not the full platform.
+
+**IntelOwl — Multi-source OSINT aggregation**
+Source: https://github.com/intelowlproject/IntelOwl — AGPL v3, maintained by Certego
+Why relevant: Production OSINT aggregator querying 100+ intelligence sources from a single platform. Relevant to Fortress because AEGIS tools like `check_dark_web_exposure` and `get_threat_intel_feeds` are attempting to do what IntelOwl already does at scale. Before building more intelligence enrichment tools from scratch, IntelOwl's connector architecture and source management patterns are worth reviewing.
+What to review: Connector architecture for adding new intelligence sources, how source reliability/credibility is tracked across queries, API design for programmatic access.
+Effort: Review only — assess whether any IntelOwl connectors cover gaps in Fortress's current intelligence sources.
+
+---
+
+## Section 23: Expert Auto-Discovery & Belief Synthesis (April 10, 2026 — Session 8)
+
+### Overview
+This session built a self-expanding expert intelligence network: agents now discover human practitioners automatically, ingest their knowledge, and synthesize that knowledge (alongside live platform signals) into grounded analytical beliefs. Three previous gaps were closed:
+1. Human expert knowledge was stored but never fed into `agent_beliefs`
+2. Agent beliefs had no connection to live platform signals (incidents, entities, travel)
+3. No quality gates existed to prevent false conclusions from low-quality signals or test data
+
+---
+
+### 23.1 Kyle Scott — Seed Expert Added
+
+**Who:** Kyle Scott, CEO & President, Golden Ridge Protection (Minnesota). Iraq combat veteran (US Army). LinkedIn: linkedin.com/in/kyle-scott-grp. Veteran-owned protective security firm specialising in executive protection and critical infrastructure.
+
+**Added to:** `PRACTITIONER_SOURCES` in `agent-knowledge-seeker/index.ts`
+```typescript
+{ query: 'Kyle Scott Golden Ridge Protection executive protection critical infrastructure security 2026', domain: 'executive_protection' }
+```
+
+**How he will be ingested:** `agent-knowledge-seeker` runs the practitioners angle nightly. Perplexity searches for Kyle Scott's recent public output (interviews, articles, podcasts). `ingest-expert-media` sweeps his `expert_profiles` entry for YouTube, podcasts, and LinkedIn content. All content is vectorised into `expert_knowledge` and synthesized into `agent_beliefs` for AEGIS agents.
+
+**Note on LinkedIn scraping:** Direct fetch to LinkedIn returns HTTP 999 (bot block). `ingest-expert-media` uses Perplexity to retrieve LinkedIn profile summaries — this is the correct approach; do not attempt direct LinkedIn scraping.
+
+---
+
+### 23.2 Auto-Discovery of New Experts
+
+**Function:** `autoDiscoverExperts()` in `agent-knowledge-seeker/index.ts`
+
+**How it works:**
+1. Practitioners angle fires per-agent via Perplexity
+2. If content is returned, `autoDiscoverExperts()` parses the text via GPT-4o-mini
+3. GPT-4o-mini extracts up to 3 named practitioners with names, specialties, and query strings
+4. Each extracted expert is checked against existing `expert_profiles` (by name ILIKE match)
+5. New experts are inserted into `expert_profiles` with `auto_discovered = true`, `discovered_by_agent = agent.call_sign`
+6. Background `ingest-expert-media` is fired with `topics_only: true` for each new profile
+
+**Migration required:** `20260410000005_expert_profiles_auto_discovery.sql`
+- Adds `auto_discovered BOOLEAN DEFAULT false` to `expert_profiles`
+- Adds `discovered_by_agent TEXT` to `expert_profiles`
+- Index on `auto_discovered WHERE auto_discovered = true`
+- **Must be applied manually in Supabase SQL editor — not yet applied as of April 10, 2026**
+
+**Wired into:** `huntOneAngle()` — fires as fire-and-forget when `angleConfig.angle === 'practitioners'`
+
+---
+
+### 23.3 Human Expert → Agent Belief Pipeline (Gap Closed)
+
+**Previous state:** `knowledge-synthesizer` only synthesized entries where `expert_name LIKE 'agent:%'`. Human expert entries (Kyle Scott, Jocko Willink, etc.) accumulated in `expert_knowledge` but were never converted to `agent_beliefs`.
+
+**Fix applied:**
+- `ingest-expert-media` now fires background `knowledge-synthesizer` with `{ mode: 'beliefs', since_hours: 3, include_human_experts: true }` after each expert sweep (both batch sweep and single-URL ingestion paths)
+- `knowledge-synthesizer` new param `include_human_experts`: loads all `expert_knowledge` entries where `expert_name NOT LIKE 'agent:%'` and `confidence_score >= 0.65`
+- `knowledge-synthesizer` new param `since_hours`: overrides `since_days` for triggered (non-nightly) runs
+- Human entries are domain-matched to relevant agents via a `humanByDomain` map
+- Matched human expert entries are merged into each agent's synthesis set alongside that agent's own entries
+- Minimum entry gate lowered from 3 to 2 to accommodate small human expert sets
+
+**Flow:** `ingest-expert-media` sweep completes → fires `knowledge-synthesizer` → human entries matched to agent domains → GPT-4o-mini synthesizes combined set → `agent_beliefs` rows upserted with `include_human_experts: true` provenance
+
+---
+
+### 23.4 Operational Belief Synthesis
+
+**Function:** `synthesizeOperationalBeliefs()` in `knowledge-synthesizer/index.ts`
+
+**Triggers:** Runs as part of `mode: 'all'` (nightly) and `mode: 'operational'` (on-demand)
+
+**What it does:** For each agent, pulls live platform data by domain and synthesizes pattern-based analytical beliefs:
+- Signals (quality-filtered)
+- Active incidents
+- Active entities with recent mentions
+- Travel alerts (country alerts)
+
+**Domain routing:** `DOMAIN_SIGNAL_CATEGORIES` maps 12 agent domains → relevant signal category lists. Example: `physical_security` → `['protest', 'infrastructure', 'violence', 'threat']`; `cyber_security` → `['cybersecurity', 'malware', 'data_breach', 'vulnerability']`
+
+**Output:** `belief_type = 'operational_pattern'` rows in `agent_beliefs`
+
+---
+
+### 23.5 Signal Quality Gates — Three-Layer Protection
+
+**Goal:** Prevent false conclusions from low-quality signals, test data, or isolated data points.
+
+**Layer 1 — SQL gate (in `synthesizeOperationalBeliefs`):**
+- `composite_confidence >= 0.45`
+- `relevance_score >= 20`
+- `severity != 'low'`
+- `is_test = false`
+- `deleted_at IS NULL`
+- Ordered by `composite_confidence DESC`
+
+**Layer 2 — Evidence count gate (in code):**
+- `domainSignals.length + incidents.length < 3` → skip domain entirely, no belief formed
+- Prevents single-signal beliefs that could be noise or false positives
+
+**Layer 3 — Prompt hardening (GPT-4o-mini instruction):**
+- Minimum 3 independent signals or 1 active incident + 2 signals required to form a belief
+- Calibrated confidence scale: 0.60–0.70 = emerging (2-4 signals), 0.71–0.85 = established (5+), 0.86+ = high
+- Explicit `[]` return instruction when evidence is insufficient
+- No extrapolation beyond observed evidence
+- Same hardening applied to expert-knowledge belief prompt
+
+---
+
+### 23.6 Storage URL Regression Fix (generate-briefing-audio)
+
+`generate-briefing-audio/index.ts` was calling `getPublicUrl` on the private `tenant-files` bucket, producing URLs that fail with `InvalidJWT`. Fixed to `createSignedUrl(fileName, 604800)` (7-day signed URL).
+
+**CLAUDE.md updated** with bucket registry table and rule: never use `getPublicUrl` on any FORTRESS bucket. All four buckets (`tenant-files`, `osint-media`, `entity-photos`, `agent-avatars`) are private and require `createSignedUrl`.
+
+**Storage smoke test added** to `scripts/test-aegis-tools.mjs`: calls `generate_fortress_report`, extracts `view_url`, asserts HTTP 200. Note: fallback path returns cached reports without `view_url` — this is pre-existing behavior, not a regression.
+
+---
+
+### 23.7 Health Check Baseline
+
+Session 8 started from session 7 baseline: **85/85 AEGIS tools passing, 2/2 edge function direct tests passing.**
+No tools were added or removed this session. Baseline unchanged.
+
+---
+
+### 23.8 Files Modified This Session
+
+| File | Change |
+|---|---|
+| `supabase/functions/generate-briefing-audio/index.ts` | `getPublicUrl` → `createSignedUrl` bug fix |
+| `CLAUDE.md` | Added storage bucket registry and `getPublicUrl` ban rule |
+| `scripts/test-aegis-tools.mjs` | Added storage URL smoke test |
+| `supabase/functions/agent-knowledge-seeker/index.ts` | Kyle Scott added to `PRACTITIONER_SOURCES`; `autoDiscoverExperts()` function added |
+| `supabase/functions/ingest-expert-media/index.ts` | Fires background `knowledge-synthesizer` after each sweep |
+| `supabase/functions/knowledge-synthesizer/index.ts` | `include_human_experts` + `since_hours` params; `synthesizeOperationalBeliefs()` function; signal quality gates; prompt hardening |
+| `supabase/migrations/20260410000005_expert_profiles_auto_discovery.sql` | `auto_discovered` + `discovered_by_agent` columns on `expert_profiles` — **NOT YET APPLIED** |
+| `supabase/functions/system-watchdog/index.ts` | Expert learning section added to `FORTRESS_SYSTEM_KNOWLEDGE`; `expertLearning` telemetry; `collectExpertLearningTelemetry()` helper; `trigger_belief_synthesis` remediation action |
+| `FORTRESS_PLATFORM_STATE.md` | This section |
+
+---
+
+### 23.9 Pending Actions (Human Required)
+
+1. **Apply migration** `20260410000005_expert_profiles_auto_discovery.sql` in Supabase SQL editor
+2. **Deploy all modified edge functions:**
+   ```
+   supabase functions deploy generate-briefing-audio
+   supabase functions deploy agent-knowledge-seeker
+   supabase functions deploy ingest-expert-media
+   supabase functions deploy knowledge-synthesizer
+   supabase functions deploy system-watchdog
+   ```
+3. **Verify auto-discovery fires** by checking `expert_profiles WHERE auto_discovered = true` after next nightly `agent-knowledge-seeker` run
+4. **Monitor belief formation** — `agent_beliefs` count should grow within 24h of first nightly cycle after deployment
