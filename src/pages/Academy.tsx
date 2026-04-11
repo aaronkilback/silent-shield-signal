@@ -63,7 +63,7 @@ export default function Academy() {
     queryFn: async () => {
       const { data } = await supabase
         .from("academy_learner_profiles")
-        .select("id, full_name, email, phone, city, country, matched_tier, matched_agent, primary_domain, created_at")
+        .select("id, full_name, email, phone, city, country, matched_tier, matched_agent, primary_domain, self_reported_role, sector, current_status, confidence_rating, confidence_gap, created_at")
         .order("created_at", { ascending: false });
       return data || [];
     },
@@ -329,34 +329,59 @@ export default function Academy() {
                   </div>
                 ) : (
                   learners.map(l => (
-                    <div key={l.id} className="rounded-lg border border-border bg-card/60 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
-                      <div className="flex-1 space-y-1">
-                        <div className="font-semibold text-foreground">{l.full_name || "Unknown"}</div>
-                        <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                          {l.email && (
-                            <a href={`mailto:${l.email}`} className="flex items-center gap-1 hover:text-primary">
-                              <Mail className="w-3.5 h-3.5" />{l.email}
-                            </a>
+                    <div key={l.id} className="rounded-lg border border-border bg-card/60 p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+                        <div className="flex-1 space-y-1">
+                          <div className="font-semibold text-foreground">{l.full_name || "Unknown"}</div>
+                          {l.self_reported_role && (
+                            <div className="text-sm text-foreground/70">{l.self_reported_role}</div>
                           )}
-                          {l.phone && (
-                            <a href={`tel:${l.phone}`} className="flex items-center gap-1 hover:text-primary">
-                              <Phone className="w-3.5 h-3.5" />{l.phone}
-                            </a>
-                          )}
-                          {(l.city || l.country) && (
-                            <span className="flex items-center gap-1">
-                              <MapPin className="w-3.5 h-3.5" />{[l.city, l.country].filter(Boolean).join(", ")}
+                          <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                            {l.email && (
+                              <a href={`mailto:${l.email}`} className="flex items-center gap-1 hover:text-primary">
+                                <Mail className="w-3.5 h-3.5" />{l.email}
+                              </a>
+                            )}
+                            {l.phone && (
+                              <a href={`tel:${l.phone}`} className="flex items-center gap-1 hover:text-primary">
+                                <Phone className="w-3.5 h-3.5" />{l.phone}
+                              </a>
+                            )}
+                            {(l.city || l.country) && (
+                              <span className="flex items-center gap-1">
+                                <MapPin className="w-3.5 h-3.5" />{[l.city, l.country].filter(Boolean).join(", ")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap shrink-0">
+                          <Badge variant="outline" className="text-xs capitalize">{l.matched_tier || "—"}</Badge>
+                          <Badge variant="outline" className="text-xs">{l.matched_agent || "—"}</Badge>
+                          {l.sector && <Badge variant="outline" className="text-xs capitalize">{l.sector.replace(/_/g, " ")}</Badge>}
+                          <span className="text-xs text-muted-foreground">{new Date(l.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      {/* Confidence calibration */}
+                      {l.confidence_rating && (
+                        <div className="flex items-center gap-4 pt-1 border-t border-border text-xs">
+                          <span className="text-muted-foreground">
+                            Self-confidence: <span className="text-foreground font-medium">{l.confidence_rating}/10</span>
+                          </span>
+                          {l.confidence_gap !== null && l.confidence_gap !== undefined && (
+                            <span className={cn(
+                              "font-medium flex items-center gap-1",
+                              Math.abs(l.confidence_gap) <= 15 ? "text-green-400" :
+                              l.confidence_gap > 30 ? "text-red-400" : "text-amber-400"
+                            )}>
+                              <TrendingUp className="w-3 h-3" />
+                              Gap: {l.confidence_gap > 0 ? "+" : ""}{l.confidence_gap}pts
+                              {l.confidence_gap > 30 && " — overconfident"}
+                              {l.confidence_gap < -20 && " — underestimates self"}
+                              {Math.abs(l.confidence_gap) <= 15 && " — well calibrated"}
                             </span>
                           )}
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="text-xs capitalize">{l.matched_tier || "—"}</Badge>
-                        <Badge variant="outline" className="text-xs">{l.matched_agent || "—"}</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(l.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
+                      )}
                     </div>
                   ))
                 )}

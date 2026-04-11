@@ -24,88 +24,48 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ─── Intake questions ─────────────────────────────────────────────────────────
-// These are the 5 questions presented to learners on intake.
-// Stored in intake_answers for reference; scoring is done server-side.
-export const INTAKE_QUESTIONS = [
-  {
-    id: "q1",
-    question: "How many years of professional experience do you have in security, intelligence, or risk management?",
-    options: [
-      { value: "novice",       label: "0–2 years (student / entry level)" },
-      { value: "practitioner", label: "3–9 years (working professional)" },
-      { value: "expert",       label: "10+ years (senior / executive)" },
-    ],
-  },
-  {
-    id: "q2",
-    question: "Which domain best describes your primary area of work?",
-    options: [
-      { value: "physical_security",        label: "Physical security / protective operations" },
-      { value: "cyber_threat_intel",       label: "Cyber / digital threat intelligence" },
-      { value: "travel_security",          label: "Executive protection / travel security" },
-      { value: "osint_privacy",            label: "OSINT / digital privacy" },
-      { value: "financial_security",       label: "Financial crime / fraud / compliance" },
-      { value: "business_continuity",      label: "Business continuity / crisis management" },
-      { value: "reputational_risk",        label: "Reputational risk / communications" },
-      { value: "intelligence_tradecraft",  label: "Intelligence tradecraft / investigations" },
-    ],
-  },
-  {
-    id: "q3",
-    question: "Have you received formal training in threat assessment or protective intelligence?",
-    options: [
-      { value: "none",     label: "No formal training" },
-      { value: "basic",    label: "Basic / introductory courses only" },
-      { value: "formal",   label: "Formal certification (ASIS, ATAP, CPP, etc.)" },
-      { value: "advanced", label: "Advanced / operational training (government, military, intelligence community)" },
-    ],
-  },
-  {
-    id: "q4",
-    question: "How do you typically make decisions when information is incomplete or ambiguous?",
-    options: [
-      { value: "wait",      label: "I wait for more information before acting" },
-      { value: "escalate",  label: "I escalate to someone more senior" },
-      { value: "framework", label: "I apply a structured framework or doctrine" },
-      { value: "instinct",  label: "I rely primarily on experience and instinct" },
-    ],
-  },
-  {
-    id: "q5",
-    question: "What is your primary goal in using Fortress Academy?",
-    options: [
-      { value: "calibrate",  label: "Calibrate my judgment against a standard" },
-      { value: "learn",      label: "Learn new domain knowledge" },
-      { value: "credential", label: "Build credentials / demonstrate competence" },
-      { value: "team",       label: "Train or benchmark my team" },
-    ],
-  },
-];
-
-// ─── Tier scoring ─────────────────────────────────────────────────────────────
+// ─── Tier scoring (new richer profile) ───────────────────────────────────────
 
 function scoreTier(answers: Record<string, string>): "foundation" | "advanced" | "elite" {
   let score = 0;
 
-  // q1: experience
-  if (answers.q1 === "expert")       score += 3;
-  else if (answers.q1 === "practitioner") score += 1;
+  // Sector
+  if (answers.sector === "military_intel")  score += 3;
+  if (answers.sector === "law_enforcement") score += 2;
+  if (answers.sector === "private")         score += 2;
+  if (answers.sector === "corporate")       score += 1;
 
-  // q3: formal training
-  if (answers.q3 === "advanced")     score += 3;
-  else if (answers.q3 === "formal")  score += 2;
-  else if (answers.q3 === "basic")   score += 1;
+  // Decision authority — have they actually been responsible
+  if (answers.decision_authority === "yes_many")  score += 3;
+  if (answers.decision_authority === "yes_once")  score += 2;
+  if (answers.decision_authority === "no_close")  score += 1;
 
-  // q4: decision making (framework = higher competency signal)
-  if (answers.q4 === "framework" || answers.q4 === "instinct") score += 1;
+  // High-risk exposure
+  if (answers.high_risk_exposure === "yes_sustained") score += 2;
+  if (answers.high_risk_exposure === "yes_incident")  score += 1;
 
-  if (score >= 5) return "elite";
-  if (score >= 2) return "advanced";
+  // Current status
+  if (answers.current_status === "operational")  score += 1;
+  if (answers.current_status === "management")   score += 1;
+
+  // Doctrine answer (non-empty = at least practitioner)
+  if ((answers.doctrine || "").trim().length > 30) score += 1;
+
+  if (score >= 7) return "elite";
+  if (score >= 3) return "advanced";
   return "foundation";
 }
 
 // ─── Domain → agent mapping ───────────────────────────────────────────────────
+
+const OPERATIONAL_DOMAIN_MAP: Record<string, string> = {
+  close_protection:  "travel_security",
+  threat_assessment: "intelligence_tradecraft",
+  physical_security: "physical_security",
+  investigations:    "intelligence_tradecraft",
+  crisis_management: "business_continuity",
+  cyber:             "cyber_threat_intel",
+};
 
 const DOMAIN_AGENT_MAP: Record<string, string> = {
   physical_security:       "WARDEN",
@@ -139,30 +99,35 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Score tier and resolve domain/agent
+    // Score tier and resolve domain/agent from new profile questions
     const tier          = scoreTier(answers);
-    const primaryDomain = answers.q2 || "physical_security";
+    const primaryDomain = OPERATIONAL_DOMAIN_MAP[answers.operational_experience || ""] || "physical_security";
     const matchedAgent  = DOMAIN_AGENT_MAP[primaryDomain] || "WARDEN";
+    const confidenceRating = answers.confidence ? parseInt(answers.confidence) : null;
 
-    console.log(`[academy-intake] userId=${userId} tier=${tier} domain=${primaryDomain} agent=${matchedAgent}`);
+    console.log(`[academy-intake] userId=${userId} tier=${tier} domain=${primaryDomain} agent=${matchedAgent} confidence=${confidenceRating}`);
 
     // Upsert learner profile
     const { data: profile, error: profileErr } = await supabase
       .from("academy_learner_profiles")
       .upsert({
-        user_id:          userId,
-        intake_answers:   { ...answers, contact: contact || {} },
-        experience_level: answers.q1 || "practitioner",
-        primary_domain:   primaryDomain,
-        matched_agent:    matchedAgent,
-        matched_tier:     tier,
-        full_name:        contact?.full_name  || null,
-        email:            contact?.email      || null,
-        phone:            contact?.phone      || null,
-        address:          contact?.address    || null,
-        city:             contact?.city       || null,
-        country:          contact?.country    || null,
-        updated_at:       new Date().toISOString(),
+        user_id:            userId,
+        intake_answers:     { ...answers, contact: contact || {} },
+        experience_level:   tier,
+        primary_domain:     primaryDomain,
+        matched_agent:      matchedAgent,
+        matched_tier:       tier,
+        self_reported_role: answers.role        || null,
+        sector:             answers.sector      || null,
+        current_status:     answers.current_status || null,
+        confidence_rating:  confidenceRating,
+        full_name:          contact?.full_name  || null,
+        email:              contact?.email      || null,
+        phone:              contact?.phone      || null,
+        address:            contact?.address    || null,
+        city:               contact?.city       || null,
+        country:            contact?.country    || null,
+        updated_at:         new Date().toISOString(),
       }, { onConflict: "user_id" })
       .select("id")
       .single();
@@ -233,10 +198,25 @@ Deno.serve(async (req: Request) => {
               <p><strong>Location:</strong> ${[contact.address, contact.city, contact.country].filter(Boolean).join(", ") || "—"}</p>
             </div>
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 16px 0;">
-              <p><strong>Experience:</strong> ${answers.q1}</p>
-              <p><strong>Domain:</strong> ${primaryDomain.replace(/_/g, " ")}</p>
+              <p><strong>Role:</strong> ${answers.role || "—"}</p>
+              <p><strong>Sector:</strong> ${(answers.sector || "—").replace(/_/g, " ")}</p>
+              <p><strong>Operational experience:</strong> ${(answers.operational_experience || "—").replace(/_/g, " ")}</p>
+              <p><strong>Decision authority:</strong> ${(answers.decision_authority || "—").replace(/_/g, " ")}</p>
+              <p><strong>High-risk exposure:</strong> ${(answers.high_risk_exposure || "—").replace(/_/g, " ")}</p>
+              <p><strong>Current status:</strong> ${(answers.current_status || "—").replace(/_/g, " ")}</p>
+              <p><strong>Team size:</strong> ${(answers.team_size || "—").replace(/_/g, " ")}</p>
+              <p><strong>Self-confidence rating:</strong> ${confidenceRating || "—"}/10</p>
+            </div>
+            <div style="background: #fff8ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 20px; margin: 16px 0;">
+              <p><strong>Highest-threat environment described:</strong></p>
+              <p style="font-style: italic; color: #374151;">"${(answers.highest_threat || "Not provided").slice(0, 400)}"</p>
+              <p style="margin-top: 12px;"><strong>Doctrine / framework:</strong></p>
+              <p style="font-style: italic; color: #374151;">"${(answers.doctrine || "Not provided").slice(0, 300)}"</p>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 16px 0;">
               <p><strong>Tier matched:</strong> ${tier}</p>
               <p><strong>Agent matched:</strong> ${matchedAgent}</p>
+              <p><strong>Domain:</strong> ${primaryDomain.replace(/_/g, " ")}</p>
               <p><strong>Courses enrolled:</strong> ${finalRecommended.length}</p>
             </div>
             <p style="color: #64748b; font-size: 12px;">Fortress Academy — ${new Date().toLocaleString()}</p>

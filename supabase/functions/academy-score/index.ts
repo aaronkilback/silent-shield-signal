@@ -250,6 +250,26 @@ Deno.serve(async (req: Request) => {
 
     if (updateErr) throw updateErr;
 
+    // After pre-test: calculate confidence gap and store it
+    if (stage === "pre") {
+      const { data: learner } = await supabase
+        .from("academy_learner_profiles")
+        .select("confidence_rating")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (learner?.confidence_rating) {
+        const selfConfidencePct = learner.confidence_rating * 10;
+        const actualPct        = Math.round(totalScore * 100);
+        const gap              = selfConfidencePct - actualPct;
+        await supabase
+          .from("academy_learner_profiles")
+          .update({ confidence_gap: gap })
+          .eq("user_id", userId);
+        console.log(`[academy-score] confidence_gap=${gap} (self=${selfConfidencePct}% actual=${actualPct}%)`);
+      }
+    }
+
     // Update agent teaching score (only after post or 30day — we have a delta)
     if ((stage === "post" || stage === "30day") && scenario.agent_call_sign) {
       // Aggregate judgment_delta for this agent+domain across all learners
