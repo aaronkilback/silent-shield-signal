@@ -76,53 +76,40 @@ Deno.serve(async (req) => {
     const openIncidents = incidents?.filter(i => i.status === 'open').length || 0;
     const resolvedIncidents = incidents?.filter(i => i.status === 'resolved').length || 0;
 
-    // Generate AI recommendations for top signals
-    const signalsWithRecommendations = await Promise.all(
-      (signals || []).slice(0, 20).map(async (signal) => {
-        try {
-          const aiResult = await callAiGateway({
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: 'You are a cybersecurity analyst. Provide 3-4 brief, actionable recommendations for responding to this security signal. Be concise and specific.' },
-              { role: 'user', content: `Signal: ${signal.normalized_text}\nSeverity: ${signal.severity}\nCategory: ${signal.category}\nLocation: ${signal.location || 'Unknown'}` }
-            ],
-            functionName: 'generate-report',
-          });
-
-          const recommendations = aiResult.content || 'No recommendations available';
-          return { ...signal, recommendations };
-        } catch (error) {
-          console.error('Error generating recommendations:', error);
-          return { ...signal, recommendations: 'Unable to generate recommendations' };
-        }
-      })
-    );
+    // Use signals as-is — no per-signal AI inflation
+    const signalsWithRecommendations = (signals || []).map(s => ({ ...s, recommendations: null }));
 
     // Use AI to generate executive summary
-    
-    const summaryPrompt = `Generate a concise executive risk snapshot for the last ${period_hours} hours.
-    
-Data:
-- Total signals: ${signals?.length || 0}
-- Critical signals: ${criticalSignals}
-- High priority signals: ${highSignals}
+    const topSignals = (signals || []).slice(0, 5).map((s, i) =>
+      `${i + 1}. [${s.severity?.toUpperCase()} | ${s.category}] ${s.normalized_text?.substring(0, 200)} (${new Date(s.received_at).toLocaleDateString('en-CA')})`
+    ).join('\n');
+
+    const summaryPrompt = `Write a concise 72-hour risk snapshot for internal security leadership. Base it ONLY on the verified data below — do not introduce events, actors, or risks that are not present in this data.
+
+VERIFIED DATA:
+- Period: last ${period_hours} hours
+- Total signals collected: ${signals?.length || 0}
+- Critical severity: ${criticalSignals}
+- High severity: ${highSignals}
 - Open incidents: ${openIncidents}
 - Resolved incidents: ${resolvedIncidents}
 
-Top signals: ${JSON.stringify(signals?.slice(0, 5) || [])}
+TOP SIGNALS:
+${topSignals || 'No signals in this period.'}
 
-Provide:
-1. Overall threat level (LOW, ELEVATED, HIGH, CRITICAL)
-2. Top 3 concerns
-3. Recommended actions
-4. Trend analysis
+GROUNDING RULES — you must follow these:
+1. Threat level must reflect ACTUAL signal counts above — do not upgrade without justification from the data
+2. If critical signals = 0, threat level cannot be CRITICAL
+3. Only reference events and actors that appear verbatim in the signal text above
+4. If data is sparse, say so plainly — do not pad with hypothetical risks
+5. No markdown formatting — plain prose only
 
-Keep it executive-friendly and action-oriented.`;
+Write 2 short paragraphs: (1) what the data shows — exact counts, key signal themes; (2) what security leadership should watch or action in the next 24 hours based strictly on this data.`;
 
     const summaryResult = await callAiGateway({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You are a security intelligence analyst creating executive briefings.' },
+        { role: 'system', content: 'You are a security intelligence analyst producing a factual risk snapshot. Report only what the data shows. Do not speculate, inflate, or introduce information not present in the provided signals.' },
         { role: 'user', content: summaryPrompt }
       ],
       functionName: 'generate-report',

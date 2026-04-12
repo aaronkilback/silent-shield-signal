@@ -346,8 +346,8 @@ ${k.content?.substring(0, 300)}`).join('\n\n')}
 ` : '';
 
     const agentContext = agentBeliefs.length > 0 ? `
-ANALYST TEAM ASSESSMENTS — these are conclusions your specialist analysts have reached through ongoing research. The report should reflect their views, not just list signals. Where an analyst assessment is relevant to current activity, incorporate it as part of your analysis:
-${agentBeliefs.map((b: any) => `• ${b.agent_call_sign} [${b.belief_type}, ${Math.round(b.confidence * 100)}% confidence]: ${b.hypothesis?.substring(0, 250)}`).join('\n')}
+ANALYST TEAM ASSESSMENTS — reference these only where current signals directly support them. Do not use these to introduce risks or claims that are not grounded in the signals provided above. These are background context, not a substitute for signal evidence:
+${agentBeliefs.map((b: any) => `• ${b.agent_call_sign} [${b.belief_type}, ${Math.round(b.confidence * 100)}% confidence]: ${b.hypothesis?.substring(0, 200)}`).join('\n')}
 ` : '';
 
     const briefingStandardsContext = briefingKnowledge.length > 0 ? `
