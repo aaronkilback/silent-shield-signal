@@ -1,30 +1,51 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
+// VIIRS SNPP NRT CSV column indices (confirmed from live data):
+// 0:latitude, 1:longitude, 2:bright_ti4, 3:scan, 4:track,
+// 5:acq_date, 6:acq_time, 7:satellite, 8:instrument,
+// 9:confidence, 10:version, 11:bright_ti5, 12:frp, 13:daynight
+//
+// confidence values: "h" (high), "n" (nominal), "l" (low)
+// satellite values: "N" (Suomi-NPP), "1" (NOAA-20)
+
 // Bounding boxes for regions where clients operate
-// Used to filter global FIRMS data to operationally relevant fires
-const CANADA_WEST_BBOX = { minLat: 48.0, maxLat: 62.0, minLon: -140.0, maxLon: -110.0 }; // BC + Alberta
+const CANADA_WEST_BBOX = { minLat: 48.0, maxLat: 62.0, minLon: -140.0, maxLon: -110.0 };
+
+// Gas flare heuristic: very high FRP with only moderate brightness is likely
+// an industrial flare (oil/gas), not a wildfire. Alberta has thousands of
+// active flaring sites. Wildfires in spring/summer typically have bright_ti4 > 330K.
+function isLikelyGasFlare(brightTi4: number, frpMW: number, daynight: string): boolean {
+  // Night-time detections with very high FRP but moderate brightness = flare
+  if (daynight === 'N' && frpMW > 50 && brightTi4 < 340) return true;
+  // Extreme FRP with only warm (not hot) brightness = industrial combustion
+  if (frpMW > 200 && brightTi4 < 360) return true;
+  return false;
+}
 
 // Reverse-geocode lat/lon to a human-readable region name
-// Uses a simple bounding-box lookup — no external API dependency
 function resolveRegion(lat: number, lon: number): string {
-  // British Columbia sub-regions
   if (lat >= 55.5 && lat <= 60.0 && lon >= -125.0 && lon <= -120.0) return 'Northeast British Columbia (Peace Region)';
   if (lat >= 53.5 && lat <= 56.0 && lon >= -128.0 && lon <= -122.0) return 'Central British Columbia';
   if (lat >= 53.5 && lat <= 55.5 && lon >= -130.0 && lon <= -126.0) return 'Northwest British Columbia (Skeena/Kitimat corridor)';
   if (lat >= 49.0 && lat <= 53.5 && lon >= -126.0 && lon <= -120.0) return 'Southern British Columbia';
-  // Alberta
   if (lat >= 56.0 && lat <= 60.0 && lon >= -120.0 && lon <= -110.0) return 'Northern Alberta';
   if (lat >= 51.0 && lat <= 56.0 && lon >= -120.0 && lon <= -110.0) return 'Central Alberta';
   if (lat >= 49.0 && lat <= 51.0 && lon >= -115.0 && lon <= -110.0) return 'Southern Alberta';
-  // Broader Canada West
   if (lon >= -140.0 && lon <= -110.0 && lat >= 48.0 && lat <= 62.0) return 'Western Canada';
   return `${lat.toFixed(2)}°N ${Math.abs(lon).toFixed(2)}°W`;
 }
 
-// Check if a fire is within the Canada West operational bounding box
 function isInOperationalArea(lat: number, lon: number): boolean {
   return lat >= CANADA_WEST_BBOX.minLat && lat <= CANADA_WEST_BBOX.maxLat &&
          lon >= CANADA_WEST_BBOX.minLon && lon <= CANADA_WEST_BBOX.maxLon;
+}
+
+// Stable dedup key: round to 0.25-degree grid + acquisition date.
+// Prevents the same fire being re-ingested on every 15-min cron run.
+function fireDedupeKey(lat: number, lon: number, acqDate: string): string {
+  const gridLat = Math.round(lat * 4) / 4;
+  const gridLon = Math.round(lon * 4) / 4;
+  return `wildfire:${gridLat}:${gridLon}:${acqDate}`;
 }
 
 Deno.serve(async (req) => {
@@ -33,6 +54,8 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
+    const heartbeatAt = new Date().toISOString();
+    const heartbeatMs = Date.now();
 
     console.log('Starting wildfire monitoring scan...');
 
@@ -43,12 +66,11 @@ Deno.serve(async (req) => {
 
     if (clientsError) throw clientsError;
 
-    console.log(`Found ${clients?.length || 0} clients to monitor`);
-
     let signalsCreated = 0;
+    let flaresSuppressed = 0;
+    let duplicatesSuppressed = 0;
 
     const firmsKey = Deno.env.get('NASA_FIRMS_MAP_KEY');
-
     if (!firmsKey) {
       console.log('[Wildfires] NASA_FIRMS_MAP_KEY not configured — skipping.');
       return successResponse({ success: true, signals_created: 0, note: 'NASA_FIRMS_MAP_KEY not configured' });
@@ -56,7 +78,7 @@ Deno.serve(async (req) => {
 
     const firmsResponse = await fetch(
       `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/world/1`,
-      { headers: { 'User-Agent': 'OSINT-Monitoring-System' } }
+      { headers: { 'User-Agent': 'FortressAI/1.0' } }
     );
 
     if (!firmsResponse.ok) {
@@ -67,31 +89,71 @@ Deno.serve(async (req) => {
     const firmsText = await firmsResponse.text();
     const lines = firmsText.split('\n');
 
-    // Parse CSV (skip header), filter to operational area only
+    // Track dedup keys seen this run to avoid processing the same fire twice
+    const seenThisRun = new Set<string>();
+
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
 
-      const [latStr, lonStr, brightness, , , acq_date, acq_time, satellite, confidence, , , frp] = line.split(',');
+      const parts = line.split(',');
+      if (parts.length < 13) continue;
 
-      const lat = parseFloat(latStr);
-      const lon = parseFloat(lonStr);
-      const conf = parseInt(confidence);
+      const lat = parseFloat(parts[0]);
+      const lon = parseFloat(parts[1]);
+      const brightTi4 = parseFloat(parts[2]);
+      const acq_date = parts[5];
+      const satellite = parts[7];        // "N" = Suomi-NPP, "1" = NOAA-20
+      const confidence = parts[9];       // "h", "n", or "l"
+      const frp = parseFloat(parts[12]); // Fire Radiative Power in MW
+      const daynight = parts[13] || 'D';
 
-      if (isNaN(lat) || isNaN(lon) || conf < 70) continue;
+      if (isNaN(lat) || isNaN(lon) || isNaN(brightTi4) || isNaN(frp)) continue;
 
-      // Only process fires within the operational bounding box
+      // Only high/nominal confidence — skip low confidence
+      if (confidence === 'l') continue;
+
       if (!isInOperationalArea(lat, lon)) continue;
 
+      // Filter gas flares — very common in Alberta oil/gas fields
+      if (isLikelyGasFlare(brightTi4, frp, daynight)) {
+        flaresSuppressed++;
+        continue;
+      }
+
+      // Deduplicate: same fire location + date = skip
+      const dedupeKey = fireDedupeKey(lat, lon, acq_date);
+      if (seenThisRun.has(dedupeKey)) {
+        duplicatesSuppressed++;
+        continue;
+      }
+      seenThisRun.add(dedupeKey);
+
+      // Check DB-level dedup: has this fire already been ingested today?
+      const stableUrl = `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${lon.toFixed(2)},${lat.toFixed(2)},10z`;
+      const { data: existing } = await supabase
+        .from('ingested_documents')
+        .select('id')
+        .eq('metadata->>url', stableUrl)
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        duplicatesSuppressed++;
+        continue;
+      }
+
       const region = resolveRegion(lat, lon);
-      const severity = conf > 90 ? 'critical' : 'high';
+      const satelliteName = satellite === 'N' ? 'Suomi-NPP VIIRS' : satellite === '1' ? 'NOAA-20 VIIRS' : 'VIIRS';
+      const confLabel = confidence === 'h' ? 'high' : 'nominal';
+      const severity = confidence === 'h' ? 'high' : 'medium';
 
       for (const client of clients || []) {
         try {
           const signalText = [
-            `Active Wildfire Detected near ${region}.`,
-            `Satellite (${satellite || 'VIIRS'}) detected high-confidence (${conf}%) fire on ${acq_date}.`,
-            `Fire Radiative Power: ${frp} MW. Brightness: ${brightness}K.`,
+            `Active wildfire detected near ${region}.`,
+            `${satelliteName} satellite detected a ${confLabel}-confidence fire on ${acq_date}.`,
+            `Fire Radiative Power: ${frp.toFixed(1)} MW. Brightness temperature: ${brightTi4.toFixed(1)}K.`,
+            `Location: ${lat.toFixed(3)}°N, ${Math.abs(lon).toFixed(3)}°W (${daynight === 'N' ? 'night' : 'day'} detection).`,
             `This fire is within the operational area of ${client.name}'s pipeline infrastructure, gas facilities, and right-of-way corridors in ${region}.`,
             `Wildfires in this corridor pose direct risk to above-ground pipeline assets, compressor stations, and access roads.`,
           ].join(' ');
@@ -99,34 +161,47 @@ Deno.serve(async (req) => {
           const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
             body: {
               text: signalText,
-              source_url: `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${lon},${lat},8z`,
+              source_url: stableUrl,
               location: region,
               clientId: client.id,
-              skip_relevance_gate: true, // Pre-filtered to operational area; gate would reject bare fire data
+              skip_relevance_gate: true,
             },
           });
 
           if (!ingestError) {
             signalsCreated++;
-            console.log(`[Wildfires] Signal created for ${client.name}: ${region} (conf=${conf}%, FRP=${frp}MW)`);
+            console.log(`[Wildfires] Signal: ${client.name} — ${region} (conf=${confLabel}, FRP=${frp.toFixed(1)}MW, bright=${brightTi4.toFixed(1)}K)`);
           }
 
-          break; // One signal per fire per scan
+          break; // One signal per fire location per scan
         } catch (error) {
           console.error(`Error processing wildfire for ${client.name}:`, error);
         }
       }
 
-      if (signalsCreated >= 15) break;
+      if (signalsCreated >= 10) break;
     }
 
-    console.log(`Wildfire monitoring complete. ${signalsCreated} signals created.`);
+    console.log(`Wildfire scan complete. Signals: ${signalsCreated}, flares suppressed: ${flaresSuppressed}, duplicates suppressed: ${duplicatesSuppressed}`);
+
+    try {
+      await supabase.from('cron_heartbeat').insert({
+        job_name: 'monitor-wildfires',
+        started_at: heartbeatAt,
+        completed_at: new Date().toISOString(),
+        status: 'completed',
+        duration_ms: Date.now() - heartbeatMs,
+        result_summary: { signals_created: signalsCreated, flares_suppressed: flaresSuppressed, duplicates_suppressed: duplicatesSuppressed },
+      });
+    } catch (_) {}
 
     return successResponse({
       success: true,
       clients_scanned: clients?.length || 0,
       signals_created: signalsCreated,
-      source: 'wildfire'
+      flares_suppressed: flaresSuppressed,
+      duplicates_suppressed: duplicatesSuppressed,
+      source: 'wildfire',
     });
   } catch (error) {
     console.error('Error in wildfire monitoring:', error);
