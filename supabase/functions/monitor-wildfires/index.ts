@@ -8,8 +8,20 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 // confidence values: "h" (high), "n" (nominal), "l" (low)
 // satellite values: "N" (Suomi-NPP), "1" (NOAA-20)
 
-// Bounding boxes for regions where clients operate
-const CANADA_WEST_BBOX = { minLat: 48.0, maxLat: 62.0, minLon: -140.0, maxLon: -110.0 };
+// Operational zones — only fires within these areas are relevant to Petronas Canada.
+// Alberta fires are only relevant near Calgary (major operations hub) or
+// the Montney corridor in NE BC/NW Alberta. Central/Northern Alberta is oil sands
+// country, not Petronas territory, and generates massive gas flare noise.
+const OPERATIONAL_ZONES = [
+  // Northeast BC — Montney formation, Peace Region (core Petronas production area)
+  { minLat: 55.0, maxLat: 60.0, minLon: -125.0, maxLon: -119.0, label: 'Northeast BC (Peace/Montney)' },
+  // Skeena/Kitimat corridor — LNG Canada terminal, TransMountain route
+  { minLat: 53.0, maxLat: 56.0, minLon: -130.0, maxLon: -125.0, label: 'Skeena/Kitimat corridor' },
+  // Southern BC — pipeline corridors
+  { minLat: 49.0, maxLat: 53.0, minLon: -126.0, maxLon: -120.0, label: 'Southern British Columbia' },
+  // Calgary metro area — major operations/corporate hub (user-specified relevance)
+  { minLat: 50.5, maxLat: 51.5, minLon: -115.0, maxLon: -113.5, label: 'Calgary region' },
+];
 
 // Gas flare heuristic: very high FRP with only moderate brightness is likely
 // an industrial flare (oil/gas), not a wildfire. Alberta has thousands of
@@ -35,9 +47,13 @@ function resolveRegion(lat: number, lon: number): string {
   return `${lat.toFixed(2)}°N ${Math.abs(lon).toFixed(2)}°W`;
 }
 
-function isInOperationalArea(lat: number, lon: number): boolean {
-  return lat >= CANADA_WEST_BBOX.minLat && lat <= CANADA_WEST_BBOX.maxLat &&
-         lon >= CANADA_WEST_BBOX.minLon && lon <= CANADA_WEST_BBOX.maxLon;
+function getOperationalZone(lat: number, lon: number): string | null {
+  for (const zone of OPERATIONAL_ZONES) {
+    if (lat >= zone.minLat && lat <= zone.maxLat && lon >= zone.minLon && lon <= zone.maxLon) {
+      return zone.label;
+    }
+  }
+  return null; // Not in any operational zone — ignore
 }
 
 // Stable dedup key: round to 0.25-degree grid + acquisition date.
@@ -113,7 +129,8 @@ Deno.serve(async (req) => {
       // Only high/nominal confidence — skip low confidence
       if (confidence === 'l') continue;
 
-      if (!isInOperationalArea(lat, lon)) continue;
+      const zone = getOperationalZone(lat, lon);
+      if (!zone) continue;
 
       // Filter gas flares — very common in Alberta oil/gas fields
       if (isLikelyGasFlare(brightTi4, frp, daynight)) {
@@ -142,7 +159,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const region = resolveRegion(lat, lon);
+      const region = zone;
       const satelliteName = satellite === 'N' ? 'Suomi-NPP VIIRS' : satellite === '1' ? 'NOAA-20 VIIRS' : 'VIIRS';
       const confLabel = confidence === 'h' ? 'high' : 'nominal';
       const severity = confidence === 'h' ? 'high' : 'medium';
