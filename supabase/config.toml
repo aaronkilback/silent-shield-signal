@@ -600,3 +600,6 @@ verify_jwt = false
 
 [functions.academy-build-training]
 verify_jwt = false
+
+[functions.generate-security-bulletin]
+verify_jwt = false

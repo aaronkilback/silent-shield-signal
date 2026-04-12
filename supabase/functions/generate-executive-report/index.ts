@@ -333,10 +333,9 @@ Deno.serve(async (req) => {
         .from('agent_beliefs')
         .select('belief_type, confidence, related_domains, agent_call_sign, last_updated_at, hypothesis')
         .eq('is_active', true)
-        .in('agent_call_sign', ['AEGIS-CMD', 'VERIDIAN-TANGO', 'PURE-DATA', 'FININT', 'BRAVO-1'])
-        .gte('confidence', 0.85)
-        .order('last_updated_at', { ascending: false })
-        .limit(8),
+        .gte('confidence', 0.65)
+        .order('confidence', { ascending: false })
+        .limit(12),
 
       supabase
         .from('expert_knowledge')
@@ -358,8 +357,8 @@ ${k.content?.substring(0, 300)}`).join('\n\n')}
 ` : '';
 
     const agentContext = agentBeliefs.length > 0 ? `
-CURRENT AGENT INTELLIGENCE PICTURE (assessments formed by specialist analysts):
-${agentBeliefs.map((b: any) => `${b.agent_call_sign} [${b.belief_type}, confidence ${Math.round(b.confidence * 100)}%]: ${b.hypothesis?.substring(0, 200)}`).join('\n')}
+ANALYST TEAM ASSESSMENTS — these are conclusions your specialist analysts have reached through ongoing research. The report should reflect their views, not just list signals. Where an analyst assessment is relevant to current activity, incorporate it as part of your analysis:
+${agentBeliefs.map((b: any) => `• ${b.agent_call_sign} [${b.belief_type}, ${Math.round(b.confidence * 100)}% confidence]: ${b.hypothesis?.substring(0, 250)}`).join('\n')}
 ` : '';
 
     const briefingStandardsContext = briefingKnowledge.length > 0 ? `
@@ -473,7 +472,7 @@ Provide exactly 3 impact ladders. Be specific and actionable. Use executive lang
     const reliabilityContext = getReliabilityFirstPrompt([]);
 
     // Generate executive summary with tone transformation
-    const summaryPrompt = `You are a senior security intelligence analyst with deep specialist knowledge and access to current agent assessments. Apply the expertise below to produce an executive summary that reflects the depth of analysis our specialist agents have conducted.
+    const summaryPrompt = `You are a senior security intelligence analyst synthesizing live threat data with your team's ongoing analytical work. Your specialist analysts have reached conclusions through continuous research — the executive summary should reflect their assessments where relevant, not just enumerate signals. Think of the analyst assessments as the interpretive backbone and the signals/incidents as the current evidence.
 ${reliabilityContext}
 ${criticalDateContext}
 

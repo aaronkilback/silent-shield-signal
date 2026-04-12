@@ -576,8 +576,24 @@ async function extractAgentBeliefs(
   callSign: string,
   entries: any[]
 ): Promise<{ beliefs: any[]; rawContent: string | null; geminiError: string | null }> {
+  // Build source quality metadata to pass into the prompt
+  const sourceStats: Record<string, { count: number; types: Set<string> }> = {};
+  for (const e of entries) {
+    const src = e.source_name || e.expert_name || 'unknown';
+    if (!sourceStats[src]) sourceStats[src] = { count: 0, types: new Set() };
+    sourceStats[src].count++;
+    if (e.knowledge_type) sourceStats[src].types.add(e.knowledge_type);
+  }
+  const sourceQualityNote = Object.entries(sourceStats)
+    .map(([src, s]) => `- ${src}: ${s.count} entries (${[...s.types].join(', ') || 'general'})`)
+    .join('\n');
+
   const entrySummaries = entries
-    .map(e => `[${(e.subdomain || e.knowledge_type || 'knowledge').toUpperCase()}] ${e.title}\n${e.content.substring(0, 260)}`)
+    .map(e => {
+      const src = e.source_name || e.expert_name || '';
+      const srcTag = src ? ` | SOURCE: ${src}` : '';
+      return `[${(e.subdomain || e.knowledge_type || 'knowledge').toUpperCase()}${srcTag}] ${e.title}\n${e.content.substring(0, 260)}`;
+    })
     .join('\n\n');
 
   const result = await callAiGateway({
@@ -585,16 +601,21 @@ async function extractAgentBeliefs(
     messages: [
       {
         role: 'system',
-        content: `You are an intelligence analyst. Extract 3-5 analytical BELIEFS from this agent's knowledge base.
+        content: `You are ${callSign}, an intelligence analyst. Extract 3-5 durable analytical BELIEFS from this knowledge base.
 
+STEP 1 — ASSESS SOURCE QUALITY (internally, before forming beliefs):
+Use your domain expertise to evaluate source credibility. Tier 1 (government agencies, peer-reviewed research, established news orgs) = full weight; Tier 2 (industry publications, think tanks, regional news) = medium weight; Tier 3 (social media, unverified, single-source claims) = low weight. Beliefs grounded only in Tier 3 sources must have confidence ≤ 0.65.
+
+STEP 2 — FORM BELIEFS:
 Beliefs are durable analytical conclusions — NOT facts or summaries of what sources say.
-Good: "AI-driven tools compress attacker dwell time to under 48h, making reactive defense insufficient."
+Good: "AI-driven offensive tools now compress attacker dwell time below 48 hours, making perimeter-focused detection architectures strategically insufficient." (confidence: 0.82)
+Good: "Anti-pipeline protest movements in western Canada have shifted from reactive demonstrations to pre-planned infrastructure access denial — a tactical evolution that increases operational disruption risk." (confidence: 0.74)
 Bad: "Cyber threats are growing." (too vague)
-Bad: "According to Mike Baker..." (citation restatement, not a belief)
+Bad: "According to CISA..." (citation restatement, not a belief)
 
-Quality rules:
-- Each belief must be grounded in multiple knowledge entries, not a single source
-- Confidence 0.60-0.75 = established expert consensus; 0.76-0.90 = near-universal doctrine
+Rules:
+- Each belief must be grounded in multiple entries, not a single source
+- Confidence 0.60-0.75 = well-supported; 0.76-0.90 = near-consensus across multiple Tier-1/2 sources
 - If fewer than 3 entries exist, return []
 
 Respond with ONLY a JSON array, no other text:
@@ -602,7 +623,7 @@ Respond with ONLY a JSON array, no other text:
       },
       {
         role: 'user',
-        content: `Agent ${callSign}:\n\n${entrySummaries.substring(0, 4000)}`,
+        content: `Agent ${callSign} knowledge base:\n\nSOURCE INVENTORY:\n${sourceQualityNote}\n\nKNOWLEDGE ENTRIES:\n${entrySummaries.substring(0, 3800)}`,
       },
     ],
     functionName: `knowledge-synthesizer-beliefs-${callSign}`,
