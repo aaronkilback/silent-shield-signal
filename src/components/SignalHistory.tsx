@@ -80,6 +80,7 @@ interface Signal {
   relevance_score?: number | null;
   media_urls?: string[];
   thumbnail_url?: string;
+  source_url?: string | null;
   // Quality & feedback scores
   quality_score?: number | null;
   feedback_score?: number | null;
@@ -216,6 +217,7 @@ export const SignalHistory = () => {
           thumbnail_url,
           relevance_score,
           quality_score,
+          source_url,
           feedback_score,
           triage_override,
           clients (
@@ -373,7 +375,7 @@ export const SignalHistory = () => {
 
   // Helper to detect non-Canadian / international signals
   const isInternationalSignal = (signal: Signal): boolean => {
-    const sourceUrl = signal.raw_json?.source_url || signal.raw_json?.url || '';
+    const sourceUrl = signal.source_url || signal.raw_json?.source_url || signal.raw_json?.url || '';
     const text = `${signal.normalized_text || ''} ${signal.title || ''} ${signal.description || ''}`.toLowerCase();
     const urlLower = sourceUrl.toLowerCase();
     
@@ -415,8 +417,8 @@ export const SignalHistory = () => {
     if (normalizedConf != null && normalizedConf < 30) return true;
     
     const text = `${signal.normalized_text || ''} ${signal.title || ''} ${signal.description || ''}`.toLowerCase();
-    const sourceUrl = signal.raw_json?.source_url || signal.raw_json?.url || '';
-    
+    const sourceUrl = signal.source_url || signal.raw_json?.source_url || signal.raw_json?.url || '';
+
     // Netflix/entertainment/webinar sources
     if (/netflix|webinar|documentary|book launch|podcast/i.test(text)) return true;
     if (/netflix|spotify|youtube\.com\/watch/i.test(sourceUrl)) return true;
@@ -860,7 +862,7 @@ export const SignalHistory = () => {
                 />
                 {/* Source link */}
                 {(() => {
-                  const raw = signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
+                  const raw = signal.source_url || signal.raw_json?.url || signal.raw_json?.source_url || signal.raw_json?.link;
                   const href = extractHttpUrl(raw);
                   if (!href) return null;
                   return (

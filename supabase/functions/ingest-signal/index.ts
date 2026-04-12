@@ -179,6 +179,8 @@ Deno.serve(async (req) => {
     
     let signalLocation = location || null;
     let signalRaw = raw_json || event || { text: signalText };
+    // Ensure source_url is always accessible inside raw_json (UI reads from both places)
+    if (source_url && !signalRaw.source_url) signalRaw = { ...signalRaw, source_url };
     
     // If URL is provided, fetch and analyze the website
     if (url) {
