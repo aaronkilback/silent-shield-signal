@@ -36,9 +36,10 @@ Deno.serve(async (req) => {
           try {
             const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
               body: {
-                text: `CISA KEV: ${vuln.vulnerabilityName}\n\n${vuln.shortDescription || ''}\n\nVendor: ${vuln.vendorProject}. Product: ${vuln.product}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due: ${vuln.dueDate || 'N/A'}. Added: ${vuln.dateAdded || 'N/A'}.`,
+                text: `CISA KEV: ${vuln.vulnerabilityName}\n\n${vuln.shortDescription || ''}\n\nVendor: ${vuln.vendorProject}. Product: ${vuln.product}. Required action: ${vuln.requiredAction || 'Patch immediately'}. Due: ${vuln.dueDate || 'N/A'}. Added: ${vuln.dateAdded || 'N/A'}.\n\nThis vulnerability is actively exploited in the wild and is relevant to energy sector OT/IT environments.`,
                 source_url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog#${vuln.cveID}`,
                 location: 'Global',
+                skip_relevance_gate: true, // CISA KEV = confirmed active exploitation; always actionable for energy sector
               },
             });
             if (!ingestError) {

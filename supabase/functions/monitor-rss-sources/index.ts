@@ -117,8 +117,12 @@ Deno.serve(async (req) => {
         scannedSourceNames.push(source.name);
         console.log(`Fetching RSS feed: ${source.name} from ${feedUrl}`);
         
+        // Reddit requires a descriptive User-Agent or returns 403
+        const userAgent = feedUrl.includes('reddit.com')
+          ? 'FortressAI/1.0 (OSINT security monitoring; automated)'
+          : 'Mozilla/5.0 (compatible; FortressAI/1.0; OSINT Monitor)';
         const response = await fetch(feedUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 OSINT Monitor' },
+          headers: { 'User-Agent': userAgent },
           signal: AbortSignal.timeout(30000) // 30 second timeout
         });
 

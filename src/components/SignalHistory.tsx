@@ -227,7 +227,7 @@ export const SignalHistory = () => {
           )
         `)
         .neq('status', 'archived')
-        .neq('signal_type', 'pattern')
+        .or('signal_type.neq.pattern,signal_type.is.null')
         .neq('is_test', true)
         .order('created_at', { ascending: false })
         .limit(50);

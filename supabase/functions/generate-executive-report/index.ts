@@ -137,6 +137,7 @@ Deno.serve(async (req) => {
       .eq('client_id', client_id)
       .gte('opened_at', periodStart.toISOString())
       .lte('opened_at', periodEnd.toISOString())
+      .neq('is_test', true)
       .order('opened_at', { ascending: false });
 
     if (incidentsError) throw incidentsError;
