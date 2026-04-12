@@ -173,7 +173,7 @@ Deno.serve(async (req) => {
     }
 
     // Filter out junk signals before any analysis — use freshSignals (not raw signals) to exclude stale/historical data
-    const EXCLUDE_CATEGORIES = new Set(['weather', 'test', 'work_interruption', 'advisory', 'health_concern', 'system_alert']);
+    const EXCLUDE_CATEGORIES = new Set(['weather', 'wildfire', 'natural_disaster', 'test', 'work_interruption', 'advisory', 'health_concern', 'system_alert']);
     const HIGH_VALUE_CATEGORIES = new Set(['active_threat', 'cybersecurity', 'insider_threat', 'protest', 'regulatory', 'operational']);
 
     const reportableSignals = (freshSignals || []).filter((s: any) => {
