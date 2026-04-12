@@ -26,32 +26,15 @@ Deno.serve(async (req) => {
       );
     }
     
-    const authHeader = req.headers.get('Authorization')!;
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Use service role for inserting reports (bypasses RLS)
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
+    const supabaseClient = supabase;
 
-    const { report_type, period_hours } = await req.json();
-    
+    const { report_type, period_hours } = body;
+
     console.log(`Generating ${report_type} report for last ${period_hours} hours`);
-
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 
     const periodStart = new Date();
     periodStart.setHours(periodStart.getHours() - (period_hours || 72));
@@ -96,8 +79,6 @@ Deno.serve(async (req) => {
     // Generate AI recommendations for top signals
     const signalsWithRecommendations = await Promise.all(
       (signals || []).slice(0, 20).map(async (signal) => {
-        if (!GEMINI_API_KEY) return { ...signal, recommendations: 'AI recommendations unavailable' };
-        
         try {
           const aiResult = await callAiGateway({
             model: 'gpt-4o-mini',

@@ -34,7 +34,7 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.generate-report]
-verify_jwt = true
+verify_jwt = false
 
 [functions.process-client-onboarding]
 verify_jwt = true

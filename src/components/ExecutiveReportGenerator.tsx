@@ -60,13 +60,16 @@ export const ExecutiveReportGenerator = () => {
 
     try {
       const { data, error } = await supabase.functions.invoke('generate-executive-report', {
-        body: { 
+        body: {
           client_id: selectedClientId,
           period_days: parseInt(periodDays)
         }
       });
 
-      if (error) throw error;
+      if (error) {
+        const reason = data?.message || data?.error || error.message;
+        throw new Error(reason);
+      }
 
       if (data.success) {
         setReportHtml(data.html);

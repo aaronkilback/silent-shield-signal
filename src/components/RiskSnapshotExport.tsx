@@ -35,7 +35,10 @@ export const RiskSnapshotExport = () => {
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        const reason = data?.message || data?.error || error.message;
+        throw new Error(reason);
+      }
       setReportHtml(data.html);
       
       // Auto-archive

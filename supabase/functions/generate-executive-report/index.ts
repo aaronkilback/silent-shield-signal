@@ -63,11 +63,6 @@ Deno.serve(async (req) => {
     
     console.log(`Generating enhanced executive report for client ${client_id}, ${period_days} days`);
 
-    const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
-    if (!GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY not configured');
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL DATE CONTEXT - Used throughout report generation
     // ═══════════════════════════════════════════════════════════════════════════
@@ -187,14 +182,8 @@ Deno.serve(async (req) => {
       return true;
     });
 
-    // Zero signal guard — refuse to generate a report without minimum signal data
-    if (reportableSignals.length < 3) {
-      return new Response(JSON.stringify({
-        error: 'INSUFFICIENT_SIGNAL_DATA',
-        message: `Report requires minimum 3 signals. Only ${reportableSignals.length} found for this period.`,
-        signals_analyzed: reportableSignals.length
-      }), { status: 422, headers: { 'Content-Type': 'application/json' } });
-    }
+    // Log signal count but don't block — AI will note low activity if signals are sparse
+    console.log(`[generate-executive-report] reportable signals: ${reportableSignals.length}`);
 
     function getHostname(url: string | null | undefined): string {
       if (!url) return 'Fortress Intelligence';
