@@ -837,4 +837,131 @@ No tools were added or removed this session. Baseline unchanged.
    supabase functions deploy system-watchdog
    ```
 3. **Verify auto-discovery fires** by checking `expert_profiles WHERE auto_discovered = true` after next nightly `agent-knowledge-seeker` run
+
+---
+
+## 24. CLIENT AUTHORIZATION & COMPLIANCE SECURITY (verified April 15, 2026)
+
+### 24.1 Super Admin MFA Enforcement
+
+`src/pages/Auth.tsx` login flow now enforces MFA for `super_admin` accounts:
+
+1. After successful password auth, checks for existing TOTP factors (`supabase.auth.mfa.listFactors`)
+2. Checks for existing SMS factors (`supabase.auth.mfa.listFactors`)
+3. If neither found, queries `user_roles` table for `super_admin` role
+4. If super_admin and no MFA: sets `showMandatoryMFA = true` → triggers `MandatoryMFAEnrollment` component
+5. User cannot proceed without completing MFA enrollment
+
+This closes the gap where existing super_admin accounts created before MFA was required could sign in without a second factor. New super_admin accounts were already gated via signup flow.
+
+### 24.2 Enhanced Compliance Gate (`ComplianceGate.tsx`)
+
+The pre-investigation compliance gate for Vulnerability Scans was significantly hardened. All fields below are **required** before the "Approve & Proceed" button enables:
+
+| Field | Type | Required |
+|---|---|---|
+| Written client authorization checkbox | Checkbox | ✅ |
+| Jurisdiction | Text input | ✅ |
+| Legal Basis | Text input | ✅ |
+| Data Deletion Date | Date picker | ✅ |
+| Client Authorization (email OTP flow) | Auth status | ✅ |
+| Secure Notes | Textarea | Optional |
+| All other required checklist items | Checkboxes | ✅ |
+
+**Removed:** Skip button — investigators cannot bypass the compliance gate.
+
+**Added to DB:** Migration `20260415000001_compliance_gate_fields.sql` adds `data_retention_date` (DATE) and `secure_notes` (TEXT) to `investigation_compliance`.
+
+### 24.3 Client Authorization Flow
+
+A two-factor, email-verified client consent system for all vulnerability scans.
+
+#### Table: `client_authorizations`
+
+```sql
+id                UUID PRIMARY KEY DEFAULT gen_random_uuid()
+compliance_id     UUID REFERENCES investigation_compliance(id) ON DELETE CASCADE
+scan_type         TEXT  -- vip_deep_scan | entity_deep_scan | osint_scan
+target_name       TEXT
+scope_summary     TEXT
+data_retention_date DATE
+client_name       TEXT
+client_email      TEXT
+token             TEXT UNIQUE  -- UUID-based, 72h expiry
+token_expires_at  TIMESTAMPTZ
+otp_code          TEXT         -- 6-digit numeric, 30min expiry
+otp_expires_at    TIMESTAMPTZ
+otp_attempts      INTEGER DEFAULT 0  -- max 5 attempts
+status            TEXT DEFAULT 'pending'  -- pending | authorized | expired
+authorized_at     TIMESTAMPTZ
+ip_address        TEXT         -- cf-connecting-ip or x-forwarded-for
+user_agent        TEXT
+created_by        UUID REFERENCES auth.users(id)
+created_at        TIMESTAMPTZ DEFAULT NOW()
+```
+
+Migration: `supabase/migrations/20260415000003_client_authorizations.sql`
+
+#### Edge Function: `send-client-authorization`
+
+- **Auth:** Requires Bearer JWT (authenticated Fortress user)
+- **Creates** a `client_authorizations` record with UUID token (72h) + 6-digit OTP (30min)
+- **Sends** Resend email from `no-reply@silentshieldsecurity.com` to client with:
+  - Scan details (subject, type, scope, data retention date)
+  - 6-digit OTP displayed prominently
+  - Authorization link: `https://fortress.silentshieldsecurity.com/authorize/{token}`
+- **Returns** `{ id, status: "pending" }` — the `id` is stored by `ComplianceGate` to poll status
+
+#### Edge Function: `confirm-client-authorization`
+
+- **Auth:** Public (no JWT) — deployed with `--no-verify-jwt`
+- **Action `get_details`:** Returns safe scan info (no OTP, no token) for the review page
+- **Action `confirm`:** Validates OTP, enforces 5-attempt limit, records `authorized_at`, IP, and user-agent; marks status `authorized`
+- Token expiry checked on every request; expired tokens are marked `expired` in DB
+
+#### Public Page: `/authorize/:token` (`src/pages/ClientAuthorization.tsx`)
+
+- Dark-themed standalone page (no Fortress nav/auth required)
+- State machine: `loading → review → otp → authorized | error`
+- **Review state:** Shows scan subject, type, scope, data deletion date. Consent notice.
+- **OTP state:** 6-slot `InputOTP` component. Client enters code from email. "I Authorize This Scan" button.
+- **Authorized state:** Confirmation with audit trail summary (identity verified, timestamp, IP recorded)
+- **Error state:** Invalid/expired link message with analyst contact note
+
+#### Authorization Check in ComplianceGate
+
+- Analyst fills `clientName` + `clientEmail`, clicks "Send Authorization Request"
+- `authStatus` transitions: `none → sending → pending → authorized`
+- "Check Authorization Status" button polls `client_authorizations` table by `authId`
+- `allRequiredChecked` condition includes `authStatus === "authorized"` — scan cannot proceed until client has clicked the link and entered their OTP
+
+#### Audit Trail
+
+Each authorization records:
+- Timestamp (`authorized_at`)
+- IP address (from `cf-connecting-ip` or `x-forwarded-for`)
+- User agent string
+- OTP attempt count
+
+#### Security Properties
+
+- Token is unguessable (two concatenated UUIDs, 64 hex chars)
+- OTP brute force limited to 5 attempts; after that the record is locked
+- OTP expires in 30 minutes (token valid 72 hours for link delivery)
+- Client identity proven by possession of email inbox (OTP delivery)
+- All records retained in `client_authorizations` table post-authorization (not deleted)
+- `secure_notes` on the compliance record stored encrypted at rest by Supabase (AES-256)
+
+### 24.4 Files Changed (April 15, 2026)
+
+| File | Change |
+|---|---|
+| `src/pages/Auth.tsx` | Super admin MFA enforcement in login flow |
+| `src/components/vip-deep-scan/ComplianceGate.tsx` | Full rewrite — required fields, client auth flow, no skip |
+| `supabase/migrations/20260415000001_compliance_gate_fields.sql` | Adds `data_retention_date`, `secure_notes` to `investigation_compliance` |
+| `supabase/migrations/20260415000003_client_authorizations.sql` | New `client_authorizations` table |
+| `supabase/functions/send-client-authorization/index.ts` | New edge function |
+| `supabase/functions/confirm-client-authorization/index.ts` | New public edge function |
+| `src/pages/ClientAuthorization.tsx` | New public client-facing page |
+| `src/App.tsx` | Public route `/authorize/:token` |
 4. **Monitor belief formation** — `agent_beliefs` count should grow within 24h of first nightly cycle after deployment

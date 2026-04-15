@@ -58,6 +58,7 @@ const NeuralConstellation = lazy(() => import("./pages/NeuralConstellation"));
 const KnowledgeBank = lazy(() => import("./pages/KnowledgeBank"));
 const SecurityAdvisor = lazy(() => import("./pages/SecurityAdvisor"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const ClientAuthorization = lazy(() => import("./pages/ClientAuthorization"));
 const Agents = lazy(() => import("./pages/Agents"));
 const Intelligence = lazy(() => import("./pages/Intelligence"));
 const ThreatIntel = lazy(() => import("./pages/ThreatIntel"));
@@ -109,6 +110,7 @@ const App = () => {
                       <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
                       <Route path="/auth" element={<Auth />} />
                       <Route path="/reset-password" element={<ResetPassword />} />
+                      <Route path="/authorize/:token" element={<ClientAuthorization />} />
                       <Route path="/welcome" element={<Welcome />} />
                       <Route path="/invite/accept" element={<AcceptInvite />} />
                       <Route path="/invite-required" element={<InviteRequired />} />

@@ -285,10 +285,26 @@ const Auth = () => {
             setLoading(false);
             return;
           }
+
+          // No MFA enrolled — enforce for super_admin accounts
+          const { data: roleData } = await supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', data.user!.id)
+            .eq('role', 'super_admin')
+            .maybeSingle();
+
+          if (roleData) {
+            setPendingUserId(data.user!.id);
+            setShowMandatoryMFA(true);
+            toast.warning("Super Admin accounts require two-factor authentication.");
+            setLoading(false);
+            return;
+          }
         }
-        
+
         toast.success("Welcome back to Fortress AI");
-        
+
         // Navigate to dashboard after successful login (no MFA case)
         navigate("/");
       } else {

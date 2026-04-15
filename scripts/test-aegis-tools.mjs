@@ -125,6 +125,7 @@ const TOOLS = [
   { name: "remember_this",              args: { content: "test", category: "test" }, skip: true },
   { name: "update_user_preferences",    args: { preferences: {} }, skip: true },
   { name: "manage_project_context",     args: { project_name: "test", action: "get" } },
+  { name: "lookup_ioc_indicator",        args: { indicator: "conn.elbbird.zip", indicator_type: "domain" } },
   { name: "update_risk_profile",        args: { entity_name: "Petronas" }, skip: true },
   { name: "guide_decision_tree",         args: { scenario: "ransomware" } },
   { name: "recommend_playbook",          args: { incident_type: "ransomware" } },
@@ -279,6 +280,16 @@ const EDGE_TESTS = [
     expectValue: "Signal not found",
     description: "composite_score=0.63 with unknown signal_id should return 404 error",
   },
+  // Client Authorization functions (public — no auth header needed)
+  {
+    name: "confirm-client-authorization (invalid token)",
+    url: `${SUPABASE_URL}/functions/v1/confirm-client-authorization`,
+    body: { token: "00000000000000000000000000000000", action: "get_details" },
+    expectKey: "error",
+    expectValue: "Invalid or expired authorization link",
+    description: "Unknown token should return 'Invalid or expired authorization link'",
+    noAuth: true,
+  },
 ];
 
 // ── Storage URL Smoke Tests ───────────────────────────────────────────────────
@@ -327,12 +338,11 @@ for (const test of EDGE_TESTS) {
   try {
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 15000);
+    const headers = { "Content-Type": "application/json" };
+    if (!test.noAuth) headers["Authorization"] = `Bearer ${SERVICE_ROLE_KEY}`;
     const res = await fetch(test.url, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(test.body),
       signal: ctrl.signal,
     });
