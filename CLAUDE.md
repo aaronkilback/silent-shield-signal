@@ -128,7 +128,7 @@ Runs every 15 minutes. Primary source is **CWFIS hotspots_last24hrs WFS** (NRCan
 |---|---|
 | < 0.5km | `industrial_flaring` (high confidence) — unless FRP < 40MW + fire season + FWI > 15 → `ambiguous_near_facility` |
 | 0.5–4km | `industrial_flaring` if FRP > 120MW + HFI < 500 kW/m + off-season or FWI < 8. Otherwise → `ambiguous_near_facility` (wildfire signal with proximity warning) |
-| > 4km | `wildfire` unless high FRP + low HFI signature → `industrial_flaring` (low confidence, unknown source) |
+| > 4km | `wildfire` unless high FRP + low HFI signature → `industrial_flaring` (low confidence, unknown source). **Off-season (Nov–Mar) override: HFI < 2000 → `industrial_flaring` regardless of FRP — real wildfires in winter NE BC are essentially impossible.** |
 
 **`ambiguous_near_facility`** creates a wildfire signal with a `⚠ FACILITY PROXIMITY` note. This is intentional — a real fire near a gas plant must not be silently classified as a flare.
 
