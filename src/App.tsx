@@ -1,5 +1,5 @@
 // build: 2026-03-16
-import { lazy, Suspense, useState } from "react";
+import React, { lazy, Suspense, useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,51 +20,63 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+// Reload on chunk load failure (stale bundle after new deploy)
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>
+): React.LazyExoticComponent<T> {
+  return lazy(() =>
+    factory().catch(() => {
+      window.location.reload();
+      return new Promise<{ default: T }>(() => {});
+    })
+  );
+}
+
 // Lazy-loaded pages
-const Index = lazy(() => import("./pages/Index"));
-const Auth = lazy(() => import("./pages/Auth"));
-const Clients = lazy(() => import("./pages/Clients"));
-const ClientDetail = lazy(() => import("./pages/ClientDetail"));
-const Incidents = lazy(() => import("./pages/Incidents"));
-const Signals = lazy(() => import("./pages/Signals"));
-const Sources = lazy(() => import("./pages/Sources"));
-const Entities = lazy(() => import("./pages/Entities"));
-const Reports = lazy(() => import("./pages/Reports"));
-const Investigations = lazy(() => import("./pages/Investigations"));
-const InvestigationDetail = lazy(() => import("./pages/InvestigationDetail"));
-const Travel = lazy(() => import("./pages/Travel"));
-const KnowledgeBase = lazy(() => import("./pages/KnowledgeBase"));
-const BugReports = lazy(() => import("./pages/BugReports"));
-const RuleApprovals = lazy(() => import("./pages/RuleApprovals"));
-const Benchmark = lazy(() => import("./pages/Benchmark"));
-const UserManagement = lazy(() => import("./pages/UserManagement"));
-const CommandCenter = lazy(() => import("./pages/CommandCenter"));
-const TaskForce = lazy(() => import("./pages/TaskForce"));
-const ThreatRadar = lazy(() => import("./pages/ThreatRadar"));
-const Integrations = lazy(() => import("./pages/Integrations"));
-const MatchingDashboard = lazy(() => import("./pages/MatchingDashboard"));
-const Workspace = lazy(() => import("./pages/Workspace"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const InviteRequired = lazy(() => import("./pages/InviteRequired"));
-const AcceptInvite = lazy(() => import("./pages/AcceptInvite"));
-const TenantAdmin = lazy(() => import("./pages/TenantAdmin"));
-const Welcome = lazy(() => import("./pages/Welcome"));
-const SuperAdminDashboard = lazy(() => import("./pages/SuperAdminDashboard"));
-const VIPDeepScan = lazy(() => import("./pages/VIPDeepScan"));
-const Consortia = lazy(() => import("./pages/Consortia"));
-const IntelligenceHub = lazy(() => import("./pages/IntelligenceHub"));
-const BriefingFeedback = lazy(() => import("./pages/BriefingFeedback"));
-const NeuralConstellation = lazy(() => import("./pages/NeuralConstellation"));
-const KnowledgeBank = lazy(() => import("./pages/KnowledgeBank"));
-const SecurityAdvisor = lazy(() => import("./pages/SecurityAdvisor"));
-const ResetPassword = lazy(() => import("./pages/ResetPassword"));
-const ClientAuthorization = lazy(() => import("./pages/ClientAuthorization"));
-const Agents = lazy(() => import("./pages/Agents"));
-const Intelligence = lazy(() => import("./pages/Intelligence"));
-const ThreatIntel = lazy(() => import("./pages/ThreatIntel"));
-const Operations = lazy(() => import("./pages/Operations"));
-const Academy = lazy(() => import("./pages/Academy"));
-const AcademyCredential = lazy(() => import("./pages/AcademyCredential"));
+const Index = lazyWithRetry(() => import("./pages/Index"));
+const Auth = lazyWithRetry(() => import("./pages/Auth"));
+const Clients = lazyWithRetry(() => import("./pages/Clients"));
+const ClientDetail = lazyWithRetry(() => import("./pages/ClientDetail"));
+const Incidents = lazyWithRetry(() => import("./pages/Incidents"));
+const Signals = lazyWithRetry(() => import("./pages/Signals"));
+const Sources = lazyWithRetry(() => import("./pages/Sources"));
+const Entities = lazyWithRetry(() => import("./pages/Entities"));
+const Reports = lazyWithRetry(() => import("./pages/Reports"));
+const Investigations = lazyWithRetry(() => import("./pages/Investigations"));
+const InvestigationDetail = lazyWithRetry(() => import("./pages/InvestigationDetail"));
+const Travel = lazyWithRetry(() => import("./pages/Travel"));
+const KnowledgeBase = lazyWithRetry(() => import("./pages/KnowledgeBase"));
+const BugReports = lazyWithRetry(() => import("./pages/BugReports"));
+const RuleApprovals = lazyWithRetry(() => import("./pages/RuleApprovals"));
+const Benchmark = lazyWithRetry(() => import("./pages/Benchmark"));
+const UserManagement = lazyWithRetry(() => import("./pages/UserManagement"));
+const CommandCenter = lazyWithRetry(() => import("./pages/CommandCenter"));
+const TaskForce = lazyWithRetry(() => import("./pages/TaskForce"));
+const ThreatRadar = lazyWithRetry(() => import("./pages/ThreatRadar"));
+const Integrations = lazyWithRetry(() => import("./pages/Integrations"));
+const MatchingDashboard = lazyWithRetry(() => import("./pages/MatchingDashboard"));
+const Workspace = lazyWithRetry(() => import("./pages/Workspace"));
+const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
+const InviteRequired = lazyWithRetry(() => import("./pages/InviteRequired"));
+const AcceptInvite = lazyWithRetry(() => import("./pages/AcceptInvite"));
+const TenantAdmin = lazyWithRetry(() => import("./pages/TenantAdmin"));
+const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
+const SuperAdminDashboard = lazyWithRetry(() => import("./pages/SuperAdminDashboard"));
+const VIPDeepScan = lazyWithRetry(() => import("./pages/VIPDeepScan"));
+const Consortia = lazyWithRetry(() => import("./pages/Consortia"));
+const IntelligenceHub = lazyWithRetry(() => import("./pages/IntelligenceHub"));
+const BriefingFeedback = lazyWithRetry(() => import("./pages/BriefingFeedback"));
+const NeuralConstellation = lazyWithRetry(() => import("./pages/NeuralConstellation"));
+const KnowledgeBank = lazyWithRetry(() => import("./pages/KnowledgeBank"));
+const SecurityAdvisor = lazyWithRetry(() => import("./pages/SecurityAdvisor"));
+const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"));
+const ClientAuthorization = lazyWithRetry(() => import("./pages/ClientAuthorization"));
+const Agents = lazyWithRetry(() => import("./pages/Agents"));
+const Intelligence = lazyWithRetry(() => import("./pages/Intelligence"));
+const ThreatIntel = lazyWithRetry(() => import("./pages/ThreatIntel"));
+const Operations = lazyWithRetry(() => import("./pages/Operations"));
+const Academy = lazyWithRetry(() => import("./pages/Academy"));
+const AcademyCredential = lazyWithRetry(() => import("./pages/AcademyCredential"));
 
 const PageLoader = () => (
   <div className="min-h-screen bg-background flex items-center justify-center">
