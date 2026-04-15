@@ -57,7 +57,7 @@
   - P2: Suspected Sabotage — Coastal GasLink Pipeline Near Fort St. John
   - P3: Coastal GasLink Construction Halt — Wedzin Kwa River Crossing
 - 1 closed incident: Fortinet CISA KEV BOD 22-01 — closed April 7, deadline passed
-- 0 rows in incident_outcomes — feedback loop infrastructure deployed but never exercised
+- 0 rows in incident_outcomes — feedback loop infrastructure is fully wired (IncidentFeedbackDialog + SignalFalsePositiveButton write rows; source-credibility-updater reads every 8h). Waiting on first analyst action to close/verdict an incident.
 
 ### Entity graph
 - 2,708 active entities across 10 types
@@ -222,7 +222,7 @@ Key entities confirmed active:
 ## 7. KNOWN GAPS AND OPEN WORK
 
 ### Still open (April 10, 2026):
-- **0 rows in incident_outcomes** — feedback loop infrastructure deployed but never exercised. Needs analyst to close an incident through UI. Phase 3 Bayesian learning loop cannot run until then.
+- **0 rows in incident_outcomes** — infrastructure fully wired (two UI write paths, source-credibility-updater reads every 8h). Waiting on first analyst action: close one of the 3 open PETRONAS incidents via UI and submit feedback verdict. That single action will start the Bayesian credibility update loop.
 - **Signal verification gate** — LOCUS-INTEL narrative review before report assembly. Architectural future feature.
 - **6 YouTube sources paused** — wrong channel IDs. Needs manual lookup of each channel's `externalChannelId` to fix.
 - **BC Energy Regulator RSS** — BC Oil Gas Commission renamed, new URL needed (currently paused).
@@ -609,10 +609,10 @@ Problem: `run_vulnerability_scan` cron scheduled but never run against live data
 Fix: Manually trigger `wraith-security-advisor` with `{"action": "run_vulnerability_scan"}` and confirm findings written. Review output before trusting the nightly schedule.
 Effort: Low
 
-**Close one incident to exercise Phase 3 feedback loop**
-Problem: `incident_outcomes` has 0 rows. Bayesian learning loop cannot run. Source credibility scores stuck at 0.65 default.
-Fix: Close one of the 3 open PETRONAS incidents via UI. Verify `incident_outcomes` gets a row. Verify `source-credibility-updater` fires and updates at least one source score.
-Effort: Low (UI action + verification)
+**Exercise Phase 3 feedback loop** ⚠️ Requires analyst action
+Problem: `incident_outcomes` has 0 rows. Source credibility scores stuck at 0.65 default. Code is fully wired — only a real analyst verdict is missing.
+Fix: Open any of the 3 PETRONAS incidents → click the resolve/feedback button → submit verdict (outcome type + was_accurate). The source-credibility-updater will process it within 8h.
+Effort: 2 minutes (UI action only)
 
 ### LOW VALUE / FUTURE
 

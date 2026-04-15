@@ -21,6 +21,13 @@ Deno.serve(async (req) => {
     let incidentsToProcess: any[] = [];
 
     if (batch_mode) {
+      // Heartbeat for watchdog (cron runs only)
+      await supabase.from("cron_heartbeat").upsert({
+        job_name: "auto-summarize-incidents-nightly",
+        last_run_at: new Date().toISOString(),
+        status: "running",
+      }, { onConflict: "job_name" });
+
       // Find incidents missing title or summary
       const { data: incidentsMissingData } = await supabase
         .from('incidents')
@@ -226,6 +233,15 @@ ${entitiesContext ? `\n${entitiesContext}` : ''}`
           error: incidentError instanceof Error ? incidentError.message : 'Unknown error'
         });
       }
+    }
+
+    if (batch_mode) {
+      await supabase.from("cron_heartbeat").upsert({
+        job_name: "auto-summarize-incidents-nightly",
+        last_run_at: new Date().toISOString(),
+        status: "success",
+        metadata: { processed: results.length, successful: results.filter(r => r.success).length },
+      }, { onConflict: "job_name" });
     }
 
     return successResponse({
