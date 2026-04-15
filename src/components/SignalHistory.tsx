@@ -228,6 +228,7 @@ export const SignalHistory = () => {
             type
           )
         `)
+        .is('deleted_at', null)
         .neq('status', 'archived')
         .or('signal_type.neq.pattern,signal_type.is.null')
         .neq('is_test', true)
@@ -316,12 +317,12 @@ export const SignalHistory = () => {
 
   const handleDeleteSelected = async () => {
     if (selectedSignalIds.size === 0) return;
-    
+
     setIsDeleting(true);
     try {
       const { error } = await supabase
         .from('signals')
-        .delete()
+        .update({ deleted_at: new Date().toISOString(), deletion_reason: 'manually_dismissed' })
         .in('id', Array.from(selectedSignalIds));
 
       if (error) throw error;
