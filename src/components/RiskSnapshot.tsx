@@ -127,7 +127,7 @@ export const RiskSnapshot = () => {
           <Shield className="w-6 h-6 text-primary" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-foreground">Executive Risk Snapshot</h2>
+          <h2 className="text-xl font-semibold text-foreground">Executive Vulnerability Snapshot</h2>
           <p className="text-sm text-muted-foreground">Last 24 hours</p>
         </div>
       </div>

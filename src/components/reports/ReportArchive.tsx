@@ -9,7 +9,7 @@ import { format } from "date-fns";
 
 const typeLabels: Record<string, string> = {
   executive: "Executive Report",
-  risk_snapshot: "Risk Snapshot",
+  risk_snapshot: "Vulnerability Snapshot",
   security_bulletin: "Security Bulletin",
   "72h-snapshot": "72h Snapshot",
 };

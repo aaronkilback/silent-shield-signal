@@ -32,7 +32,7 @@ interface CreateMissionDialogProps {
 }
 
 const MISSION_TYPES = [
-  { value: "risk_snapshot", label: "Risk Snapshot" },
+  { value: "risk_snapshot", label: "Vulnerability Snapshot" },
   { value: "incident_response", label: "Incident Response" },
   { value: "site_assessment", label: "Site Assessment" },
   { value: "executive_brief", label: "Executive Brief" },

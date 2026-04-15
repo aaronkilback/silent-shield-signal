@@ -63,7 +63,7 @@ export const ClientRiskSnapshot = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold mb-2">Client Risk Snapshots</h2>
+        <h2 className="text-2xl font-bold mb-2">Client Vulnerability Snapshots</h2>
         <p className="text-muted-foreground">
           Overview of all onboarded clients and their risk profiles
         </p>

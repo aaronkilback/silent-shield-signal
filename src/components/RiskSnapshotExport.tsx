@@ -47,13 +47,13 @@ export const RiskSnapshotExport = () => {
       periodStart.setHours(periodStart.getHours() - 72);
       persistReport.mutate({
         report_type: 'risk_snapshot',
-        title: `72-Hour Risk Snapshot (${periodEnd.toISOString().split('T')[0]})`,
+        title: `72-Hour Vulnerability Snapshot (${periodEnd.toISOString().split('T')[0]})`,
         period_start: periodStart.toISOString(),
         period_end: periodEnd.toISOString(),
         html_content: data.html,
       });
       
-      toast.success("Risk Snapshot generated and archived");
+      toast.success("Vulnerability Snapshot generated and archived");
     } catch (error) {
       console.error("Error generating report:", error);
       toast.error("Failed to generate report");
@@ -99,15 +99,15 @@ export const RiskSnapshotExport = () => {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>72-Hour Risk Snapshot</CardTitle>
+        <CardTitle>72-Hour Vulnerability Snapshot</CardTitle>
         <CardDescription>
-          Export a comprehensive risk report for the last 72 hours
+          Export a comprehensive vulnerability report for the last 72 hours
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <Button onClick={generateReport} disabled={loading} className="w-full">
           <Download className="w-4 h-4 mr-2" />
-          {loading ? "Generating..." : "Generate Risk Snapshot"}
+          {loading ? "Generating..." : "Generate Vulnerability Snapshot"}
         </Button>
         
         {reportHtml && (

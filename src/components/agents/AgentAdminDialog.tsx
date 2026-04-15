@@ -81,7 +81,7 @@ const OUTPUT_TYPE_OPTIONS = [
   "Setup Checklists",
   "Progress Reports",
   "Reminder Alerts",
-  "Risk Snapshots",
+  "Vulnerability Snapshots",
 ];
 
 export function AgentAdminDialog({
@@ -324,7 +324,7 @@ export function AgentAdminDialog({
                   mission_scope: e.target.value,
                 }))
               }
-              placeholder="Generate Risk Snapshots, detect emerging threats..."
+              placeholder="Generate Vulnerability Snapshots, detect emerging threats..."
               rows={2}
             />
           </div>

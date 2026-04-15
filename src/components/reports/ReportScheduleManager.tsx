@@ -120,7 +120,7 @@ export const ReportScheduleManager = () => {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="executive">Executive Report</SelectItem>
-                    <SelectItem value="risk_snapshot">Risk Snapshot</SelectItem>
+                    <SelectItem value="risk_snapshot">Vulnerability Snapshot</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -178,7 +178,7 @@ export const ReportScheduleManager = () => {
               <div key={schedule.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-card">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">
-                    {schedule.clients?.name || "Unknown"} — {schedule.report_type === "executive" ? "Executive Report" : "Risk Snapshot"}
+                    {schedule.clients?.name || "Unknown"} — {schedule.report_type === "executive" ? "Executive Report" : "Vulnerability Snapshot"}
                   </p>
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     <span className="text-xs text-muted-foreground">
