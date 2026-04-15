@@ -41,7 +41,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/threat-radar': 'Threat Radar',
   '/reports': 'Reports',
   '/clients': 'Clients',
-  '/vip-deep-scan': 'VIP Deep Scan',
+  '/vip-deep-scan': 'Vulnerability Scan',
   '/matching-dashboard': 'Matching',
   '/consortia': 'Consortia',
 };

@@ -58,7 +58,7 @@ const ThreatIntel = () => {
             {isSuperAdmin && (
               <TabsTrigger value="vip-scan" className="gap-2">
                 <ScanEye className="h-3.5 w-3.5" />
-                VIP Deep Scan
+                Vulnerability Scan
               </TabsTrigger>
             )}
           </TabsList>

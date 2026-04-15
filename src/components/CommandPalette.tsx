@@ -65,7 +65,7 @@ export const CommandPalette = () => {
 
     // Admin (conditional)
     ...(isSuperAdmin ? [
-      { path: "/vip-deep-scan", label: "VIP Deep Scan", icon: Activity, keywords: ["vip", "scan", "deep", "osint"], group: "admin" as const },
+      { path: "/vip-deep-scan", label: "Vulnerability Scan", icon: Activity, keywords: ["vip", "scan", "deep", "osint", "vulnerability"], group: "admin" as const },
       { path: "/super-admin", label: "Super Admin", icon: Shield, keywords: ["admin", "super", "system"], group: "admin" as const },
     ] : []),
     ...((isSuperAdmin || isAdmin) ? [

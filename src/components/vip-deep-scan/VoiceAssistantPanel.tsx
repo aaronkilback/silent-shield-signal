@@ -52,7 +52,7 @@ export function VoiceAssistantPanel({
   const [liveAgentResponse, setLiveAgentResponse] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const systemPrompt = `You are AEGIS, assisting with a VIP Deep Scan intake form for corporate security.
+  const systemPrompt = `You are AEGIS, assisting with a Vulnerability Scan intake form for corporate security.
 
 CURRENT STEP: ${currentStep} - ${stepTitle}
 CONTEXT: ${STEP_CONTEXTS[currentStep] || "Collecting VIP security information."}

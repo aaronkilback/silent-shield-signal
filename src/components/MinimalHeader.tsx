@@ -45,7 +45,7 @@ export const MinimalHeader = () => {
     { path: "/security-advisor", label: "Security Advisor" },
     { path: "/consortia", label: "Intel Sharing" },
     ...(isSuperAdmin ? [
-      { path: "/vip-deep-scan", label: "VIP Deep Scan" },
+      { path: "/vip-deep-scan", label: "Vulnerability Scan" },
       { path: "/neural-constellation", label: "Neural Constellation" },
       { path: "/super-admin", label: "Super Admin" },
     ] : []),

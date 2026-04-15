@@ -585,7 +585,7 @@ export function VIPDeepScanWizard() {
 
       toast({
         title: "Deep Scan Initiated",
-        description: `VIP Deep Scan for ${formData.fullLegalName} has been queued. ${formData.priorityLevel === 'priority' ? 'Priority processing (72 hours)' : 'Standard processing (14 days)'}.`,
+        description: `Vulnerability Scan for ${formData.fullLegalName} has been queued. ${formData.priorityLevel === 'priority' ? 'Priority processing (72 hours)' : 'Standard processing (14 days)'}.`,
       });
 
       // Clear persisted state only AFTER successful submission
@@ -1636,7 +1636,7 @@ export function VIPDeepScanWizard() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Shield className="h-7 w-7 text-primary" />
-            Silent Shield™ Deep Scan
+            Silent Shield™ Vulnerability Scan
           </h1>
           <p className="text-muted-foreground mt-1">
             7-Day Intelligence Vulnerability Snapshot — AI-Powered Terrain Mapping & Threat Detection

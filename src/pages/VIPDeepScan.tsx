@@ -39,7 +39,7 @@ const VIPDeepScan = () => {
             </CardHeader>
             <CardContent className="text-center space-y-4">
               <p className="text-muted-foreground">
-                VIP Deep Scan is only available to Super Admin users. This feature handles sensitive executive protection data and requires elevated privileges.
+                Vulnerability Scan is only available to Super Admin users. This feature handles sensitive executive protection data and requires elevated privileges.
               </p>
               <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                 <Shield className="w-4 h-4" />

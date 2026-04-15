@@ -95,7 +95,7 @@ export const Header = () => {
   const operationsItems = [
     { path: "/command-center", icon: Bot, label: "Agents" },
     { path: "/task-force", icon: Swords, label: "Task Force" },
-    ...(isSuperAdmin ? [{ path: "/vip-deep-scan", icon: ScanEye, label: "VIP Deep Scan" }] : []),
+    ...(isSuperAdmin ? [{ path: "/vip-deep-scan", icon: ScanEye, label: "Vulnerability Scan" }] : []),
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
     { path: "/security-advisor", icon: Shield, label: "Security Advisor" },
