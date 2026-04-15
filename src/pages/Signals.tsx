@@ -167,21 +167,24 @@ const Signals = () => {
     },
   });
 
-  // Delete signal mutation — soft deletes the signal row (preserves FK integrity + audit trail),
-  // hard deletes the correlation group (routing record only, no FK children)
+  // Delete signal mutation — hard deletes the correlation group (removes from feed),
+  // then best-effort soft-deletes the underlying signal for audit trail.
   const deleteMutation = useMutation({
     mutationFn: async (signal: UnmatchedSignal) => {
-      if (signal.primary_signal_id) {
-        const { error: softErr } = await supabase.from("signals")
-          .update({ deleted_at: new Date().toISOString(), deletion_reason: "manually_dismissed" })
-          .eq("id", signal.primary_signal_id);
-        if (softErr) throw softErr;
-      }
+      // Delete the correlation group first — this is what removes it from the feed.
       const { error: groupErr } = await supabase
         .from("signal_correlation_groups")
         .delete()
         .eq("id", signal.id);
       if (groupErr) throw groupErr;
+
+      // Best-effort soft-delete the underlying signal for audit trail.
+      // Non-fatal: if this fails (e.g. already deleted, RLS), the group is already gone.
+      if (signal.primary_signal_id) {
+        await supabase.from("signals")
+          .update({ deleted_at: new Date().toISOString(), deletion_reason: "manually_dismissed" })
+          .eq("id", signal.primary_signal_id);
+      }
     },
     onSuccess: (_data, signal) => {
       queryClient.setQueriesData(
