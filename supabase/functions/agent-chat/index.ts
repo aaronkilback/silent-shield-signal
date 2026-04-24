@@ -1421,7 +1421,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       type: "function",
       function: {
         name: "consult_agent",
-        description: "Consult a specific peer agent by their call sign and get their live response. Use when another agent's specialty would strengthen your analysis — e.g., consult LOCUS-INTEL for location questions, LEX-MAGNA for legal matters, GLOBE-SAGE for geopolitical context.",
+        description: "Consult a specific peer agent by their call sign and get their live response. Use when another agent's specialty would strengthen your analysis. Roster: NEO (cyber/APT), SPECTER (insider threat/behavioral), MERIDIAN (geopolitical), CERBERUS (financial crime/AML), ECHO-WATCH (influence ops/social engineering), INSIDE-EYE (counterintelligence), VERIDIAN-TANGO (counterterrorism/energy), WRAITH (offensive security/red team), ORACLE (predictive intelligence), GUARDIAN (protective intelligence/executive protection), THE-SENTINEL (perimeter security), HERALD (executive briefing), FININT (financial intelligence), CHAIN-WATCH (supply chain), FORT-GUARD (platform security), WILDFIRE (wildfire/environmental), VERITAS (disinformation), SHERLOCK (investigative/deductive), HORATIO (forensics), MCGRAW (psychology/behavioral profiling), PEARSON (legal intelligence), VECTOR (attack path/kill chain), RYAN-GLOBE (global strategic synthesis), DR-HOUSE (red team/assumption challenger), JOCKO (leadership/extreme ownership), JARVIS (technical systems), KILO (covert ops/HUMINT).",
         parameters: {
           type: "object",
           properties: {
@@ -1471,6 +1471,63 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           required: ["specialty"],
         },
       },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_wildfire_intelligence",
+        description: "Get current wildfire and environmental threat intelligence. Returns active fire detections, fire weather index (FWI) data, lightning strike activity, and proximity assessments for client facilities. WILDFIRE agent must call this on every relevant query. Any agent discussing NE BC / BC operational risk, evacuation, or environmental threats should call this.",
+        parameters: {
+          type: "object",
+          properties: {
+            client_id: { type: "string", description: "Client UUID to assess facility proximity (optional)" },
+          },
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "lookup_ioc_indicator",
+        description: "Check whether a domain, IP, URL, or file hash is known malicious in Fortress threat intelligence. Returns prior sightings from ingested IOC feeds. NEO, CERBERUS, VECTOR, JARVIS should call this whenever an indicator is mentioned. Never conclude an IOC is novel without checking first.",
+        parameters: {
+          type: "object",
+          properties: {
+            indicator: { type: "string", description: "IOC value: domain, IP, URL, or file hash" },
+            indicator_type: { type: "string", enum: ["domain", "ip", "url", "hash", "unknown"] },
+          },
+          required: ["indicator"],
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "run_entity_deep_scan",
+        description: "Run a comprehensive OSINT deep scan on an entity — news, academic publications, social media, dark web mentions, relationship mapping. More thorough than trigger_osint_scan. SPECTER, INSIDE-EYE, SHERLOCK, HORATIO, MCGRAW, GUARDIAN, KILO should use this for full subject profiling.",
+        parameters: {
+          type: "object",
+          properties: {
+            entity_id: { type: "string", description: "Entity UUID (preferred if known)" },
+            entity_name: { type: "string", description: "Entity name if UUID unknown" },
+          },
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "check_dark_web_exposure",
+        description: "Check if an entity (person, org, domain, email) has exposure on dark web forums, leak sites, or credential markets. Returns breach records, credential leaks, dark web mentions. NEO, CERBERUS, SPECTER, FORT-GUARD should use this for threat actor attribution and credential risk.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Entity name, email, domain, or organization to check" },
+            client_id: { type: "string", description: "Client UUID for context (optional)" },
+          },
+          required: ["query"],
+        }
+      }
     },
     {
       type: "function",
@@ -1763,9 +1820,49 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           const { data: radarResult, error } = await supabase.functions.invoke('threat-radar-analysis', {
             body: { client_id: args.client_id, include_predictions: args.include_predictions !== false }
           });
-          
+
           if (error) throw error;
           toolResults.push({ tool: 'analyze_threat_radar', result: { success: true, ...radarResult } });
+
+        } else if (funcName === 'get_wildfire_intelligence') {
+          const { data: wildfireResult, error } = await supabase.functions.invoke('monitor-wildfires', {
+            body: { health_check: false, client_id: args.client_id || client_id }
+          });
+          if (error) {
+            toolResults.push({ tool: 'get_wildfire_intelligence', result: { success: false, error: error.message } });
+          } else {
+            toolResults.push({ tool: 'get_wildfire_intelligence', result: { success: true, ...(wildfireResult || {}) } });
+          }
+
+        } else if (funcName === 'lookup_ioc_indicator') {
+          const { data: iocResult, error } = await supabase.functions.invoke('ai-tools-query', {
+            body: { tool: 'lookup_ioc_indicator', indicator: args.indicator, indicator_type: args.indicator_type || 'unknown', client_id: client_id }
+          });
+          if (error) {
+            toolResults.push({ tool: 'lookup_ioc_indicator', result: { success: false, error: error.message } });
+          } else {
+            toolResults.push({ tool: 'lookup_ioc_indicator', result: { success: true, ...(iocResult || {}) } });
+          }
+
+        } else if (funcName === 'run_entity_deep_scan') {
+          const { data: deepScanResult, error } = await supabase.functions.invoke('entity-deep-scan', {
+            body: { entity_id: args.entity_id, entity_name: args.entity_name, client_id: client_id }
+          });
+          if (error) {
+            toolResults.push({ tool: 'run_entity_deep_scan', result: { success: false, error: error.message } });
+          } else {
+            toolResults.push({ tool: 'run_entity_deep_scan', result: { success: true, ...(deepScanResult || {}) } });
+          }
+
+        } else if (funcName === 'check_dark_web_exposure') {
+          const { data: darkWebResult, error } = await supabase.functions.invoke('monitor-darkweb', {
+            body: { query: args.query, client_id: args.client_id || client_id }
+          });
+          if (error) {
+            toolResults.push({ tool: 'check_dark_web_exposure', result: { success: false, error: error.message } });
+          } else {
+            toolResults.push({ tool: 'check_dark_web_exposure', result: { success: true, ...(darkWebResult || {}) } });
+          }
           
         } else if (funcName === 'perform_impact_analysis') {
           const { data: impactResult, error } = await supabase.functions.invoke('perform-impact-analysis', {
