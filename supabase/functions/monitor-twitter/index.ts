@@ -1,26 +1,23 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
-import { captureMediaFromContent, createMediaAttachments } from '../_shared/media-capture.ts';
-import { 
-  extractMentions, 
-  extractHashtags, 
-  parseEngagement,
-  isHighPriorityContent,
-  detectPostType,
-  extractEventDetails,
-  extractAuthorFromUrl 
-} from '../_shared/social-media-parser.ts';
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-// HIGH-SPECIFICITY keywords — generic terms like 'pipeline' or 'protest' alone
-// match content about unrelated projects worldwide, causing massive false positives
-const ACTIVISM_KEYWORDS = [
-  'Coastal GasLink', 'CGL pipeline', 'PRGT', 'Wet\'suwet\'en', 'Gidimt\'en',
-  'Unist\'ot\'en', 'Petronas Canada', 'LNG Canada', 'Cedar LNG',
-  'Ksi Lisims', 'Prince Rupert Gas', 'TC Energy pipeline',
-  'stand.earth', 'standearth', 'Dogwood BC', 'Dogwood Initiative',
-  'BC Counter Info', 'Frack Free BC', 'pipeline blockade',
-  'pipeline sabotage', 'pipeline protest', 'LNG protest', 'LNG blockade',
-  'indigenous pipeline', 'first nation pipeline',
-  'Shut Down Canada', 'land defender pipeline'
+/**
+ * Twitter/X monitor — uses Twitter API v2 recent search when
+ * TWITTER_BEARER_TOKEN is set, otherwise no-ops (Google CSE cannot
+ * reliably index x.com posts since 2023).
+ *
+ * Free tier limits: 1 request per 15 min per app, 500k tweet reads/month.
+ * Strategy: pack everything into 2 queries per run —
+ *   Query A: person entity names + threat/harassment terms
+ *   Query B: client campaign keywords + activism terms
+ */
+
+const TWITTER_SEARCH_URL = "https://api.twitter.com/2/tweets/search/recent";
+
+// Hard threat/targeting terms for person monitoring
+const PERSON_THREAT_TERMS = [
+  "threat", "harass", "dox", "doxx", "doxxing", "doxxed",
+  "\"home address\"", "\"personal information\"", "\"personal details\"",
+  "\"find them\"", "protest", "\"at risk\""
 ];
 
 Deno.serve(async (req) => {
@@ -28,354 +25,269 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    const bearerToken = Deno.env.get("TWITTER_BEARER_TOKEN");
+
+    if (!bearerToken) {
+      console.log("[TwitterMonitor] No TWITTER_BEARER_TOKEN configured — skipping");
+      return successResponse({ success: true, message: "No bearer token configured", signals_created: 0 });
+    }
+
     const supabase = createServiceClient();
 
-    console.log('Starting Twitter/X monitoring scan...');
+    // Fetch all actively monitored person entities
+    const { data: personEntities, error: entErr } = await supabase
+      .from("entities")
+      .select("id, name, type, client_id, attributes")
+      .eq("active_monitoring_enabled", true)
+      .eq("type", "person");
 
-    // Fetch clients with monitoring keywords
-    const { data: clients, error: clientsError } = await supabase
-      .from('clients')
-      .select('id, name, organization, industry, monitoring_keywords, locations');
+    if (entErr) throw entErr;
 
-    if (clientsError) throw clientsError;
+    // Fetch clients for campaign monitoring
+    const { data: clients, error: clientErr } = await supabase
+      .from("clients")
+      .select("id, name, monitoring_keywords");
 
-    // Fetch entities with active monitoring and twitter handles
-    const { data: watchedEntities, error: entitiesError } = await supabase
-      .from('entities')
-      .select('id, name, type, aliases, risk_level, attributes, active_monitoring_enabled')
-      .eq('active_monitoring_enabled', true);
+    if (clientErr) throw clientErr;
 
-    if (entitiesError) {
-      console.error('Error fetching entities:', entitiesError);
-    }
-
-    // Filter entities that have twitter handles
-    const twitterEntities = (watchedEntities || []).filter(e => 
-      e.attributes?.twitter_handle || 
-      e.attributes?.x_handle ||
-      e.aliases?.some((a: string) => a.startsWith('@'))
-    );
-
-    console.log(`Monitoring Twitter/X for ${clients?.length || 0} clients and ${twitterEntities.length} entities with Twitter handles`);
+    const persons = personEntities || [];
+    const clientList = clients || [];
 
     let signalsCreated = 0;
-    let mediaCaptures = 0;
-    let totalSearches = 0;
-    const processedUrls = new Set<string>();
+    let tweetsProcessed = 0;
 
-    // PART 1: Entity-focused searches (activist groups with Twitter presence)
-    for (const entity of twitterEntities) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const searchQueries: string[] = [];
-        const twitterHandle = entity.attributes?.twitter_handle || 
-                              entity.attributes?.x_handle ||
-                              entity.aliases?.find((a: string) => a.startsWith('@'));
-        
-        if (twitterHandle) {
-          const cleanHandle = twitterHandle.replace('@', '');
-          
-          // Direct profile search on X/Twitter
-          searchQueries.push(`site:x.com/${cleanHandle}`);
-          searchQueries.push(`site:twitter.com/${cleanHandle}`);
-          
-          // Entity's recent tweets with media
-          searchQueries.push(`site:x.com from:${cleanHandle} (pic OR video OR photo)`);
-          
-          // Entity + relevant topics
-          const focusAreas = entity.attributes?.focus_areas || [];
-          if (focusAreas.length > 0) {
-            const topics = focusAreas.slice(0, 2).join(' OR ');
-            searchQueries.push(`site:x.com "${entity.name}" (${topics})`);
-          }
-        }
-        
-        // Entity name searches
-        searchQueries.push(`site:x.com "${entity.name}" (protest OR action OR pipeline OR LNG)`);
+    // ═══ QUERY A: Person threat monitoring ═══
+    // Build one OR query from all monitored person names
+    if (persons.length > 0) {
+      const nameTerms = persons
+        .map((p: any) => `"${p.name}"`)
+        .join(" OR ");
 
-        for (const query of searchQueries) {
-          totalSearches++;
-          const result = await processTwitterSearch(
-            supabase, query, null, entity.name, 'entity', processedUrls, entity.id
-          );
-          signalsCreated += result.signals;
-          mediaCaptures += result.media;
-        }
+      const threatOR = PERSON_THREAT_TERMS.slice(0, 8).join(" OR ");
 
-        console.log(`Processed Twitter/X for entity: ${entity.name}`);
+      // Twitter API v2 query — max 1024 chars
+      const query = `(${nameTerms}) (${threatOR}) -is:retweet lang:en`;
+      const truncated = query.length > 1000 ? query.substring(0, 1000) + ")" : query;
 
-      } catch (error) {
-        console.error(`Error monitoring Twitter/X for entity ${entity.name}:`, error);
+      console.log(`[TwitterMonitor] Person threat query (${truncated.length} chars): ${truncated.substring(0, 120)}...`);
+
+      const tweets = await searchRecentTweets(bearerToken, truncated, 25);
+
+      for (const tweet of tweets) {
+        const result = await ingestTweet(supabase, tweet, persons, null, "person_threat");
+        if (result) signalsCreated++;
+        tweetsProcessed++;
       }
+
+      console.log(`[TwitterMonitor] Person threat query: ${tweets.length} tweets, ${signalsCreated} signals`);
     }
 
-    // PART 2: Client-focused searches
-    for (const client of clients || []) {
-      try {
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-        const searchQueries: string[] = [];
-        
-        // Client name + activism terms
-        searchQueries.push(`site:x.com "${client.name}" (protest OR pipeline OR activist OR blockade)`);
-        searchQueries.push(`site:twitter.com "${client.name}" (protest OR threat OR boycott)`);
-        
-        // Use client's monitoring keywords
-        const clientKeywords = client.monitoring_keywords || [];
-        const priorityKeywords = clientKeywords.filter((k: string) => 
-          k.toLowerCase().includes('pipeline') || 
-          k.toLowerCase().includes('lng') || 
-          k.toLowerCase().includes('first nation')
-        );
-        
-        if (priorityKeywords.length > 0) {
-          const keywordTerms = priorityKeywords.slice(0, 3).map((k: string) => `"${k}"`).join(' OR ');
-          searchQueries.push(`site:x.com (protest OR activist) (${keywordTerms})`);
-        }
-
-        for (const query of searchQueries) {
-          totalSearches++;
-          const result = await processTwitterSearch(
-            supabase, query, client.id, client.name, 'client', processedUrls
-          );
-          signalsCreated += result.signals;
-          mediaCaptures += result.media;
-        }
-
-        console.log(`Processed Twitter/X mentions for ${client.name}`);
-
-      } catch (error) {
-        console.error(`Error monitoring Twitter/X for ${client.name}:`, error);
-      }
+    // ═══ QUERY B: Client campaign monitoring ═══
+    // Combine monitoring keywords from all clients into one query
+    const allClientKeywords: string[] = [];
+    for (const client of clientList) {
+      const kws: string[] = client.monitoring_keywords || [];
+      // Pick up to 5 most specific keywords per client (skip very short ones)
+      const filtered = kws.filter((k: string) => k.length > 6).slice(0, 5);
+      allClientKeywords.push(...filtered);
     }
 
-    console.log(`Twitter/X monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Captured ${mediaCaptures} media files.`);
+    if (allClientKeywords.length > 0) {
+      // Deduplicate and cap at 10 terms to stay under query length limit
+      const uniqueKws = [...new Set(allClientKeywords)].slice(0, 10);
+      const kwOR = uniqueKws.map((k: string) => `"${k}"`).join(" OR ");
+      const campaignQuery = `(${kwOR}) (protest OR blockade OR threat OR sabotage OR activist OR boycott) -is:retweet lang:en`;
+
+      console.log(`[TwitterMonitor] Campaign query (${campaignQuery.length} chars): ${campaignQuery.substring(0, 120)}...`);
+
+      // Wait 1s between API calls to be safe
+      await new Promise(r => setTimeout(r, 1000));
+
+      const campaignTweets = await searchRecentTweets(bearerToken, campaignQuery, 25);
+      let campaignSignals = 0;
+
+      for (const tweet of campaignTweets) {
+        const result = await ingestTweet(supabase, tweet, persons, clientList, "campaign");
+        if (result) { campaignSignals++; signalsCreated++; }
+        tweetsProcessed++;
+      }
+
+      console.log(`[TwitterMonitor] Campaign query: ${campaignTweets.length} tweets, ${campaignSignals} signals`);
+    }
+
+    console.log(`[TwitterMonitor] Done. Tweets processed: ${tweetsProcessed}, signals created: ${signalsCreated}`);
 
     return successResponse({
       success: true,
-      clients_scanned: clients?.length || 0,
-      entities_scanned: twitterEntities.length,
-      searches_executed: totalSearches,
+      tweets_processed: tweetsProcessed,
       signals_created: signalsCreated,
-      media_captured: mediaCaptures,
-      source: 'twitter'
+      source: "twitter_api_v2"
     });
 
   } catch (error) {
-    console.error('Error in Twitter/X monitoring:', error);
-    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
+    console.error("[TwitterMonitor] Fatal error:", error);
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });
 
-async function processTwitterSearch(
-  supabase: any,
-  query: string,
-  clientId: string | null,
-  sourceName: string,
-  sourceType: 'client' | 'entity',
-  processedUrls: Set<string>,
-  entityId?: string
-): Promise<{ signals: number; media: number }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  let signalsCreated = 0;
-  let mediaCount = 0;
+// ═══════════════════════════════════════════════════════════════
+// Twitter API v2 recent search
+// ═══════════════════════════════════════════════════════════════
+
+interface Tweet {
+  id: string;
+  text: string;
+  created_at?: string;
+  public_metrics?: { like_count: number; retweet_count: number; reply_count: number };
+  author?: { username: string; name: string };
+}
+
+async function searchRecentTweets(bearerToken: string, query: string, maxResults = 10): Promise<Tweet[]> {
+  const params = new URLSearchParams({
+    query,
+    max_results: String(Math.min(Math.max(maxResults, 10), 100)),
+    "tweet.fields": "created_at,public_metrics,text",
+    expansions: "author_id",
+    "user.fields": "username,name",
+  });
+
+  const url = `${TWITTER_SEARCH_URL}?${params.toString()}`;
 
   try {
-    console.log(`Twitter/X search: ${query.substring(0, 80)}...`);
-    
-    const response = await fetch(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=15`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        signal: controller.signal
-      }
-    ).finally(() => clearTimeout(timeout));
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (response.status === 429) {
+      const resetAt = response.headers.get("x-rate-limit-reset");
+      console.warn(`[TwitterMonitor] Rate limited. Resets at: ${resetAt ? new Date(Number(resetAt) * 1000).toISOString() : "unknown"}`);
+      return [];
+    }
 
     if (!response.ok) {
-      console.log(`Twitter/X search failed: ${response.status}`);
-      if (response.status === 429) {
-        await new Promise(resolve => setTimeout(resolve, 30000));
-      }
-      return { signals: 0, media: 0 };
+      const body = await response.text();
+      console.error(`[TwitterMonitor] API error ${response.status}: ${body.substring(0, 200)}`);
+      return [];
     }
 
-    const html = await response.text();
-    
-    // Extract search results
-    const resultMatches = html.matchAll(/<div class="g"[^>]*>(.*?)<\/div>/gs);
-    const altMatches = html.matchAll(/href="(https?:\/\/(?:x|twitter)\.com\/[^"]+)"[^>]*>([^<]*)<\/a>/gs);
+    const data = await response.json();
 
-    const results: Array<{ url: string; text: string }> = [];
-
-    // Parse main results
-    for (const match of Array.from(resultMatches).slice(0, 10)) {
-      const text = match[1]
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&[^;]+;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      const urlMatch = text.match(/(x|twitter)\.com\/[^\s"'<>]+/);
-      if (urlMatch) {
-        results.push({
-          url: `https://${urlMatch[0]}`,
-          text
-        });
-      }
+    if (!data.data?.length) {
+      console.log("[TwitterMonitor] No tweets returned");
+      return [];
     }
 
-    // Also capture from direct links
-    for (const match of Array.from(altMatches).slice(0, 5)) {
-      if (!results.some(r => r.url === match[1])) {
-        results.push({
-          url: match[1],
-          text: match[2] || ''
-        });
-      }
+    // Merge author info into tweets
+    const usersById = new Map<string, { username: string; name: string }>();
+    for (const user of data.includes?.users || []) {
+      usersById.set(user.id, { username: user.username, name: user.name });
     }
 
-    for (const result of results) {
-      const { url: twitterUrl, text } = result;
+    return (data.data as any[]).map((t: any) => ({
+      id: t.id,
+      text: t.text,
+      created_at: t.created_at,
+      public_metrics: t.public_metrics,
+      author: usersById.get(t.author_id),
+    }));
 
-      // Skip duplicates
-      if (processedUrls.has(twitterUrl)) continue;
-      processedUrls.add(twitterUrl);
+  } catch (err) {
+    console.error("[TwitterMonitor] Fetch error:", err);
+    return [];
+  }
+}
 
-      // Extract social media metadata
-      const mentions = extractMentions(text);
-      const hashtags = extractHashtags(text);
-      const engagement = parseEngagement(text);
-      const postType = detectPostType(twitterUrl, text);
-      const eventDetails = extractEventDetails(text);
-      const authorHandle = extractAuthorFromUrl(twitterUrl, 'twitter');
+// ═══════════════════════════════════════════════════════════════
+// Signal ingestion
+// ═══════════════════════════════════════════════════════════════
 
-      // Check for relevance
-      const lowerText = text.toLowerCase();
-      const sourceNameLower = sourceName.toLowerCase();
-      
-      // ═══ DISAMBIGUATION GATE ═══
-      // For short entity names (<=4 chars), require contextual keywords
-      const isShortSourceName = sourceNameLower.length <= 4;
-      let nameAppearsInContext = lowerText.includes(sourceNameLower);
-      
-      if (isShortSourceName && nameAppearsInContext) {
-        const contextualKeywords = ['pipeline', 'lng', 'gas', 'energy', 'protest', 'indigenous', 'first nation', 'coastal gaslink', 'prgt'];
-        const hasContext = contextualKeywords.some(kw => lowerText.includes(kw));
-        if (!hasContext) {
-          console.log(`Skipping disambiguation failure for "${sourceName}": ${text.substring(0, 60)}`);
-          nameAppearsInContext = false;
-        }
-      }
-      
-      const isRelevant = 
-        ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase())) ||
-        nameAppearsInContext ||
-        isHighPriorityContent(text);
+async function ingestTweet(
+  supabase: any,
+  tweet: Tweet,
+  persons: any[],
+  clients: any[] | null,
+  queryType: "person_threat" | "campaign"
+): Promise<boolean> {
+  const tweetUrl = `https://x.com/i/web/status/${tweet.id}`;
+  const lowerText = tweet.text.toLowerCase();
 
-      if (text.length > 20 && isRelevant) {
-        // Check for duplicates in DB
-        const { data: existing } = await supabase
-          .from('ingested_documents')
-          .select('id')
-          .or(`source_url.eq.${twitterUrl},metadata->>source.eq.twitter`)
-          .ilike('raw_text', `%${text.substring(0, 50)}%`)
-          .limit(1);
+  // Dedup check
+  const { data: existing } = await supabase
+    .from("ingested_documents")
+    .select("id")
+    .eq("source_url", tweetUrl)
+    .limit(1);
 
-        if (existing && existing.length > 0) {
-          console.log('Skipping duplicate Twitter/X content');
-          continue;
-        }
+  if (existing?.length > 0) return false;
 
-        // Determine category
-        let category = 'social_media';
-        if (lowerText.includes('protest') || lowerText.includes('blockade') || lowerText.includes('demonstration')) {
-          category = 'protest_activity';
-        } else if (ACTIVISM_KEYWORDS.some(k => lowerText.includes(k.toLowerCase()))) {
-          category = 'activism';
-        } else if (lowerText.includes('threat') || lowerText.includes('warning')) {
-          category = 'threat_indication';
-        }
+  // Match which entity or client this tweet is about
+  const matchedPerson = persons.find((p: any) => lowerText.includes(p.name.toLowerCase()));
+  const matchedClient = clients?.find((c: any) => lowerText.includes(c.name.toLowerCase()));
 
-        // Capture media from the content
-        const mediaResult = await captureMediaFromContent(supabase, text, 'twitter', 5);
-        if (mediaResult.storedMedia.length > 0) {
-          mediaCount += mediaResult.storedMedia.length;
-        }
+  const entityId = matchedPerson?.id || null;
+  const clientId = matchedPerson?.client_id || matchedClient?.id || null;
 
-        // Create ingested document with full social media data
-        const { data: doc, error: docError } = await supabase
-          .from('ingested_documents')
-          .insert({
-            title: `Twitter/X ${postType}: ${sourceName}`,
-            raw_text: text,
-            source_url: twitterUrl,
-            post_caption: text,
-            author_handle: authorHandle,
-            author_name: sourceName,
-            mentions: mentions,
-            hashtags: hashtags,
-            engagement_metrics: engagement,
-            media_urls: mediaResult.storedMedia.map((m: any) => m.storageUrl),
-            thumbnail_url: mediaResult.storedMedia[0]?.storageUrl || null,
-            metadata: {
-              source: 'twitter',
-              source_type: 'social_media',
-              platform: twitterUrl.includes('x.com') ? 'x' : 'twitter',
-              client_id: clientId,
-              entity_id: entityId,
-              source_name: sourceName,
-              search_type: sourceType,
-              search_query: query,
-              category: category,
-              post_type: postType,
-              event_details: eventDetails,
-              detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerText.includes(k.toLowerCase())),
-              media_count: mediaResult.storedMedia.length
-            }
-          })
-          .select()
-          .single();
-
-        if (!docError && doc) {
-          // Create media attachments
-          if (mediaResult.storedMedia.length > 0) {
-            await createMediaAttachments(supabase, 'document', doc.id, mediaResult.storedMedia);
-          }
-
-          // Link to entity if applicable
-          if (entityId) {
-            await supabase
-              .from('document_entity_mentions')
-              .insert({
-                document_id: doc.id,
-                entity_id: entityId,
-                confidence: 0.85,
-                mention_text: sourceName
-              });
-          }
-
-          // Invoke intelligence processing
-          await supabase.functions.invoke('process-intelligence-document', {
-            body: { documentId: doc.id }
-          });
-          signalsCreated++;
-          console.log(`Ingested Twitter/X ${category}: ${sourceName} - ${text.substring(0, 60)}... (${mediaResult.storedMedia.length} media)`);
-        }
-      }
-    }
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      console.log(`Twitter/X search timeout`);
-    } else {
-      throw error;
-    }
+  // Categorise
+  let category = "social_media";
+  const threatTerms = ["threat", "harass", "dox", "doxx", "home address", "personal information", "find them"];
+  if (threatTerms.some(t => lowerText.includes(t))) {
+    category = "threat_indication";
+  } else if (lowerText.includes("protest") || lowerText.includes("blockade")) {
+    category = "protest_activity";
+  } else if (lowerText.includes("boycott") || lowerText.includes("activist") || lowerText.includes("sabotage")) {
+    category = "activism";
   }
 
-  return { signals: signalsCreated, media: mediaCount };
+  const authorHandle = tweet.author ? `@${tweet.author.username}` : null;
+  const title = `Tweet${authorHandle ? ` by ${authorHandle}` : ""}${matchedPerson ? `: ${matchedPerson.name}` : matchedClient ? `: ${matchedClient.name}` : ""}`;
+
+  const { data: doc, error: docErr } = await supabase
+    .from("ingested_documents")
+    .insert({
+      title,
+      raw_text: tweet.text,
+      source_url: tweetUrl,
+      post_caption: tweet.text,
+      author_handle: authorHandle,
+      author_name: tweet.author?.name || null,
+      metadata: {
+        source: "twitter_api_v2",
+        source_type: "social_media",
+        platform: "twitter",
+        client_id: clientId,
+        entity_id: entityId,
+        tweet_id: tweet.id,
+        created_at: tweet.created_at,
+        public_metrics: tweet.public_metrics,
+        category,
+        query_type: queryType,
+        is_high_priority: category === "threat_indication",
+      },
+    })
+    .select()
+    .single();
+
+  if (docErr || !doc) {
+    console.error("[TwitterMonitor] Insert error:", docErr);
+    return false;
+  }
+
+  // Link to entity if matched
+  if (entityId) {
+    await supabase.from("document_entity_mentions").insert({
+      document_id: doc.id,
+      entity_id: entityId,
+      confidence: 0.9,
+      mention_text: matchedPerson.name,
+    });
+  }
+
+  // Trigger intelligence pipeline
+  await supabase.functions.invoke("process-intelligence-document", {
+    body: { documentId: doc.id },
+  });
+
+  console.log(`[TwitterMonitor] ✓ Ingested ${category} tweet${matchedPerson ? ` about ${matchedPerson.name}` : ""}: "${tweet.text.substring(0, 80)}..."`);
+  return true;
 }

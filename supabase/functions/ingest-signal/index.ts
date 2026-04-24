@@ -434,6 +434,12 @@ Respond ONLY with valid JSON.`
       if (classResult.data.confidence && classResult.data.confidence > 1) {
         classification.confidence = classResult.data.confidence / 100;
       }
+      // Floor confidence for pre-vetted signals (skip_relevance_gate) — AI sometimes returns
+      // near-zero decimal confidence for these, which is misleading. The gate bypass itself
+      // means the upstream monitor already validated the signal.
+      if (skip_relevance_gate && classification.confidence < 0.75) {
+        classification.confidence = 0.80;
+      }
       // Keep rules-based severity if matched
       if (rulesResult.severity) {
         classification.severity = rulesResult.severity;
@@ -719,6 +725,31 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
           reason: 'duplicate_url',
           existing_signal_id: existingByUrl.id
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
+
+    // Title-based dedup: if the exact same title was ingested in the last 24h, skip.
+    // Catches social monitors finding the same tweet/post across repeated runs when
+    // the source_url varies (search result URL vs permalink).
+    if (!isQaTest && signalText) {
+      const titleLine = signalText.split('\n')[0].trim().substring(0, 200);
+      if (titleLine.length > 20) {
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { data: existingByTitle } = await supabase
+          .from('signals')
+          .select('id')
+          .ilike('title', `%${titleLine.substring(0, 80)}%`)
+          .gte('created_at', oneDayAgo)
+          .limit(1)
+          .maybeSingle();
+        if (existingByTitle) {
+          console.log(`[Title-dedup] Duplicate title blocked: "${titleLine.substring(0, 60)}..."`);
+          return new Response(JSON.stringify({
+            status: 'suppressed',
+            reason: 'duplicate_title',
+            existing_signal_id: existingByTitle.id
+          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
       }
     }
 
@@ -1278,6 +1309,27 @@ Score this signal's relevance and classify the connection.`
 
     console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
 
+    // Fire-and-forget: generate and store content_embedding for pgvector semantic dedup.
+    // Embeddings accumulate over time — detect-duplicates will use find_similar_signals_by_embedding
+    // once enough signals have embeddings, giving better cross-outlet dedup than GPT-60-candidates.
+    const openaiKeyForEmbed = Deno.env.get('OPENAI_API_KEY');
+    if (openaiKeyForEmbed && signal?.id) {
+      const embedText = (classification.normalized_text || signalText).substring(0, 8000);
+      fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openaiKeyForEmbed}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'text-embedding-3-small', input: embedText }),
+      }).then((r: Response) => r.json()).then((embedData: any) => {
+        const embedding = embedData.data?.[0]?.embedding;
+        if (embedding) {
+          supabase.from('signals')
+            .update({ content_embedding: JSON.stringify(embedding) })
+            .eq('id', signal.id)
+            .then(() => {}, () => {});
+        }
+      }).catch(() => {});
+    }
+
     // Non-blocking — anomaly scoring runs after insert
     supabase.functions.invoke('score-signal-anomaly', {
       body: {
@@ -1658,8 +1710,10 @@ Score this signal's relevance and classify the connection.`
       } else {
         console.log('AI decision engine result:', aiDecisionResult.data);
 
-        // Check if AI decision recommends incident creation
-        if (!isCyberAdvisory && !isQaTest && !isHistorical && aiDecisionResult.data?.decision?.should_create_incident) {
+        // AI-based incident creation is DISABLED — incidents must be created manually by analysts.
+        // Auto-created incidents from wildfire/regulatory/social signals are noise, not actionable.
+        // Only rules-based P1 keyword matches (active shooter, bomb, weapon, kidnap) create incidents.
+        if (false && !isCyberAdvisory && !isQaTest && !isHistorical && aiDecisionResult.data?.decision?.should_create_incident) {
           const { error: incidentError } = await supabase
             .from('incidents')
             .insert({
@@ -1693,9 +1747,10 @@ Score this signal's relevance and classify the connection.`
       // Don't fail the main request if AI decision fails
     }
     
-    // Auto-open incident based on rules (fallback if AI didn't create one)
-    // Skip cyber advisory signals and QA test signals — not PECL operational incidents
-    if (rulesResult.shouldOpenIncident && !isCyberAdvisory && !isQaTest) {
+    // Auto-open incident based on rules — P1 ONLY (active shooter, bomb, weapon, kidnap, credible threat).
+    // P2 rules ('suspicious', 'tamper', 'intrusion') are too broad and create false incidents.
+    // Analysts must create incidents manually for all other signal types.
+    if (rulesResult.shouldOpenIncident && rulesResult.matchedRule === 'p1' && !isCyberAdvisory && !isQaTest) {
       // Check if incident was already created by AI
       const { data: existingIncident } = await supabase
         .from('incidents')

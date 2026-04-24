@@ -9,6 +9,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -17,12 +18,7 @@ Deno.serve(async (req) => {
   try {
     const supabase = createServiceClient();
 
-    const { data: heartbeatRow } = await supabase.from('cron_heartbeat').insert({
-      job_name: 'knowledge-synthesizer-nightly',
-      started_at: new Date().toISOString(),
-      status: 'running',
-    }).select('id').single();
-    const heartbeatId: string | null = heartbeatRow?.id ?? null;
+    const hb = await startHeartbeat(supabase, 'knowledge-synthesizer-nightly');
 
     const body = await req.json().catch(() => ({}));
     const {
@@ -148,7 +144,7 @@ Deno.serve(async (req) => {
         for (const belief of beliefs) {
           const { data: existing } = await supabase
             .from('agent_beliefs')
-            .select('id, confidence, evolution_log')
+            .select('id, confidence, evolution_log, has_contradiction')
             .eq('agent_call_sign', callSign)
             .eq('is_active', true)
             .ilike('hypothesis', `%${belief.hypothesis.substring(0, 45).replace(/[%_]/g, ' ')}%`)
@@ -156,28 +152,71 @@ Deno.serve(async (req) => {
 
           if (existing?.length) {
             const old = existing[0];
-            const newConf = Math.round(((old.confidence * 0.6) + (belief.confidence * 0.4)) * 100) / 100;
-            if (Math.abs(newConf - old.confidence) < 0.02) continue;
+
+            // Check if new evidence contradicts the existing hypothesis
+            const contradiction = await checkForContradiction(old.hypothesis, agentEntries.slice(0, 6));
+
+            let newConf: number;
+            let logReason: string;
+            const updateFields: Record<string, any> = { last_updated_at: new Date().toISOString() };
+
+            if (contradiction.contradicts) {
+              // Contradiction: reduce confidence more aggressively than a standard blend
+              const penalty = contradiction.severity === 'major' ? 0.18 : 0.09;
+              newConf = Math.round(Math.max(0.35, old.confidence - penalty) * 100) / 100;
+              logReason = `CONTRADICTION (${contradiction.severity}): ${contradiction.note}`;
+              updateFields.has_contradiction = true;
+              updateFields.contradiction_note = contradiction.note;
+              // Track which entries provided the contradicting evidence
+              const contradictingIds = agentEntries.slice(0, 4).map((e: any) => e.id).filter(Boolean);
+              if (contradictingIds.length) updateFields.contradicting_entry_ids = contradictingIds;
+              console.log(`[knowledge-synthesizer] ⚠️ CONTRADICTION for ${callSign}: "${old.hypothesis.substring(0, 60)}..." → conf ${old.confidence} → ${newConf} | ${contradiction.note}`);
+            } else {
+              // Standard evidence blend — 60% existing weight, 40% new evidence
+              newConf = Math.round(((old.confidence * 0.6) + (belief.confidence * 0.4)) * 100) / 100;
+              logReason = `Evidence synthesis Δ${(newConf - old.confidence) > 0 ? '+' : ''}${(newConf - old.confidence).toFixed(2)}`;
+              // Clear a prior contradiction flag if new evidence no longer contradicts
+              if (old.has_contradiction) {
+                updateFields.has_contradiction = false;
+                updateFields.contradiction_note = null;
+              }
+            }
+
+            if (Math.abs(newConf - old.confidence) < 0.02 && !contradiction.contradicts) continue;
+
             const log = [...(old.evolution_log || []), {
               date: new Date().toISOString(),
               old_confidence: old.confidence,
               new_confidence: newConf,
-              reason: `Evidence synthesis Δ${(newConf - old.confidence) > 0 ? '+' : ''}${(newConf - old.confidence).toFixed(2)}`,
+              reason: logReason,
             }];
-            await supabase.from('agent_beliefs').update({ confidence: newConf, last_updated_at: new Date().toISOString(), evolution_log: log }).eq('id', old.id);
+            await supabase.from('agent_beliefs').update({ confidence: newConf, evolution_log: log, ...updateFields }).eq('id', old.id);
             updated++;
           } else {
+            const domains = [...new Set(agentEntries.map((e: any) => e.domain).filter(Boolean))];
             const { error: insErr } = await supabase.from('agent_beliefs').insert({
               agent_call_sign: callSign,
               hypothesis: belief.hypothesis,
               belief_type: belief.belief_type || 'pattern',
               confidence: belief.confidence,
-              supporting_entry_ids: agentEntries.slice(0, 4).map(e => e.id),
-              related_domains: [...new Set(agentEntries.map(e => e.domain).filter(Boolean))],
+              supporting_entry_ids: agentEntries.slice(0, 4).map((e: any) => e.id),
+              related_domains: domains,
               evolution_log: [{ date: new Date().toISOString(), old_confidence: null, new_confidence: belief.confidence, reason: 'Initial belief formed' }],
             });
-            if (!insErr) created++;
-            else return { callSign, status: `insert_error:${insErr.message}` };
+            if (!insErr) {
+              created++;
+              // Dispatch high-confidence beliefs to semantically related agents — fire and forget
+              if (belief.confidence >= 0.82) {
+                dispatchBeliefToMesh({
+                  fromAgent: callSign,
+                  hypothesis: belief.hypothesis,
+                  beliefType: belief.belief_type || 'pattern',
+                  domain: domains[0] || 'threat_intelligence',
+                }).catch(() => {}); // never block belief formation on mesh errors
+              }
+            } else {
+              return { callSign, status: `insert_error:${insErr.message}` };
+            }
           }
         }
 
@@ -238,37 +277,20 @@ Deno.serve(async (req) => {
     };
     if (debug) { response.diagnostics = diagnostics; response.conn_debug = connDebug; }
 
-    if (heartbeatId) {
-      await supabase.from('cron_heartbeat').update({
-        completed_at: new Date().toISOString(),
-        status: 'succeeded',
-        result_summary: {
-          entries_processed: entries.length,
-          agents_synthesized: agentKeys.length,
-          beliefs_created: beliefsCreated,
-          beliefs_updated: beliefsUpdated,
-          connections_created: connectionsCreated,
-        },
-      }).eq('id', heartbeatId);
-    }
+    await completeHeartbeat(supabase, hb, {
+      entries_processed: (entries || []).length,
+      agents_synthesized: agentKeys.length,
+      beliefs_created: beliefsCreated,
+      beliefs_updated: beliefsUpdated,
+      connections_created: connectionsCreated,
+    });
 
     return successResponse(response);
 
   } catch (err) {
     console.error('[knowledge-synthesizer] Error:', err);
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    try {
-      const supabase = createServiceClient();
-      // heartbeatId not in scope here; insert a fresh failure row
-      await supabase.from('cron_heartbeat').insert({
-        job_name: 'knowledge-synthesizer-nightly',
-        started_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-        status: 'failed',
-        result_summary: { error: message },
-      });
-    } catch (_) {}
-    return errorResponse(message, 500);
+    await failHeartbeat(createServiceClient(), { id: null, jobName: 'knowledge-synthesizer-nightly', startedAt: Date.now() }, err);
+    return errorResponse(err instanceof Error ? err.message : 'Unknown error', 500);
   }
 });
 
@@ -310,7 +332,7 @@ async function synthesizeOperationalBeliefs(params: {
   ] = await Promise.all([
     supabase
       .from('signals')
-      .select('title, description, category, rule_category, severity, composite_confidence, relevance_score, created_at, entity_tags')
+      .select('title, description, category, rule_category, severity, composite_confidence, relevance_score, created_at, entity_tags, client_id')
       .is('deleted_at', null)
       .eq('is_test', false)
       .neq('severity', 'low')                    // low-severity signals add noise, not belief-worthy
@@ -389,6 +411,11 @@ async function synthesizeOperationalBeliefs(params: {
         return relevantCategories.has(cat);
       });
 
+      // If every contributing signal belongs to one client, beliefs are client-specific.
+      // Mixed-source or no-source signals produce global (NULL) beliefs.
+      const signalClientIds = [...new Set(domainSignals.map((s: any) => s.client_id).filter(Boolean))];
+      const beliefClientId: string | null = signalClientIds.length === 1 ? signalClientIds[0] : null;
+
       // All agents see all incidents and high-threat entities
       // Require a minimum evidence base before forming beliefs.
       // A single signal or one open incident is not a pattern.
@@ -445,6 +472,7 @@ async function synthesizeOperationalBeliefs(params: {
             belief_type: belief.belief_type || 'pattern',
             confidence: belief.confidence,
             related_domains: [domain],
+            client_id: beliefClientId,
             evolution_log: [{
               date: new Date().toISOString(),
               old_confidence: null,
@@ -570,6 +598,55 @@ Return ONLY a JSON array (empty array [] if evidence is insufficient):
 
   const beliefs = extractJsonArray(result.content);
   return { beliefs: beliefs.slice(0, 5), geminiError: null };
+}
+
+// ── CONTRADICTION DETECTION ───────────────────────────────────────────────────
+// Checks whether newly ingested knowledge entries directly oppose an existing
+// belief. Only fires when a matching belief is found during update — not on
+// every entry, so the cost is low.
+
+async function checkForContradiction(
+  hypothesis: string,
+  newEntries: any[]
+): Promise<{ contradicts: boolean; note: string; severity: 'minor' | 'major' }> {
+  if (newEntries.length === 0) return { contradicts: false, note: '', severity: 'minor' };
+
+  const entrySummaries = newEntries
+    .slice(0, 5)
+    .map(e => `[${e.knowledge_type || e.subdomain || 'entry'}] ${e.title}: ${e.content.substring(0, 180)}`)
+    .join('\n\n');
+
+  try {
+    const result = await callAiGateway({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an intelligence analyst checking for direct contradictions between an established belief and new evidence. Respond ONLY with valid JSON, no other text.',
+        },
+        {
+          role: 'user',
+          content: `Established belief: "${hypothesis}"\n\nNew evidence:\n${entrySummaries}\n\nDoes any new evidence DIRECTLY contradict the established belief with a specific opposing claim? Nuance or qualification is NOT a contradiction. Only flag a genuine opposition.\n\nRespond: {"contradicts":boolean,"note":"brief explanation citing which entry opposes it, or empty string if no contradiction","severity":"minor|major"}`,
+        },
+      ],
+      functionName: 'contradiction-check',
+      retries: 0,
+      extraBody: { max_tokens: 180 },
+      skipGuardrails: true,
+    });
+
+    if (!result.content) return { contradicts: false, note: '', severity: 'minor' };
+    const cleaned = result.content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      contradicts: parsed.contradicts === true,
+      note: typeof parsed.note === 'string' ? parsed.note.substring(0, 300) : '',
+      severity: parsed.severity === 'major' ? 'major' : 'minor',
+    };
+  } catch {
+    // Never fail silently in a way that blocks belief processing — contradiction check is best-effort
+    return { contradicts: false, note: '', severity: 'minor' };
+  }
 }
 
 async function extractAgentBeliefs(
@@ -717,4 +794,37 @@ function extractJsonArray(text: string): any[] {
     try { const p = JSON.parse(text.slice(start, end + 1)); if (Array.isArray(p)) return p; } catch {}
   }
   return [];
+}
+
+// ── MESH DISPATCH ─────────────────────────────────────────────────────────────
+// Fires a background call to agent-mesh-dispatcher when a high-confidence
+// belief is first formed. The dispatcher uses semantic routing to find which
+// other agents need to know and handles rate limiting internally.
+// Always fire-and-forget — never block belief formation on mesh errors.
+
+async function dispatchBeliefToMesh(params: {
+  fromAgent: string;
+  hypothesis: string;
+  beliefType: string;
+  domain: string;
+}): Promise<void> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !serviceKey) return;
+
+  await fetch(`${supabaseUrl}/functions/v1/agent-mesh-dispatcher`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${serviceKey}`,
+    },
+    body: JSON.stringify({
+      from_agent: params.fromAgent,
+      insight: params.hypothesis,
+      insight_type: params.beliefType,
+      domain: params.domain,
+      relevance_context: `High-confidence belief (≥82%) formed by ${params.fromAgent} in domain: ${params.domain}`,
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
 }

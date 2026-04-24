@@ -16,6 +16,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
+import { recordHeartbeat } from "../_shared/heartbeat.ts";
 
 const AEGIS_AGENT_ID = '894e87b8-039a-4f6f-9966-85f932ee7a05';
 const MIN_PUSH_INTERVAL_MS = 30 * 60 * 1000; // 30 min between pushes per user (raised from 10)
@@ -333,6 +334,12 @@ Current date: ${dateContext.currentDateISO}`,
 
     console.log(`[ProactiveIntel] Pushed to ${deliveredCount} users (${recentPushUsers.size} skipped by cooldown). ${insights.length} insights synthesized.`);
 
+    await recordHeartbeat(supabase, 'proactive-intelligence-push-15min', 'completed', {
+      insights_detected: insights.length,
+      delivered_to: deliveredCount,
+      push_priority: pushPriority,
+    });
+
     return successResponse({
       status: 'pushed',
       insights_detected: insights.length,
@@ -343,6 +350,9 @@ Current date: ${dateContext.currentDateISO}`,
 
   } catch (error) {
     console.error('[ProactiveIntel] Engine error:', error);
+    await recordHeartbeat(createServiceClient(), 'proactive-intelligence-push-15min', 'failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    }).catch(() => {});
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

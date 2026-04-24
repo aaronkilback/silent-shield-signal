@@ -1,5 +1,6 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -13,11 +14,7 @@ Deno.serve(async (req) => {
     const report: string[] = [];
     const actions: Array<{ type: string; agent?: string; detail: string }> = [];
 
-    await supabase.from('cron_heartbeat').upsert({
-      job_name: 'self-improvement-nightly',
-      started_at: new Date().toISOString(),
-      status: 'running',
-    }, { onConflict: 'job_name' });
+    const hb = await startHeartbeat(supabase, 'self-improvement-nightly');
 
     console.log('[self-improvement] Starting improvement cycle...');
 
@@ -263,12 +260,7 @@ Return ONLY the JSON array.`;
       });
     }
 
-    await supabase.from('cron_heartbeat').upsert({
-      job_name: 'self-improvement-nightly',
-      completed_at: new Date().toISOString(),
-      status: 'succeeded',
-      result_summary: { prompts_updated: promptsUpdated, learning_triggered: learningTriggered, underperformers: underperformers.length, dormant_agents: dormantAgents.length },
-    }, { onConflict: 'job_name' });
+    await completeHeartbeat(supabase, hb, { prompts_updated: promptsUpdated, learning_triggered: learningTriggered, underperformers: underperformers.length, dormant_agents: dormantAgents.length });
 
     return successResponse({
       cycle_complete: true,
@@ -283,15 +275,7 @@ Return ONLY the JSON array.`;
 
   } catch (err) {
     console.error('[self-improvement] Error:', err);
-    try {
-      const supabase = createServiceClient();
-      await supabase.from('cron_heartbeat').upsert({
-        job_name: 'self-improvement-nightly',
-        completed_at: new Date().toISOString(),
-        status: 'failed',
-        result_summary: { error: err instanceof Error ? err.message : String(err) },
-      }, { onConflict: 'job_name' });
-    } catch (_) {}
+    await failHeartbeat(createServiceClient(), { id: null, jobName: 'self-improvement-nightly', startedAt: Date.now() }, err);
     return errorResponse(err instanceof Error ? err.message : 'Unknown error', 500);
   }
 });

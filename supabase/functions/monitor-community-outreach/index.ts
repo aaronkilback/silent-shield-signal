@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { recordHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * Community Outreach Monitor
@@ -15,14 +16,18 @@ interface OutreachSource {
   query?: string;
 }
 
+interface OutreachSourceExtended extends OutreachSource {
+  requiresGeoMatch?: boolean; // If true, item must mention NE BC location to be processed
+}
+
 // NE BC community outreach sources
-const RSS_SOURCES: OutreachSource[] = [
+// NOTE: Peace Arch News was removed — it covers Surrey/Metro Vancouver (Fraser Valley), not Peace River.
+const RSS_SOURCES: OutreachSourceExtended[] = [
   // Local News - Fort St. John / Peace Region
   { name: 'Energetic City News', type: 'rss', url: 'https://www.energeticcity.ca/feed/' },
   { name: 'Alaska Highway News', type: 'rss', url: 'https://www.alaskahighwaynews.ca/rss' },
-  { name: 'Peace Arch News', type: 'rss', url: 'https://www.peacearchnews.com/feed/' },
-  // BC Government
-  { name: 'BC Gov News', type: 'rss', url: 'https://news.gov.bc.ca/feed' },
+  // BC Government — covers all of BC, so geo-gate required
+  { name: 'BC Gov News', type: 'rss', url: 'https://news.gov.bc.ca/feed', requiresGeoMatch: true },
 ];
 
 // Google Search queries for community outreach (consolidated to reduce API calls)
@@ -73,7 +78,7 @@ const EXCLUDE_PATTERNS = [
 // Domains that produce noise / irrelevant results
 const EXCLUDED_DOMAINS = [
   'wikipedia.org', 'youtube.com', 'talent.com', 'indeed.com',
-  'linkedin.com/jobs', 'tumblr.com', 'volcanodiscovery.com',
+  'linkedin.com', 'tumblr.com', 'volcanodiscovery.com',
   'facebook.com/groups', 'pinterest.com', 'tiktok.com',
   'amazon.com', 'ebay.com', 'reddit.com',
   // Job boards & recruitment sites
@@ -143,6 +148,23 @@ Deno.serve(async (req) => {
 
         for (const item of items.slice(0, 15)) {
           const content = `${item.title} ${item.description}`.toLowerCase();
+
+          // Geographic gate: for broad-coverage feeds (e.g. BC Gov News), require at least one
+          // NE BC / operational location keyword before scoring to prevent off-geography signals.
+          if ((source as OutreachSourceExtended).requiresGeoMatch) {
+            const geoTerms = ['fort st. john', 'fort st john', 'dawson creek', 'hudson\'s hope',
+              'chetwynd', 'tumbler ridge', 'taylor bc', 'peace river', 'northeast bc',
+              'charlie lake', 'pink mountain', 'wonowon', 'montney', 'kiskatinaw',
+              'blueberry river', 'doig river', 'halfway river', 'prophet river', 'west moberly',
+              'saulteau', 'mcleod lake', 'tsay keh dene', 'kwadacha',
+              'kitimat', 'skeena', 'coastal gaslink', 'lng canada'];
+            const hasGeoMatch = geoTerms.some(t => content.includes(t));
+            if (!hasGeoMatch) {
+              console.log(`[GeoGate] Skipping off-geography item from ${source.name}: ${item.title?.substring(0, 60)}`);
+              continue;
+            }
+          }
+
           const relevance = scoreOutreachRelevance(content);
 
           if (relevance.score >= 30) {
@@ -320,6 +342,9 @@ Deno.serve(async (req) => {
     }
 
     console.log(`Community outreach monitoring complete. Created ${signalsCreated} signals from ${sourcesProcessed.length} sources.`);
+
+    // Heartbeat
+    await recordHeartbeat(supabase, 'monitor-community-outreach-hourly', 'completed', { signals_created: signalsCreated, items_scanned: itemsScanned, sources: sourcesProcessed });
 
     // Update monitoring history
     if (historyEntry) {

@@ -125,10 +125,15 @@ DATA YOU CANNOT ACCESS = DATA YOU CANNOT REPORT:
 ║    - "PIR 1/2/3" / "Access vectors" / "intelligence gaps"                     ║
 ║    - "Recommend deploying assets" / "task collection teams"                   ║
 ║                                                                               ║
-║ 🚫 FABRICATED SPECULATION:                                                    ║
-║    - "May lead to" / "Could indicate" / "Likely to escalate"                  ║
-║    - "Social cover for radical elements" / "foreign influence operations"    ║
-║    - Impact predictions not based on data                                     ║
+║ 🚫 FABRICATED SPECULATION (invented from nothing):                            ║
+║    - Predictions, implications, or escalation claims with NO signal/data      ║
+║    - "Social cover for radical elements" / "foreign influence operations"     ║
+║    - Inventing threat actors, motives, or outcomes not present in the data    ║
+║                                                                               ║
+║ ✅ ANALYTICAL INFERENCE (allowed, requires citation):                         ║
+║    - "[ASSESSMENT] Based on [signal/belief X], this may indicate..."          ║
+║    - "[ASSESSMENT] Pattern across [N signals] suggests escalation risk"       ║
+║    - Always cite the specific data point. Never infer from thin air.          ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
 IF YOU NEED EXTERNAL NEWS/GEOPOLITICAL INFO:

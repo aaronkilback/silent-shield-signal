@@ -40,14 +40,21 @@ Deno.serve(async (req) => {
     periodStart.setHours(periodStart.getHours() - (period_hours || 72));
     const periodEnd = new Date();
 
-    // Fetch signals in time window (using user auth)
+    // Fetch signals in time window — only actionable, relevant signals
+    // Exclude: false_positive, archived, irrelevant (relevance_score < 0.3)
     const { data: signals, error: signalsError } = await supabaseClient
       .from('signals')
       .select('*')
       .gte('received_at', periodStart.toISOString())
       .lte('received_at', periodEnd.toISOString())
       .neq('status', 'archived')
-      .order('received_at', { ascending: false });
+      .neq('status', 'false_positive')
+      .not('category', 'eq', 'industrial_flaring')
+      .not('normalized_text', 'ilike', '%industrial flaring%')
+      .not('normalized_text', 'ilike', '%thermal anomaly%flaring%')
+      .gte('relevance_score', 0.45)
+      .order('received_at', { ascending: false })
+      .limit(200);
 
     if (signalsError) throw signalsError;
 
@@ -56,7 +63,8 @@ Deno.serve(async (req) => {
       .from('incidents')
       .select('*')
       .gte('opened_at', periodStart.toISOString())
-      .lte('opened_at', periodEnd.toISOString());
+      .lte('opened_at', periodEnd.toISOString())
+      .order('opened_at', { ascending: false });
 
     if (incidentsError) throw incidentsError;
 
@@ -76,35 +84,35 @@ Deno.serve(async (req) => {
     const openIncidents = incidents?.filter(i => i.status === 'open').length || 0;
     const resolvedIncidents = incidents?.filter(i => i.status === 'resolved').length || 0;
 
-    // Use signals as-is — no per-signal AI inflation
-    const signalsWithRecommendations = (signals || []).map(s => ({ ...s, recommendations: null }));
+    // Top 25 signals for the report table — already sorted by severity desc, received desc
+    const signalsWithRecommendations = (signals || []).slice(0, 25).map(s => ({ ...s, recommendations: null }));
 
-    // Use AI to generate executive summary
-    const topSignals = (signals || []).slice(0, 5).map((s, i) =>
-      `${i + 1}. [${s.severity?.toUpperCase()} | ${s.category}] ${s.normalized_text?.substring(0, 200)} (${new Date(s.received_at).toLocaleDateString('en-CA')})`
+    // Use AI to generate executive summary — top 8 signals by severity
+    const topSignals = (signals || []).slice(0, 8).map((s, i) =>
+      `${i + 1}. [${s.severity?.toUpperCase()} | ${s.category}] ${s.normalized_text?.substring(0, 150)} (${new Date(s.received_at).toLocaleDateString('en-CA')})`
     ).join('\n');
 
-    const summaryPrompt = `Write a concise 72-hour risk snapshot for internal security leadership. Base it ONLY on the verified data below — do not introduce events, actors, or risks that are not present in this data.
+    const summaryPrompt = `Write a concise 72-hour risk snapshot for internal security leadership. Base it ONLY on the verified data below.
 
 VERIFIED DATA:
 - Period: last ${period_hours} hours
-- Total signals collected: ${signals?.length || 0}
+- Actionable signals (relevance >= 0.3, not false-positive): ${signals?.length || 0}
 - Critical severity: ${criticalSignals}
 - High severity: ${highSignals}
 - Open incidents: ${openIncidents}
 - Resolved incidents: ${resolvedIncidents}
 
 TOP SIGNALS:
-${topSignals || 'No signals in this period.'}
+${topSignals || 'No actionable signals in this period.'}
 
-GROUNDING RULES — you must follow these:
-1. Threat level must reflect ACTUAL signal counts above — do not upgrade without justification from the data
-2. If critical signals = 0, threat level cannot be CRITICAL
-3. Only reference events and actors that appear verbatim in the signal text above
-4. If data is sparse, say so plainly — do not pad with hypothetical risks
-5. No markdown formatting — plain prose only
+RULES — strictly enforced:
+1. Output ONLY plain prose. Zero markdown. No asterisks, no hashes, no dashes as dividers, no bold syntax.
+2. Threat level must match actual data. Critical signals = 0 means threat level cannot be CRITICAL.
+3. Only reference events that appear in the signal text above. Do not invent risks.
+4. If data is sparse or signals are low-relevance, say so plainly.
+5. Sentences only. No bullet points, no numbered lists, no headers.
 
-Write 2 short paragraphs: (1) what the data shows — exact counts, key signal themes; (2) what security leadership should watch or action in the next 24 hours based strictly on this data.`;
+Write exactly 2 paragraphs separated by a blank line: (1) what the data shows with exact counts and key themes; (2) what security leadership should monitor or action in the next 24 hours based strictly on this data.`;
 
     const summaryResult = await callAiGateway({
       model: 'gpt-4o-mini',
@@ -139,7 +147,7 @@ Write 2 short paragraphs: (1) what the data shows — exact counts, key signal t
       .select()
       .single();
 
-    if (reportError) throw reportError;
+    if (reportError) console.error('Report record insert failed (non-fatal):', reportError.message);
 
     // Calculate additional analytics
     const signalsByCategory = signals?.reduce((acc: any, s) => {
@@ -813,24 +821,26 @@ Write 2 short paragraphs: (1) what the data shows — exact counts, key signal t
             <tr>
               <th>Priority</th>
               <th>Status</th>
+              <th>Incident</th>
               <th>Opened</th>
               <th>Duration</th>
             </tr>
           </thead>
           <tbody>
-            ${incidents?.length ? incidents.map(inc => {
-              const duration = inc.resolved_at 
+            ${incidents?.length ? incidents.slice(0, 15).map(inc => {
+              const duration = inc.resolved_at
                 ? Math.round((new Date(inc.resolved_at).getTime() - new Date(inc.opened_at).getTime()) / 60000)
                 : Math.round((new Date().getTime() - new Date(inc.opened_at).getTime()) / 60000);
-              
+              const label = (inc.title || inc.description || inc.normalized_text || inc.summary || 'Untitled incident').substring(0, 80);
               return `
               <tr>
                 <td><span class="badge ${inc.priority === 'p1' ? 'critical' : inc.priority === 'p2' ? 'high' : 'medium'}">${inc.priority?.toUpperCase() || 'P3'}</span></td>
                 <td><span class="badge ${inc.status}">${inc.status}</span></td>
+                <td style="color: #e2e8f0; font-size: 0.85rem;">${label}</td>
                 <td>${new Date(inc.opened_at).toLocaleString()}</td>
                 <td>${duration < 60 ? duration + ' min' : Math.round(duration / 60) + ' hrs'}</td>
               </tr>`;
-            }).join('') : '<tr><td colspan="4" style="text-align: center; color: #64748b;">No incidents in this period</td></tr>'}
+            }).join('') : '<tr><td colspan="5" style="text-align: center; color: #64748b;">No incidents in this period</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -999,7 +1009,7 @@ Write 2 short paragraphs: (1) what the data shows — exact counts, key signal t
     `.trim();
 
     return new Response(
-      JSON.stringify({ report, html }),
+      JSON.stringify({ report: report || null, html }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {

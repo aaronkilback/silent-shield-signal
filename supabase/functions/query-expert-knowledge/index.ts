@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { retrieveRelevantKnowledge } from "../_shared/semantic-rag.ts";
 
 /**
  * On-Demand Expert Knowledge Query
@@ -30,34 +31,53 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
     const limit = max_results || 10;
+    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
 
     console.log(`[query-expert-knowledge] Query: "${question}", Domain: ${domain || 'all'}, Live: ${include_live_search}`);
 
-    // Step 1: Search local expert knowledge database
-    const keywords = question.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    
-    let knowledgeQuery = supabase
-      .from('expert_knowledge')
-      .select('id, domain, subdomain, knowledge_type, title, content, applicability_tags, confidence_score, citation, last_validated_at')
-      .eq('is_active', true)
-      .order('confidence_score', { ascending: false })
-      .limit(limit);
+    // Step 1: Search local expert knowledge database — semantic similarity first, keyword fallback
+    let localKnowledge: any[] | null = null;
 
-    if (domain) {
-      knowledgeQuery = knowledgeQuery.eq('domain', domain);
-    }
-
-    if (keywords.length > 0) {
-      const orConditions = keywords
-        .slice(0, 5) // Limit to avoid overly complex queries
-        .map(k => `title.ilike.%${k}%,content.ilike.%${k}%`)
-        .join(',');
-      knowledgeQuery = knowledgeQuery.or(orConditions);
-    }
-
-    const { data: localKnowledge, error: localError } = await knowledgeQuery;
-    if (localError) {
-      console.error('[query-expert-knowledge] Local query error:', localError);
+    if (OPENAI_API_KEY) {
+      // Semantic search via pgvector — finds conceptually related knowledge, not just exact keywords
+      const ragResults = await retrieveRelevantKnowledge(supabase, question, OPENAI_API_KEY, {
+        threshold: 0.60,
+        limit: limit + (domain ? 5 : 0), // over-fetch so domain post-filter still has enough
+      });
+      let filtered = ragResults;
+      if (domain) {
+        const domainFiltered = ragResults.filter(r => r.domain === domain);
+        filtered = domainFiltered.length > 0 ? domainFiltered : ragResults; // don't return empty if domain is narrow
+      }
+      localKnowledge = filtered.slice(0, limit).map(r => ({
+        id: r.id,
+        domain: r.domain,
+        knowledge_type: r.knowledge_type,
+        title: r.title,
+        content: r.content,
+        citation: r.citation,
+        confidence_score: r.similarity, // use semantic similarity as confidence proxy
+        similarity: r.similarity,
+      }));
+      console.log(`[query-expert-knowledge] Semantic search returned ${localKnowledge.length} results`);
+    } else {
+      // Fallback: keyword ilike if no OpenAI key
+      const keywords = question.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      let knowledgeQuery = supabase
+        .from('expert_knowledge')
+        .select('id, domain, subdomain, knowledge_type, title, content, applicability_tags, confidence_score, citation, last_validated_at')
+        .eq('is_active', true)
+        .order('confidence_score', { ascending: false })
+        .limit(limit);
+      if (domain) knowledgeQuery = knowledgeQuery.eq('domain', domain);
+      if (keywords.length > 0) {
+        const orConditions = keywords.slice(0, 5).map(k => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
+        knowledgeQuery = knowledgeQuery.or(orConditions);
+      }
+      const { data, error: localError } = await knowledgeQuery;
+      if (localError) console.error('[query-expert-knowledge] Keyword fallback error:', localError);
+      localKnowledge = data;
+      console.log(`[query-expert-knowledge] Keyword fallback returned ${localKnowledge?.length || 0} results`);
     }
 
     // Step 2: Also pull from global learning insights

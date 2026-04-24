@@ -12,15 +12,46 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
+async function runHibpCheck(email: string, apiKey: string): Promise<any[]> {
+  try {
+    const response = await fetch(
+      `https://haveibeenpwned.com/api/v3/breachedaccount/${encodeURIComponent(email)}?truncateResponse=false`,
+      {
+        headers: {
+          'hibp-api-key': apiKey,
+          'user-agent': 'Fortress-Silent-Shield-Signal/1.0',
+        },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    if (response.status === 404) return [];
+    if (!response.ok) {
+      console.log(`[HIBP] HTTP ${response.status} for ${email}`);
+      return [];
+    }
+    return await response.json();
+  } catch (err) {
+    console.log(`[HIBP] Check failed for ${email}: ${err}`);
+    return [];
+  }
+}
+
 const REPORT_PROMPT = `You are a senior intelligence analyst writing a structured report about a Person of Interest (POI).
 
 STRICT EVIDENCE RULE: Every factual claim (address, phone, email, associate name, criminal record, employer) MUST be sourced from the provided gathered intelligence. Do NOT fabricate, infer, or guess any specific personal details. If a detail is not in the provided data, say "Not identified in gathered intelligence."
+
+STRICT SOURCING RULE — NO VAGUE CLAIMS ALLOWED:
+- Every specific finding (activist mention, threat, protest, negative media, legal record) MUST cite the exact [Source N] number from the OSINT section AND quote the relevant URL.
+- Do NOT write general statements like "activists are discussing this online" or "there is online activity" without naming the specific publication, post, or page.
+- If a claim of activist/threat activity cannot be tied to a specific named source with a URL in the provided data, DO NOT include it. Write "Not identified in gathered intelligence" instead.
+- When quoting from a source, include: the publication/platform name, the article title or post description, and the URL. Example: "Named in activist media [Source 4] — environmentalprogress.org: 'WPATH Files: BC Children's Hospital doctor...' (https://...)"
+- Images: If a source URL has an associated image (thumbnail_url or image in metadata), reference it explicitly as "Image available: [URL]".
 
 FOR WELL-KNOWN PUBLIC FIGURES ONLY: If this subject is a widely documented public figure (politician, celebrity, executive, known criminal) you may note publicly documented facts from your training — but you MUST mark each with [AI-KNOWLEDGE] and treat them as unverified leads requiring confirmation, NOT as confirmed facts.
 
 For private individuals: Use ONLY what was gathered. Do not invent addresses, phone numbers, emails, employers, or associates.
 
-Label every claim: [OSINT] for gathered web data, [AGENT] for agent findings, [AI-KNOWLEDGE] for AI training knowledge (public figures only).
+Label every claim: [OSINT: source-name URL] for gathered web data, [AGENT] for agent findings, [AI-KNOWLEDGE] for AI training knowledge (public figures only).
 
 Format the report EXACTLY as follows (use these exact section headers):
 
@@ -93,20 +124,34 @@ Deno.serve(async (req) => {
     // ── Load entity ──────────────────────────────────────────────────────────
     const { data: entity, error: entityErr } = await supabase
       .from('entities')
-      .select('id, name, type, risk_level, threat_score, description, aliases, attributes')
+      .select('id, name, type, risk_level, threat_score, description, aliases, attributes, ai_assessment')
       .eq('id', entity_id)
       .single();
 
     if (entityErr || !entity) return successResponse({ error: "Entity not found" });
 
     // ── Load top OSINT content ───────────────────────────────────────────────
-    const { data: contentRows } = await supabase
+    // Fetch more rows than needed — temporal decay re-ranks them before slicing to 50.
+    // Old findings (>6 months) are down-weighted so fresh intelligence surfaces first.
+    const { data: rawContentRows } = await supabase
       .from('entity_content')
-      .select('title, url, content_text, content_type, relevance_score, created_at')
+      .select('title, url, content_text, content_type, relevance_score, created_at, source, metadata')
       .eq('entity_id', entity_id)
-      .order('relevance_score', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(150);
+
+    const now = Date.now();
+    const contentRows = (rawContentRows || [])
+      .map((c: any) => {
+        const ageDays = (now - new Date(c.created_at || 0).getTime()) / 86400000;
+        const decay = ageDays < 180 ? 1.0
+          : ageDays < 365 ? 0.85
+          : ageDays < 730 ? 0.65
+          : 0.45;
+        return { ...c, _adjustedScore: (c.relevance_score || 50) * decay };
+      })
+      .sort((a: any, b: any) => b._adjustedScore - a._adjustedScore)
+      .slice(0, 50);
 
     // ── Load signals mentioning this entity ──────────────────────────────────
     // Check related_entity_names (array), entity_tags (array), and normalized_text (text)
@@ -127,6 +172,35 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: false })
         .limit(15);
       signalAnalyses = analyses || [];
+    }
+
+    // ── Load entity relationships (associates & network) ─────────────────────
+    const { data: relationships } = await supabase
+      .from('entity_relationships')
+      .select('entity_a_id, entity_b_id, relationship_type, description, strength')
+      .or(`entity_a_id.eq.${entity_id},entity_b_id.eq.${entity_id}`)
+      .order('strength', { ascending: false })
+      .limit(20);
+
+    // Resolve related entity names
+    let relationshipsText = 'No known associates in database.';
+    if (relationships && relationships.length > 0) {
+      const relatedIds = relationships.map((r: any) =>
+        r.entity_a_id === entity_id ? r.entity_b_id : r.entity_a_id
+      );
+      const { data: relatedEntities } = await supabase
+        .from('entities')
+        .select('id, name, type, description')
+        .in('id', relatedIds);
+
+      const nameMap = new Map((relatedEntities || []).map((e: any) => [e.id, e]));
+      relationshipsText = relationships.map((r: any) => {
+        const relatedId = r.entity_a_id === entity_id ? r.entity_b_id : r.entity_a_id;
+        const related = nameMap.get(relatedId);
+        const relatedName = related?.name || relatedId;
+        const relatedType = related?.type || 'unknown';
+        return `- ${relatedName} (${relatedType}) — ${r.relationship_type}: ${r.description} [strength: ${Math.round((r.strength || 0) * 100)}%]`;
+      }).join('\n');
     }
 
     // ── Load watch-list status ───────────────────────────────────────────────
@@ -224,7 +298,9 @@ Deno.serve(async (req) => {
     const contentText = (contentRows || []).map((c, i) => {
       const date = c.created_at ? new Date(c.created_at).toLocaleDateString() : 'unknown date';
       const snippet = (c.content_text || '').substring(0, 1500);
-      return `[Source ${i + 1}] ${c.title || 'Untitled'} (${c.content_type || 'web'}, ${date})\nURL: ${c.url || 'N/A'}\n${snippet}`;
+      const imageNote = c.metadata?.image_url ? `\nImage: ${c.metadata.image_url}` : '';
+      const relevance = c.relevance_score ? ` [relevance: ${c.relevance_score}]` : '';
+      return `[Source ${i + 1}]${relevance}\nTitle: ${c.title || 'Untitled'}\nURL: ${c.url || 'N/A'}\nSource: ${c.source || 'unknown'} (${c.content_type || 'web'}, ${date})${imageNote}\nContent: ${snippet}`;
     }).join('\n\n---\n\n');
 
     const signalsText = (signals || []).map(s => {
@@ -236,16 +312,49 @@ Deno.serve(async (req) => {
       `- Watch Level: ${w.watch_level} | Reason: ${w.reason} | Boost: +${w.severity_boost}`
     ).join('\n');
 
-    const entityEmails: string[] = (entity.attributes as any)?.emails || [];
-    const hibpText = investigation?.hibp_checked
-      ? (investigation.hibp_breaches?.length
-          ? `Breaches found:\n${investigation.hibp_breaches.map((b: any) =>
+    const attrs = (entity.attributes as any) || {};
+    const contactInfoEmails: string[] = Array.isArray(attrs.contact_info?.email)
+      ? attrs.contact_info.email
+      : (typeof attrs.contact_info?.email === 'string' ? [attrs.contact_info.email] : []);
+    const entityEmails: string[] = [...new Set([...(attrs.emails || []), ...contactInfoEmails])];
+
+    const contactInfoPhones: string[] = Array.isArray(attrs.contact_info?.phone)
+      ? attrs.contact_info.phone
+      : (typeof attrs.contact_info?.phone === 'string' ? [attrs.contact_info.phone] : []);
+    const entityPhones: string[] = [...new Set([...(attrs.phones || []), ...contactInfoPhones])];
+
+    // Format stored ai_assessment as context for the report
+    const aiAssessment = (entity as any).ai_assessment;
+    const aiAssessmentText = aiAssessment
+      ? `Risk Summary: ${aiAssessment.risk_summary || 'N/A'}\n\nKey Findings:\n${(aiAssessment.key_findings || []).map((f: string) => `- ${f}`).join('\n')}\n\nRecommended Actions:\n${(aiAssessment.recommended_actions || []).map((a: string) => `- ${a}`).join('\n')}`
+      : null;
+    // Run HIBP live if the stored investigation didn't complete it
+    const hibpApiKey = Deno.env.get('HIBP_API_KEY') || '';
+    let liveBreaches: any[] = [];
+    let liveHibpRan = false;
+
+    if (!investigation?.hibp_checked && entityEmails.length > 0 && hibpApiKey) {
+      console.log(`[generate-poi-report] Running live HIBP check for ${entityEmails.length} email(s)`);
+      for (const email of entityEmails.slice(0, 3)) {
+        const results = await runHibpCheck(email, hibpApiKey);
+        liveBreaches.push(...results);
+        if (entityEmails.length > 1) await new Promise(r => setTimeout(r, 1500));
+      }
+      liveHibpRan = true;
+    }
+
+    const hibpBreaches = investigation?.hibp_breaches ?? (liveHibpRan ? liveBreaches : null);
+    const hibpChecked = investigation?.hibp_checked || liveHibpRan;
+
+    const hibpText = hibpChecked
+      ? (hibpBreaches?.length
+          ? `Breaches found:\n${hibpBreaches.map((b: any) =>
               `  - ${b.Name} (${b.BreachDate}): ${b.DataClasses?.join(', ')}`
             ).join('\n')}`
           : 'No credential breaches found in HaveIBeenPwned database.')
       : entityEmails.length > 0
-        ? `Breach check not performed despite ${entityEmails.length} known email(s) on file: ${entityEmails.join(', ')}. HIBP_API_KEY may not be configured. Recommend manual breach check at haveibeenpwned.com.`
-        : 'Breach check not performed — no email address on file for this subject. Add email to entity attributes and re-run investigation to enable automated breach checking.';
+        ? `Breach check not performed despite ${entityEmails.length} known email(s) on file: ${entityEmails.join(', ')}. HIBP_API_KEY may not be configured.`
+        : 'Breach check not performed — no email address on file for this subject.';
 
     const investigationMeta = investigation
       ? `Investigation run: ${new Date(investigation.created_at).toLocaleDateString()} | Sources searched: ${investigation.sources_searched} | Results found: ${investigation.results_found} | Queries run: ${investigation.queries_run?.length || 0}`
@@ -277,10 +386,14 @@ ${entity.description ? `**Description:** ${entity.description}` : ''}
 ## INVESTIGATION METADATA
 ${investigationMeta}
 
+## STORED CONTACT INFORMATION
+Emails on file: ${entityEmails.length > 0 ? entityEmails.join(', ') : 'None'}
+Phones on file: ${entityPhones.length > 0 ? entityPhones.join(', ') : 'None'}
+
 ## CREDENTIAL BREACH DATA
 ${hibpText}
 
-## WATCH LIST STATUS
+${aiAssessmentText ? `## PRIOR AI THREAT ASSESSMENT (stored from previous analysis)\n${aiAssessmentText}\n` : ''}## WATCH LIST STATUS
 ${watchText || 'Not currently on watch list.'}
 
 ## PRIOR AGENT INVESTIGATION FINDINGS (${agentFindings.length} entries)
@@ -288,6 +401,9 @@ The following findings were contributed by specialized AI agents during prior in
 
 ${agentFindingsText}
 ${signalAnalysesText ? `\n## SIGNAL PRE-ANALYSIS (${signalAnalyses.length} agent analyses of signals mentioning this subject)\n${signalAnalysesText}` : ''}
+
+## KNOWN ASSOCIATES & NETWORK (from entity_relationships database)
+${relationshipsText}
 
 ## SIGNAL HISTORY (${(signals || []).length} signals)
 ${signalsText || 'No signals found mentioning this subject.'}

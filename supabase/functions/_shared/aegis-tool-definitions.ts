@@ -2066,4 +2066,155 @@ Use this:
       },
     },
   },
+  // ── Threat intelligence IOC lookup ────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "lookup_ioc_indicator",
+      description: `Check whether a specific domain, IP address, URL, or file hash is known malicious in Fortress.
+
+Searches all ingested threat intelligence signals (including Microsoft Defender TI exports and other IOC sources) for prior sightings of the indicator. Returns a verdict of 'known_malicious' or 'unknown' with full source context.
+
+Use this:
+- When a new signal mentions a domain, IP, or hash and you want to know if Fortress has seen it before
+- To close the belief loop: if an indicator is known-bad, elevate the signal severity automatically rather than treating it as unknown
+- Before recommending containment — confirm the indicator has a sourced, traceable record in Fortress
+- To surface the original threat intelligence article that documented the indicator
+
+ALWAYS call this before concluding an IOC is novel. Prior ingestion from Defender TI or other feeds means the threat is already tracked.`,
+      parameters: {
+        type: "object",
+        properties: {
+          indicator: {
+            type: "string",
+            description: "The IOC value to look up — domain, IP address, URL, or file hash",
+          },
+          indicator_type: {
+            type: "string",
+            enum: ["domain", "ip", "url", "hash", "unknown"],
+            description: "Type hint for the indicator. Use 'unknown' if unsure.",
+          },
+          client_id: {
+            type: "string",
+            description: "Optional — scope the lookup to a specific client's signals",
+          },
+        },
+        required: ["indicator"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "assign_agent_mission",
+      description: `Assign an explicit mission to a specific agent — a short-term objective with a deadline and reporting cadence.
+
+Use this when:
+- A user wants an agent to actively monitor something ("have FININT watch these entities for 30 days")
+- A client situation requires dedicated agent focus ("task VERIDIAN-TANGO to assess Coastal GasLink risk through Q2")
+- You want an agent to proactively surface findings rather than waiting to be asked
+
+The agent will see this mission at the start of every conversation and treat it as an active directive. They will log findings as they occur.
+
+Examples:
+- assign_agent_mission(agent="FININT", title="Monitor Petronas transaction patterns", objective="Track all financial signals related to PECL and LNG Canada for suspicious transaction patterns or sanctions exposure. Report any findings immediately.", deadline="2026-07-01", reporting_cadence="on_finding")
+- assign_agent_mission(agent="ECHO-ALPHA", title="Assess Q2 hemispheric risk", objective="Monitor US-Canada defense posture changes and assess implications for Petronas operational security in NE BC.", deadline="2026-06-30", reporting_cadence="weekly")`,
+      parameters: {
+        type: "object",
+        properties: {
+          agent: {
+            type: "string",
+            description: "Agent call sign (e.g. 'FININT', 'VERIDIAN-TANGO', 'ECHO-ALPHA')",
+          },
+          title: {
+            type: "string",
+            description: "Short mission title (max 80 chars)",
+          },
+          objective: {
+            type: "string",
+            description: "Full description of what the agent should find, monitor, or assess",
+          },
+          deadline: {
+            type: "string",
+            description: "ISO date string for mission deadline (e.g. '2026-06-30'). Optional.",
+          },
+          reporting_cadence: {
+            type: "string",
+            enum: ["on_finding", "daily", "weekly"],
+            description: "How often the agent should report. 'on_finding' means immediately when something relevant is discovered.",
+          },
+          client_name: {
+            type: "string",
+            description: "Client name to associate this mission with (optional). Resolved to client_id automatically.",
+          },
+        },
+        required: ["agent", "title", "objective"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_agent_missions",
+      description: `List active or recent missions assigned to agents.
+
+Use to answer questions like:
+- "What is FININT currently tasked with?"
+- "Show me all active agent missions"
+- "What missions are assigned for Petronas?"`,
+      parameters: {
+        type: "object",
+        properties: {
+          agent: {
+            type: "string",
+            description: "Filter by agent call sign. Omit for all agents.",
+          },
+          status: {
+            type: "string",
+            enum: ["active", "completed", "paused", "abandoned", "all"],
+            description: "Filter by mission status. Default: 'active'.",
+          },
+          client_name: {
+            type: "string",
+            description: "Filter by client name.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_mission_progress",
+      description: `Log a finding or progress update to an active mission.
+
+Use this when an agent surfaces intelligence that is relevant to one of their active missions. This keeps a traceable record of what was found and when.
+
+Call this proactively when you recognize that new information satisfies or advances a mission objective.`,
+      parameters: {
+        type: "object",
+        properties: {
+          mission_id: {
+            type: "string",
+            description: "Mission UUID. Use list_agent_missions to find it if unknown.",
+          },
+          update: {
+            type: "string",
+            description: "The finding or progress note to log",
+          },
+          finding_type: {
+            type: "string",
+            enum: ["finding", "escalation", "no_change", "completed"],
+            description: "'finding' = relevant intelligence found. 'escalation' = urgent finding. 'no_change' = checked, nothing new. 'completed' = mission objective achieved.",
+          },
+          mark_completed: {
+            type: "boolean",
+            description: "Set true if this finding completes the mission objective.",
+          },
+        },
+        required: ["mission_id", "update", "finding_type"],
+      },
+    },
+  },
 ];

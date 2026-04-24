@@ -106,9 +106,15 @@ Deno.serve(async (req) => {
       // Cybersecurity
       'cybersecurity', 'netsec', 'InfoSecNews', 'blueteamsec',
       'threatintel', 'ReverseEngineering', 'pwned', 'privacy',
-      // Environmental/Activism
-      'climate', 'environment', 'ClimateActionPlan', 'energy',
-      'climate_science', 'fossilfuels', 'ClimateOffensive'
+      // Environmental/Activism — BC/Canada specific
+      'BritishColumbia', 'vancouver', 'canada', 'albertapolitics',
+      'climate', 'environment', 'ClimateActionPlan', 'fossilfuels',
+      // Pipeline / energy industry
+      'energy', 'NaturalGas', 'LNG',
+      // Indigenous / land defense
+      'indigenous', 'NativeAmerican',
+      // Social issues (covers healthcare/clinic-type clients)
+      'trans', 'asktransgender', 'detrans', 'GenderCritical',
     ];
     
     for (const subreddit of subreddits) {
@@ -221,15 +227,11 @@ Deno.serve(async (req) => {
                 // Boost confidence if client name directly mentioned
                 const confidence = hasNameMatch ? 0.90 : 0.70;
                 
-                const { error: signalError } = await supabase
-                  .from('signals')
-                  .insert({
-                    normalized_text: post.data.title,
-                    location: 'Social Media',
-                    severity: severity,
-                    category: category,
-                    entity_tags: entityTags,
-                    confidence: confidence,
+                const ingestResult_reddit = await supabase.functions.invoke('ingest-signal', {
+                  body: {
+                    text: post.data.title,
+                    source_url: `https://reddit.com${post.data.permalink}`,
+                    client_id: client.id,
                     raw_json: {
                       source: 'reddit',
                       subreddit: subreddit,
@@ -238,18 +240,11 @@ Deno.serve(async (req) => {
                       created: post.data.created_utc,
                       score: post.data.score,
                       type: category,
-                      matched_categories: [
-                        ...(isPhysicalThreat ? ['physical-threat'] : []),
-                        ...(isActivistRelated ? ['activist'] : []),
-                        ...(isDealRelated ? ['deal'] : []),
-                        ...(isSecurityRelated ? ['security'] : [])
-                      ]
                     },
-                    client_id: client.id,
-                    status: 'new'
-                  });
-
-                if (!signalError) {
+                  },
+                });
+                const ingestStatus_reddit = (ingestResult_reddit.data as any)?.status;
+                if (!ingestResult_reddit.error && ingestStatus_reddit !== 'rejected' && ingestStatus_reddit !== 'suppressed' && ingestStatus_reddit !== 'filed_as_update') {
                   signalsCreated++;
                   console.log(`Created social signal for ${client.name}`);
                   
@@ -272,6 +267,82 @@ Deno.serve(async (req) => {
         }
       } catch (error) {
         console.error(`Error fetching r/${subreddit}:`, error);
+      }
+    }
+
+    // === REDDIT DYNAMIC SEARCH — entity names and client keywords ===
+    // Searches all of Reddit for monitored entity names and client keywords,
+    // not just fixed subreddits. This catches activist posts in any community.
+    const { data: activeEntities } = await supabase
+      .from('entities')
+      .select('id, name, client_id, attributes')
+      .eq('active_monitoring_enabled', true)
+      .eq('type', 'person');
+
+    const { data: allClients } = await supabase
+      .from('clients')
+      .select('id, name, monitoring_keywords');
+
+    const redditSearchTerms: Array<{ term: string; clientId: string | null; entityId: string | null }> = [];
+
+    // Add person entity names (most targeted — finds posts about specific staff)
+    for (const entity of (activeEntities || []).slice(0, 8)) {
+      redditSearchTerms.push({ term: `"${entity.name}"`, clientId: entity.client_id || null, entityId: entity.id });
+    }
+
+    // Add top client keywords (broader coverage)
+    for (const client of (allClients || []).slice(0, 4)) {
+      for (const kw of (client.monitoring_keywords || []).slice(0, 3)) {
+        redditSearchTerms.push({ term: `"${kw}"`, clientId: client.id, entityId: null });
+      }
+    }
+
+    for (const { term, clientId, entityId } of redditSearchTerms) {
+      try {
+        const q = encodeURIComponent(term);
+        const searchResp = await fetch(
+          `https://www.reddit.com/search.json?q=${q}&sort=new&limit=10&t=month`,
+          { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SOCBot/1.0)' } }
+        );
+        if (!searchResp.ok) continue;
+        const searchData = await searchResp.json();
+
+        for (const child of (searchData.data?.children || []).slice(0, 5)) {
+          const post = child.data;
+          if (!post?.title) continue;
+          const combinedText = `${post.title} ${post.selftext || ''}`.toLowerCase();
+          if (combinedText.length < 30) continue;
+
+          // Determine category
+          let category = 'general';
+          let severity = 'low';
+          if (/threat|harass|dox|doxx|doxxed|"home address"|"find them"/.test(combinedText)) {
+            category = 'physical_threat'; severity = 'high';
+          } else if (/protest|blockade|activist|campaign|oppose|boycott/.test(combinedText)) {
+            category = 'activist'; severity = 'medium';
+          } else if (/breach|hack|ransomware|malware|vulnerability/.test(combinedText)) {
+            category = 'security'; severity = 'medium';
+          }
+
+          await supabase.functions.invoke('ingest-signal', {
+            body: {
+              text: `${post.title}\n\n${(post.selftext || '').substring(0, 500)}`,
+              source_url: `https://reddit.com${post.permalink}`,
+              client_id: clientId,
+              raw_json: {
+                source: 'reddit_search',
+                subreddit: post.subreddit,
+                author: post.author,
+                score: post.score,
+                search_term: term,
+                entity_id: entityId,
+              },
+            },
+          });
+        }
+        await new Promise(r => setTimeout(r, 300)); // rate limit
+      } catch (e) {
+        console.error(`Reddit search error for "${term}":`, e);
       }
     }
 
@@ -370,15 +441,11 @@ Deno.serve(async (req) => {
                 
                 const confidence = hasNameMatch ? 0.90 : 0.70;
                 
-                const { error: signalError } = await supabase
-                  .from('signals')
-                  .insert({
-                    normalized_text: story.title,
-                    location: 'Hacker News',
-                    severity: severity,
-                    category: category,
-                    entity_tags: entityTags,
-                    confidence: confidence,
+                const ingestResult_hn = await supabase.functions.invoke('ingest-signal', {
+                  body: {
+                    text: story.title,
+                    source_url: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
+                    client_id: client.id,
                     raw_json: {
                       source: 'hackernews',
                       url: story.url || `https://news.ycombinator.com/item?id=${story.id}`,
@@ -387,18 +454,11 @@ Deno.serve(async (req) => {
                       score: story.score,
                       comments: story.descendants,
                       type: category,
-                      matched_categories: [
-                        ...(isPhysicalThreat ? ['physical-threat'] : []),
-                        ...(isActivistRelated ? ['activist'] : []),
-                        ...(isDealRelated ? ['deal'] : []),
-                        ...(isSecurityRelated ? ['security'] : [])
-                      ]
                     },
-                    client_id: client.id,
-                    status: 'new'
-                  });
-                
-                if (!signalError) {
+                  },
+                });
+                const ingestStatus_hn = (ingestResult_hn.data as any)?.status;
+                if (!ingestResult_hn.error && ingestStatus_hn !== 'rejected' && ingestStatus_hn !== 'suppressed' && ingestStatus_hn !== 'filed_as_update') {
                   signalsCreated++;
                   console.log(`Created Hacker News signal for ${client.name}`);
                 }
@@ -471,19 +531,21 @@ Deno.serve(async (req) => {
                 else if (ACTIVIST_KEYWORDS.some(kw => includesKeyword(combinedText, kw))) { category = 'reputation'; severity = hasNameMatch ? 'medium' : 'low'; }
                 else if (PHYSICAL_THREAT_KEYWORDS.some(kw => includesKeyword(combinedText, kw))) { category = 'physical'; severity = hasNameMatch ? 'high' : 'medium'; }
 
-                const { error: signalError } = await supabase
-                  .from('signals')
-                  .insert({
+                const ingestResult_cse = await supabase.functions.invoke('ingest-signal', {
+                  body: {
+                    text: `Twitter/X: ${item.title?.substring(0, 250) || snippet.substring(0, 250)}`,
+                    source_url: item.link || undefined,
                     client_id: client.id,
-                    normalized_text: `Twitter/X: ${item.title?.substring(0, 250) || snippet.substring(0, 250)}`,
-                    category,
-                    severity,
-                    location: 'Twitter/X',
                     raw_json: { platform: 'twitter', source: 'google_cse', keyword, url: item.link, snippet: item.snippet },
-                    status: 'new',
-                    confidence: hasNameMatch ? 0.80 : 0.55
-                  });
-                if (!signalError) { signalsCreated++; console.log(`Created Google CSE Twitter signal for ${client.name}`); }
+                  },
+                });
+                const ingestStatus_cse = (ingestResult_cse.data as any)?.status;
+                if (!ingestResult_cse.error && ingestStatus_cse !== 'rejected' && ingestStatus_cse !== 'suppressed' && ingestStatus_cse !== 'filed_as_update') {
+                  signalsCreated++;
+                  console.log(`Created Google CSE Twitter signal for ${client.name}: ${ingestStatus_cse}`);
+                } else {
+                  console.log(`↳ ${ingestStatus_cse || 'error'}: Google CSE Twitter signal for ${client.name}`);
+                }
                 break;
               }
             }
@@ -585,27 +647,22 @@ Deno.serve(async (req) => {
 
               const citations = pData.citations || [];
               const primaryUrl = citations.length > 0 ? citations[0] : null;
-              const { error: signalError } = await supabase
-                .from('signals')
-                .insert({
+              const ingestResult_perp = await supabase.functions.invoke('ingest-signal', {
+                body: {
+                  text: `Social Intelligence: ${content.substring(0, 300)}`,
+                  source_url: primaryUrl || undefined,
                   client_id: client.id,
-                  normalized_text: `Social Intelligence: ${content.substring(0, 300)}`,
-                  signal_type: 'social',
-                  category,
-                  severity,
-                  location: 'Social Media (Multi-Platform)',
                   raw_json: {
                     platform: 'perplexity_sonar',
                     source: 'multi_platform_search',
                     source_url: primaryUrl,
-                    link: primaryUrl,
                     citations,
                     full_content: content.substring(0, 2000),
                   },
-                  status: 'new',
-                  confidence: 0.70
-                });
-              if (!signalError) { signalsCreated++; console.log(`Created Perplexity social signal for ${client.name}`); }
+                },
+              });
+              const ingestStatus_perp = (ingestResult_perp.data as any)?.status;
+              if (!ingestResult_perp.error && ingestStatus_perp !== 'rejected' && ingestStatus_perp !== 'suppressed' && ingestStatus_perp !== 'filed_as_update') { signalsCreated++; console.log(`Created Perplexity social signal for ${client.name}: ${ingestStatus_perp}`); }
             }
           }
         } catch (error) {

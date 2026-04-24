@@ -22,7 +22,11 @@ import {
  *   5. 50s execution ceiling
  */
 
-// Platforms to search via Google CSE
+// Platforms to search via Google CSE.
+// Twitter/X is best indexed. Facebook public pages and Instagram public profiles
+// are partially indexed — CSE returns fewer results but still catches public posts
+// from activist pages and accounts that have web presence.
+// Meta Graph API (when FACEBOOK_ACCESS_TOKEN is set) supplements CSE with real API access.
 const PLATFORMS = [
   { name: 'twitter', sites: ['site:x.com', 'site:twitter.com'], label: 'Twitter/X' },
   { name: 'facebook', sites: ['site:facebook.com'], label: 'Facebook' },
@@ -80,7 +84,7 @@ Deno.serve(async (req) => {
     const [clientsResult, entitiesResult] = await Promise.all([
       supabase.from('clients').select('id, name, organization, industry, monitoring_keywords'),
       supabase.from('entities')
-        .select('id, name, type, aliases, risk_level, attributes')
+        .select('id, name, type, aliases, risk_level, attributes, client_id')
         .eq('active_monitoring_enabled', true)
         .in('type', ['organization', 'person'])
     ]);
@@ -88,10 +92,151 @@ Deno.serve(async (req) => {
     const clients = clientsResult.data || [];
     const entities = entitiesResult.data || [];
 
+    // Build map of client_id → monitoring_keywords for entity query enrichment
+    const clientKeywordsMap = new Map<string, string[]>();
+    for (const c of clients) {
+      if (c.id && c.monitoring_keywords?.length) {
+        clientKeywordsMap.set(c.id, c.monitoring_keywords);
+      }
+    }
+
     console.log(`[SocialUnified] ${clients.length} clients, ${entities.length} entities`);
 
+    // ═══ META GRAPH API — Facebook & Instagram (runs first when configured) ═══
+    // Set FACEBOOK_ACCESS_TOKEN as "{app_id}|{app_secret}" from developers.facebook.com
+    // This provides real API access to public Facebook page posts and Instagram hashtags,
+    // supplementing the CSE fallback below.
+    const metaToken = Deno.env.get('FACEBOOK_ACCESS_TOKEN');
+    if (metaToken) {
+      console.log('[SocialUnified] Meta Graph API configured — running FB/IG API phase');
+
+      // Collect search terms: client keywords + entity names
+      const metaSearchTerms: Array<{ term: string; clientId: string | null; entityId: string | null }> = [];
+      for (const client of clients.slice(0, 4)) {
+        for (const kw of (client.monitoring_keywords || []).slice(0, 4)) {
+          metaSearchTerms.push({ term: kw, clientId: client.id, entityId: null });
+        }
+        metaSearchTerms.push({ term: client.name, clientId: client.id, entityId: null });
+      }
+      for (const entity of entities.filter((e: any) => e.type === 'person').slice(0, 8)) {
+        metaSearchTerms.push({ term: entity.name, clientId: entity.client_id || null, entityId: entity.id });
+      }
+
+      // Step 1: Find relevant Facebook pages for each term
+      const discoveredPageIds = new Set<string>();
+      for (const { term } of metaSearchTerms.slice(0, 10)) {
+        try {
+          const pageSearchUrl = `https://graph.facebook.com/v21.0/pages/search?q=${encodeURIComponent(term)}&fields=id,name,link&limit=5&access_token=${metaToken}`;
+          const pageResp = await fetch(pageSearchUrl);
+          if (!pageResp.ok) continue;
+          const pageData = await pageResp.json();
+          for (const page of pageData.data || []) {
+            discoveredPageIds.add(page.id);
+          }
+          await new Promise(r => setTimeout(r, 500));
+        } catch (e) {
+          console.warn(`[SocialUnified] Meta page search error for "${term}":`, e);
+        }
+      }
+
+      // Step 2: Fetch recent posts from discovered pages
+      const since24h = Math.floor((Date.now() - 24 * 3600000) / 1000);
+      for (const pageId of Array.from(discoveredPageIds).slice(0, 15)) {
+        try {
+          const postsUrl = `https://graph.facebook.com/v21.0/${pageId}/posts?fields=message,story,permalink_url,created_time&limit=10&since=${since24h}&access_token=${metaToken}`;
+          const postsResp = await fetch(postsUrl);
+          if (!postsResp.ok) continue;
+          const postsData = await postsResp.json();
+
+          for (const post of postsData.data || []) {
+            const text = (post.message || post.story || '').trim();
+            if (text.length < 40) continue;
+
+            // Find best matching client/entity for this post
+            let matchedClientId: string | null = null;
+            let matchedEntityId: string | null = null;
+            const lowerText = text.toLowerCase();
+            for (const { term, clientId, entityId } of metaSearchTerms) {
+              if (lowerText.includes(term.toLowerCase())) {
+                matchedClientId = clientId;
+                matchedEntityId = entityId;
+                break;
+              }
+            }
+
+            await supabase.functions.invoke('ingest-signal', {
+              body: {
+                text,
+                source_url: post.permalink_url || `https://facebook.com/${pageId}`,
+                client_id: matchedClientId,
+                raw_json: {
+                  source: 'facebook_graph_api',
+                  page_id: pageId,
+                  created_time: post.created_time,
+                  entity_id: matchedEntityId,
+                },
+              },
+            });
+          }
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          console.warn(`[SocialUnified] Meta posts fetch error for page ${pageId}:`, e);
+        }
+      }
+
+      // Step 3: Instagram hashtag monitoring via Graph API
+      // Requires INSTAGRAM_BUSINESS_ACCOUNT_ID env var alongside FACEBOOK_ACCESS_TOKEN
+      const igAccountId = Deno.env.get('INSTAGRAM_BUSINESS_ACCOUNT_ID');
+      if (igAccountId) {
+        const igHashtags: string[] = [];
+        for (const client of clients.slice(0, 3)) {
+          for (const kw of (client.monitoring_keywords || []).slice(0, 3)) {
+            igHashtags.push(kw.replace(/\s+/g, '').toLowerCase());
+          }
+        }
+        for (const hashtag of [...new Set(igHashtags)].slice(0, 8)) {
+          try {
+            const hashtagSearchUrl = `https://graph.facebook.com/v21.0/ig-hashtag-search?q=${encodeURIComponent(hashtag)}&user_id=${igAccountId}&access_token=${metaToken}`;
+            const hashtagResp = await fetch(hashtagSearchUrl);
+            if (!hashtagResp.ok) continue;
+            const hashtagData = await hashtagResp.json();
+            const hashtagId = hashtagData.data?.[0]?.id;
+            if (!hashtagId) continue;
+
+            const topMediaUrl = `https://graph.facebook.com/v21.0/${hashtagId}/recent_media?fields=caption,permalink,timestamp&limit=10&user_id=${igAccountId}&access_token=${metaToken}`;
+            const mediaResp = await fetch(topMediaUrl);
+            if (!mediaResp.ok) continue;
+            const mediaData = await mediaResp.json();
+
+            for (const media of mediaData.data || []) {
+              const caption = (media.caption || '').trim();
+              if (caption.length < 40) continue;
+              await supabase.functions.invoke('ingest-signal', {
+                body: {
+                  text: `#${hashtag}\n\n${caption}`,
+                  source_url: media.permalink,
+                  raw_json: {
+                    source: 'instagram_graph_api',
+                    hashtag,
+                    timestamp: media.timestamp,
+                  },
+                },
+              });
+            }
+            await new Promise(r => setTimeout(r, 500));
+          } catch (e) {
+            console.warn(`[SocialUnified] Instagram hashtag error for #${hashtag}:`, e);
+          }
+        }
+      }
+
+      console.log('[SocialUnified] Meta Graph API phase complete');
+    } else {
+      console.log('[SocialUnified] FACEBOOK_ACCESS_TOKEN not set — using CSE only for FB/IG');
+    }
+
     // ═══ SEARCH BUDGET ═══
-    const MAX_SEARCHES = 15;
+    const MAX_SEARCHES = 25;
     let searchBudgetRemaining = MAX_SEARCHES;
     let signalsCreated = 0;
     let aiRejected = 0;
@@ -124,7 +269,7 @@ Deno.serve(async (req) => {
     }
 
     // Entity queries — prioritize those with platform handles
-    for (const entity of entities.slice(0, 6)) {
+    for (const entity of entities.slice(0, 15)) {
       const attrs = entity.attributes || {};
       
       // Twitter/X
@@ -169,14 +314,38 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Generic fallback if no handles
+      // Generic fallback if no handles — use client-specific or entity-level context terms
       if (!twitterHandle && !fbHandle && !igHandle) {
+        // Prefer entity-level monitoring_context, then client keywords, then generic fallback
+        let contextTerms = attrs.monitoring_context as string | undefined;
+        if (!contextTerms && entity.client_id) {
+          const clientKws = clientKeywordsMap.get(entity.client_id);
+          if (clientKws?.length) {
+            // Use up to 3 most specific client keywords as OR terms
+            contextTerms = clientKws.slice(0, 3).map((k: string) => `"${k}"`).join(' OR ');
+          }
+        }
+        if (!contextTerms) {
+          contextTerms = 'pipeline OR LNG OR protest';
+        }
         searchQueue.push({
-          query: `site:x.com OR site:facebook.com OR site:instagram.com "${entity.name}" (pipeline OR LNG OR protest)`,
+          query: `site:x.com OR site:facebook.com OR site:instagram.com "${entity.name}" (${contextTerms})`,
           platform: 'multi',
           sourceName: entity.name,
           sourceType: 'entity',
-          clientId: null,
+          clientId: entity.client_id || null,
+          entityId: entity.id,
+        });
+      }
+
+      // Threat/targeting query for person entities — always added regardless of handles
+      if (entity.type === 'person') {
+        searchQueue.push({
+          query: `"${entity.name}" (threat OR harass OR dox OR doxxed OR "personal information" OR "home address" OR protest OR "at risk")`,
+          platform: 'multi',
+          sourceName: entity.name,
+          sourceType: 'entity',
+          clientId: entity.client_id || null,
           entityId: entity.id,
         });
       }

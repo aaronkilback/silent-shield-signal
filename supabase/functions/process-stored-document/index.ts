@@ -1430,6 +1430,9 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
               domain: entry.domain || 'threat_intelligence',
               subdomain: entry.subdomain || 'document_upload',
               knowledge_type: 'document_derived',
+              // expert_name attribution lets the knowledge-synthesizer track and credit
+              // library documents as a distinct source in agent belief formation.
+              expert_name: 'library_document',
               title: (entry.title || `Finding from ${document.filename}`).substring(0, 200),
               content: entry.content || '',
               applicability_tags: entry.tags || [],
@@ -1437,11 +1440,45 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
               confidence_score: 0.75,
             }));
 
-            const { error: kbErr } = await supabase.from('expert_knowledge').insert(kbInserts);
+            const { data: kbData, error: kbErr } = await supabase
+              .from('expert_knowledge')
+              .insert(kbInserts)
+              .select('id');
             if (kbErr) {
               console.error('Knowledge bank insert error:', kbErr.message);
             } else {
               console.log(`Generated ${kbInserts.length} knowledge bank entries`);
+              // Embed each entry so semantic search (search_expert_knowledge_semantic)
+              // can find it. generate-embeddings doesn't support expert_knowledge so
+              // we embed inline. Failures are non-fatal.
+              if (kbData && kbData.length > 0) {
+                await Promise.all(kbInserts.map(async (entry: any, i: number) => {
+                  if (!kbData[i]?.id) return;
+                  try {
+                    const embResp = await fetch('https://api.openai.com/v1/embeddings', {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        model: 'text-embedding-3-small',
+                        input: `${entry.title}\n${entry.content}`.substring(0, 8000),
+                      }),
+                    });
+                    if (embResp.ok) {
+                      const embData = await embResp.json();
+                      await supabase
+                        .from('expert_knowledge')
+                        .update({ embedding: embData.data[0].embedding })
+                        .eq('id', kbData[i].id);
+                    }
+                  } catch (e) {
+                    console.warn(`Embedding failed for knowledge entry ${i} (non-fatal):`, e);
+                  }
+                }));
+                console.log(`Embedded ${kbData.length} knowledge bank entries for semantic search`);
+              }
             }
           }
         }
@@ -1654,6 +1691,131 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    // ── kb_backfill: re-run knowledge bank extraction for processed documents ──
+    // Finds archival_documents that don't yet have a 'library_document' entry in
+    // expert_knowledge, runs AI extraction + embedding for each, and returns a
+    // summary. Safe to call multiple times — checks citation before inserting.
+    if (body.kb_backfill) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      const since = body.since_days ? `${body.since_days}d` : '30d';
+      const sinceDays = body.since_days ?? 30;
+      const sinceDate = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: docs, error: docsErr } = await supabase
+        .from('archival_documents')
+        .select('id, filename, content_text, metadata')
+        .gte('created_at', sinceDate)
+        .not('content_text', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (docsErr) {
+        return new Response(JSON.stringify({ error: docsErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // Get filenames that already have library_document entries
+      const { data: existing } = await supabase
+        .from('expert_knowledge')
+        .select('citation')
+        .eq('expert_name', 'library_document')
+        .gte('created_at', sinceDate);
+      const alreadyDone = new Set((existing || []).map((e: any) => e.citation));
+
+      // Build list of docs that need processing
+      const docsToProcess = (docs || []).filter(doc => {
+        if (!doc.content_text || doc.content_text.length < 200) return false;
+        const prefix = `Extracted from uploaded document: ${doc.filename}`;
+        return ![...alreadyDone].some(c => c?.startsWith(prefix));
+      });
+      const skipped = (docs?.length ?? 0) - docsToProcess.length;
+
+      // Return immediately — process all docs in parallel in the background
+      const processAll = async () => {
+        await Promise.allSettled(docsToProcess.map(async (doc) => {
+          const textContent: string = doc.content_text;
+          const expectedCitationPrefix = `Extracted from uploaded document: ${doc.filename}`;
+          try {
+            const kbResp = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+              signal: AbortSignal.timeout(30000),
+              body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: [
+                  { role: 'system', content: 'You are a security intelligence analyst. Extract 3-5 key findings from a document for a corporate security knowledge base. Return ONLY a valid JSON array, no markdown.' },
+                  { role: 'user', content: `Extract 3-5 key intelligence findings from this document.\n\nDOCUMENT: "${doc.filename}"\nCONTENT:\n${textContent.substring(0, 8000)}\n\nReturn a JSON array. Each object:\n{\n  "title": "Concise finding title (under 120 chars)",\n  "content": "Detailed finding with context (200-500 chars)",\n  "domain": "one of: physical_security|cyber|executive_protection|crisis_management|threat_intelligence|geopolitical|financial_crime|compliance|general",\n  "subdomain": "specific subtopic",\n  "tags": ["tag1", "tag2"]\n}\n\nOnly extract genuinely valuable intelligence insights. Skip boilerplate.` },
+                ],
+                max_tokens: 2000,
+                temperature: 0.3,
+              }),
+            });
+            if (!kbResp.ok) { console.warn(`[kb_backfill] OpenAI ${kbResp.status} for ${doc.filename}`); return; }
+
+            const kbData = await kbResp.json();
+            let kbContent = (kbData.choices?.[0]?.message?.content || '[]').replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '').trim();
+            let kbEntries: any[] = [];
+            try { kbEntries = JSON.parse(kbContent); } catch { return; }
+            if (!Array.isArray(kbEntries) || kbEntries.length === 0) return;
+
+            const kbInserts = kbEntries.slice(0, 5).map((entry: any) => ({
+              domain: entry.domain || 'threat_intelligence',
+              subdomain: entry.subdomain || 'document_upload',
+              knowledge_type: 'document_derived',
+              expert_name: 'library_document',
+              title: (entry.title || `Finding from ${doc.filename}`).substring(0, 200),
+              content: entry.content || '',
+              applicability_tags: entry.tags || [],
+              citation: `${expectedCitationPrefix} (${new Date().toISOString().split('T')[0]})`,
+              confidence_score: 0.75,
+            }));
+
+            const { data: inserted, error: insertErr } = await supabase.from('expert_knowledge').insert(kbInserts).select('id');
+            if (insertErr) { console.error(`[kb_backfill] Insert error for ${doc.filename}:`, insertErr.message); return; }
+            console.log(`[kb_backfill] ${doc.filename}: inserted ${kbInserts.length} entries`);
+
+            // Embed in parallel
+            await Promise.allSettled((inserted || []).map(async (row: any, i: number) => {
+              try {
+                const embResp = await fetch('https://api.openai.com/v1/embeddings', {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+                  signal: AbortSignal.timeout(10000),
+                  body: JSON.stringify({ model: 'text-embedding-3-small', input: `${kbInserts[i].title}\n${kbInserts[i].content}`.substring(0, 8000) }),
+                });
+                if (embResp.ok) {
+                  const embData = await embResp.json();
+                  await supabase.from('expert_knowledge').update({ embedding: embData.data[0].embedding }).eq('id', row.id);
+                }
+              } catch { /* non-fatal */ }
+            }));
+            console.log(`[kb_backfill] ${doc.filename}: embeddings generated`);
+          } catch (e: any) {
+            console.error(`[kb_backfill] Error processing ${doc.filename}:`, e.message);
+          }
+        }));
+        console.log(`[kb_backfill] Complete. Processed ${docsToProcess.length} docs.`);
+      };
+
+      try {
+        (EdgeRuntime as any).waitUntil(processAll());
+      } catch {
+        processAll().catch(e => console.error('[kb_backfill] Background error:', e));
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: 'processing',
+          message: `Backfilling ${docsToProcess.length} documents in background (${skipped} already done). Check function logs for progress.`,
+          docs_queued: docsToProcess.map(d => d.filename),
+          since,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { documentId, sync } = body;
     if (!documentId) {
       return new Response(

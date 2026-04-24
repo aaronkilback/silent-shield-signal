@@ -275,7 +275,7 @@ const Investigations = () => {
                   </p>
                 )}
                 <div className="text-xs text-muted-foreground">
-                  <p>Created: {format(new Date(investigation.created_at), 'MMM dd, yyyy')}</p>
+                  <p>Created: {format(new Date(investigation.created_at), "MMM d, yyyy 'at' h:mm a")}</p>
                   <p>By: {investigation.created_by_name}</p>
                 </div>
               </Card>

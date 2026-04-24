@@ -85,12 +85,27 @@ Deno.serve(async (req) => {
         const contactInfo = attributes.contact_info || {};
         const socialMedia = contactInfo.social_media || {};
         const location = entity.current_location || '';
-        
+
+        // Build disambiguation anchors from structured attributes.
+        // These are appended to search queries so common-name individuals
+        // (e.g. "Daniel Metzger") don't match unrelated people globally.
+        const institution: string = attributes.institution || '';
+        const role: string = attributes.role || '';
+        const specialty: string = attributes.specialty || '';
+        // Pick the single most distinctive anchor term available
+        const disambigAnchor: string = institution || specialty || role || '';
+
         // PART 1: Perform targeted web searches using entity details
-        const searchQueries: string[] = [
-          `"${entity.name}"`,
-          `"${entity.name}" news`,
-        ];
+        const searchQueries: string[] = [];
+
+        if (disambigAnchor) {
+          // Lead with a scoped query — far fewer false positives
+          searchQueries.push(`"${entity.name}" "${disambigAnchor}"`);
+          searchQueries.push(`"${entity.name}" threat OR harassment OR doxxing OR protest`);
+        } else {
+          searchQueries.push(`"${entity.name}"`);
+          searchQueries.push(`"${entity.name}" news`);
+        }
 
         // Add location-specific searches
         if (location) {
@@ -100,12 +115,16 @@ Deno.serve(async (req) => {
         // Add social media searches with handles
         if (socialMedia.facebook) {
           searchQueries.push(`site:facebook.com "${socialMedia.facebook}"`);
+        } else if (disambigAnchor) {
+          searchQueries.push(`site:facebook.com "${entity.name}" "${disambigAnchor}"`);
         } else {
           searchQueries.push(`site:facebook.com "${entity.name}"`);
         }
 
         if (socialMedia.linkedin) {
           searchQueries.push(`site:linkedin.com "${socialMedia.linkedin}"`);
+        } else if (disambigAnchor) {
+          searchQueries.push(`site:linkedin.com "${entity.name}" "${disambigAnchor}"`);
         } else {
           searchQueries.push(`site:linkedin.com "${entity.name}"`);
         }
@@ -147,12 +166,25 @@ Deno.serve(async (req) => {
                 const allPartsPresent = nameParts.every((part: string) => contentToCheck.includes(part));
                 
                 if (allPartsPresent) {
+                  // Build a concise identity card from structured attributes so the
+                  // AI can definitively reject homonyms (e.g. a San Francisco
+                  // acupuncturist vs. a Vancouver pediatric endocrinologist).
+                  const identityLines: string[] = [];
+                  if (institution) identityLines.push(`Institution: ${institution}`);
+                  if (role) identityLines.push(`Role: ${role}`);
+                  if (specialty) identityLines.push(`Specialty: ${specialty}`);
+                  if (location) identityLines.push(`Location: ${location}`);
+                  if (entity.description) identityLines.push(`Background: ${entity.description.substring(0, 200)}`);
+                  const identityCard = identityLines.length
+                    ? identityLines.join('\n')
+                    : entity.description || 'No additional context';
+
                   // Use AI to verify this is actually about the same person
                   const verifyResult = await callAiGateway({
                     model: 'gpt-4o-mini',
                     messages: [
-                      { role: 'system', content: 'You are verifying if a web search result is actually about a specific person. Respond with only "YES" or "NO".' },
-                      { role: 'user', content: `Is this search result about the person "${entity.name}"?\n\nDescription: ${entity.description || 'No description available'}\n\nSearch result title: ${item.title}\nSearch result snippet: ${item.snippet || 'No snippet'}\nURL: ${item.link}\n\nAnswer YES only if this content is clearly about the same specific individual named "${entity.name}". Answer NO if it's about a different person who happens to have a similar name, or if it's unrelated content.` }
+                      { role: 'system', content: 'You are verifying whether a web search result is about a specific individual. You must be strict: if the result is about ANY other person who shares the same name, answer NO. Respond with only "YES" or "NO".' },
+                      { role: 'user', content: `Is this search result about the specific person described below?\n\nPERSON WE ARE TRACKING:\nName: ${entity.name}\n${identityCard}\n\nSEARCH RESULT:\nTitle: ${item.title}\nSnippet: ${item.snippet || 'No snippet'}\nURL: ${item.link}\n\nAnswer YES only if this content is clearly about THIS specific individual (matching institution, role, or specialty). Answer NO if it is about a different person who shares the name, or if the content is unrelated.` }
                     ],
                     functionName: 'osint-entity-scan',
                     extraBody: { max_tokens: 10 },

@@ -161,7 +161,7 @@ function selectInitialAgent(incident: any, signal: any): { agentCallSign: string
   return { agentCallSign: 'BIRD-DOG', agentId: 'b304c547-ab87-41a6-805c-e65330ee0f05' };
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -256,14 +256,37 @@ serve(async (req) => {
       } catch { /* service call, no user */ }
     }
 
-    // Tier 2: Retrieve agent memory, knowledge graph, cross-agent insights, calibration, and preferences in parallel
-    const [memoryContext, graphContext, graphEdges, crossAgentContext, agentCalibration, analystPrefs] = await Promise.all([
+    // Tier 2: Retrieve agent memory, knowledge graph, cross-agent insights, calibration, preferences, and mesh inbox in parallel
+    const [memoryContext, graphContext, graphEdges, crossAgentContext, agentCalibration, analystPrefs, meshInboxContext] = await Promise.all([
       buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
       buildGraphContext(supabase, incident_id),
       discoverIncidentConnections(supabase, incident_id, selectedAgent),
       buildCrossAgentContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
       getAgentCalibration(supabase, selectedAgent),
       requestingUserId ? getAnalystPreferences(supabase, requestingUserId) : Promise.resolve({}),
+      // Read unread mesh messages sent to this agent by peers, then mark them read
+      (async () => {
+        try {
+          const { data: msgs } = await supabase
+            .from('agent_mesh_messages')
+            .select('from_agent, subject, content, relevance_score, created_at')
+            .eq('to_agent', selectedAgent)
+            .eq('is_read', false)
+            .order('created_at', { ascending: false })
+            .limit(5);
+          if (!msgs || msgs.length === 0) return '';
+          // Mark as read (fire-and-forget)
+          supabase.from('agent_mesh_messages')
+            .update({ is_read: true })
+            .eq('to_agent', selectedAgent)
+            .eq('is_read', false)
+            .then(() => {}, () => {});
+          const lines = msgs.map((m: any) =>
+            `[${m.from_agent} → ${selectedAgent}] (${(m.relevance_score * 100).toFixed(0)}% relevance) ${m.content.substring(0, 300)}`
+          ).join('\n');
+          return `\n=== PEER INTELLIGENCE (${msgs.length} unread messages from fellow agents) ===\n${lines}\nNOTE: These insights were shared by peer agents. Integrate relevant findings into your analysis.\n`;
+        } catch { return ''; }
+      })(),
     ]);
     
     if (graphEdges.length > 0) {
@@ -301,6 +324,7 @@ ${incident.signals?.raw_json?.ai_decision ? JSON.stringify(incident.signals.raw_
 ${incident.timeline_json?.map((t: any) => `[${t.timestamp}] ${t.event}: ${t.details}`).join('\n') || 'No timeline entries'}
 
 ${memoryContext}
+${meshInboxContext}
 ${graphContext}
 ${crossAgentContext}
 

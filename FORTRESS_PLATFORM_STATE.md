@@ -964,4 +964,192 @@ Each authorization records:
 | `supabase/functions/confirm-client-authorization/index.ts` | New public edge function |
 | `src/pages/ClientAuthorization.tsx` | New public client-facing page |
 | `src/App.tsx` | Public route `/authorize/:token` |
+
+---
+
+## §25 Signal Feed Delete/Dismiss Bugs — Root Causes and Fixes (April 15, 2026)
+
+Three separate bugs caused signal deletion to silently fail across both feed views (unmatched and recent). None were regressions — all three had never worked since the features were first written.
+
+### 25.1 The RLS Silent Failure Pattern
+
+**Critical warning for all future DB work:** Supabase RLS policy violations do not throw errors. A blocked INSERT/UPDATE/DELETE returns:
+- `error: null`
+- `data: []` or `count: 0`
+
+This means any toast that fires on `if (!error)` will say "success" even though nothing was written. The only tell is that the UI item remains in the feed after refetch.
+
+**Diagnosis technique:** If a mutation reports success but the record stays, check RLS policies for the affected table first. Run:
+```sql
+SELECT policyname, cmd FROM pg_policies WHERE tablename = 'your_table';
+```
+
+### 25.2 Bug 1 — Missing UPDATE/DELETE Policies on `signal_correlation_groups`
+
+**Table:** `public.signal_correlation_groups`
+
+**What happened:** The table was created with only a SELECT policy for analysts. No UPDATE or DELETE policy existed. Every dismiss and delete operation in the unmatched signal feed (Signals page) touched this table — all were silently blocked.
+
+**Symptom:** Clicking dismiss or delete showed a success toast but the signal remained in the feed.
+
+**Fix:** Migration `supabase/migrations/20260415000005_fix_correlation_groups_rls.sql`
+
+Added UPDATE and DELETE policies for `analyst`, `admin`, and `super_admin` roles:
+```sql
+CREATE POLICY "Analysts and admins can update correlation groups"
+  ON public.signal_correlation_groups FOR UPDATE TO authenticated
+  USING (has_role(auth.uid(), 'analyst'::app_role) OR ...)
+  WITH CHECK (has_role(auth.uid(), 'analyst'::app_role) OR ...);
+
+CREATE POLICY "Analysts and admins can delete correlation groups"
+  ON public.signal_correlation_groups FOR DELETE TO authenticated
+  USING (has_role(auth.uid(), 'analyst'::app_role) OR ...);
+```
+
+### 25.3 Bug 2 — Operation Ordering in Unmatched Feed Delete Mutation
+
+**File:** `src/pages/Signals.tsx` — `deleteMutation.mutationFn`
+
+**What happened:** After the RLS fix above, the group delete now succeeded. However, the mutation ran the signal soft-delete first. If that soft-delete threw for any reason, the group delete never ran — the signal stayed in the feed.
+
+**Fix:** Reordered the two operations. Group delete runs first (fatal — throws on failure). Signal soft-delete runs second (non-fatal — errors are swallowed):
+
+```typescript
+// 1. Delete the correlation group — removes signal from feed (fatal if fails)
+const { error: groupErr } = await supabase
+  .from("signal_correlation_groups").delete().eq("id", signal.id);
+if (groupErr) throw groupErr;
+
+// 2. Soft-delete the underlying signal — audit trail only (non-fatal)
+if (signal.primary_signal_id) {
+  await supabase.from("signals")
+    .update({ deleted_at: new Date().toISOString(), deletion_reason: "manually_dismissed" })
+    .eq("id", signal.primary_signal_id);
+}
+```
+
+### 25.4 Bug 3 — Two Bugs in `SignalHistory` (Recent Feed)
+
+**File:** `src/components/SignalHistory.tsx`
+
+#### 25.4.1 — Missing `deleted_at IS NULL` filter
+
+`loadSignals` was not filtering out soft-deleted records. Every refresh after a deletion would re-fetch the deleted signal (because the row was still in the table, just with `deleted_at` set). The signal appeared to return immediately after deletion.
+
+**Fix:** Added `.is('deleted_at', null)` to the query:
+```typescript
+.from('signals')
+.select('...')
+.is('deleted_at', null)   // ← added
+.order('created_at', { ascending: false })
+```
+
+**Rule going forward:** Every user-facing query on the `signals` table must include `.is('deleted_at', null)`.
+
+#### 25.4.2 — Hard DELETE vs Soft-Delete RLS Mismatch
+
+`handleDeleteSelected` was issuing a hard `DELETE` against the `signals` table. The RLS policy for hard DELETE is admin-only. Analysts were silently blocked — 0 rows affected, no error.
+
+**Fix:** Switched to soft-delete UPDATE, which analysts are permitted to perform:
+```typescript
+const { error } = await supabase
+  .from('signals')
+  .update({
+    deleted_at: new Date().toISOString(),
+    deletion_reason: 'manually_dismissed'
+  })
+  .in('id', Array.from(selectedSignalIds));
+```
+
+### 25.5 Summary Table
+
+| Bug | Feed | Root Cause | Fix |
+|---|---|---|---|
+| Dismiss/delete silently no-ops | Unmatched | `signal_correlation_groups` had no UPDATE/DELETE RLS policy | Migration `20260415000005` added the missing policies |
+| "Failed to delete" error | Unmatched | Soft-delete ran before group delete; if soft-delete threw, group delete was skipped | Reordered: group delete first (fatal), soft-delete second (non-fatal) |
+| Soft-deleted signals reappear | Recent | `loadSignals` had no `.is('deleted_at', null)` filter | Added filter to `loadSignals` query |
+| Hard delete fails silently for analysts | Recent | `handleDeleteSelected` used hard DELETE (admin-only RLS); analysts blocked | Switched to soft-delete UPDATE (all roles permitted) |
+
+### 25.6 Files Changed
+
+| File | Change |
+|---|---|
+| `supabase/migrations/20260415000005_fix_correlation_groups_rls.sql` | New — adds UPDATE + DELETE policies to `signal_correlation_groups` |
+| `src/pages/Signals.tsx` | Reordered delete mutation: group delete first, soft-delete second |
+| `src/components/SignalHistory.tsx` | Added `deleted_at IS NULL` filter; switched hard DELETE to soft-delete UPDATE |
+
 4. **Monitor belief formation** — `agent_beliefs` count should grow within 24h of first nightly cycle after deployment
+
+---
+
+## §26 Neural Constellation — Fortify Loop Scoring Fix (April 15, 2026)
+
+### 26.1 Problem
+
+The Neural Constellation page showed 8/15 loops closed. Investigation revealed three compounding issues:
+
+1. **`fortress-loop-closer` was invisible to monitoring** — no `cron_heartbeat` upsert inside the function, no `cron_job_registry` entry. The validation script (`validate-cron-alignment.mjs`) only monitors functions that write heartbeats; the closer was completely invisible. If it was silently crashing, nobody would know.
+
+2. **Three loops had false-idle scores** — Hypothesis Trees, Debate Records, and Learning Sessions were measured by whether their output tables had rows in the last 24h. These loops are *output-conditional*: they only write rows when prerequisite data exists (open P1/P2 incidents for debates, unprocessed predictions for accuracy tracking, etc.). When conditions aren't met the closer runs successfully but writes nothing — the loop shows "idle" even though the mechanism is healthy.
+
+3. **Two loops were incorrectly included in the score denominator** — Feedback Events and Analyst Preferences can only close with real analyst UI activity. No cron can force them. Including them in the 15-loop denominator permanently penalised the score on low-usage days.
+
+4. **Validator bug** — `extractUnscheduled()` in `validate-cron-alignment.mjs` treated the `cron.unschedule(...)` safety guard (used before rescheduling in the same migration) as a permanent removal, causing `fortress-loop-closer-6h` to be dropped from the active schedule list even though the same migration immediately rescheduled it.
+
+### 26.2 Fixes
+
+#### `fortress-loop-closer/index.ts`
+Added `cron_heartbeat` upserts at the start (`status: "running"`) and end (`status: "success"`, `metadata: results`) of every run. The heartbeat `job_name` is `fortress-loop-closer-6h` — matches the pg_cron job name exactly per CLAUDE.md rules.
+
+#### `supabase/migrations/20260415000006_register_fortress_loop_closer.sql`
+New migration registering `fortress-loop-closer-6h` in `cron_job_registry` (360-minute interval, `is_critical: true`). Now appears as one of the monitored functions in the validation script.
+
+#### `src/hooks/useFortressHealth.ts`
+Three changes:
+
+**1. Output-conditional loops now read from `cron_heartbeat`:**
+Hypothesis Trees, Debate Records, and Learning Sessions no longer query their output tables. Instead, all three share a single `cron_heartbeat` query for `fortress-loop-closer-6h`. `runs = loopCloserRan ? 1 : 0` — closed means the closer ran successfully in the last 24h, not that it produced output. This is the honest signal: the mechanism is healthy; it just had nothing to do.
+
+**2. Activity-dependent loops marked `passive: true`:**
+Feedback Events and Analyst Preferences get `passive: true`. They are excluded from `fortifyScore` and `totalCount`. The score denominator is now 13 active loops. Passive loops still appear in the drilldown but can't drag down the score on days with low analyst activity.
+
+**3. `agent_learning_sessions` query removed:**
+Learning Sessions was a separate query on `agent_learning_sessions`. It now uses the loop-closer heartbeat (same as Hypothesis Trees and Debate Records) — one query serves all three.
+
+#### `src/components/neural-constellation/FortressHUD.tsx`
+- Layer bar percentages exclude passive loops from their ratios
+- Passive loops render a grey dot instead of a status icon, and a `PASSIVE` badge instead of a layer tag
+- Header subtitle appends `+N passive` when any passive loops are closed
+
+#### `scripts/validate-cron-alignment.mjs`
+Fixed `extractUnscheduled()`: a job is only added to the `removed` set if its `cron.unschedule(...)` appears in a migration that does **not** also contain a `cron.schedule(...)` for the same job name. The unschedule+reschedule safety-guard pattern in the same file is no longer treated as a removal.
+
+### 26.3 Loop Measurement Reference (post-fix)
+
+| Loop | Source | Closed when |
+|---|---|---|
+| OODA Loop | `autonomous_actions_log` | ≥1 row in 24h |
+| Watchdog | `watchdog_learnings` | ≥1 row in 24h |
+| Signal Ingestion | `signals` | ≥1 row in 24h |
+| Knowledge Growth | `expert_knowledge` | ≥1 row in 24h |
+| Consolidation | `signal_updates` | ≥1 row in 24h |
+| Predictive Scoring | `predictive_incident_scores` | ≥1 row in 24h |
+| Agent Accuracy | `agent_accuracy_tracking` | ≥1 row in 24h |
+| Scan Results | `autonomous_scan_results` | ≥1 row in 24h |
+| AEGIS Briefings | `ai_assistant_messages` (role=assistant) | ≥1 row in 24h |
+| Escalation Rules | `auto_escalation_rules` (active) | ≥3 active rules |
+| Hypothesis Trees | `cron_heartbeat` (fortress-loop-closer-6h) | Closer ran successfully in 24h |
+| Debate Records | `cron_heartbeat` (fortress-loop-closer-6h) | Closer ran successfully in 24h |
+| Learning Sessions | `cron_heartbeat` (fortress-loop-closer-6h) | Closer ran successfully in 24h |
+| **Feedback Events** *(passive)* | `implicit_feedback_events` | ≥3 events in 24h — analyst activity only |
+| **Analyst Preferences** *(passive)* | `analyst_preferences` | ≥1 update in 24h — analyst activity only |
+
+### 26.4 Files Changed
+
+| File | Change |
+|---|---|
+| `supabase/functions/fortress-loop-closer/index.ts` | Added `cron_heartbeat` upserts (running + success) |
+| `supabase/migrations/20260415000006_register_fortress_loop_closer.sql` | New — registers `fortress-loop-closer-6h` in `cron_job_registry` |
+| `src/hooks/useFortressHealth.ts` | Hypothesis Trees/Debate Records/Learning Sessions read from heartbeat; Feedback Events/Analyst Preferences marked passive and excluded from score |
+| `src/components/neural-constellation/FortressHUD.tsx` | Passive loop rendering (grey dot, PASSIVE badge); layer bars exclude passive |
+| `scripts/validate-cron-alignment.mjs` | Fixed `extractUnscheduled()` — unschedule+reschedule in same migration no longer treated as removal |

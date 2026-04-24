@@ -43,6 +43,36 @@ interface DeepScanResult {
   url?: string;
 }
 
+const PAGE_FETCH_TIMEOUT_MS = 8000;
+
+async function fetchPageContent(url: string): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+      signal: AbortSignal.timeout(PAGE_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return '';
+    const html = await response.text();
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/\s{3,}/g, '  ')
+      .trim();
+    return text.substring(0, 4000);
+  } catch {
+    return '';
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -100,6 +130,49 @@ Deno.serve(async (req) => {
     const contactInfo = (attributes.contact_info as Record<string, unknown>) || {};
     const emails = (contactInfo.email as string[]) || [];
     const socialMedia = (contactInfo.social_media as Record<string, string>) || {};
+
+    // Build a disambiguation anchor for person entities with common names.
+    // When present, all search queries are scoped so we don't pull in results
+    // for unrelated people who share the same name (e.g. "Daniel Metzger").
+    const institution = (attributes.institution as string) || '';
+    const role = (attributes.role as string) || '';
+    const specialty = (attributes.specialty as string) || '';
+    const disambigAnchor = institution || specialty || role || '';
+
+    // Build a concise identity card used by the AI relevance gate.
+    const identityLines: string[] = [];
+    if (institution) identityLines.push(`Institution: ${institution}`);
+    if (role) identityLines.push(`Role: ${role}`);
+    if (specialty) identityLines.push(`Specialty: ${specialty}`);
+    if (entity.current_location) identityLines.push(`Location: ${entity.current_location}`);
+    if (entity.description) identityLines.push(`Background: ${entity.description.substring(0, 200)}`);
+    const identityCard = identityLines.length ? identityLines.join('\n') : (entity.description || '');
+
+    // AI relevance gate — used before storing any result for person entities.
+    // Returns true only if the content is about THIS specific individual.
+    const isResultAboutEntity = async (title: string, snippet: string, url: string): Promise<boolean> => {
+      if (entity.type !== 'person' || !identityCard) return true; // non-person entities skip the gate
+      const OPENAI_KEY = Deno.env.get('OPENAI_API_KEY') || GEMINI_API_KEY;
+      if (!OPENAI_KEY) return true; // no AI available — allow through
+      try {
+        const res = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            max_tokens: 5,
+            messages: [
+              { role: 'system', content: 'You verify if a web result is about a specific person. Reply only YES or NO.' },
+              { role: 'user', content: `Is this about the person below?\n\nPERSON:\nName: ${entity.name}\n${identityCard}\n\nRESULT:\nTitle: ${title}\nSnippet: ${snippet}\nURL: ${url}\n\nAnswer YES only if this matches THIS specific individual's institution/role/specialty. Answer NO for any other person with the same name.` }
+            ]
+          })
+        });
+        if (!res.ok) return true;
+        const data = await res.json();
+        const answer = (data.choices?.[0]?.message?.content || '').trim().toUpperCase();
+        return answer.startsWith('YES');
+      } catch { return true; }
+    };
 
     // ═══════════════════════════════════════════════════════════════════════════
     // PHASE 1: DARK WEB & BREACH INTELLIGENCE
@@ -190,11 +263,12 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════════════════════
     
     if (GOOGLE_API_KEY && GOOGLE_CX) {
-      // Dark web related searches
+      // Dark web related searches — scoped with institution anchor when available
+      const nameQ = disambigAnchor ? `"${entity.name}" "${disambigAnchor}"` : `"${entity.name}"`;
       const darkWebQueries = [
-        `"${entity.name}" site:pastebin.com OR site:doxbin.org OR site:reddit.com/r/leak`,
-        `"${entity.name}" "dox" OR "doxxed" OR "exposed"`,
-        `"${entity.name}" "breach" OR "hacked" OR "leaked"`
+        `${nameQ} site:pastebin.com OR site:doxbin.org OR site:reddit.com/r/leak`,
+        `${nameQ} "dox" OR "doxxed" OR "exposed"`,
+        `${nameQ} "breach" OR "hacked" OR "leaked"`
       ];
 
       for (const query of darkWebQueries) {
@@ -209,10 +283,13 @@ Deno.serve(async (req) => {
           if (response.ok) {
             const data = await response.json();
             for (const item of data.items || []) {
+              const relevant = await isResultAboutEntity(item.title || '', item.snippet || '', item.link || '');
+              if (!relevant) { console.log(`[deep-scan] dark_web skip (homonym): ${item.title}`); continue; }
+
               const hostname = new URL(item.link).hostname.toLowerCase();
-              const isDarkWeb = hostname.includes('pastebin') || hostname.includes('doxbin') || 
+              const isDarkWeb = hostname.includes('pastebin') || hostname.includes('doxbin') ||
                                hostname.includes('reddit.com/r/leak');
-              
+
               results.push({
                 category: 'dark_web',
                 type: isDarkWeb ? 'dark_web_mention' : 'exposure_mention',
@@ -234,15 +311,71 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // PHASE 2B: RESEARCH & ACADEMIC PUBLICATIONS (person entities only)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    if (GOOGLE_API_KEY && GOOGLE_CX && entity.type === 'person') {
+      // Use name alone for site-specific academic searches — homonyms are rare
+      // on PubMed/ResearchGate for a specific specialty. Anchor still used for
+      // broad searches to avoid false positives.
+      const nameOnly = `"${entity.name}"`;
+      const specialtyTerms = specialty || role || 'medicine';
+      const academicQueries = [
+        { query: `${nameOnly} site:pubmed.ncbi.nlm.nih.gov`, label: 'PubMed' },
+        { query: `${nameOnly} site:researchgate.net`, label: 'ResearchGate' },
+        { query: `${nameOnly} site:scholar.google.com`, label: 'Google Scholar' },
+        { query: `${nameOnly} "${specialtyTerms}" research OR publication OR journal OR study`, label: 'Academic' },
+        { query: `${nameOnly} site:ubc.ca OR site:cw.bc.ca OR site:bcchildrens.ca`, label: 'Institutional' },
+      ];
+
+      for (const { query, label } of academicQueries) {
+        try {
+          const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
+          searchUrl.searchParams.set('key', GOOGLE_API_KEY);
+          searchUrl.searchParams.set('cx', GOOGLE_CX);
+          searchUrl.searchParams.set('q', query);
+          searchUrl.searchParams.set('num', '5');
+
+          const response = await fetchWithRetry(searchUrl.toString(), {});
+          if (response.ok) {
+            const data = await response.json();
+            for (const item of data.items || []) {
+              const relevant = await isResultAboutEntity(item.title || '', item.snippet || '', item.link || '');
+              if (!relevant) { console.log(`[deep-scan] academic skip (homonym): ${item.title}`); continue; }
+              results.push({
+                category: 'research',
+                type: 'academic_publication',
+                label: `📄 ${label}: ${item.title?.slice(0, 60)}`,
+                value: item.snippet || 'No description available',
+                source: label,
+                confidence: 80,
+                riskLevel: 'info',
+                url: item.link,
+                commentary: `Academic/research content found via ${label}`
+              });
+            }
+          }
+          await delay(500);
+        } catch (e) {
+          console.error(`Academic search error (${label}):`, e);
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // PHASE 3: SOCIAL MEDIA & DIGITAL FOOTPRINT
     // ═══════════════════════════════════════════════════════════════════════════
-    
+
     if (GOOGLE_API_KEY && GOOGLE_CX) {
+      // Site-specific social searches: use name only — the site: filter is already
+      // a strong disambiguation. Broad social searches keep the anchor.
+      const socialNameQ = disambigAnchor ? `"${entity.name}" "${disambigAnchor}"` : `"${entity.name}"`;
+      const nameOnly = `"${entity.name}"`;
       const socialPlatforms = [
-        { query: `"${entity.name}" site:linkedin.com`, platform: 'LinkedIn', icon: '💼' },
-        { query: `"${entity.name}" site:twitter.com OR site:x.com`, platform: 'Twitter/X', icon: '🐦' },
-        { query: `"${entity.name}" site:facebook.com`, platform: 'Facebook', icon: '📘' },
-        { query: `"${entity.name}" site:instagram.com`, platform: 'Instagram', icon: '📸' }
+        { query: `${nameOnly} site:linkedin.com`, platform: 'LinkedIn', icon: '💼' },
+        { query: `${nameOnly} site:twitter.com OR site:x.com`, platform: 'Twitter/X', icon: '🐦' },
+        { query: `${nameOnly} site:facebook.com`, platform: 'Facebook', icon: '📘' },
+        { query: `${nameOnly} site:instagram.com`, platform: 'Instagram', icon: '📸' }
       ];
 
       for (const { query, platform, icon } of socialPlatforms) {
@@ -257,6 +390,9 @@ Deno.serve(async (req) => {
           if (response.ok) {
             const data = await response.json();
             for (const item of data.items || []) {
+              const relevant = await isResultAboutEntity(item.title || '', item.snippet || '', item.link || '');
+              if (!relevant) { console.log(`[deep-scan] social skip (homonym): ${item.title}`); continue; }
+
               results.push({
                 category: 'digital_footprint',
                 type: 'social_media',
@@ -282,10 +418,11 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════════════════════
     
     if (GOOGLE_API_KEY && GOOGLE_CX) {
+      const newsNameQ = disambigAnchor ? `"${entity.name}" "${disambigAnchor}"` : `"${entity.name}"`;
       const newsQueries = [
-        `"${entity.name}" news`,
-        `"${entity.name}" controversy OR scandal OR lawsuit`,
-        `"${entity.name}" arrest OR investigation OR charged`
+        `${newsNameQ} news`,
+        `${newsNameQ} controversy OR scandal OR lawsuit OR protest`,
+        `${newsNameQ} arrest OR investigation OR charged OR threat`
       ];
 
       for (const query of newsQueries) {
@@ -301,10 +438,13 @@ Deno.serve(async (req) => {
           if (response.ok) {
             const data = await response.json();
             for (const item of data.items || []) {
-              const isNegative = /arrest|scandal|lawsuit|investigation|charged|controversy/i.test(
+              const relevant = await isResultAboutEntity(item.title || '', item.snippet || '', item.link || '');
+              if (!relevant) { console.log(`[deep-scan] news skip (homonym): ${item.title}`); continue; }
+
+              const isNegative = /arrest|scandal|lawsuit|investigation|charged|controversy|protest|harass|dox/i.test(
                 item.title + ' ' + item.snippet
               );
-              
+
               results.push({
                 category: 'news',
                 type: isNegative ? 'adverse_media' : 'media_mention',
@@ -624,6 +764,31 @@ If no matches found for a category, include an entry with risk_level "info" conf
         updated_at: new Date().toISOString()
       })
       .eq('id', entity_id);
+
+    // ═══ CONTENT ENRICHMENT — fetch full article text for news/academic results ═══
+    // Deep-scan previously stored only search snippets (~150 chars) in content_text.
+    // This fetches the full article body for news and research findings so reports
+    // have real substance to work with. Batched in groups of 3, capped at 15 URLs.
+    const enrichableResults = results.filter((r: any) =>
+      r.url && r.url.startsWith('http') && ['news', 'research'].includes(r.category || '')
+    ).slice(0, 15);
+
+    if (enrichableResults.length > 0) {
+      console.log(`[deep-scan] Enriching ${enrichableResults.length} results with full article content...`);
+      for (let i = 0; i < enrichableResults.length; i += 3) {
+        const batch = enrichableResults.slice(i, i + 3);
+        const fetched = await Promise.all(
+          batch.map((r: any) => fetchPageContent(r.url).catch(() => ''))
+        );
+        batch.forEach((r: any, j: number) => {
+          if (fetched[j] && fetched[j].length > 100) {
+            r.commentary = fetched[j];
+          }
+        });
+        if (i + 3 < enrichableResults.length) await delay(500);
+      }
+      console.log(`[deep-scan] Content enrichment complete`);
+    }
 
     // Store ALL findings in entity_content (including non-URL findings like HIBP/sanctions)
     // Non-URL findings get a synthetic URN so they survive the UNIQUE(entity_id, url) constraint

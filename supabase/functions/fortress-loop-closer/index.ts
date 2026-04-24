@@ -12,6 +12,7 @@
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { generateHypothesisTree, resolveIncidentPredictions } from "../_shared/agent-intelligence.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -20,6 +21,8 @@ Deno.serve(async (req) => {
   try {
     const supabase = createServiceClient();
     const results: Record<string, any> = {};
+
+    const hb = await startHeartbeat(supabase, "fortress-loop-closer-6h");
 
     // ═══════════════════════════════════════════════════════════════════
     // LOOP 1: HYPOTHESIS TREES — Generate for top open incidents
@@ -558,10 +561,13 @@ Deno.serve(async (req) => {
       results.prediction_resolution = { error: String(err) };
     }
 
+    await completeHeartbeat(supabase, hb, results);
+
     console.log(`[LoopCloser] Complete:`, JSON.stringify(results));
     return successResponse({ success: true, results });
   } catch (error) {
     console.error('[LoopCloser] Fatal error:', error);
+    await failHeartbeat(createServiceClient(), { id: null, jobName: "fortress-loop-closer-6h", startedAt: Date.now() }, error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

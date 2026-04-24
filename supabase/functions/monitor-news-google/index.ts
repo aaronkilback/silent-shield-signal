@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { extractOGImage } from "../_shared/og-image.ts";
+import { recordHeartbeat } from "../_shared/heartbeat.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -51,6 +52,22 @@ Deno.serve(async (req) => {
 
     if (clientsError) throw clientsError;
 
+    // Fetch actively monitored person entities per client
+    const { data: monitoredEntities } = await supabase
+      .from('entities')
+      .select('id, name, client_id, attributes')
+      .eq('active_monitoring_enabled', true)
+      .eq('type', 'person');
+
+    // Build map: client_id → person entity names
+    const clientPersonsMap = new Map<string, string[]>();
+    for (const e of monitoredEntities || []) {
+      if (!e.client_id) continue;
+      const list = clientPersonsMap.get(e.client_id) || [];
+      list.push(e.name);
+      clientPersonsMap.set(e.client_id, list);
+    }
+
     console.log(`Found ${clients?.length || 0} clients to monitor`);
 
     let signalsCreated = 0;
@@ -60,16 +77,25 @@ Deno.serve(async (req) => {
     // Build search queries for each client
     for (const client of clients || []) {
       const queries: string[] = [];
-      
+
       // Add client name as primary query
       queries.push(`"${client.name}" security OR threat OR incident`);
       queries.push(`"${client.name}" protest OR activist OR opposition`);
-      
-      // Add monitoring keywords
+
+      // Add monitoring keywords — always scoped to Canada/BC to avoid
+      // matching unrelated global use of broad terms like "LNG"
       if (client.monitoring_keywords?.length > 0) {
         for (const keyword of client.monitoring_keywords.slice(0, 3)) {
-          queries.push(`"${keyword}" news`);
+          queries.push(`"${keyword}" Canada OR "British Columbia" OR "BC" news`);
         }
+      }
+
+      // Add person entity name queries — searches for staff/VIPs by name
+      // in news and activist contexts. These are the queries most likely to
+      // surface targeted coverage, threats, or protest activity.
+      const personNames = clientPersonsMap.get(client.id) || [];
+      for (const name of personNames.slice(0, 6)) {
+        queries.push(`"${name}" news OR threat OR protest OR harassment OR controversy`);
       }
 
       // Execute Google Custom Search for each query
@@ -174,7 +200,10 @@ Deno.serve(async (req) => {
       })
       .eq('id', historyEntry?.id);
 
-    console.log(`Google News monitoring complete. Scanned ${itemsScanned} items, created ${signalsCreated} signals.`);
+    // Heartbeat
+  await recordHeartbeat(supabase, 'monitor-news-google-hourly', 'completed', { items_scanned: itemsScanned, signals_created: signalsCreated });
+
+  console.log(`Google News monitoring complete. Scanned ${itemsScanned} items, created ${signalsCreated} signals.`);
 
     return successResponse({
       success: true,

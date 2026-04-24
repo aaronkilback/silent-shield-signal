@@ -27,7 +27,8 @@ async function aiRelevanceGate(
   searchQuery: string,
 ): Promise<{ relevant: boolean; location: string | null; reason: string }> {
   const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-  ;
+  if (!OPENAI_API_KEY) {
+    return { relevant: true, location: null, reason: 'no_openai_key_fallback' };
   }
 
   const prompt = `You are a signal relevance filter for a Canadian corporate security platform focused on Western Canada (British Columbia, Alberta, Saskatchewan, NWT, Yukon). 

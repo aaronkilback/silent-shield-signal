@@ -414,8 +414,8 @@ export async function scoreSignalRelevance(
   score = Math.max(0.0, Math.min(1.0, score));
   confidence = Math.max(0.0, Math.min(1.0, confidence));
 
-  let suppressBelow = 0.35;
-  let lowConfBelow = 0.60;
+  let suppressBelow = 0.45;
+  let lowConfBelow = 0.65;
 
   try {
     const { data: thresholdProfile } = await supabase

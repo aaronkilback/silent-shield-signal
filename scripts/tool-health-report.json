@@ -1,9 +1,14 @@
 {
-  "run_at": "2026-04-10T21:18:24.740Z",
-  "total": 85,
+  "run_at": "2026-04-23T21:01:45.427Z",
+  "total": 86,
   "passed": 85,
-  "failed": 0,
+  "failed": 1,
   "skipped": 30,
-  "avg_ms": 938,
-  "failures": []
+  "avg_ms": 1174,
+  "failures": [
+    {
+      "tool": "search_social_media",
+      "error": "error"
+    }
+  ]
 }

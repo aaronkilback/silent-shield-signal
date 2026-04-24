@@ -324,7 +324,10 @@ Deno.serve(async (req) => {
               const bestId = parsed?.best_match_id as string | null;
               const sim = Number(parsed?.similarity);
 
-              if (bestId && Number.isFinite(sim) && sim >= nearDupThreshold) {
+              // Use 0.45 threshold for semantic matches — lower than lexical nearDupThreshold
+              // so moderate-similarity cross-outlet coverage (0.45–0.79) reaches ingest-signal's
+              // same-story check. nearDuplicateMatch (hard block) only fires at ≥0.80 below.
+              if (bestId && Number.isFinite(sim) && sim >= 0.45) {
                 const matched = recentSignals.find((s) => s.id === bestId);
                 duplicates.push({
                   id: bestId,
@@ -408,7 +411,10 @@ Deno.serve(async (req) => {
       await supabase.from('duplicate_detections').insert(detections);
     }
 
-    const nearDuplicateMatch = type === 'signal' && duplicates.length > 0;
+    // nearDuplicateMatch = hard block. Only true when similarity ≥ 0.80.
+    // Lower-similarity semantic matches (0.45–0.79) are included in duplicates
+    // for ingest-signal's same-story check but do NOT trigger a hard block.
+    const nearDuplicateMatch = type === 'signal' && duplicates.some((d: any) => (d.similarity_score ?? 0) >= 0.80);
 
     return successResponse({
       isDuplicate: duplicates.length > 0,

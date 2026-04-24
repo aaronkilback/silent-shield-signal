@@ -182,7 +182,7 @@ async function logApiUsage(
   });
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   const startTime = Date.now();
   const url = new URL(req.url);
   const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip');

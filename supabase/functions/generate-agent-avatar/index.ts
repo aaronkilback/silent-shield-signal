@@ -70,8 +70,9 @@ Portrait orientation, head and shoulders composition.`;
 
     if (uploadError) throw new Error(`Failed to upload avatar: ${uploadError.message}`);
 
-    const { data: publicUrlData } = supabase.storage.from('agent-avatars').getPublicUrl(fileName);
-    const avatarUrl = publicUrlData.publicUrl;
+    // agent-avatars is a private bucket — store signed URL (7-day expiry)
+    const { data: signedUrlData } = await supabase.storage.from('agent-avatars').createSignedUrl(fileName, 604800);
+    const avatarUrl = signedUrlData?.signedUrl || '';
 
     const { error: updateError } = await supabase
       .from('ai_agents')

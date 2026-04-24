@@ -828,12 +828,13 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         } // end confidence threshold else
 
         // ═══ PHASE 2C: TIER 2 ASYNC AGENT REVIEW ═══
-        // For signals with composite_confidence in [0.60, 0.75), fire review-signal-agent
-        // asynchronously. This never blocks the current response.
-        // - 0.60–0.64: no incident yet — agent may promote
-        // - 0.65–0.74: incident created above — agent may enrich or flag
-        // Excluded: tier2_promotion signals (avoid re-review loop) and scores outside range.
-        if (!tier2_promotion && compositeScore >= 0.60 && compositeScore < 0.75) {
+        // Fires review-signal-agent for two cases:
+        // 1. Ambiguous tier (0.60–0.75): no incident yet or incident just created — agent promotes/enriches/flags
+        // 2. High-value signals (≥0.75, severity_score ≥50): most important signals get enrichment context, not just the ambiguous ones
+        // Never blocks — fire-and-forget fetch.
+        const isAmbiguousTier = compositeScore >= 0.60 && compositeScore < 0.75;
+        const isHighValueSignal = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
+        if (!tier2_promotion && (isAmbiguousTier || isHighValueSignal)) {
           const supabaseUrlT2 = Deno.env.get('SUPABASE_URL');
           const serviceRoleKeyT2 = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
           if (supabaseUrlT2 && serviceRoleKeyT2) {
@@ -852,7 +853,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
                 incident_id: incident_id,
               }),
             }).catch((e: any) => console.warn('[AI-Decision] Tier 2 review fire-and-forget failed:', e));
-            console.log(`[AI-Decision] Tier 2 review queued for signal ${signal.id} (composite=${compositeScore.toFixed(3)})`);
+            console.log(`[AI-Decision] Agent review queued for signal ${signal.id} (composite=${compositeScore.toFixed(3)}, severity=${signal.severity_score ?? 0}, reason=${isHighValueSignal ? 'high_value' : 'ambiguous_tier'})`);
           }
         }
       }

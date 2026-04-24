@@ -28,18 +28,20 @@ export const RiskSnapshotExport = () => {
     setLoading(true);
     try {
       const genDate = new Date();
-      const { data, error } = await supabase.functions.invoke("generate-report", {
-        body: {
-          report_type: "72h-snapshot",
-          period_hours: 72,
-        },
+      const invokePromise = supabase.functions.invoke("generate-report", {
+        body: { report_type: "72h-snapshot", period_hours: 72 },
       });
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Report generation timed out after 60s")), 60000)
+      );
+      const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
 
       if (error) {
-        const reason = data?.message || data?.error || error.message;
+        const reason = (data as any)?.message || (data as any)?.error || error.message;
         throw new Error(reason);
       }
-      setReportHtml(data.html);
+      if (!(data as any)?.html) throw new Error("Report returned no content");
+      setReportHtml((data as any).html);
       
       // Auto-archive
       const periodEnd = new Date();

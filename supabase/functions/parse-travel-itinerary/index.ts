@@ -1,5 +1,32 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
+import "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+
+try {
+  (pdfjsLib as any).GlobalWorkerOptions.workerSrc =
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+} catch (_) { /* non-fatal */ }
+
+async function extractTextFromPdf(blob: Blob): Promise<string> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const uint8 = new Uint8Array(arrayBuffer);
+  const pdf = await (pdfjsLib as any).getDocument({ data: uint8, disableWorker: true }).promise;
+  const totalPages = Math.min(Number(pdf?.numPages || 0), 100);
+  const out: string[] = [];
+  for (let i = 1; i <= totalPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const text = (content?.items ?? [])
+      .map((it: any) => (typeof it?.str === "string" ? it.str : ""))
+      .filter((s: string) => s.trim().length > 0)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (text) out.push(text);
+  }
+  return out.join("\n");
+}
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -7,113 +34,55 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
-
     const { filePath } = await req.json();
 
-    if (!filePath) {
-      return errorResponse('File path is required', 400);
-    }
+    if (!filePath) return errorResponse("File path is required", 400);
 
     console.log("Processing itinerary:", filePath);
 
-    // Download the file from storage
-    const { data: fileData, error: downloadError } = await supabase
-      .storage
+    const { data: fileData, error: downloadError } = await supabase.storage
       .from("travel-documents")
       .download(filePath);
 
     if (downloadError || !fileData) {
-      console.error("Download error:", downloadError);
       return errorResponse(`Failed to download file: ${downloadError?.message}`, 400);
     }
 
-    console.log("File downloaded, converting to base64...");
+    console.log("Extracting text from PDF...");
+    const extractedText = await extractTextFromPdf(fileData);
 
-    // Convert PDF to base64 for AI processing
-    const arrayBuffer = await fileData.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    
-    // Convert to base64 in chunks to avoid stack overflow
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-      binary += String.fromCharCode.apply(null, Array.from(chunk));
-    }
-    const base64Pdf = btoa(binary);
-    
-    console.log(`PDF converted to base64, size: ${fileData.size} bytes, base64 length: ${base64Pdf.length}`);
-
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY not configured");
+    if (!extractedText || extractedText.trim().length < 30) {
+      return errorResponse(
+        "Could not extract text from this PDF. It may be a scanned/image-only document.",
+        400
+      );
     }
 
-    console.log("Calling AI to parse itinerary with structured segments");
+    console.log(`Extracted ${extractedText.length} chars — calling AI to parse structure`);
 
     const aiResult = await callAiGateway({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `You are an itinerary parsing engine. Extract travel information from documents and return ONLY valid JSON.
-
-Output a single, valid JSON object in this EXACT schema:
-
-{
-  "traveler_name": "",
-  "trip_title": "",
-  "start_date": "",
-  "end_date": "",
-  "segments": [
-    {
-      "type": "",
-      "start_datetime": "",
-      "end_datetime": "",
-      "origin_city": "",
-      "origin_airport_code": "",
-      "destination_city": "",
-      "destination_airport_code": "",
-      "airline": "",
-      "flight_number": "",
-      "hotel_name": "",
-      "hotel_address": "",
-      "notes": ""
-    }
-  ]
-}
+          content: `You are a travel itinerary parsing engine. Extract structured travel data from the provided text and call the parse_itinerary function with the results.
 
 Rules:
-- CRITICAL: Extract the traveler/passenger name from the document.
-- traveler_name should be the FULL NAME of the person traveling.
-- Always return VALID JSON. No comments, no trailing commas, no markdown.
-- Use ISO date format: YYYY-MM-DD for start_date and end_date.
-- Use YYYY-MM-DD HH:MM (24h) for start_datetime and end_datetime.
-- If you do not know a field, use an empty string "".
-- If multiple flights, include each as a separate segment with "type": "flight".
-- If multiple hotels, include each as a separate segment with "type": "hotel".
-- Derive a useful trip_title using main origin/destination and dates.`
+- traveler_name: full name of the passenger/traveler.
+- trip_title: descriptive title using main origin/destination and dates.
+- start_date / end_date: YYYY-MM-DD format.
+- start_datetime / end_datetime: YYYY-MM-DD HH:MM (24h). Empty string if unknown.
+- Include each flight as a segment with type "flight".
+- Include each hotel stay as a segment with type "hotel".
+- If a field is unknown, use an empty string.`,
         },
         {
           role: "user",
-          content: "Parse this travel itinerary and return ONLY the JSON object with no additional text or explanation."
-        }
+          content: `Parse this travel itinerary:\n\n${extractedText.substring(0, 12000)}`,
+        },
       ],
       functionName: "parse-travel-itinerary",
       extraBody: {
-        messages: [
-          {
-            role: "system",
-            content: `You are an itinerary parsing engine. Extract travel information from documents and return ONLY valid JSON.`
-          },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Parse this travel itinerary and return ONLY the JSON object with no additional text or explanation." },
-              { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64Pdf}` } }
-            ]
-          },
-        ],
         tools: [
           {
             type: "function",
@@ -123,62 +92,56 @@ Rules:
               parameters: {
                 type: "object",
                 properties: {
-                  traveler_name: { type: "string", description: "Full name of the traveler/passenger from the document" },
-                  trip_title: { type: "string", description: "Descriptive title with origin/destination and dates" },
-                  start_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Trip start date in YYYY-MM-DD format" },
-                  end_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Trip end date in YYYY-MM-DD format" },
+                  traveler_name: { type: "string" },
+                  trip_title:    { type: "string" },
+                  start_date:    { type: "string", description: "YYYY-MM-DD" },
+                  end_date:      { type: "string", description: "YYYY-MM-DD" },
                   segments: {
                     type: "array",
-                    description: "Array of flight and hotel segments",
                     items: {
                       type: "object",
                       properties: {
-                        type: { type: "string", enum: ["flight", "hotel"], description: "Segment type" },
-                        start_datetime: { type: "string", description: "Start date/time in YYYY-MM-DD HH:MM format" },
-                        end_datetime: { type: "string", description: "End date/time in YYYY-MM-DD HH:MM format" },
-                        origin_city: { type: "string" },
-                        origin_airport_code: { type: "string" },
-                        destination_city: { type: "string" },
+                        type:                     { type: "string", enum: ["flight", "hotel"] },
+                        start_datetime:           { type: "string", description: "YYYY-MM-DD HH:MM" },
+                        end_datetime:             { type: "string", description: "YYYY-MM-DD HH:MM" },
+                        origin_city:              { type: "string" },
+                        origin_airport_code:      { type: "string" },
+                        destination_city:         { type: "string" },
                         destination_airport_code: { type: "string" },
-                        airline: { type: "string" },
-                        flight_number: { type: "string" },
-                        hotel_name: { type: "string" },
-                        hotel_address: { type: "string" },
-                        notes: { type: "string" }
+                        airline:                  { type: "string" },
+                        flight_number:            { type: "string" },
+                        hotel_name:               { type: "string" },
+                        hotel_address:            { type: "string" },
+                        notes:                    { type: "string" },
                       },
-                      required: ["type", "start_datetime", "end_datetime"]
-                    }
-                  }
+                      required: ["type", "start_datetime", "end_datetime"],
+                    },
+                  },
                 },
-                required: ["traveler_name", "trip_title", "start_date", "end_date", "segments"]
-              }
-            }
-          }
+                required: ["traveler_name", "trip_title", "start_date", "end_date", "segments"],
+              },
+            },
+          },
         ],
-        tool_choice: { type: "function", function: { name: "parse_itinerary" } }
+        tool_choice: { type: "function", function: { name: "parse_itinerary" } },
       },
     });
 
-    if (aiResult.error) {
-      console.error("AI error:", aiResult.error);
-      throw new Error(`AI failed: ${aiResult.error}`);
-    }
+    if (aiResult.error) throw new Error(`AI failed: ${aiResult.error}`);
 
     const toolCall = aiResult.raw?.choices?.[0]?.message?.tool_calls?.[0];
-
     if (!toolCall) {
       console.log("AI response:", JSON.stringify(aiResult.raw, null, 2));
-      throw new Error("Could not extract travel data from PDF. The document may not contain a valid travel itinerary.");
+      throw new Error("Could not extract travel data. The document may not be a valid travel itinerary.");
     }
 
     const itineraryData = JSON.parse(toolCall.function.arguments);
-    
+
     console.log("=== PARSED ITINERARY ===");
-    console.log(JSON.stringify(itineraryData, null, 2));
     console.log("Traveler:", itineraryData.traveler_name);
     console.log("Trip:", itineraryData.trip_title);
     console.log("Dates:", itineraryData.start_date, "to", itineraryData.end_date);
-    console.log("Segments:", itineraryData.segments.length);
+    console.log("Segments:", itineraryData.segments?.length);
     console.log("=======================");
 
     return successResponse({ success: true, data: itineraryData });

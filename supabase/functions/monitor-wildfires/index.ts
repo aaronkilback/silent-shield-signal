@@ -22,12 +22,11 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 const OPERATIONAL_ZONES = [
   { minLat: 55.0, maxLat: 60.0, minLon: -125.0, maxLon: -119.0, label: 'Northeast BC (Peace/Montney)' },
   { minLat: 53.0, maxLat: 56.0, minLon: -130.0, maxLon: -125.0, label: 'Skeena/Kitimat corridor' },
-  { minLat: 49.0, maxLat: 53.0, minLon: -126.0, maxLon: -120.0, label: 'Southern British Columbia' },
   { minLat: 50.5, maxLat: 51.5, minLon: -115.0, maxLon: -113.5, label: 'Calgary region' },
 ];
 
 // Single BBOX covering all zones (minLon,minLat,maxLon,maxLat — EPSG:4326)
-const OPS_BBOX = '-130,49,-113,60';
+const OPS_BBOX = '-130,50.5,-113,60';
 
 // ── Season detection ─────────────────────────────────────────────────────────
 function getFireSeason(): { isFireSeason: boolean; isShoulder: boolean; label: string } {
@@ -301,11 +300,13 @@ function classifyHotspot(hs: CWFISHotspot): Classification {
   // impossible (snow cover, sub-zero temps, frozen fuels). Any low-fire-behaviour
   // hotspot in winter is an industrial source not yet in the facility registry.
   // Threshold HFI < 2000 kW/m — in winter even a moderate reading is suspect.
-  if (!season.isFireSeason && !season.isShoulder && hs.hfi < 2000) {
+  // April (shoulder) is also included for NE BC — ground is still frozen and
+  // active fire behaviour is not credible before mid-May in this region.
+  if (!season.isFireSeason && hs.hfi < 2000) {
     return {
       type: 'industrial_flaring',
       confidence: 'medium',
-      note: `Off-season (${season.label}) thermal anomaly with low fire behaviour (HFI ${hs.hfi.toFixed(0)} kW/m, FWI ${hs.fwi.toFixed(1)}) — classified as industrial source. Facility not in registry. If source identified, add to INDUSTRIAL_FACILITIES in monitor-wildfires.`,
+      note: `${season.label} thermal anomaly with low fire behaviour (HFI ${hs.hfi.toFixed(0)} kW/m, FWI ${hs.fwi.toFixed(1)}) — classified as industrial source. Facility not in registry. If source identified, add to INDUSTRIAL_FACILITIES in monitor-wildfires.`,
     };
   }
 
@@ -701,6 +702,7 @@ Deno.serve(async (req) => {
     let lightningSignals = 0;
 
     const seenThisRun = new Set<string>();
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
 
     // ── Hotspot processing ──────────────────────────────────────────────────
     for (const hs of hotspots) {
@@ -712,11 +714,13 @@ Deno.serve(async (req) => {
       if (seenThisRun.has(dedupeKey)) { duplicatesSuppressed++; continue; }
       seenThisRun.add(dedupeKey);
 
-      const stableUrl = `https://cwfis.cfs.nrcan.gc.ca/firemaps/2025/#${hs.lat.toFixed(3)},${hs.lon.toFixed(3)}`;
+      const stableUrl = `https://cwfis.cfs.nrcan.gc.ca/firemaps/?lat=${hs.lat.toFixed(3)}&lon=${hs.lon.toFixed(3)}`;
+      // Check signals table (not ingested_documents — ingest-signal never writes there)
       const { data: existing } = await supabase
-        .from('ingested_documents')
+        .from('signals')
         .select('id')
-        .eq('metadata->>url', stableUrl)
+        .eq('source_url', stableUrl)
+        .gte('created_at', twelveHoursAgo)
         .limit(1);
       if (existing && existing.length > 0) { duplicatesSuppressed++; continue; }
 
@@ -726,30 +730,9 @@ Deno.serve(async (req) => {
       const region = zone;
 
       if (classification.type === 'industrial_flaring') {
-        const fac = classification.facility;
-        const signalText = buildFlaringSignalText({
-          hs, region,
-          facilityName: fac?.name ?? 'Unknown facility',
-          facilityType: fac?.type ?? 'industrial',
-          facilityDistKm: fac?.distKm ?? 0,
-          clientName: client.name,
-        });
-
-        const { error } = await supabase.functions.invoke('ingest-signal', {
-          body: {
-            text: signalText + (classification.note ? ` Note: ${classification.note}` : ''),
-            source_url: stableUrl,
-            location: region,
-            clientId: client.id,
-            skip_relevance_gate: true,
-            category: 'industrial_flaring',
-            entity_tags: ['industrial-flaring', 'oil-gas', fac?.type ?? 'industrial'],
-          },
-        });
-        if (!error) {
-          flaringsDetected++;
-          console.log(`[Wildfires] Flaring (${classification.confidence}): ${fac?.name ?? 'unknown'} FRP=${hs.frp.toFixed(1)}MW`);
-        }
+        // Industrial flaring — log only, no signal created
+        flaringsDetected++;
+        console.log(`[Wildfires] Flaring suppressed (no signal): ${classification.facility?.name ?? 'unknown'} FRP=${hs.frp.toFixed(1)}MW`);
         continue;
       }
 
@@ -850,11 +833,12 @@ Deno.serve(async (req) => {
         const season = getFireSeason();
         if (!season.isFireSeason && !season.isShoulder) continue;
 
-        const stableUrl = `https://cwfis.cfs.nrcan.gc.ca/lightning/#${strike.lat.toFixed(3)},${strike.lon.toFixed(3)}`;
+        const stableUrl = `https://cwfis.cfs.nrcan.gc.ca/firemaps/?lat=${strike.lat.toFixed(3)}&lon=${strike.lon.toFixed(3)}`;
         const { data: existingStrike } = await supabase
-          .from('ingested_documents')
+          .from('signals')
           .select('id')
-          .eq('metadata->>url', stableUrl)
+          .eq('source_url', stableUrl)
+          .gte('created_at', twelveHoursAgo)
           .limit(1);
         if (existingStrike && existingStrike.length > 0) continue;
 

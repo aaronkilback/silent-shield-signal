@@ -76,14 +76,21 @@ function extractCronSchedules(migrationsDir) {
 }
 
 // ── Step 3: Extract cron.unschedule() to find removed jobs ─────────────────
+// A job is only considered "removed" if it is unscheduled in a migration that does NOT
+// also reschedule it (i.e. the "unschedule then reschedule" safety-guard pattern in
+// the same file is NOT treated as a removal).
 
 function extractUnscheduled(migrationsDir) {
   const removed = new Set();
   const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
   for (const file of files) {
     const src = readFileSync(join(migrationsDir, file), 'utf8');
-    const matches = [...src.matchAll(/cron\.unschedule\s*\(\s*'([^']+)'/g)];
-    for (const m of matches) removed.add(m[1]);
+    const unscheduled = [...src.matchAll(/cron\.unschedule\s*\(\s*'([^']+)'/g)].map(m => m[1]);
+    const rescheduled = new Set([...src.matchAll(/cron\.schedule\s*\(\s*'([^']+)'/g)].map(m => m[1]));
+    // Only mark as removed if this file does not also reschedule the same job
+    for (const name of unscheduled) {
+      if (!rescheduled.has(name)) removed.add(name);
+    }
   }
   return removed;
 }
@@ -178,6 +185,28 @@ for (const [jobName, s] of activeByName) {
   }
 }
 if (!orphansFound) console.log('  ✅ All cron jobs target existing functions');
+
+// ── Check 4: Deprecated serve() entry point (must be Deno.serve) ──────────
+// Using serve(async...) instead of Deno.serve(async...) causes WORKER_ERROR
+// on the current Supabase edge runtime. Functions deployed with the old pattern
+// will fail silently until redeployed — at which point they break in production.
+console.log('\n── Check 4: Deprecated serve() entry point ──');
+const allFunctionDirs = readdirSync(FUNCTIONS_DIR).filter(d => {
+  try { return statSync(join(FUNCTIONS_DIR, d)).isDirectory(); } catch { return false; }
+});
+let deprecatedServeFound = false;
+for (const dir of allFunctionDirs) {
+  if (dir === '_shared') continue;
+  const indexPath = join(FUNCTIONS_DIR, dir, 'index.ts');
+  let src;
+  try { src = readFileSync(indexPath, 'utf8'); } catch { continue; }
+  if (/^serve\s*\(async/m.test(src)) {
+    console.log(`  ❌ DEPRECATED  ${dir}: uses serve() — must be Deno.serve()`);
+    errors++;
+    deprecatedServeFound = true;
+  }
+}
+if (!deprecatedServeFound) console.log('  ✅ All functions use Deno.serve()');
 
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log('\n═══════════════════════════════════════════');

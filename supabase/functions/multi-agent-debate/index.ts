@@ -290,7 +290,47 @@ You MUST use the submit_synthesis tool.`;
       throw new Error(`Incident not found: ${incErr?.message || 'no data returned'}`);
     }
 
-    const selectedAgents = agents || ['THREAT-ANALYST', 'PATTERN-ANALYST', 'STRATEGIC-ANALYST'];
+    // Auto-select named roster agents when no specific agents are requested.
+    // Build a relevance query from the incident category + signal text, then pick
+    // 3 agents whose specialty best matches. Fall back to generic analysts if DB
+    // lookup fails or returns fewer than 2 named agents.
+    let selectedAgents: string[];
+    if (agents) {
+      selectedAgents = agents;
+    } else {
+      try {
+        const matchText = [incident.signals?.category, incident.signals?.normalized_text?.substring(0, 200)].filter(Boolean).join(' ');
+        const { data: rosterAgents } = await supabase
+          .from('ai_agents')
+          .select('call_sign, specialty')
+          .eq('is_active', true)
+          .not('system_prompt', 'is', null)
+          .limit(50);
+
+        if (rosterAgents && rosterAgents.length >= 2) {
+          // Score each agent by word-overlap between specialty and incident context
+          const matchWords = new Set((matchText.toLowerCase().match(/\w{4,}/g) || []));
+          const scored = rosterAgents
+            .map((a: any) => {
+              const specWords = (a.specialty || '').toLowerCase().match(/\w{4,}/g) || [];
+              const hits = specWords.filter((w: string) => matchWords.has(w)).length;
+              return { call_sign: a.call_sign, score: hits };
+            })
+            .sort((a: any, b: any) => b.score - a.score)
+            .slice(0, 3);
+
+          // Only use named agents if we got at least 2 with any relevance; otherwise fallback
+          const relevant = scored.filter((a: any) => a.score > 0);
+          selectedAgents = relevant.length >= 2
+            ? scored.map((a: any) => a.call_sign)
+            : ['THREAT-ANALYST', 'PATTERN-ANALYST', 'STRATEGIC-ANALYST'];
+        } else {
+          selectedAgents = ['THREAT-ANALYST', 'PATTERN-ANALYST', 'STRATEGIC-ANALYST'];
+        }
+      } catch {
+        selectedAgents = ['THREAT-ANALYST', 'PATTERN-ANALYST', 'STRATEGIC-ANALYST'];
+      }
+    }
     const incidentAge = calculateIncidentAge({ id: incident.id, opened_at: incident.opened_at });
 
     const incidentContext = `

@@ -1,15 +1,17 @@
 /**
  * Tier 2 Signal Review Agent
  *
- * Fires asynchronously for signals with composite_confidence in [0.60, 0.75).
+ * Fires asynchronously for signals with composite_confidence ≥ 0.60.
+ * Also fires for high-value signals (≥0.75 composite + severity_score ≥50) dispatched
+ * by ai-decision-engine after the April 24, 2026 agent trigger expansion.
  * Gathers contextual evidence (similar signals, active incidents, entity graph)
  * and makes a contextual promote/enrich/flag/dismiss decision.
  *
  * Verdicts:
  *   promote  — create an incident (for 0.60–0.64 signals that passed model gates but
  *               fell below the composite threshold; agent found corroborating context)
- *   enrich   — add agent review context to the existing incident (for 0.65–0.75 signals)
- *   flag     — mark incident as low_confidence (for 0.65–0.75 signals the agent doubts)
+ *   enrich   — add agent review context to the existing incident (for ≥0.65 signals)
+ *   flag     — mark incident as low_confidence (agent doubts the signal)
  *   dismiss  — no action needed (agent found no corroboration)
  *
  * This function is intentionally non-blocking: ai-decision-engine fires it via
@@ -47,9 +49,9 @@ Deno.serve(async (req) => {
     if (!signal_id) return errorResponse('signal_id is required', 400);
 
     const compositeScore = Number(composite_score) || 0;
-    if (compositeScore < 0.60 || compositeScore >= 0.75) {
-      // Called out of range — nothing to do
-      return successResponse({ skipped: true, reason: 'composite_score outside [0.60, 0.75) range' });
+    if (compositeScore < 0.60) {
+      // Below minimum threshold — nothing to do
+      return successResponse({ skipped: true, reason: 'composite_score below 0.60' });
     }
 
     // ── 1. Fetch the signal ──────────────────────────────────────────────────

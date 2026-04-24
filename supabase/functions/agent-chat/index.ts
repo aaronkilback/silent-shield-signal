@@ -653,16 +653,22 @@ Respond naturally and briefly.`
       trajectoriesResult,
       meshResult,
       pendingMsgsResult,
+      missionsResult,
     ] = await Promise.allSettled([
       buildCOP(supabase),
-      supabase
-        .from('agent_beliefs')
-        .select('hypothesis, belief_type, confidence, evolution_log')
-        .eq('agent_call_sign', agentCallSign)
-        .eq('is_active', true)
-        .gte('confidence', 0.60)
-        .order('confidence', { ascending: false })
-        .limit(5),
+      (() => {
+        let q = supabase
+          .from('agent_beliefs')
+          .select('hypothesis, belief_type, confidence, evolution_log, has_contradiction, contradiction_note')
+          .eq('agent_call_sign', agentCallSign)
+          .eq('is_active', true)
+          .gte('confidence', 0.60)
+          .order('confidence', { ascending: false })
+          .limit(15);
+        // Show global beliefs (client_id IS NULL) plus beliefs specific to this client
+        if (client_id) q = q.or(`client_id.is.null,client_id.eq.${client_id}`);
+        return q;
+      })(),
       supabase
         .from('knowledge_connections')
         .select('synthesis_note, agents_involved, relationship_type, connection_strength')
@@ -685,6 +691,13 @@ Respond naturally and briefly.`
         .eq('agent_id', agent.id)
         .is('delivered_at', null)
         .is('dismissed_at', null)
+        .order('created_at', { ascending: false })
+        .limit(5),
+      supabase
+        .from('agent_missions')
+        .select('id, title, objective, deadline, reporting_cadence, progress_log, created_at')
+        .eq('assigned_agent', agentCallSign)
+        .eq('status', 'active')
         .order('created_at', { ascending: false })
         .limit(5),
     ]);
@@ -714,7 +727,10 @@ Respond naturally and briefly.`
           const trend = b.evolution_log?.length > 1
             ? (b.evolution_log[b.evolution_log.length - 1]?.new_confidence > b.evolution_log[b.evolution_log.length - 2]?.new_confidence ? '↑' : '↓')
             : '';
-          return `▸ [${b.belief_type.toUpperCase()} | ${conf}%${trend}] ${b.hypothesis}`;
+          const contested = b.has_contradiction
+            ? ` ⚠️ CONTESTED${b.contradiction_note ? ` — ${b.contradiction_note}` : ' (contradicting evidence on file)'}`
+            : '';
+          return `▸ [${b.belief_type.toUpperCase()} | ${conf}%${trend}] ${b.hypothesis}${contested}`;
         });
         parts.push(`WHAT YOU BELIEVE (analytical conclusions, confidence-weighted):\n${beliefLines.join('\n')}`);
       }
@@ -750,6 +766,20 @@ Respond naturally and briefly.`
     if (trajectoriesResult.status === 'fulfilled') trajectoryBlock = formatTrajectoryContext(trajectoriesResult.value);
     if (meshResult.status === 'fulfilled') meshBlock = formatSourceCredibilityContext(meshResult.value);
 
+    // ── ACTIVE MISSIONS ───────────────────────────────────────────
+    let missionsBlock = "";
+    const activeMissions = missionsResult.status === 'fulfilled' ? (missionsResult.value.data || []) : [];
+    if (activeMissions.length > 0) {
+      const missionLines = activeMissions.map((m: any) => {
+        const deadline = m.deadline ? ` | Deadline: ${m.deadline.substring(0, 10)}` : '';
+        const cadence = ` | Report: ${m.reporting_cadence}`;
+        const progress = (m.progress_log || []).length;
+        const progressNote = progress > 0 ? ` | ${progress} update(s) logged` : ' | No updates yet';
+        return `▸ [MISSION ${m.id.substring(0, 8)}] ${m.title}${deadline}${cadence}${progressNote}\n  Objective: ${m.objective}`;
+      }).join('\n\n');
+      missionsBlock = `\n\n🎯 ACTIVE MISSIONS (${activeMissions.length}):\n${missionLines}\n\nThese are your current directives. Proactively surface findings relevant to these missions. Use update_mission_progress to log discoveries.\n`;
+    }
+
     // ── PENDING MESSAGES ──────────────────────────────────────────
     let pendingMessagesBlock = "";
     const pendingMsgs = pendingMsgsResult.status === 'fulfilled' ? (pendingMsgsResult.value.data || []) : [];
@@ -761,7 +791,7 @@ Respond naturally and briefly.`
         .then(() => {}).catch(() => {});
     }
 
-    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${worldModelBlock}${episodicBlock}${trajectoryBlock}${meshBlock}${behavioralCorrectionBlock}${pendingMessagesBlock}
+    const systemPrompt = `${agent.system_prompt || `You are ${agent.codename}, an AI agent specializing in ${agent.specialty}.`}${expertiseBlock}${worldModelBlock}${episodicBlock}${trajectoryBlock}${meshBlock}${behavioralCorrectionBlock}${missionsBlock}${pendingMessagesBlock}
 
 Your Mission: ${agent.mission_scope}
 Your Call Sign: ${agent.call_sign}

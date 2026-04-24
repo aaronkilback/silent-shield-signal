@@ -200,7 +200,7 @@ function formatSMSMessage(alert: SecureAlertPayload): string {
   return lines.join('\n').slice(0, 1600); // SMS limit
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }

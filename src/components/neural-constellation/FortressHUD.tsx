@@ -41,9 +41,9 @@ export function FortressHUD({ health, isLoading }: FortressHUDProps) {
   const fortifyPct = Math.round(health.fortifyScore * 100);
   const scoreColor = fortifyPct >= 80 ? "#10b981" : fortifyPct >= 50 ? "#f59e0b" : "#ef4444";
 
-  // Count by layer
+  // Count by layer — passive loops excluded (they can't be forced by cron)
   const layerStats = (["observability", "safety", "reliability", "learning"] as const).map((layer) => {
-    const loops = health.loops.filter((l) => l.layer === layer);
+    const loops = health.loops.filter((l) => l.layer === layer && !l.passive);
     const closed = loops.filter((l) => l.status === "closed").length;
     return { layer, closed, total: loops.length, pct: loops.length > 0 ? closed / loops.length : 0 };
   });
@@ -70,6 +70,11 @@ export function FortressHUD({ health, isLoading }: FortressHUDProps) {
             </div>
             <div className="text-[9px] text-muted-foreground">
               {health.closedCount}/{health.totalCount} loops closed · SIG {health.signalIntegrity.overall}%
+              {health.loops.filter(l => l.passive && l.status === "closed").length > 0 && (
+                <span className="ml-1 opacity-60">
+                  +{health.loops.filter(l => l.passive && l.status === "closed").length} passive
+                </span>
+              )}
             </div>
           </div>
           {expanded ? (
@@ -130,17 +135,31 @@ export function FortressHUD({ health, isLoading }: FortressHUDProps) {
                 const Icon = statusIcons[loop.status];
                 return (
                   <div key={loop.name} className="flex items-center gap-1.5 py-0.5">
-                    <Icon className="w-3 h-3 flex-shrink-0" style={{ color: statusColors[loop.status] }} />
-                    <span className="text-[10px] flex-1 text-foreground">{loop.name}</span>
-                    <span
-                      className="text-[8px] px-1 py-0.5 rounded font-mono"
-                      style={{
-                        color: layerColors[loop.layer],
-                        backgroundColor: `${layerColors[loop.layer]}15`,
-                      }}
-                    >
-                      {layerLabels[loop.layer]}
+                    {loop.passive ? (
+                      <span className="w-3 h-3 flex-shrink-0 flex items-center justify-center">
+                        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
+                      </span>
+                    ) : (
+                      <Icon className="w-3 h-3 flex-shrink-0" style={{ color: statusColors[loop.status] }} />
+                    )}
+                    <span className={`text-[10px] flex-1 ${loop.passive ? "text-muted-foreground" : "text-foreground"}`}>
+                      {loop.name}
                     </span>
+                    {loop.passive ? (
+                      <span className="text-[8px] px-1 py-0.5 rounded font-mono text-muted-foreground/60 bg-muted/20">
+                        PASSIVE
+                      </span>
+                    ) : (
+                      <span
+                        className="text-[8px] px-1 py-0.5 rounded font-mono"
+                        style={{
+                          color: layerColors[loop.layer],
+                          backgroundColor: `${layerColors[loop.layer]}15`,
+                        }}
+                      >
+                        {layerLabels[loop.layer]}
+                      </span>
+                    )}
                     <span className="text-[10px] font-mono text-muted-foreground w-6 text-right">
                       {loop.runs24h}
                     </span>

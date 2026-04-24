@@ -3,6 +3,7 @@ import { useIsEmbedded } from "@/hooks/useIsEmbedded";
 import { ExecutiveReportGenerator } from "@/components/ExecutiveReportGenerator";
 import { RiskSnapshotExport } from "@/components/RiskSnapshotExport";
 import { SecurityBulletinGenerator } from "@/components/SecurityBulletinGenerator";
+import { WildfireReportGenerator } from "@/components/WildfireReportGenerator";
 import { ReportArchive } from "@/components/reports/ReportArchive";
 import { ReportScheduleManager } from "@/components/reports/ReportScheduleManager";
 import { useAuth } from "@/hooks/useAuth";
@@ -63,6 +64,7 @@ const Reports = () => {
 
         {/* Generators */}
         <div className="grid grid-cols-1 gap-6">
+          <WildfireReportGenerator />
           <SecurityBulletinGenerator />
           <ExecutiveReportGenerator />
           <RiskSnapshotExport />

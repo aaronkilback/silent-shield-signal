@@ -10,13 +10,15 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
  *
  * Data sources (all require no API key):
  *   - Yahoo Finance chart API   — copper (HG=F), WTI crude (CL=F),
- *                                  natural gas (NG=F), aluminum (ALI=F),
- *                                  CAD/USD rate (CADUSD=X)
+ *                                  natural gas (NG=F), CAD/USD rate (CADUSD=X)
  *   - Polymarket public API     — Canadian labour and political risk markets
  *
- * Signal dedup: a new signal for a given source_key is suppressed if one
- * with the same source_key was created within the last 6 days, UNLESS the
- * 30-day trend is sharply escalating (>15% move), which always fires.
+ * Signal dedup: a signal with the same title is suppressed if one was created
+ * within the last 6 days, UNLESS the 30-day trend is sharply escalating
+ * (>15% move), which always fires.
+ *
+ * Signals table columns used: title, normalized_text, category, severity,
+ * confidence, entity_tags, raw_json, client_id.
  */
 
 const JOB_NAME = 'monitor-macro-indicators-6am';
@@ -136,17 +138,21 @@ function calcTrend30d(prices: number[]): number | null {
 }
 
 // ─── Recent signal dedup check ────────────────────────────────────────────────
+// Dedup by title + client_id within the window. The signals table has no
+// source_key column; title is specific enough for daily macro indicator signals.
 
 async function recentSignalExists(
   supabase: ReturnType<typeof createServiceClient>,
-  sourceKey: string,
+  title: string,
+  clientId: string,
   windowDays = 6
 ): Promise<boolean> {
   const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from('signals')
     .select('id')
-    .eq('source_key', sourceKey)
+    .eq('title', title)
+    .eq('client_id', clientId)
     .gte('created_at', since)
     .limit(1);
   return (data?.length ?? 0) > 0;
@@ -158,18 +164,16 @@ async function insertSignal(
   supabase: ReturnType<typeof createServiceClient>,
   clientId: string,
   params: {
-    sourceKey: string;
-    event: string;
+    title: string;
     normalizedText: string;
     severity: 'critical' | 'high' | 'medium' | 'low';
     entityTags: string[];
     rawJson: Record<string, unknown>;
+    sourceUrl?: string;
   }
 ): Promise<boolean> {
   const { error } = await supabase.from('signals').insert({
-    source_key:      params.sourceKey,
-    event:           params.event,
-    text:            params.normalizedText,
+    title:           params.title,
     normalized_text: params.normalizedText,
     severity:        params.severity,
     category:        'macro_indicator',
@@ -177,9 +181,10 @@ async function insertSignal(
     confidence:      0.78,
     raw_json:        params.rawJson,
     client_id:       clientId,
+    source_url:      params.sourceUrl ?? null,
   });
   if (error) {
-    console.error(`[MacroIndicators] Signal insert error (${params.sourceKey}):`, error.message);
+    console.error(`[MacroIndicators] Signal insert error (${params.title}):`, error.message);
     return false;
   }
   return true;
@@ -195,6 +200,7 @@ interface PolymarketMarket {
   volume: number;
   endDateIso: string;
   active: boolean;
+  marketSlug?: string;      // used to build polymarket.com/event/{slug} URL
 }
 
 async function fetchPolymarketMarkets(keyword: string): Promise<PolymarketMarket[]> {
@@ -216,6 +222,7 @@ async function fetchPolymarketMarkets(keyword: string): Promise<PolymarketMarket
       volume:        Number(m.volume) || 0,
       endDateIso:    m.endDate ?? m.endDateIso ?? '',
       active:        true,
+      marketSlug:    m.marketSlug ?? m.slug ?? undefined,
     }));
   } catch (e) {
     console.warn(`[MacroIndicators] Polymarket fetch error (${keyword}):`, e);
@@ -233,6 +240,38 @@ function parseYesProbability(market: PolymarketMarket): number | null {
   } catch {
     return null;
   }
+}
+
+// ─── Polymarket relevance filter ─────────────────────────────────────────────
+// Only keep markets explicitly related to Canada, Canadian provinces/institutions,
+// or BC O&G supply chain. Generic terms like 'strike' are excluded to prevent
+// unrelated markets (celebrity news, international conflicts) from passing through.
+
+const CANADA_RELEVANCE_TERMS = [
+  'canada', 'canadian',
+  'british columbia', ' bc ', 'alberta', 'ontario',
+  'port of vancouver', 'prince rupert', 'vancouver port', 'vancouver harbour',
+  'ilwu', 'teamsters canada',
+  'cn rail', 'cp rail', 'via rail',
+  'lng canada', 'coastal gaslink', 'trans mountain', 'tmx',
+  'cupe', 'unifor', 'ufcw canada',
+  'canada post', 'rail stoppage', 'port strike', 'dock strike',
+];
+
+function isRelevantToCanadaOG(question: string): boolean {
+  const q = question.toLowerCase();
+  return CANADA_RELEVANCE_TERMS.some(term => q.includes(term));
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface SignalCandidate {
+  title: string;
+  text: string;
+  severity: 'high' | 'medium';
+  tags: string[];
+  alwaysFire: boolean;
+  sourceUrl?: string;
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -254,30 +293,39 @@ Deno.serve(async (req) => {
     if (body?.health_check) {
       return successResponse({ status: 'healthy', function: 'monitor-macro-indicators', timestamp: new Date().toISOString() });
     }
-
     console.log('[MacroIndicators] Starting daily macro indicator run...');
 
-    // Fetch all clients — no status filter, consistent with other monitor functions
-    const { data: clients, error: clientsError } = await supabase
-      .from('clients')
-      .select('id, name');
+    // ── 1. ALL external I/O in one parallel Promise.all ──────────────────────
+    // Yahoo Finance, clients query, and Polymarket all run concurrently to
+    // minimize total wall-clock time. This is critical for staying within
+    // the Supabase Edge Function execution window.
+
+    // ALI=F (CME micro aluminum) is thinly traded and unreliable on Yahoo Finance.
+    // Aluminum monitoring is seeded in expert_knowledge for AI context but not
+    // threshold-triggered until a reliable free data source is identified.
+    const polyKeywords = ['canada strike', 'canada port', 'rail strike', 'canada pipeline', 'bc labour'];
+
+    const [
+      [copperRaw, crudeRaw, natgasRaw, cadUsdRaw],
+      clientsResult,
+      polyResultsNested,
+    ] = await Promise.all([
+      Promise.all([
+        fetchYahooFinance('HG=F'),    // Copper futures USD/lb
+        fetchYahooFinance('CL=F'),    // WTI crude USD/barrel
+        fetchYahooFinance('NG=F'),    // Natural gas USD/MMBtu
+        fetchYahooFinance('CADUSD=X'),// CAD/USD exchange rate (1 CAD = X USD)
+      ]),
+      supabase.from('clients').select('id, name'),
+      Promise.all(polyKeywords.map(kw => fetchPolymarketMarkets(kw))),
+    ]);
+
+    const { data: clients, error: clientsError } = clientsResult;
     if (clientsError) throw clientsError;
     if (!clients?.length) {
       console.log('[MacroIndicators] No active clients found — exiting.');
       return successResponse({ signals_created: 0, reason: 'no_active_clients' });
     }
-
-    // ── 1. Fetch commodity prices ─────────────────────────────────────────────
-
-    // ALI=F (CME micro aluminum) is thinly traded and unreliable on Yahoo Finance.
-    // Aluminum monitoring is seeded in expert_knowledge for AI context but not
-    // threshold-triggered until a reliable free data source is identified.
-    const [copperRaw, crudeRaw, natgasRaw, cadUsdRaw] = await Promise.all([
-      fetchYahooFinance('HG=F'),    // Copper futures USD/lb
-      fetchYahooFinance('CL=F'),    // WTI crude USD/barrel
-      fetchYahooFinance('NG=F'),    // Natural gas USD/MMBtu
-      fetchYahooFinance('CADUSD=X'),// CAD/USD exchange rate (1 CAD = X USD)
-    ]);
 
     // CADUSD=X gives "1 CAD in USD" (e.g. 0.72). Invert for CAD per USD (e.g. 1.39).
     const cadUsd = cadUsdRaw?.price ?? 0.72;
@@ -324,47 +372,37 @@ Deno.serve(async (req) => {
     const dieselTrend   = calcTrend30d(dieselPrices30d);
     const natgasTrend   = calcTrend30d(natgasPrices30d);
 
-    // Build signal candidates (indicator → threshold level → text)
-    interface SignalCandidate {
-      sourceKey: string;
-      event: string;
-      text: string;
-      severity: 'high' | 'medium';
-      tags: string[];
-      alwaysFire: boolean; // trend signals bypass dedup window
-    }
-
     const candidates: SignalCandidate[] = [];
 
     // COPPER
     if (copperPerTonne !== null) {
       if (copperPerTonne >= tCu.high) {
         candidates.push({
-          sourceKey: 'macro-copper-high-threshold',
-          event: 'Copper Price — High Theft Risk Threshold',
+          title: 'Copper Price — High Theft Risk Threshold',
           text: `LME copper spot has reached $${copperPerTonne.toLocaleString()} USD/tonne, exceeding the high-risk threshold ($${tCu.high.toLocaleString()}). Historical correlation: elevated risk of copper wire, cathodic protection cable, and grounding system theft at remote pipeline and utility sites. Primary targets include bonding cables, communication line copper cores, and unguarded transformer windings.${copperTrend !== null ? ` 30-day trend: ${copperTrend > 0 ? '+' : ''}${copperTrend}%.` : ''} Review copper-intensive installations at ungated or remotely-located sites.`,
           severity: 'high',
           tags: ['copper', 'theft', 'macro_indicator', 'pipeline', 'cathodic_protection', 'lme'],
           alwaysFire: false,
+          sourceUrl: 'https://finance.yahoo.com/quote/HG%3DF/',
         });
       } else if (copperPerTonne >= tCu.medium) {
         candidates.push({
-          sourceKey: 'macro-copper-medium-threshold',
-          event: 'Copper Price — Elevated Theft Risk',
+          title: 'Copper Price — Elevated Theft Risk',
           text: `LME copper spot at $${copperPerTonne.toLocaleString()} USD/tonne has crossed the elevated-risk threshold ($${tCu.medium.toLocaleString()}). Increased risk of copper infrastructure theft at remote O&G and pipeline sites. Recommend auditing copper cable runs and cathodic protection systems at sites with limited surveillance.${copperTrend !== null ? ` 30-day trend: ${copperTrend > 0 ? '+' : ''}${copperTrend}%.` : ''}`,
           severity: 'medium',
           tags: ['copper', 'theft', 'macro_indicator', 'pipeline', 'lme'],
           alwaysFire: false,
+          sourceUrl: 'https://finance.yahoo.com/quote/HG%3DF/',
         });
       }
       if (copperTrend !== null && copperTrend >= tCu.trend_pct) {
         candidates.push({
-          sourceKey: 'macro-copper-trend-escalation',
-          event: 'Copper Price — 30-Day Escalation Trend',
+          title: 'Copper Price — 30-Day Escalation Trend',
           text: `LME copper has risen ${copperTrend}% over the last 30 days (now $${copperPerTonne.toLocaleString()} USD/tonne). Rapid price appreciation attracts new entrants into copper theft networks. Escalating trend is an independent risk factor beyond absolute price level. Notify neighbouring operators and regional RCMP detachments.`,
           severity: 'medium',
           tags: ['copper', 'theft', 'macro_indicator', 'trend', 'lme'],
           alwaysFire: true,
+          sourceUrl: 'https://finance.yahoo.com/quote/HG%3DF/',
         });
       }
     }
@@ -373,31 +411,31 @@ Deno.serve(async (req) => {
     if (dieselProxy !== null) {
       if (dieselProxy >= tDs.high) {
         candidates.push({
-          sourceKey: 'macro-diesel-high-threshold',
-          event: 'Diesel Price — High Site Fuel Theft Risk',
+          title: 'Diesel Price — High Site Fuel Theft Risk',
           text: `Estimated NE BC diesel price has reached $${dieselProxy.toFixed(2)}/L (based on WTI crude at $${wtiPrice?.toFixed(2)}/bbl), exceeding the high-risk threshold ($${tDs.high}/L). Historically, prices above this level correlate with a 15–30% increase in bulk fuel theft at unmanned remote sites. Increase physical security on above-ground fuel storage, audit fuel levels at remote generator pads, and consider installing fuel-level alarms on bulk tanks exceeding 500L.${dieselTrend !== null ? ` 30-day trend: ${dieselTrend > 0 ? '+' : ''}${dieselTrend}%.` : ''}`,
           severity: 'high',
           tags: ['diesel', 'fuel_theft', 'macro_indicator', 'remote_site', 'northeast_bc'],
           alwaysFire: false,
+          sourceUrl: 'https://finance.yahoo.com/quote/CL%3DF/',
         });
       } else if (dieselProxy >= tDs.medium) {
         candidates.push({
-          sourceKey: 'macro-diesel-medium-threshold',
-          event: 'Diesel Price — Elevated Site Fuel Theft Risk',
+          title: 'Diesel Price — Elevated Site Fuel Theft Risk',
           text: `Estimated NE BC diesel price at $${dieselProxy.toFixed(2)}/L has entered the elevated-risk range (above $${tDs.medium}/L). Recommend weekly fuel inventory audits at remote sites and ensuring bulk storage locks are functional. Seasonal risk is higher if this occurs in fall/winter.${dieselTrend !== null ? ` 30-day trend: ${dieselTrend > 0 ? '+' : ''}${dieselTrend}%.` : ''}`,
           severity: 'medium',
           tags: ['diesel', 'fuel_theft', 'macro_indicator', 'remote_site', 'northeast_bc'],
           alwaysFire: false,
+          sourceUrl: 'https://finance.yahoo.com/quote/CL%3DF/',
         });
       }
       if (dieselTrend !== null && dieselTrend >= tDs.trend_pct) {
         candidates.push({
-          sourceKey: 'macro-diesel-trend-escalation',
-          event: 'Diesel Price — 30-Day Escalation Trend',
+          title: 'Diesel Price — 30-Day Escalation Trend',
           text: `NE BC diesel proxy price has risen ${dieselTrend}% over the last 30 days (now ~$${dieselProxy.toFixed(2)}/L). Rapid increase approaching threshold levels — pre-emptively review fuel storage security at remote sites before theft risk peaks.`,
           severity: 'medium',
           tags: ['diesel', 'fuel_theft', 'macro_indicator', 'trend', 'northeast_bc'],
           alwaysFire: true,
+          sourceUrl: 'https://finance.yahoo.com/quote/CL%3DF/',
         });
       }
     }
@@ -406,102 +444,115 @@ Deno.serve(async (req) => {
     if (natgasPrice !== null) {
       if (natgasPrice <= tNg.low_medium) {
         candidates.push({
-          sourceKey: 'macro-natgas-low-workforce-risk',
-          event: 'Natural Gas Price — Workforce Instability Risk',
+          title: 'Natural Gas Price — Workforce Instability Risk',
           text: `Henry Hub natural gas at $${natgasPrice.toFixed(2)}/MMBtu is below the workforce instability threshold ($${tNg.low_medium}/MMBtu). At this price level, NE BC upstream operators face margin pressure likely to drive layoffs and contract deferrals. Elevated insider threat risk: audit site access credentials for recently separated personnel, ensure access codes are changed within 24h of any departures.${natgasTrend !== null ? ` 30-day trend: ${natgasTrend > 0 ? '+' : ''}${natgasTrend}%.` : ''}`,
           severity: 'medium',
           tags: ['natural_gas', 'workforce', 'insider_threat', 'macro_indicator', 'aeco', 'northeast_bc'],
           alwaysFire: false,
+          sourceUrl: 'https://finance.yahoo.com/quote/NG%3DF/',
         });
       } else if (natgasTrend !== null && Math.abs(natgasTrend) >= tNg.trend_pct) {
         const direction = natgasTrend > 0 ? 'risen' : 'fallen';
         candidates.push({
-          sourceKey: 'macro-natgas-trend-volatility',
-          event: 'Natural Gas Price — High Volatility',
+          title: 'Natural Gas Price — High Volatility',
           text: `Henry Hub natural gas has ${direction} ${Math.abs(natgasTrend)}% over the last 30 days (now $${natgasPrice.toFixed(2)}/MMBtu). High price volatility creates operational uncertainty for NE BC O&G operators and may affect contractor activity and site staffing levels.`,
           severity: 'medium',
           tags: ['natural_gas', 'macro_indicator', 'trend', 'volatility', 'northeast_bc'],
           alwaysFire: true,
+          sourceUrl: 'https://finance.yahoo.com/quote/NG%3DF/',
         });
       }
     }
 
-    // ── 4. Fetch Polymarket markets ───────────────────────────────────────────
+    // ── 4. Process Polymarket results (already fetched in Phase 1) ────────────
 
-    const polyKeywords = ['canada strike', 'canada port', 'rail strike', 'canada pipeline', 'bc labour'];
     const allMarkets: PolymarketMarket[] = [];
-    for (const kw of polyKeywords) {
-      const markets = await fetchPolymarketMarkets(kw);
+    for (const markets of polyResultsNested) {
       for (const m of markets) {
-        if (!allMarkets.find(x => x.id === m.id)) allMarkets.push(m);
+        if (!allMarkets.find(x => x.id === m.id) && isRelevantToCanadaOG(m.question)) {
+          allMarkets.push(m);
+        }
       }
-      await new Promise(r => setTimeout(r, 300)); // gentle rate limiting
     }
 
     console.log(`[MacroIndicators] Polymarket: ${allMarkets.length} relevant markets found`);
     results.polymarketMarketsFound = allMarkets.length;
+
+    const polyReadingsToStore: Record<string, unknown>[] = [];
 
     for (const market of allMarkets) {
       const prob = parseYesProbability(market);
       if (prob === null) continue;
 
       const tPm = THRESHOLDS.polymarket_probability_pct;
-      const sourceKey = `macro-polymarket-${market.id.substring(0, 16)}`;
+      const signalTitle = `Prediction Market — ${prob >= tPm.high ? 'High' : 'Elevated'} Probability: ${market.question.substring(0, 80)}`;
+      const polyUrl = market.marketSlug
+        ? `https://polymarket.com/event/${market.marketSlug}`
+        : `https://polymarket.com/markets?keyword=${encodeURIComponent(market.question.substring(0, 60))}`;
 
       if (prob >= tPm.high) {
         candidates.push({
-          sourceKey,
-          event: `Prediction Market — High Probability: ${market.question.substring(0, 80)}`,
+          title: signalTitle,
           text: `Polymarket prediction market shows ${prob}% probability: "${market.question}" (market volume $${Math.round(market.volume / 1000)}k). At this probability level, security and supply chain teams should activate contingency planning. End date: ${market.endDateIso?.split('T')[0] ?? 'unknown'}.`,
           severity: 'high',
           tags: ['polymarket', 'prediction_market', 'labour', 'supply_chain', 'macro_indicator'],
           alwaysFire: false,
+          sourceUrl: polyUrl,
         });
       } else if (prob >= tPm.medium) {
         candidates.push({
-          sourceKey,
-          event: `Prediction Market — Elevated Probability: ${market.question.substring(0, 80)}`,
+          title: signalTitle,
           text: `Polymarket prediction market shows ${prob}% probability: "${market.question}" (market volume $${Math.round(market.volume / 1000)}k). Recommend reviewing supply chain buffer stocks and contingency logistics for this scenario. End date: ${market.endDateIso?.split('T')[0] ?? 'unknown'}.`,
           severity: 'medium',
           tags: ['polymarket', 'prediction_market', 'macro_indicator'],
           alwaysFire: false,
+          sourceUrl: polyUrl,
         });
       }
 
-      // Store Polymarket reading in macro_indicators
-      await supabase.from('macro_indicators').insert({
+      // Queue Polymarket reading for batch insert (avoid sequential per-market DB calls)
+      polyReadingsToStore.push({
         indicator_name: `polymarket_${market.question.substring(0, 60).toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
         value: prob,
         unit: 'probability_%',
         source: 'polymarket',
         region: 'canada',
         raw_json: { id: market.id, question: market.question, volume: market.volume, probability: prob },
-      }).catch(() => {});
+      });
+    }
+
+    // Batch insert all Polymarket readings in one call (fire-and-forget)
+    if (polyReadingsToStore.length > 0) {
+      supabase.from('macro_indicators').insert(polyReadingsToStore).catch(() => {});
     }
 
     // ── 5. Fire signals to all clients after dedup check ─────────────────────
+    // Parallelize across all candidates (and per-candidate across all clients)
+    // to avoid sequential DB calls that would blow past the edge function timeout.
 
-    for (const candidate of candidates) {
+    const pricesContext = results.prices as Record<string, unknown>;
+    const insertCounts = await Promise.all(candidates.map(async (candidate) => {
       if (!candidate.alwaysFire) {
-        const exists = await recentSignalExists(supabase, candidate.sourceKey);
+        // Check dedup against first client as a proxy — avoids N×M dedup checks
+        const exists = await recentSignalExists(supabase, candidate.title, clients[0].id);
         if (exists) {
-          console.log(`[MacroIndicators] Suppressing ${candidate.sourceKey} — recent signal exists`);
-          continue;
+          console.log(`[MacroIndicators] Suppressing "${candidate.title}" — recent signal exists`);
+          return 0;
         }
       }
-
-      for (const client of clients) {
-        const created = await insertSignal(supabase, client.id, {
-          sourceKey:      candidate.sourceKey,
-          event:          candidate.event,
+      const inserted = await Promise.all(clients.map(client =>
+        insertSignal(supabase, client.id, {
+          title:          candidate.title,
           normalizedText: candidate.text,
           severity:       candidate.severity,
           entityTags:     candidate.tags,
-          rawJson:        { ...results.prices, sourceKey: candidate.sourceKey },
-        });
-        if (created) signalsCreated++;
-      }
-    }
+          rawJson:        { ...pricesContext, candidateTitle: candidate.title },
+          sourceUrl:      candidate.sourceUrl,
+        })
+      ));
+      return inserted.filter(Boolean).length;
+    }));
+    signalsCreated = insertCounts.reduce((sum, n) => sum + n, 0);
 
     console.log(`[MacroIndicators] Complete. ${candidates.length} candidates evaluated, ${signalsCreated} signals created across ${clients.length} clients.`);
 
@@ -510,14 +561,15 @@ Deno.serve(async (req) => {
     results.clientsProcessed = clients.length;
     results.trends = { copperTrend, dieselTrend, natgasTrend };
 
-    await supabase.from('cron_heartbeat').insert({
+    const { error: hbError } = await supabase.from('cron_heartbeat').insert({
       job_name:     'monitor-macro-indicators-6am',
       started_at:   heartbeatAt,
       completed_at: new Date().toISOString(),
       status:       'completed',
       duration_ms:  Date.now() - heartbeatMs,
       result_summary: results,
-    }).catch(() => {});
+    });
+    if (hbError) console.warn('[MacroIndicators] Heartbeat insert error:', hbError.message, hbError.code);
 
     return successResponse({ success: true, ...results });
 
@@ -533,6 +585,6 @@ Deno.serve(async (req) => {
       result_summary: { error: error.message },
     }).catch(() => {});
 
-    return errorResponse(error.message, 500);
+    return errorResponse(error?.message ?? String(error), 500);
   }
 });

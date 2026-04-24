@@ -2,6 +2,7 @@
 // Supports downloading and storing images, videos, and audio from social media
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { getSignedUrl, BUCKETS } from "./storage.ts";
 
 export interface MediaFile {
   url: string;
@@ -174,17 +175,14 @@ export async function downloadAndStoreMedia(
       return null;
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from('osint-media')
-      .getPublicUrl(storagePath);
+    const storageUrl = await getSignedUrl(supabase, BUCKETS.OSINT_MEDIA, storagePath, 3600);
 
     const mediaFile: MediaFile = {
       url: url,
       type: mediaType,
       filename: filename,
       storagePath: storagePath,
-      storageUrl: urlData.publicUrl,
+      storageUrl,
       mime: contentType,
       size: buffer.byteLength,
     };

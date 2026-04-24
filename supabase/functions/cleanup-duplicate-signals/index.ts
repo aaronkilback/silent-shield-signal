@@ -54,7 +54,7 @@ function levenshteinDistance(str1: string, str2: string): number {
   return matrix[len1][len2];
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }

@@ -14,6 +14,7 @@
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { extractOGImage } from "../_shared/og-image.ts";
 
 const GOOGLE_CSE_ENDPOINT = 'https://www.googleapis.com/customsearch/v1';
 const HIBP_ENDPOINT = 'https://haveibeenpwned.com/api/v3/breachedaccount';
@@ -310,10 +311,32 @@ Deno.serve(async (req) => {
       queriesRun.push(...queries.slice(0, MAX_QUERIES));
     }
 
-    // ── Dedup results by URL ─────────────────────────────────────────────────
+    // ── Dedup and filter generic/homepage results ────────────────────────────
     const seenUrls = new Set<string>();
+
+    // Returns true if the URL points to a specific page (article, post, profile)
+    // rather than a site root or generic directory listing.
+    const isSpecificPage = (url: string): boolean => {
+      try {
+        const { pathname, search } = new URL(url);
+        // Allow root URLs only for known people-search / court domains
+        const alwaysAllow = HIGH_VALUE_DOMAINS.slice(0, 11); // people-search + court domains
+        const host = new URL(url).hostname.replace(/^www\./, '');
+        if (alwaysAllow.some(d => host.includes(d))) return true;
+        // Reject bare roots and near-roots (e.g. /en/, /en/about)
+        const parts = pathname.replace(/\/$/, '').split('/').filter(Boolean);
+        if (parts.length === 0) return false;
+        if (parts.length === 1 && parts[0].length < 4) return false;
+        return true;
+      } catch { return true; }
+    };
+
     const uniqueResults = allResults.filter(r => {
       if (!r.url || seenUrls.has(r.url)) return false;
+      if (!isSpecificPage(r.url)) {
+        console.log(`[investigate-poi] Skip generic URL: ${r.url}`);
+        return false;
+      }
       seenUrls.add(r.url);
       return true;
     });
@@ -342,19 +365,41 @@ Deno.serve(async (req) => {
     }
 
     // ── Store results as entity_content ──────────────────────────────────────
+    // Threat/activist keywords — results matching these get elevated relevance
+    // and will also create a signal so the finding surfaces in the signals feed.
+    const THREAT_KEYWORDS = /activist|protest|threat|harass|dox|doxx|lawsuit|wpath|campaign|opposition|targeted|puberty.blocker|gender.clinic|trans.youth|anti.gender/i;
+
     let resultsStored = 0;
+    const signalCandidates: Array<{ url: string; title: string; snippet: string; imageUrl: string | null }> = [];
+
     if (uniqueResults.length > 0) {
-      const contentRows = uniqueResults.map(r => ({
-        entity_id,
-        url: r.url,
-        title: r.title.substring(0, 500),
-        excerpt: r.snippet.substring(0, 500),
-        // Use fetched full-page content if available, else fall back to snippet
-        content_text: (fetchedContent.get(r.url) || r.snippet).substring(0, 4000),
-        content_type: 'web_search',
-        source: hostname(r.url),
-        relevance_score: isHighValue(r.url) ? 85 : 55,
-      }));
+      // Extract OG images for high-value results (cap at 20 to stay within time budget)
+      const imageMap = new Map<string, string | null>();
+      const forImageExtract = uniqueResults.filter(r => isHighValue(r.url)).slice(0, 20);
+      await Promise.allSettled(
+        forImageExtract.map(async r => {
+          const img = await extractOGImage(r.url).catch(() => null);
+          imageMap.set(r.url, img);
+        })
+      );
+
+      const contentRows = uniqueResults.map(r => {
+        const imageUrl = imageMap.get(r.url) || null;
+        const combinedText = `${r.title} ${r.snippet}`;
+        const isThreat = THREAT_KEYWORDS.test(combinedText);
+        if (isThreat) signalCandidates.push({ url: r.url, title: r.title, snippet: r.snippet, imageUrl });
+        return {
+          entity_id,
+          url: r.url,
+          title: r.title.substring(0, 500),
+          excerpt: r.snippet.substring(0, 500),
+          content_text: (fetchedContent.get(r.url) || r.snippet).substring(0, 4000),
+          content_type: 'web_search',
+          source: hostname(r.url),
+          relevance_score: isThreat ? 90 : (isHighValue(r.url) ? 85 : 55),
+          metadata: { image_url: imageUrl, is_threat_relevant: isThreat },
+        };
+      });
 
       // Upsert in batches of 50 (dedup by entity_id + url)
       for (let i = 0; i < contentRows.length; i += 50) {
@@ -372,9 +417,39 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Create signals for threat/activist findings ───────────────────────────
+    // These go through ingest-signal so they appear in the signals feed and
+    // are available to AEGIS — not just buried in entity_content.
+    for (const candidate of signalCandidates.slice(0, 10)) {
+      try {
+        await supabase.functions.invoke('ingest-signal', {
+          body: {
+            text: `${candidate.title}\n\n${candidate.snippet}\n\nSource: ${candidate.url}`,
+            source_url: candidate.url,
+            source_name: hostname(candidate.url),
+            client_id: entity.client_id || null,
+            image_url: candidate.imageUrl || null,
+            metadata: {
+              entity_id,
+              entity_name: entity.name,
+              signal_origin: 'investigate-poi',
+              is_threat_relevant: true,
+            },
+          },
+        });
+        console.log(`[investigate-poi] Signal created for threat finding: ${candidate.title.substring(0, 60)}`);
+      } catch (sigErr) {
+        console.warn(`[investigate-poi] Signal creation failed for ${candidate.url}:`, sigErr);
+      }
+    }
+
     // ── HIBP checks ──────────────────────────────────────────────────────────
     const attributes = entity.attributes || {};
-    const emails: string[] = attributes.emails || [];
+    // Support both attributes.emails (legacy) and attributes.contact_info.email (current)
+    const contactInfoEmails: string[] = Array.isArray(attributes.contact_info?.email)
+      ? attributes.contact_info.email
+      : (typeof attributes.contact_info?.email === 'string' ? [attributes.contact_info.email] : []);
+    const emails: string[] = [...new Set([...(attributes.emails || []), ...contactInfoEmails])];
     let hibpChecked = false;
     let allBreaches: any[] = [];
 

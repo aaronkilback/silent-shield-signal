@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { format } from "date-fns";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -869,24 +870,6 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           <div className="flex items-center justify-between">
             <DialogTitle className="text-2xl">{entity.name}</DialogTitle>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleAssessEntity}
-                disabled={runningAssessment}
-              >
-                {runningAssessment ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Assessing...
-                  </>
-                ) : (
-                  <>
-                    <Brain className="w-4 h-4 mr-2" />
-                    {(entity as any).ai_assessed_at ? 'Re-Assess' : 'Assess'}
-                  </>
-                )}
-              </Button>
               <AskAegisButton
                 context={`Entity: ${entity.name} (${entity.type})`}
                 initialMessage={`Provide a threat assessment for the entity "${entity.name}" (${entity.type}). ${entity.description ? `Description: ${entity.description}` : ''} What are the key risk factors and recommended actions?`}
@@ -999,32 +982,19 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
             </Card>
           )}
 
-          {/* AEGIS AI Assessment Banner */}
+          {/* Risk level pill — links to assessment tab */}
           {(entity as any).ai_assessment && (
-            <Card className={`mt-4 p-3 ${
-              (entity as any).ai_assessment.threat_level === 'critical' ? 'border-red-500 bg-red-500/5' :
-              (entity as any).ai_assessment.threat_level === 'high' ? 'border-orange-500 bg-orange-500/5' :
-              (entity as any).ai_assessment.threat_level === 'medium' ? 'border-yellow-500 bg-yellow-500/5' :
-              'border-green-500 bg-green-500/5'
-            }`}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-2">
-                  <Brain className="w-4 h-4 mt-0.5 text-primary flex-shrink-0" />
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium text-muted-foreground">AEGIS Assessment</span>
-                      <Badge variant="outline" className="text-xs">
-                        {(entity as any).ai_assessment.threat_level?.toUpperCase()}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {Math.round(((entity as any).ai_assessment.confidence ?? 0) * 100)}% confidence
-                      </span>
-                    </div>
-                    <p className="text-sm">{(entity as any).ai_assessment.summary}</p>
-                  </div>
-                </div>
-              </div>
-            </Card>
+            <div className="mt-2">
+              <Badge variant="outline" className={`text-xs ${
+                (entity as any).ai_assessment.threat_level === 'critical' ? 'border-red-500 text-red-600' :
+                (entity as any).ai_assessment.threat_level === 'high' ? 'border-orange-500 text-orange-600' :
+                (entity as any).ai_assessment.threat_level === 'medium' ? 'border-yellow-500 text-yellow-600' :
+                'border-green-500 text-green-600'
+              }`}>
+                <Shield className="w-3 h-3 mr-1" />
+                {(entity as any).ai_assessment.threat_level?.toUpperCase()} RISK — see Risk Assessment tab
+              </Badge>
+            </div>
           )}
         </DialogHeader>
 
@@ -1035,6 +1005,19 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
             <TabsTrigger value="content">Content</TabsTrigger>
             <TabsTrigger value="relationships">Relationships</TabsTrigger>
             <TabsTrigger value="signals">Signals</TabsTrigger>
+            <TabsTrigger value="assessment">
+              Risk Assessment
+              {(entity as any).ai_assessment && (
+                <span className={`ml-1.5 text-xs px-1 rounded ${
+                  (entity as any).ai_assessment.threat_level === 'critical' ? 'bg-destructive text-destructive-foreground' :
+                  (entity as any).ai_assessment.threat_level === 'high' ? 'bg-orange-500 text-white' :
+                  (entity as any).ai_assessment.threat_level === 'medium' ? 'bg-yellow-500 text-white' :
+                  'bg-muted text-muted-foreground'
+                }`}>
+                  {(entity as any).ai_assessment.threat_level || 'assessed'}
+                </span>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="report">
               Report
               {latestReport && (
@@ -1932,6 +1915,110 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
             )}
           </TabsContent>
 
+          <TabsContent value="assessment" className="mt-4 space-y-4">
+            {(entity as any).ai_assessment ? (() => {
+              const assessment = (entity as any).ai_assessment;
+              const riskColor =
+                assessment.threat_level === 'critical' ? 'border-red-500 bg-red-500/5 text-red-700 dark:text-red-400' :
+                assessment.threat_level === 'high' ? 'border-orange-500 bg-orange-500/5 text-orange-700 dark:text-orange-400' :
+                assessment.threat_level === 'medium' ? 'border-yellow-500 bg-yellow-500/5 text-yellow-700 dark:text-yellow-400' :
+                'border-border bg-muted/30 text-muted-foreground';
+              return (
+                <>
+                  {/* Header card */}
+                  <Card className={`p-4 border-l-4 ${riskColor}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Shield className="w-4 h-4" />
+                        <span className="text-sm font-semibold uppercase tracking-wide">
+                          {assessment.threat_level || 'Unknown'} Risk
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {assessment.scan_date && (
+                          <span className="text-xs text-muted-foreground">
+                            Assessed: {format(new Date(assessment.scan_date), "MMM d, yyyy 'at' h:mm a")}
+                          </span>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleAssessEntity}
+                          disabled={runningAssessment}
+                        >
+                          {runningAssessment ? (
+                            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Assessing...</>
+                          ) : (
+                            <><Brain className="w-3.5 h-3.5 mr-1.5" />Re-Assess</>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="text-sm leading-relaxed">{assessment.risk_summary}</p>
+                  </Card>
+
+                  {/* Key Findings */}
+                  {assessment.key_findings?.length > 0 && (
+                    <Card className="p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <AlertTriangle className="w-4 h-4 text-orange-500" />
+                        <span className="text-sm font-medium">Key Findings</span>
+                      </div>
+                      <ul className="space-y-2">
+                        {assessment.key_findings.map((finding: string, i: number) => (
+                          <li key={i} className="flex items-start gap-2 text-sm">
+                            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
+                            <span>{finding}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </Card>
+                  )}
+
+                  {/* Recommended Actions */}
+                  {assessment.recommended_actions?.length > 0 && (
+                    <Card className="p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <CheckCircle className="w-4 h-4 text-green-500" />
+                        <span className="text-sm font-medium">Recommended Actions</span>
+                      </div>
+                      <ol className="space-y-2">
+                        {assessment.recommended_actions.map((action: string, i: number) => (
+                          <li key={i} className="flex items-start gap-2 text-sm">
+                            <span className="shrink-0 w-5 h-5 rounded-full bg-primary/10 text-primary text-xs flex items-center justify-center font-medium">
+                              {i + 1}
+                            </span>
+                            <span>{action}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </Card>
+                  )}
+                </>
+              );
+            })() : (
+              <Card className="p-8 text-center">
+                <Shield className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+                <p className="font-medium mb-1">No risk assessment yet</p>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Click Assess to have AEGIS analyse all gathered intelligence and generate a structured threat assessment.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAssessEntity}
+                  disabled={runningAssessment}
+                >
+                  {runningAssessment ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Assessing...</>
+                  ) : (
+                    <><Brain className="w-4 h-4 mr-2" />Run Assessment</>
+                  )}
+                </Button>
+              </Card>
+            )}
+          </TabsContent>
+
           <TabsContent value="report" className="mt-4 space-y-4">
             {/* Investigation metadata bar */}
             {latestInvestigation && (
@@ -1939,7 +2026,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-3 text-muted-foreground">
                     <FileSearch className="w-4 h-4" />
-                    <span>Last investigated: {new Date(latestInvestigation.created_at).toLocaleDateString()}</span>
+                    <span>Last investigated: {format(new Date(latestInvestigation.created_at), "MMM d, yyyy 'at' h:mm a")}</span>
                     <span>{latestInvestigation.sources_searched} sources</span>
                     <span>{latestInvestigation.results_found} results</span>
                     {latestInvestigation.hibp_checked && <Badge variant="outline">HIBP checked</Badge>}
@@ -1967,7 +2054,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                     </Badge>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {new Date(latestReport.created_at).toLocaleDateString()}
+                    {format(new Date(latestReport.created_at), "MMM d, yyyy 'at' h:mm a")}
                   </span>
                 </div>
                 <div className="max-h-[500px] overflow-y-auto">

@@ -9,6 +9,7 @@
  */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getSignedUrl, BUCKETS } from "./storage.ts";
 
 // ═══════════════════════════════════════════════════════════════
 //  IMAGE GENERATION TYPES
@@ -249,8 +250,8 @@ async function storeGeneratedImage(
       return null;
     }
 
-    const { data: pubUrl } = supabase.storage.from("osint-media").getPublicUrl(filename);
-    return pubUrl?.publicUrl || null;
+    const url = await getSignedUrl(supabase, BUCKETS.OSINT_MEDIA, filename);
+    return url || null;
 
   } catch (err) {
     console.warn(`[ReportVisuals] Storage error: ${err}`);

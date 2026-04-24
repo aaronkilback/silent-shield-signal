@@ -147,9 +147,9 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = ""): string {
   const timeContext = getTimeContext();
-  
+
   return `${AEGIS_CORE_IDENTITY}
 
 ${FORTRESS_CORE_DIRECTIVE}
@@ -160,7 +160,8 @@ ${AEGIS_CHAT_MODIFIERS}
 
 ═══ CURRENT TIME ═══
 ${timeContext.full}
-${agentRosterContext}
+${loginSummaryContext}${agentRosterContext}
+${agentIntelligenceContext}
 ${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
@@ -1318,14 +1319,16 @@ async function executeTool(toolName: string, args: any, supabaseClient: any, use
               continue;
             }
 
-            const { data: { publicUrl } } = supabaseClient.storage
+            // entity-photos is a private bucket — use signed URL (7-day expiry)
+            const { data: signedData } = await supabaseClient.storage
               .from('entity-photos')
-              .getPublicUrl(fileName);
+              .createSignedUrl(fileName, 604800);
+            const signedUrl = signedData?.signedUrl || '';
 
             importedImages.push({
               original_index: args.image_indices ? args.image_indices[i] : i,
               storage_path: fileName,
-              public_url: publicUrl,
+              public_url: signedUrl,
               caption: image.caption || null
             });
           }
@@ -3730,7 +3733,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -3963,6 +3966,120 @@ serve(async (req) => {
 
     case "perform_impact_analysis": {
       return { error: "perform_impact_analysis is not available — the intelligence engine required for this feature is not deployed." };
+    }
+
+    case "lookup_ioc_indicator": {
+      // Delegates to ai-tools-query — searches all ingested threat intel signals
+      const { data: iocResult, error: iocError } = await supabaseClient.functions.invoke("ai-tools-query", { body: { toolName, parameters: args } });
+      if (iocError) return { error: iocError.message, message: "IOC lookup failed" };
+      return iocResult.result;
+    }
+
+    case "assign_agent_mission": {
+      const { agent, title, objective, deadline, reporting_cadence = "on_finding", client_name } = args;
+
+      // Verify agent exists
+      const { data: agentRow } = await supabaseClient
+        .from("ai_agents").select("id, call_sign, specialty").eq("call_sign", agent).eq("is_active", true).maybeSingle();
+      if (!agentRow) return { error: `Agent '${agent}' not found or inactive. Use list_agent_missions with no filter to see available agents.` };
+
+      // Resolve client_id if client_name provided
+      let clientId: string | null = null;
+      if (client_name) {
+        const { data: clientRow } = await supabaseClient
+          .from("clients").select("id").ilike("name", `%${client_name}%`).maybeSingle();
+        clientId = clientRow?.id ?? null;
+      }
+
+      const { data: mission, error: missionErr } = await supabaseClient
+        .from("agent_missions")
+        .insert({
+          title: title.substring(0, 80),
+          objective,
+          assigned_agent: agent,
+          assigned_by: authenticatedUserId || "AEGIS",
+          client_id: clientId,
+          status: "active",
+          deadline: deadline ? new Date(deadline).toISOString() : null,
+          reporting_cadence,
+        })
+        .select("id, title, assigned_agent, deadline, reporting_cadence")
+        .single();
+
+      if (missionErr) return { error: `Failed to create mission: ${missionErr.message}` };
+
+      console.log(`[AEGIS] Mission assigned: ${agent} — "${title}"`);
+      return {
+        success: true,
+        mission_id: mission.id,
+        message: `Mission assigned to ${agent}: "${title}". The agent will see this as an active directive in every conversation${deadline ? ` until ${deadline}` : ""}. Reporting cadence: ${reporting_cadence}.`,
+        mission,
+      };
+    }
+
+    case "list_agent_missions": {
+      const { agent, status = "active", client_name } = args;
+
+      let q = supabaseClient
+        .from("agent_missions")
+        .select("id, title, objective, assigned_agent, status, deadline, reporting_cadence, progress_log, created_at, client_id")
+        .order("created_at", { ascending: false })
+        .limit(30);
+
+      if (agent) q = q.eq("assigned_agent", agent);
+      if (status && status !== "all") q = q.eq("status", status);
+      if (client_name) {
+        const { data: clientRow } = await supabaseClient.from("clients").select("id").ilike("name", `%${client_name}%`).maybeSingle();
+        if (clientRow) q = q.eq("client_id", clientRow.id);
+      }
+
+      const { data: missions, error: listErr } = await q;
+      if (listErr) return { error: listErr.message };
+      if (!missions?.length) return { success: true, missions: [], message: `No ${status === "all" ? "" : status + " "}missions found${agent ? ` for ${agent}` : ""}.` };
+
+      return {
+        success: true,
+        count: missions.length,
+        missions: missions.map((m: any) => ({
+          id: m.id,
+          title: m.title,
+          agent: m.assigned_agent,
+          status: m.status,
+          deadline: m.deadline ? m.deadline.substring(0, 10) : null,
+          reporting_cadence: m.reporting_cadence,
+          progress_entries: (m.progress_log || []).length,
+          last_update: (m.progress_log || []).at(-1)?.date?.substring(0, 10) || null,
+          objective: m.objective.substring(0, 120),
+        })),
+      };
+    }
+
+    case "update_mission_progress": {
+      const { mission_id, update, finding_type, mark_completed = false } = args;
+
+      const { data: mission, error: fetchErr } = await supabaseClient
+        .from("agent_missions").select("id, progress_log, status").eq("id", mission_id).maybeSingle();
+      if (fetchErr || !mission) return { error: `Mission ${mission_id} not found` };
+
+      const newEntry = { date: new Date().toISOString(), update, finding_type };
+      const updatedLog = [...(mission.progress_log || []), newEntry];
+      const newStatus = mark_completed ? "completed" : mission.status;
+
+      const { error: updateErr } = await supabaseClient
+        .from("agent_missions")
+        .update({ progress_log: updatedLog, status: newStatus, updated_at: new Date().toISOString() })
+        .eq("id", mission_id);
+
+      if (updateErr) return { error: `Failed to update mission: ${updateErr.message}` };
+
+      return {
+        success: true,
+        message: mark_completed
+          ? `Mission marked completed. Finding logged: "${update.substring(0, 80)}"`
+          : `Progress logged (${finding_type}): "${update.substring(0, 80)}"`,
+        total_entries: updatedLog.length,
+        status: newStatus,
+      };
     }
 
     case "update_risk_profile": {
@@ -5445,6 +5562,15 @@ Return a JSON object (no markdown, only valid JSON):
         }
         const { data: kbData } = await kbQ.limit(limit).order('updated_at', { ascending: false });
         results.knowledge_base = kbData || [];
+
+        // Also query expert_knowledge (agent-hunted + document-derived intelligence)
+        let ekQ = supabaseClient.from('expert_knowledge').select('id, domain, subdomain, knowledge_type, expert_name, title, content, applicability_tags, confidence_score, citation, created_at').eq('is_active', true);
+        if (filters.keywords?.length) {
+          const ekf = filters.keywords.map((k: string) => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
+          ekQ = ekQ.or(ekf);
+        }
+        const { data: ekData } = await ekQ.limit(20).order('created_at', { ascending: false });
+        results.expert_knowledge = ekData || [];
       }
 
       // Query monitoring history
@@ -5521,6 +5647,7 @@ Return a JSON object (no markdown, only valid JSON):
             documents_count: results.documents?.length || 0,
             investigations_count: results.investigations?.length || 0,
             knowledge_base_count: results.knowledge_base?.length || 0,
+              expert_knowledge_count: results.expert_knowledge?.length || 0,
             monitoring_history_count: results.monitoring_history?.length || 0,
             travel_count: results.travel?.length || 0,
             agents_count: results.agents?.length || 0,
@@ -7248,8 +7375,8 @@ Return a JSON object (no markdown, only valid JSON):
                       .upload(imgPath, imgBytes, { contentType: "image/png", upsert: true });
                     
                     if (!imgUploadErr) {
-                      const { data: pubUrl } = serviceClient.storage.from("osint-media").getPublicUrl(imgPath);
-                      headerImageUrl = pubUrl?.publicUrl || base64Url;
+                      const { data: pubUrl } = await serviceClient.storage.from("osint-media").createSignedUrl(imgPath, 604800);
+                      headerImageUrl = pubUrl?.signedUrl || base64Url;
                     } else {
                       headerImageUrl = base64Url; // fallback to inline base64
                     }
@@ -9167,7 +9294,7 @@ Deno.serve(async (req) => {
     
     // ═══ PARALLELIZED CONTEXT LOADING ═══
     // Run auth + learning + corrections concurrently to cut latency
-    const [authResult, learningResult, correctionsResult, agentRosterResult] = await Promise.allSettled([
+    const [authResult, learningResult, correctionsResult, agentRosterResult, agentBeliefsResult] = await Promise.allSettled([
       // 1. Auth + tenant + tenant knowledge (chained since they depend on each other)
       (async () => {
         if (!authHeader?.startsWith("Bearer ")) return null;
@@ -9236,10 +9363,48 @@ Deno.serve(async (req) => {
           console.warn("[AEGIS] Failed to load agent roster (non-fatal):", e);
           return null;
         }),
+
+      // 5. Placeholder — agent beliefs are loaded after auth resolves (need tenant context)
+      Promise.resolve(null),
     ]);
 
     const learningContext = learningResult.status === 'fulfilled' ? (learningResult.value as string) : "";
     if (learningContext) console.log(`[AEGIS] Loaded adaptive learning context (${learningContext.length} chars)`);
+
+    // ── Scoped agent beliefs — fetched after auth so we have userTenantId ──────
+    // Shows global beliefs (client_id IS NULL) + beliefs from this tenant's clients only.
+    // This prevents intelligence formed from one client's signals leaking to another tenant.
+    let agentBeliefsData: any[] | null = null;
+    try {
+      let beliefsQuery = supabaseClient
+        .from("agent_beliefs")
+        .select("hypothesis, belief_type, confidence, agent_call_sign, has_contradiction, contradiction_note, client_id")
+        .eq("is_active", true)
+        .gte("confidence", 0.70)
+        .order("confidence", { ascending: false })
+        .limit(20);
+
+      if (userTenantId) {
+        // Fetch client IDs for this tenant, then filter beliefs to those clients + global
+        const { data: tenantClients } = await supabaseClient
+          .from("clients")
+          .select("id")
+          .eq("tenant_id", userTenantId);
+        const tenantClientIds = (tenantClients || []).map((c: any) => c.id);
+        if (tenantClientIds.length > 0) {
+          beliefsQuery = beliefsQuery.or(
+            `client_id.is.null,${tenantClientIds.map((id: string) => `client_id.eq.${id}`).join(',')}`
+          );
+        } else {
+          beliefsQuery = beliefsQuery.is("client_id", null);
+        }
+      }
+
+      const { data: beliefsRaw } = await beliefsQuery;
+      agentBeliefsData = beliefsRaw;
+    } catch (e) {
+      console.warn("[AEGIS] Failed to load scoped agent beliefs (non-fatal):", e);
+    }
     
     let behavioralCorrectionContext = "";
     const corrections = correctionsResult.status === 'fulfilled' ? correctionsResult.value : null;
@@ -9258,6 +9423,55 @@ Deno.serve(async (req) => {
     } else {
       agentRosterContext = `\n\n═══ LIVE AGENT ROSTER ═══\n⚠️ Agent roster could not be loaded. Before referencing ANY agent by name, you MUST call query_fortress_data to verify the agent exists in the ai_agents table. NEVER guess or fabricate agent names.\n`;
       console.warn("[AEGIS] Agent roster unavailable — fallback anti-hallucination rule active");
+    }
+
+    // Build collective agent intelligence picture
+    let agentIntelligenceContext = "";
+    const agentBeliefs = agentBeliefsData;
+    if (agentBeliefs && (agentBeliefs as any[])?.length > 0) {
+      const beliefs = agentBeliefs as any[];
+      // Group by agent for cleaner formatting
+      const byAgent = new Map<string, any[]>();
+      for (const b of beliefs) {
+        const key = b.agent_call_sign || "UNKNOWN";
+        if (!byAgent.has(key)) byAgent.set(key, []);
+        byAgent.get(key)!.push(b);
+      }
+      const sections = Array.from(byAgent.entries()).map(([callSign, bs]) =>
+        `${callSign}:\n${bs.map((b: any) => {
+          const contested = b.has_contradiction
+            ? ` ⚠️ CONTESTED${b.contradiction_note ? `: ${b.contradiction_note}` : ' (contradicting evidence exists)'}`
+            : '';
+          return `  • [${b.belief_type?.toUpperCase() || 'BELIEF'}] (conf: ${(b.confidence * 100).toFixed(0)}%) ${b.hypothesis}${contested}`;
+        }).join('\n')}`
+      ).join('\n\n');
+      agentIntelligenceContext = `\n\n═══ SPECIALIST INTELLIGENCE PICTURE (${beliefs.length} active beliefs from field agents) ═══\nThe following are verified assessments from your specialist agents. Incorporate this intelligence when answering questions about threats, incidents, or risk. Always cite the source agent. Beliefs marked ⚠️ CONTESTED have contradicting evidence — treat with appropriate analytical caution.\n\n${sections}\n`;
+      console.log(`[AEGIS] Loaded ${beliefs.length} agent beliefs from ${byAgent.size} agents`);
+    }
+
+    // ── Login summary — fetch after auth resolves so we have user_id ──
+    let loginSummaryContext = "";
+    if (authenticatedUserId) {
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+        const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+        const summaryRes = await fetch(`${supabaseUrl}/functions/v1/get-login-summary`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceKey}` },
+          body: JSON.stringify({ user_id: authenticatedUserId }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (summaryRes.ok) {
+          const summaryJson = await summaryRes.json();
+          const summaryText = summaryJson?.data?.summary ?? summaryJson?.summary ?? null;
+          if (summaryText) {
+            loginSummaryContext = `\n\n${summaryText}\n`;
+            console.log(`[AEGIS] Login summary loaded (${summaryJson?.data?.gap_hours?.toFixed(1) ?? "?"}h gap)`);
+          }
+        }
+      } catch (e) {
+        console.warn("[AEGIS] Login summary unavailable (non-fatal):", e);
+      }
     }
 
     const truncateContent = (content: string, maxChars: number = 50000): string => {
@@ -9619,7 +9833,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             messages: [
               {
                 role: "system",
-                content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext),
+                content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext),
               },
               ...processedMessages,
             ],

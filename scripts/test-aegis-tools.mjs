@@ -357,3 +357,126 @@ for (const test of EDGE_TESTS) {
     console.log(`  ❌ ${test.name.padEnd(46)}  ERROR: ${e.message}`);
   }
 }
+
+// ── Signal Feed Integrity Checks ─────────────────────────────────────────────
+// Verify the tables and columns involved in signal deletion are accessible and
+// correctly structured. These run with the service-role key which bypasses RLS,
+// so they confirm schema correctness only — not analyst-level permissions.
+//
+// To verify analyst RLS manually (UPDATE/DELETE policies on signal_correlation_groups):
+//   SELECT policyname, cmd FROM pg_policies WHERE tablename = 'signal_correlation_groups';
+//   -- Expected: SELECT, INSERT, UPDATE, DELETE policies present for analyst/admin/super_admin
+console.log(`\n${"─".repeat(70)}`);
+console.log(`SIGNAL FEED INTEGRITY CHECKS`);
+console.log(`${"─".repeat(70)}\n`);
+
+const SIGNAL_FEED_CHECKS = [
+  {
+    name: "signal_correlation_groups queryable",
+    url: `${SUPABASE_URL}/rest/v1/signal_correlation_groups?limit=1&select=id`,
+    description: "Table is accessible — confirms RLS migration was applied without breaking reads",
+  },
+  {
+    name: "signals deleted_at filter works",
+    url: `${SUPABASE_URL}/rest/v1/signals?deleted_at=is.null&limit=1&select=id,deleted_at`,
+    description: "signals.deleted_at column exists — soft-delete filter is valid (all user-facing queries must include this)",
+  },
+  {
+    name: "signals deletion_reason column exists",
+    url: `${SUPABASE_URL}/rest/v1/signals?deleted_at=is.null&limit=1&select=id,deletion_reason`,
+    description: "signals.deletion_reason column exists — required for soft-delete audit trail",
+  },
+];
+
+for (const check of SIGNAL_FEED_CHECKS) {
+  try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 10000);
+    const res = await fetch(check.url, {
+      headers: {
+        "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+        "apikey": SERVICE_ROLE_KEY,
+      },
+      signal: ctrl.signal,
+    });
+    clearTimeout(timeout);
+    const ok = res.status === 200;
+    const mark = ok ? "✅" : "❌";
+    const nameCol = check.name.padEnd(46);
+    const extra = ok ? check.description : `FAIL HTTP ${res.status} — ${(await res.text()).substring(0, 80)}`;
+    console.log(`  ${mark} ${nameCol}  ${extra}`);
+  } catch (e) {
+    console.log(`  ❌ ${check.name.padEnd(46)}  ERROR: ${e.message}`);
+  }
+}
+
+console.log(`\n  ℹ  Analyst RLS (UPDATE/DELETE on signal_correlation_groups) cannot be tested`);
+console.log(`     with service-role — it bypasses RLS. Verify manually in Supabase SQL editor:`);
+console.log(`     SELECT policyname, cmd FROM pg_policies WHERE tablename = 'signal_correlation_groups';\n`);
+
+// ── Fortify Loop Closer Health Check ─────────────────────────────────────────
+// Verifies that fortress-loop-closer has run recently and that the cron_heartbeat
+// table records its last run status. This is the authoritative signal for whether
+// Hypothesis Trees, Debate Records, and Learning Sessions loops are "closed" in
+// the Neural Constellation — those three loops read from this heartbeat, not their
+// output tables, since they are output-conditional (they produce nothing when
+// prerequisites are absent, even when healthy).
+console.log(`${"─".repeat(70)}`);
+console.log(`FORTIFY LOOP CLOSER HEALTH CHECK`);
+console.log(`${"─".repeat(70)}\n`);
+
+try {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 10000);
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/cron_heartbeat?job_name=eq.fortress-loop-closer-6h&status=eq.success&order=completed_at.desc&limit=1&select=job_name,completed_at,status,result_summary`,
+    {
+      headers: {
+        "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+        "apikey": SERVICE_ROLE_KEY,
+      },
+      signal: ctrl.signal,
+    }
+  );
+  clearTimeout(timeout);
+  const rows = await res.json();
+  const row = Array.isArray(rows) ? rows[0] : null;
+
+  if (!row) {
+    console.log(`  ❌ ${"fortress-loop-closer-6h heartbeat".padEnd(46)}  NO HEARTBEAT — function has never run (deploy and invoke once to seed)`);
+  } else {
+    const lastRun = new Date(row.completed_at);
+    const ageMs = Date.now() - lastRun.getTime();
+    const ageHours = ageMs / 3600000;
+    const withinWindow = ageHours <= 24;
+    const succeeded = row.status === "success";
+    const ok = withinWindow && succeeded;
+    const mark = ok ? "✅" : "❌";
+    const ageLabel = ageHours < 1
+      ? `${Math.round(ageMs / 60000)}m ago`
+      : `${ageHours.toFixed(1)}h ago`;
+
+    console.log(`  ${mark} ${"fortress-loop-closer-6h last run".padEnd(46)}  ${row.status} · ${ageLabel}`);
+    if (!withinWindow) {
+      console.log(`       ⚠  Last run > 24h ago — cron may not be executing. Check pg_cron job status.`);
+    }
+    if (!succeeded) {
+      console.log(`       ⚠  Last run status: ${row.status} — check Supabase function logs for errors.`);
+    }
+    if (ok && row.result_summary) {
+      const m = row.result_summary;
+      const parts = [];
+      if (m.hypothesis_trees)  parts.push(`trees=${JSON.stringify(m.hypothesis_trees)}`);
+      if (m.debate_records)    parts.push(`debates=${JSON.stringify(m.debate_records)}`);
+      if (m.accuracy_tracking) parts.push(`accuracy=${JSON.stringify(m.accuracy_tracking)}`);
+      if (m.scan_results || m.specialist_learning) parts.push(`scans=${JSON.stringify(m.specialist_learning)}`);
+      if (parts.length > 0) console.log(`       last run results: ${parts.join(' | ')}`);
+    }
+  }
+} catch (e) {
+  console.log(`  ❌ ${"fortress-loop-closer-6h heartbeat".padEnd(46)}  ERROR: ${e.message}`);
+}
+
+console.log(`\n  ℹ  Hypothesis Trees, Debate Records, and Learning Sessions loop status on the`);
+console.log(`     Neural Constellation are derived from this heartbeat — not their output tables.`);
+console.log(`     If the closer ran successfully in the last 24h, all three show "closed".\n`);

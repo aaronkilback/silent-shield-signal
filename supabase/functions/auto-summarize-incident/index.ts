@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * Auto-summarize incidents by generating titles and summaries from linked signals.
@@ -20,13 +21,9 @@ Deno.serve(async (req) => {
 
     let incidentsToProcess: any[] = [];
 
+    let hb: import("../_shared/heartbeat.ts").HeartbeatHandle | null = null;
     if (batch_mode) {
-      // Heartbeat for watchdog (cron runs only)
-      await supabase.from("cron_heartbeat").upsert({
-        job_name: "auto-summarize-incidents-nightly",
-        last_run_at: new Date().toISOString(),
-        status: "running",
-      }, { onConflict: "job_name" });
+      hb = await startHeartbeat(supabase, "auto-summarize-incidents-nightly");
 
       // Find incidents missing title or summary
       const { data: incidentsMissingData } = await supabase
@@ -235,13 +232,8 @@ ${entitiesContext ? `\n${entitiesContext}` : ''}`
       }
     }
 
-    if (batch_mode) {
-      await supabase.from("cron_heartbeat").upsert({
-        job_name: "auto-summarize-incidents-nightly",
-        last_run_at: new Date().toISOString(),
-        status: "success",
-        metadata: { processed: results.length, successful: results.filter(r => r.success).length },
-      }, { onConflict: "job_name" });
+    if (hb) {
+      await completeHeartbeat(supabase, hb, { processed: results.length, successful: results.filter(r => r.success).length });
     }
 
     return successResponse({

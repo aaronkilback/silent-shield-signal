@@ -5,7 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -707,6 +707,15 @@ serve(async (req) => {
           }
           const { data: kbData } = await kbQ.limit(fortressLimit).order('updated_at', { ascending: false });
           fortressResults.knowledge_base = kbData;
+
+          // Also query expert_knowledge (agent-hunted + document-derived intelligence)
+          let ekQ = supabase.from('expert_knowledge').select('id, domain, subdomain, knowledge_type, expert_name, title, content, applicability_tags, confidence_score, citation, created_at').eq('is_active', true);
+          if (fortressFilters.keywords?.length) {
+            const ekf = fortressFilters.keywords.map((k: string) => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
+            ekQ = ekQ.or(ekf);
+          }
+          const { data: ekData } = await ekQ.limit(20).order('created_at', { ascending: false });
+          fortressResults.expert_knowledge = ekData;
         }
 
         // Query monitoring history
@@ -744,6 +753,7 @@ serve(async (req) => {
               documents_count: fortressResults.documents?.length || 0,
               investigations_count: fortressResults.investigations?.length || 0,
               knowledge_base_count: fortressResults.knowledge_base?.length || 0,
+              expert_knowledge_count: fortressResults.expert_knowledge?.length || 0,
               monitoring_history_count: fortressResults.monitoring_history?.length || 0,
               travel_count: fortressResults.travel?.length || 0,
             },
@@ -765,6 +775,67 @@ serve(async (req) => {
           };
         }
         break;
+
+      case "lookup_ioc_indicator": {
+        const { indicator, indicator_type, client_id: iocClientId } = parameters;
+        if (!indicator) {
+          return new Response(JSON.stringify({ error: 'indicator is required' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Search normalized_text — covers all ingested signals regardless of source format
+        let iocQuery = supabase
+          .from('signals')
+          .select('id, title, severity, confidence, received_at, source_url, raw_json, client_id, clients(name)')
+          .ilike('normalized_text', `%${indicator}%`)
+          .order('received_at', { ascending: false })
+          .limit(10);
+
+        if (iocClientId) {
+          iocQuery = iocQuery.eq('client_id', iocClientId);
+        }
+
+        const { data: iocMatches, error: iocError } = await iocQuery;
+
+        if (iocError) {
+          return new Response(JSON.stringify({ error: iocError.message }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const matches = (iocMatches || []).map((sig: any) => {
+          const raw = sig.raw_json || {};
+          return {
+            signal_id:     sig.id,
+            signal_title:  sig.title,
+            severity:      sig.severity,
+            confidence:    sig.confidence,
+            received_at:   sig.received_at,
+            source_url:    sig.source_url,
+            client_name:   Array.isArray(sig.clients) ? sig.clients[0]?.name : sig.clients?.name,
+            // Surface the Defender TI article context if available
+            article_title: raw.article_title ?? null,
+            article_url:   raw.article_url   ?? null,
+            source_name:   raw.source_name   ?? null,
+            ioc_counts:    raw.ioc_counts    ?? null,
+          };
+        });
+
+        result = {
+          indicator,
+          indicator_type: indicator_type ?? 'unknown',
+          verdict:        matches.length > 0 ? 'known_malicious' : 'unknown',
+          match_count:    matches.length,
+          matches,
+          note: matches.length > 0
+            ? `${indicator} appears in ${matches.length} Fortress signal(s). Treat as known-bad.`
+            : `${indicator} has no prior record in Fortress. Cannot confirm malicious without additional context.`,
+        };
+        break;
+      }
 
       default:
         result = { error: "Unknown tool" };

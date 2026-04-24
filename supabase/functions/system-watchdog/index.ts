@@ -350,6 +350,26 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
     - Pass count < 85 AEGIS + < 2 edge = regression introduced — revert last change
     - WATCHDOG MONITORS: Cannot auto-run — developer tool only
 
+### Signal Quality Regression Fix (April 22, 2026)
+- Root cause: monitor-community-outreach was built Feb 2026 but never scheduled via pg_cron
+- Fix: Added cron.schedule('monitor-community-outreach-hourly', '30 * * * *', ...) in migration 20260422000002
+- Fix: monitor-news-google keyword queries now scoped to Canada/BC to filter out global LNG signals (Alaska, Azerbaijan, Middle East)
+- Fix: Petronas Canada client profile populated -- locations (17), high_value_assets (7), monitoring_keywords (22) in migration 20260422000001
+- Fix: Title-based dedup added to ingest-signal as 4th dedup layer (prevents Canada Life/Salesforce duplicate flood)
+- EXPECTED: community outreach, Fort St. John local news, First Nations consultation signals appear within 1-2 hours
+
+### Wildfire Classifier -- Shoulder Season Fix (April 22, 2026)
+- Root cause: April (shoulder season) was not covered by the off-season industrial_flaring override
+- Fix: Changed condition from !isFireSeason && !isShoulder && hfi < 2000 to !isFireSeason && hfi < 2000
+- Effect: NE BC thermal detections in April with HFI < 2000 kW/m now classified as industrial_flaring, not wildfire
+- EXPECTED: wildfire signal flood from NE BC flaring events stops immediately after deploy
+
+### MFA Enforcement (April 22, 2026)
+- Root cause: 2FA was only enforced for super_admin role; all other users could log in without MFA
+- Fix: Removed role check in Auth.tsx -- ALL users now required to complete MFA after password login
+- Twilio credentials must be set in Supabase secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
+- EXPECTED: No user can reach the dashboard without completing SMS OTP
+
 ### AEGIS AI Assistant (CRITICAL)
 - Primary user interface â agent-mediated UI philosophy
 - Powered by GPT/Gemini with 21 operational tools
@@ -1433,7 +1453,8 @@ async function collectExpertLearningTelemetry(supabase: any): Promise<TelemetryD
     supabase.from('agent_beliefs').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo),
     supabase.from('agent_beliefs').select('*', { count: 'exact', head: true }).lt('confidence', 0.6),
     supabase.from('agent_beliefs').select('*', { count: 'exact', head: true }).eq('belief_type', 'operational_pattern'),
-    supabase.from('cron_job_registry').select('last_run_at').eq('job_name', 'knowledge-synthesizer-nightly').limit(1),
+    // Query cron_heartbeat (not cron_job_registry — knowledge-synthesizer writes heartbeat there, not to registry)
+    supabase.from('cron_heartbeat').select('completed_at').eq('job_name', 'knowledge-synthesizer-nightly').eq('status', 'succeeded').order('completed_at', { ascending: false }).limit(1),
   ]);
 
   // Compute average belief confidence
@@ -1456,7 +1477,7 @@ async function collectExpertLearningTelemetry(supabase: any): Promise<TelemetryD
     avgBeliefConfidence: Math.round(avgBeliefConfidence * 100) / 100,
     lowConfidenceBeliefs: lowConfBeliefsResult.count || 0,
     operationalBeliefs: operationalBeliefsResult.count || 0,
-    lastSynthesisRun: lastSynthesisResult.data?.[0]?.last_run_at || null,
+    lastSynthesisRun: lastSynthesisResult.data?.[0]?.completed_at || null,
   };
 }
 
@@ -1739,25 +1760,45 @@ async function executeRemediation(
 
       case 'close_stale_bugs': {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-        const { data: staleBugs } = await supabase
+        const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+
+        // Close any bug >30 days old regardless of source
+        const { data: oldBugs } = await supabase
           .from('bug_reports')
           .select('id, title')
           .eq('status', 'open')
           .lt('created_at', thirtyDaysAgo)
           .lt('updated_at', thirtyDaysAgo)
-          .limit(10);
+          .limit(20);
 
-        if (!staleBugs || staleBugs.length === 0) return { action, finding, success: true, details: 'No bugs old enough for auto-close (>30 days)' };
+        // Also close auto-generated bugs ([Auto] / [Silent Failure] prefix) older than 7 days —
+        // these are programmatic noise from errorTracking.ts / silentFailureDetector.ts and are
+        // never user-actionable. They accumulate and inflate the bug backlog threshold.
+        const { data: autoBugs } = await supabase
+          .from('bug_reports')
+          .select('id, title')
+          .eq('status', 'open')
+          .lt('created_at', sevenDaysAgo)
+          .or('title.ilike.[Auto]%,title.ilike.[Silent Failure]%')
+          .limit(50);
 
-        const ids = staleBugs.map((b: any) => b.id);
+        const allIds = [...new Set([
+          ...(oldBugs || []).map((b: any) => b.id),
+          ...(autoBugs || []).map((b: any) => b.id),
+        ])];
+
+        if (allIds.length === 0) return { action, finding, success: true, details: 'No bugs eligible for auto-close' };
+
         const { error } = await supabase.from('bug_reports').update({
           status: 'resolved',
           resolved_at: new Date().toISOString(),
           workflow_stage: 'Closed',
           fix_status: 'auto_closed_by_watchdog',
-        }).in('id', ids);
+        }).in('id', allIds);
 
-        return { action, finding, success: !error, details: error ? `Close failed: ${error.message}` : `Auto-closed ${ids.length} stale bugs (>30 days): ${staleBugs.map((b: any) => b.title).join(', ')}` };
+        const totalOld = oldBugs?.length || 0;
+        const totalAuto = (autoBugs || []).filter((b: any) => !oldBugs?.find((o: any) => o.id === b.id)).length;
+        return { action, finding, success: !error, details: error ? `Close failed: ${error.message}` : `Auto-closed ${allIds.length} bugs (${totalOld} stale >30d, ${totalAuto} auto-generated >7d)` };
       }
 
       case 'trigger_autonomous_loop': {
@@ -2291,12 +2332,30 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
     </div>
     
     <div style="padding: 22px 28px;">
+      ${unresolved.length > 0 ? `
+  <div style="background: #1a0505; border: 1px solid #ef4444; padding: 18px; margin-bottom: 20px; border-radius: 6px;">
+    <h2 style="color: #ef4444; font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">&#9889; Actions Required Today</h2>
+    <ol style="margin: 0; padding-left: 20px;">
+      ${unresolved.filter((f: any) => f.action).map((f: any, i: number) => `
+        <li style="color: #fca5a5; font-size: 13px; line-height: 1.6; margin-bottom: 6px;">
+          <strong>${f.title}:</strong> ${f.action}
+        </li>
+      `).join('')}
+      ${unresolved.filter((f: any) => !f.action).map((f: any) => `
+        <li style="color: #fca5a5; font-size: 13px; line-height: 1.6; margin-bottom: 6px;">
+          <strong>${f.title}</strong> — investigate and resolve
+        </li>
+      `).join('')}
+    </ol>
+  </div>
+` : `
+  <div style="background: #052e16; border: 1px solid #4ade80; padding: 14px 18px; margin-bottom: 20px; border-radius: 6px;">
+    <p style="margin: 0; color: #4ade80; font-size: 13px;">&#10003; No actions required — platform operating normally</p>
+  </div>
+`}
       ${remediationSummary}
 
-      ${resolved.length > 0 ? `
-        <h2 style="color: #4ade80; font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">â Auto-Resolved</h2>
-        ${resolved.map(f => renderFinding(f, '#4ade80', '#22c55e', '#052e16')).join('')}
-      ` : ''}
+      ${/* Auto-resolved findings omitted from email — they fixed themselves, no action needed */ ''}
 
       ${chronic.length > 0 ? `
         <h2 style="color: #a78bfa; font-size: 13px; margin: 20px 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">ð Chronic Issues (Needs Strategic Fix)</h2>
@@ -2308,10 +2367,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         ${unresolved.map(f => renderFinding(f, f.severity === 'critical' ? '#fca5a5' : '#fcd34d', f.severity === 'critical' ? '#ef4444' : '#f59e0b', f.severity === 'critical' ? '#1a0505' : '#1a1005')).join('')}
       ` : ''}
 
-      ${info.length > 0 ? `
-        <h2 style="color: #60a5fa; font-size: 13px; margin: 20px 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">â¹ï¸ Observations</h2>
-        ${info.map(f => renderFinding(f, '#93c5fd', '#3b82f6', '#0a1628')).join('')}
-      ` : ''}
+      ${/* Observations omitted from email — informational only, no action needed */ ''}
 
       ${analysis.trendNote ? `
         <div style="background: #0f172a; border: 1px solid #1e3a5f; padding: 14px 18px; margin-top: 20px; border-radius: 4px;">
@@ -2320,7 +2376,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         </div>
       ` : ''}
 
-      ${selfImprovementSection}
+      ${/* Self-improvement notes omitted from operator email — internal system context only */ ''}
 
       ${analysis.suppressedChecks?.length > 0 ? `
         <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #222;">
@@ -2338,22 +2394,14 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
       const dbMs = telemetry.database.responseTimeMs;
       const qaPassRate = (telemetry as any).qaPassRate || 'No tests run yet';
       return `
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; padding: 16px; background: #0a0a0a; border-radius: 4px;">
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 20px; padding: 16px; background: #0a0a0a; border-radius: 4px;">
         <div style="text-align: center;">
           <div style="font-size: 24px; font-weight: bold; color: ${signalCount > 0 ? '#4ade80' : '#ef4444'}">${signalCount}</div>
           <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Signals (24h)</div>
         </div>
         <div style="text-align: center;">
-          <div style="font-size: 24px; font-weight: bold; color: ${bugCount < 5 ? '#4ade80' : bugCount < 10 ? '#f59e0b' : '#ef4444'}">${bugCount}</div>
-          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Open Bugs</div>
-        </div>
-        <div style="text-align: center;">
-          <div style="font-size: 24px; font-weight: bold; color: ${dbMs < 100 ? '#4ade80' : dbMs < 300 ? '#f59e0b' : '#ef4444'}">${dbMs}ms</div>
-          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">DB Response</div>
-        </div>
-        <div style="text-align: center;">
-          <div style="font-size: 24px; font-weight: bold; color: #4ade80">${resolved.length}</div>
-          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Auto-Resolved</div>
+          <div style="font-size: 24px; font-weight: bold; color: ${unresolved.length === 0 ? '#4ade80' : unresolved.some((f: any) => f.severity === 'critical') ? '#ef4444' : '#f59e0b'}">${unresolved.length}</div>
+          <div style="font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px;">Need Attention</div>
         </div>
       </div>
     `;
@@ -2585,11 +2633,126 @@ Deno.serve(async (req) => {
       });
     }
 
+
+    // ═══ BEHAVIORAL HEALTH ASSERTIONS ═══
+    // Checks that the platform is doing the RIGHT thing, not just running.
+    // These catch silent feature regressions before they become QA sessions.
+    const behavioralFindings: any[] = [];
+
+    try {
+      // 1. Agent enrichment coverage — high-severity signals should get agent analysis
+      const { data: recentHighSeverity } = await supabase
+        .from('signals')
+        .select('id, raw_json')
+        .gte('severity_score', 50)
+        .gte('created_at', new Date(Date.now() - 48 * 3600000).toISOString())
+        .eq('is_test', false)
+        .limit(100);
+
+      if (recentHighSeverity && recentHighSeverity.length > 0) {
+        const withAgentReview = recentHighSeverity.filter(s => s.raw_json?.agent_review);
+        const coveragePct = Math.round((withAgentReview.length / recentHighSeverity.length) * 100);
+        if (coveragePct < 50) {
+          behavioralFindings.push({
+            category: 'behavioral_health',
+            severity: 'high',
+            title: `Agent enrichment gap: only ${coveragePct}% of high-severity signals analyzed`,
+            analysis: `${withAgentReview.length} of ${recentHighSeverity.length} signals from last 48h have agent_review. Expected ≥50%.`,
+            plainEnglish: `High-priority signals are entering the feed without AI context added. Analysts see threats without explanation of why they matter.`,
+            action: `Check ai-decision-engine logs — review-signal-agent may not be firing for high-confidence signals.`,
+          });
+        }
+      }
+
+      // 2. Social monitor effectiveness — each social source should produce results
+      const { data: socialHeartbeats } = await supabase
+        .from('cron_heartbeat')
+        .select('job_name, result_summary, completed_at')
+        .in('job_name', ['monitor-twitter', 'monitor-social-unified', 'monitor-social-hourly', 'monitor-social'])
+        .gte('completed_at', new Date(Date.now() - 24 * 3600000).toISOString())
+        .order('completed_at', { ascending: false })
+        .limit(20);
+
+      const socialByJob = new Map<string, any[]>();
+      for (const hb of socialHeartbeats || []) {
+        if (!socialByJob.has(hb.job_name)) socialByJob.set(hb.job_name, []);
+        socialByJob.get(hb.job_name)!.push(hb);
+      }
+
+      for (const [jobName, runs] of socialByJob) {
+        const lastRun = runs[0];
+        const signalsFromRuns = runs.map(r => r.result_summary?.signals_created ?? 0);
+        const totalSignals = signalsFromRuns.reduce((a: number, b: number) => a + b, 0);
+        if (totalSignals === 0 && runs.length >= 3) {
+          behavioralFindings.push({
+            category: 'behavioral_health',
+            severity: 'medium',
+            title: `${jobName}: 0 signals across ${runs.length} recent runs`,
+            analysis: `This social monitor has run ${runs.length} times in the last 24h but created 0 signals.`,
+            plainEnglish: `Social media monitoring for ${jobName} is running but finding nothing. Either there is no relevant activity, or the search queries/API access is broken.`,
+            action: `Check ${jobName} logs for API errors or empty CSE responses. Verify search queries match current client keywords.`,
+          });
+        }
+      }
+
+      // 3. Entity content freshness — entities with active monitoring should have recent content
+      const { data: staleEntities } = await supabase
+        .from('entities')
+        .select('id, name')
+        .eq('active_monitoring_enabled', true)
+        .lt('last_deep_scan', new Date(Date.now() - 30 * 24 * 3600000).toISOString())
+        .limit(10);
+
+      if (staleEntities && staleEntities.length > 0) {
+        behavioralFindings.push({
+          category: 'behavioral_health',
+          severity: 'medium',
+          title: `${staleEntities.length} monitored entities not deep-scanned in 30+ days`,
+          analysis: `Entities: ${staleEntities.slice(0, 5).map((e: any) => e.name).join(', ')}${staleEntities.length > 5 ? '...' : ''}`,
+          plainEnglish: `Investigation reports for these entities will be based on stale OSINT. Run a deep scan to refresh.`,
+          action: `Trigger deep scan for stale entities from the Entity Detail page.`,
+        });
+      }
+
+      // 4. Feedback loop health — learning profiles should be updating
+      const { data: recentFeedback } = await supabase
+        .from('feedback_events')
+        .select('id')
+        .eq('object_type', 'signal')
+        .gte('created_at', new Date(Date.now() - 7 * 24 * 3600000).toISOString())
+        .limit(1);
+
+      const { data: recentLearningUpdate } = await supabase
+        .from('learning_profiles')
+        .select('updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(1);
+
+      const learningAge = recentLearningUpdate?.[0]?.updated_at
+        ? Date.now() - new Date(recentLearningUpdate[0].updated_at).getTime()
+        : Infinity;
+
+      if ((recentFeedback?.length ?? 0) > 0 && learningAge > 48 * 3600000) {
+        behavioralFindings.push({
+          category: 'behavioral_health',
+          severity: 'medium',
+          title: 'Signal feedback not updating learning profiles',
+          analysis: `Feedback events exist in the last 7 days but learning_profiles last updated ${Math.round(learningAge / 3600000)}h ago.`,
+          plainEnglish: `Analysts are rating signals but those ratings are not improving the relevance filter. The learning loop is broken.`,
+          action: `Check process-feedback function logs. Verify it is writing to learning_profiles table.`,
+        });
+      }
+
+      console.log(`[Watchdog] Behavioral health: ${behavioralFindings.length} findings`);
+    } catch (behavioralErr) {
+      console.warn('[Watchdog] Behavioral health check failed:', behavioralErr);
+    }
+
     // Phase 2: AI Analysis WITH learning context
     console.log('[Watchdog] 🧠 Phase 2: AI analysis with learning context...');
     const analysisInput = {
       telemetry,
-      extraFindings: findings,
+      extraFindings: [...findings, ...behavioralFindings],
       learningHistory: {
         recentFindings: learningHistory.recentFindings.slice(0, 20),
         recurringIssues: learningHistory.recurringIssues,

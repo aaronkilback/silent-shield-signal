@@ -13,6 +13,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { extractYouTubeTranscript } from "../_shared/youtube-transcript.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 // High-value practitioner sources to monitor for recent content
 const PRACTITIONER_SOURCES = [
@@ -67,6 +68,20 @@ const KNOWLEDGE_ANGLES = [
   },
 ];
 
+// Freshness windows per angle — time-sensitive content refreshes weekly,
+// stable content (books, frameworks, case studies) refreshes monthly.
+// This cuts Perplexity spend ~7x: most nights only 'emerging' runs per agent.
+const ANGLE_FRESHNESS_DAYS: Record<string, number> = {
+  emerging: 7,      // evolving trends — refresh weekly
+  practitioners: 14, // new content from practitioners — bi-weekly
+  podcasts: 14,      // new episodes — bi-weekly
+  books: 28,         // stable — monthly
+  frameworks: 28,    // stable — monthly
+  case_studies: 28,  // stable — monthly
+  research: 28,      // stable — monthly
+  tools: 28,         // stable — monthly
+};
+
 Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;
@@ -77,11 +92,7 @@ Deno.serve(async (req) => {
 
     if (!PERPLEXITY_API_KEY) return errorResponse('PERPLEXITY_API_KEY not configured', 500);
 
-    await supabase.from('cron_heartbeat').upsert({
-      job_name: 'agent-knowledge-seeker-4am',
-      started_at: new Date().toISOString(),
-      status: 'running',
-    }, { onConflict: 'job_name' });
+    const hb = await startHeartbeat(supabase, 'agent-knowledge-seeker-4am');
 
     const body = await req.json().catch(() => ({}));
     const {
@@ -124,12 +135,7 @@ Deno.serve(async (req) => {
       angles: results[i]?.status === 'fulfilled' ? results[i].value : { error: (results[i] as any)?.reason },
     }));
 
-    await supabase.from('cron_heartbeat').upsert({
-      job_name: 'agent-knowledge-seeker-4am',
-      completed_at: new Date().toISOString(),
-      status: 'succeeded',
-      result_summary: { agents_processed: agents.length, succeeded, failed, queries_total: agents.length * anglesToRun.length },
-    }, { onConflict: 'job_name' });
+    await completeHeartbeat(supabase, hb, { agents_processed: agents.length, succeeded, failed, queries_total: agents.length * anglesToRun.length });
 
     return successResponse({
       message: 'Agent knowledge hunt complete',
@@ -144,15 +150,6 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error('[agent-knowledge-seeker] Error:', err);
-    try {
-      const supabase = createServiceClient();
-      await supabase.from('cron_heartbeat').upsert({
-        job_name: 'agent-knowledge-seeker-4am',
-        completed_at: new Date().toISOString(),
-        status: 'failed',
-        result_summary: { error: err instanceof Error ? err.message : String(err) },
-      }, { onConflict: 'job_name' });
-    } catch (_) {}
     return errorResponse(err instanceof Error ? err.message : 'Unknown error', 500);
   }
 });
@@ -200,16 +197,17 @@ async function huntOneAngle(params: {
 }): Promise<string> {
   const { agent, specialty, angleConfig, perplexityKey, supabase, force } = params;
 
-  // Skip if already ingested this angle for this agent recently
+  // Skip if already ingested this angle for this agent within its freshness window
   if (!force) {
+    const freshnessDays = ANGLE_FRESHNESS_DAYS[angleConfig.angle] ?? 14;
     const { data: existing } = await supabase
       .from('expert_knowledge')
       .select('id')
       .eq('expert_name', `agent:${agent.call_sign}`)
       .eq('subdomain', angleConfig.angle)
-      .gte('created_at', new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString())
+      .gte('created_at', new Date(Date.now() - freshnessDays * 24 * 60 * 60 * 1000).toISOString())
       .limit(1);
-    if (existing?.length) return 'skipped:recent';
+    if (existing?.length) return `skipped:fresh_${freshnessDays}d`;
   }
 
   try {
@@ -405,9 +403,9 @@ async function runPractitionerSourceHunts(params: {
         .select('id')
         .eq('source_type', 'practitioner_monitor')
         .ilike('citation', `%${query.substring(0, 60)}%`)
-        .gte('created_at', new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString())
+        .gte('created_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
         .limit(1);
-      if (existing?.length) { results[shortKey] = 'skipped:recent'; return; }
+      if (existing?.length) { results[shortKey] = 'skipped:fresh_14d'; return; }
     }
 
     try {

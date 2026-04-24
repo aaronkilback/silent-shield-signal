@@ -210,6 +210,16 @@ Deno.serve(async (req) => {
       const { data, error } = await query.limit(limit).order('updated_at', { ascending: false });
       if (error) throw error;
       results.knowledge_base = data || [];
+
+      // Also query expert_knowledge (agent-hunted + document-derived intelligence)
+      let ekQuery = supabase.from('expert_knowledge').select('id, domain, subdomain, knowledge_type, expert_name, title, content, applicability_tags, confidence_score, citation, created_at').eq('is_active', true);
+      if (filters.keywords?.length) {
+        const ekf = filters.keywords.map((k: string) => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
+        ekQuery = ekQuery.or(ekf);
+      }
+      const { data: ekData, error: ekError } = await ekQuery.limit(20).order('created_at', { ascending: false });
+      if (ekError) throw ekError;
+      results.expert_knowledge = ekData || [];
     }
 
     if (request.query_type === 'monitoring_history' || request.query_type === 'comprehensive') {
@@ -261,6 +271,7 @@ Deno.serve(async (req) => {
           documents_count: (results.documents as unknown[])?.length || 0,
           investigations_count: (results.investigations as unknown[])?.length || 0,
           knowledge_base_count: (results.knowledge_base as unknown[])?.length || 0,
+          expert_knowledge_count: (results.expert_knowledge as unknown[])?.length || 0,
           monitoring_history_count: (results.monitoring_history as unknown[])?.length || 0,
           travel_count: (results.travel as unknown[])?.length || 0,
         },
