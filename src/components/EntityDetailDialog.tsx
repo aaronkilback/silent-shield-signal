@@ -357,13 +357,18 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     }
   };
 
-  const handleAssessEntity = async () => {
+  const handleAssessEntity = async (mode: 'threat_actor' | 'threat_target' = 'threat_actor') => {
     if (!entityId || runningAssessment) return;
     setRunningAssessment(true);
     try {
-      await supabase.functions.invoke('assess-entity', { body: { entityId } });
+      await supabase.functions.invoke('assess-entity', { body: { entityId, assessment_mode: mode } });
       queryClient.invalidateQueries({ queryKey: ['entity-detail', entityId] });
-      toast({ title: "Assessment Complete", description: "AEGIS assessment updated" });
+      toast({
+        title: "Assessment Complete",
+        description: mode === 'threat_target'
+          ? "Threat landscape assessment updated"
+          : "AEGIS threat actor assessment updated"
+      });
     } catch (error: any) {
       toast({ title: "Assessment Failed", description: error.message, variant: "destructive" });
     } finally {
@@ -1017,7 +1022,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                 'border-green-500 text-green-600'
               }`}>
                 <Shield className="w-3 h-3 mr-1" />
-                {(entity as any).ai_assessment.threat_level?.toUpperCase()} RISK — see Risk Assessment tab
+                {(entity as any).ai_assessment.threat_level?.toUpperCase()} {(entity as any).ai_assessment.assessment_mode === 'threat_target' ? 'THREAT EXPOSURE' : 'RISK'} — see Assessment tab
               </Badge>
             </div>
           )}
@@ -1956,6 +1961,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           <TabsContent value="assessment" className="mt-4 space-y-4">
             {(entity as any).ai_assessment ? (() => {
               const assessment = (entity as any).ai_assessment;
+              const isTargetMode = assessment.assessment_mode === 'threat_target';
               // 'summary' is the current field name; 'risk_summary' was the old name
               const summaryText = assessment.summary ?? assessment.risk_summary;
               const assessedAt = (entity as any).ai_assessed_at ?? assessment.scan_date;
@@ -1966,13 +1972,21 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                 'border-border bg-muted/30 text-muted-foreground';
               return (
                 <>
+                  {/* Mode banner */}
+                  <div className={`flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium ${isTargetMode ? 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/30' : 'bg-muted/50 text-muted-foreground border border-border'}`}>
+                    <Shield className="w-3.5 h-3.5 shrink-0" />
+                    {isTargetMode
+                      ? 'Threat Landscape Mode — assessing threats FACING this entity, not whether the entity is a threat'
+                      : 'Threat Actor Mode — assessing whether this entity poses a threat'}
+                  </div>
+
                   {/* Header card */}
                   <Card className={`p-4 border-l-4 ${riskColor}`}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Shield className="w-4 h-4" />
                         <span className="text-sm font-semibold uppercase tracking-wide">
-                          {assessment.threat_level || 'Unknown'} Risk
+                          {isTargetMode ? 'Threats Facing This Entity:' : ''} {assessment.threat_level || 'Unknown'}{isTargetMode ? ' Threat Level' : ' Risk'}
                         </span>
                         {assessment.confidence != null && (
                           <span className="text-xs font-normal opacity-70">
@@ -1981,22 +1995,36 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap justify-end">
                         {assessedAt && (
                           <span className="text-xs text-muted-foreground">
-                            Assessed: {format(new Date(assessedAt), "MMM d, yyyy 'at' h:mm a")}
+                            {format(new Date(assessedAt), "MMM d, yyyy 'at' h:mm a")}
                           </span>
                         )}
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={handleAssessEntity}
+                          onClick={() => handleAssessEntity('threat_target')}
                           disabled={runningAssessment}
+                          title="Assess what external threats (harassment, activism, doxxing) face this entity"
                         >
-                          {runningAssessment ? (
+                          {runningAssessment && isTargetMode ? (
                             <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Assessing...</>
                           ) : (
-                            <><Brain className="w-3.5 h-3.5 mr-1.5" />Re-Assess</>
+                            <><Radar className="w-3.5 h-3.5 mr-1.5" />Re-assess as Target</>
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleAssessEntity('threat_actor')}
+                          disabled={runningAssessment}
+                          title="Assess whether this entity itself poses a threat"
+                        >
+                          {runningAssessment && !isTargetMode ? (
+                            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Assessing...</>
+                          ) : (
+                            <><Brain className="w-3.5 h-3.5 mr-1.5" />Re-assess as Actor</>
                           )}
                         </Button>
                       </div>
@@ -2009,7 +2037,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                     <Card className="p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <AlertTriangle className="w-4 h-4 text-orange-500" />
-                        <span className="text-sm font-medium">Key Findings</span>
+                        <span className="text-sm font-medium">{isTargetMode ? 'Threats Identified' : 'Key Findings'}</span>
                       </div>
                       <ul className="space-y-2.5">
                         {assessment.key_findings.map((f: any, i: number) => {
@@ -2068,7 +2096,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                     <Card className="p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <CheckCircle className="w-4 h-4 text-green-500" />
-                        <span className="text-sm font-medium">Recommended Actions</span>
+                        <span className="text-sm font-medium">{isTargetMode ? 'Protective Measures' : 'Recommended Actions'}</span>
                       </div>
                       <ol className="space-y-2">
                         {assessment.recommended_actions.map((action: string, i: number) => (
@@ -2087,22 +2115,36 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
             })() : (
               <Card className="p-8 text-center">
                 <Shield className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-                <p className="font-medium mb-1">No risk assessment yet</p>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Click Assess to have AEGIS analyse all gathered intelligence and generate a structured threat assessment.
+                <p className="font-medium mb-1">No assessment yet</p>
+                <p className="text-sm text-muted-foreground mb-6">
+                  Choose an assessment mode. Use <strong>Threat Landscape</strong> when the entity is a potential target of harassment, activism, or campaigns. Use <strong>Threat Actor</strong> to assess whether the entity itself poses a threat.
                 </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleAssessEntity}
-                  disabled={runningAssessment}
-                >
-                  {runningAssessment ? (
-                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Assessing...</>
-                  ) : (
-                    <><Brain className="w-4 h-4 mr-2" />Run Assessment</>
-                  )}
-                </Button>
+                <div className="flex gap-3 justify-center flex-wrap">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => handleAssessEntity('threat_target')}
+                    disabled={runningAssessment}
+                  >
+                    {runningAssessment ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Assessing...</>
+                    ) : (
+                      <><Radar className="w-4 h-4 mr-2" />Threat Landscape</>
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleAssessEntity('threat_actor')}
+                    disabled={runningAssessment}
+                  >
+                    {runningAssessment ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Assessing...</>
+                    ) : (
+                      <><Brain className="w-4 h-4 mr-2" />Threat Actor</>
+                    )}
+                  </Button>
+                </div>
               </Card>
             )}
           </TabsContent>

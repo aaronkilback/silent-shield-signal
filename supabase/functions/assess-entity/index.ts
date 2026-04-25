@@ -8,7 +8,10 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { entityId, suggestionId } = body;
+    const { entityId, suggestionId, assessment_mode } = body;
+    // 'threat_actor' (default): is this entity dangerous?
+    // 'threat_target': what threats face this entity?
+    const isTargetMode = assessment_mode === 'threat_target';
 
     if (!entityId && !suggestionId) {
       return errorResponse('entityId or suggestionId is required', 400);
@@ -112,14 +115,25 @@ ${entityData.attributes ? `Attributes: ${JSON.stringify(entityData.attributes)}`
       }
     }
 
-    console.log(`Assessing entity: ${entityData?.name || suggestionData?.suggested_name}`);
+    console.log(`Assessing entity: ${entityData?.name || suggestionData?.suggested_name} [mode=${assessment_mode || 'threat_actor'}]`);
 
-    const systemPrompt = `You are AEGIS, a security intelligence analyst for the Fortress AI platform.
+    const systemPrompt = isTargetMode
+      ? `You are AEGIS, a protective intelligence analyst for the Fortress AI platform.
+Your role is to assess threats FACING an entity — not whether the entity itself is dangerous.
+The entity under assessment is a POTENTIAL TARGET of external threats (harassment, doxxing, activism, protests, organized campaigns, violence).
+Use the deliver_threat_assessment tool to provide a structured, evidence-based threat landscape assessment.
+Frame threat_level as the severity of threats directed AT this entity.
+In key_findings, identify: who may be targeting them, what types of threats exist (protest, harassment, doxxing, online campaigns, physical safety risks), and any escalation indicators.
+In recommended_actions, focus on PROTECTIVE and DEFENSIVE measures (security protocols, online safety, physical security, legal options).
+Base your assessment ONLY on the provided context. Acknowledge data gaps clearly.`
+      : `You are AEGIS, a security intelligence analyst for the Fortress AI platform.
 Your role is to assess entities — people, organizations, infrastructure — for threat potential based on available intelligence.
 Use the deliver_threat_assessment tool to provide a structured, evidence-based assessment.
 Base your assessment ONLY on the provided context. Acknowledge data gaps clearly.`;
 
-    const userPrompt = `Assess the following entity for threat and risk level:\n\n${contextText}`;
+    const userPrompt = isTargetMode
+      ? `Assess the threat landscape FACING the following entity — who is targeting them, what threats exist, how serious are they:\n\n${contextText}`
+      : `Assess the following entity for threat and risk level:\n\n${contextText}`;
 
     const result = await callAiGateway({
       model: 'gpt-4o-mini',
@@ -162,6 +176,9 @@ Base your assessment ONLY on the provided context. Acknowledge data gaps clearly
     if (!assessment) {
       return errorResponse('No assessment returned from AI', 500);
     }
+
+    // Tag the assessment with its mode so the UI can frame it correctly
+    assessment.assessment_mode = assessment_mode || 'threat_actor';
 
     const now = new Date().toISOString();
 
