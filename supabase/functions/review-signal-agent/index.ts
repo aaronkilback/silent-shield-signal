@@ -173,15 +173,52 @@ ${activeIncidents.length === 0
 
     // ── 6. Write agent_review back to signal.raw_json ────────────────────────
     const currentRawJson = signal.raw_json || {};
+    const adjustedScore = Math.max(0, Math.min(1,
+      Math.round((compositeScore + agentReview.confidence_delta) * 1000) / 1000
+    ));
     await supabase
       .from('signals')
       .update({
         raw_json: { ...currentRawJson, agent_review: agentReview },
-        composite_confidence: Math.max(0, Math.min(1,
-          Math.round((compositeScore + agentReview.confidence_delta) * 1000) / 1000
-        )),
+        composite_confidence: adjustedScore,
       })
       .eq('id', signal_id);
+
+    // ── 6b. Write Tier 2 reasoning row to signal_agent_analyses ─────────────
+    supabase.from('signal_agent_analyses').insert({
+      signal_id,
+      agent_call_sign: 'TIER2-REVIEW',
+      analysis: agentReview.reasoning,
+      confidence_score: adjustedScore,
+      trigger_reason: isSubThreshold ? 'sub_threshold_review' : 'high_value_enrichment',
+      analysis_tier: 'tier2',
+      confidence_breakdown: {
+        composite_before: compositeScore,
+        confidence_delta: agentReview.confidence_delta,
+        composite_after: adjustedScore,
+        verdict: agentReview.verdict,
+      },
+      pattern_matches: {
+        context_signals_found: contextSignals.length,
+        active_incidents_found: activeIncidents.length,
+        verdict: agentReview.verdict,
+        is_sub_threshold: isSubThreshold,
+      },
+      reasoning_log: [
+        {
+          step: 'tier2_verdict',
+          verdict: agentReview.verdict,
+          reasoning: agentReview.reasoning,
+          confidence_delta: agentReview.confidence_delta,
+          context_signals: contextSignals.length,
+          active_incidents: activeIncidents.length,
+          reviewed_at: agentReview.reviewed_at,
+        },
+      ],
+    }).then(
+      () => {},
+      (e: any) => console.warn('[ReviewAgent] Failed to write signal_agent_analyses row:', e)
+    );
 
     // ── 7. Execute verdict ───────────────────────────────────────────────────
     if (agentReview.verdict === 'promote' && isSubThreshold) {

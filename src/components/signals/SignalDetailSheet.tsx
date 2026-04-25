@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText, ThumbsUp, ThumbsDown, ShieldAlert } from "lucide-react";
+import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText, ThumbsUp, ThumbsDown, ShieldAlert, Brain, ChevronDown, ChevronUp, ListChecks } from "lucide-react";
 import { AskAegisButton } from "@/components/AskAegisButton";
 import { SignalManualOverride } from "./SignalManualOverride";
 import { format, differenceInDays } from "date-fns";
@@ -63,13 +63,15 @@ export function SignalDetailSheet({
   const [createIncidentOpen, setCreateIncidentOpen] = useState(false);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackGiven, setFeedbackGiven] = useState<string | null>(null);
+  const [feedbackNote, setFeedbackNote] = useState('');
   const [agentAnalyses, setAgentAnalyses] = useState<any[]>([]);
+  const [reasoningExpanded, setReasoningExpanded] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     if (!signal?.id) return;
     supabase
       .from('signal_agent_analyses')
-      .select('agent_call_sign, analysis, confidence_score, trigger_reason, created_at')
+      .select('agent_call_sign, analysis, confidence_score, trigger_reason, created_at, analysis_tier, confidence_breakdown, pattern_matches, reasoning_log')
       .eq('signal_id', signal.id)
       .order('created_at', { ascending: true })
       .then(({ data }) => setAgentAnalyses(data || []));
@@ -81,13 +83,35 @@ export function SignalDetailSheet({
   ) => {
     if (!signal) return;
     setFeedbackLoading(true);
+    const signalId = signal.primary_signal_id || signal.id;
+
+    // Map UI feedback type to the values process-feedback expects
+    const feedbackMap: Record<string, string> = {
+      relevant: 'relevant',
+      not_relevant: 'irrelevant',
+      wrong_severity: 'wrong_severity',
+    };
+    const feedbackValue = feedbackMap[feedbackType] || feedbackType;
+
     try {
-      const { error } = await supabase.from('signal_feedback').insert({
-        signal_id: signal.primary_signal_id || signal.id,
-        feedback_type: feedbackType,
-        feedback_source: 'analyst',
-        original_severity: signal.severity,
-        corrected_severity: correctedSeverity || null,
+      // Call process-feedback edge function — this is the ONLY path that reaches
+      // the learning pipeline (feedback_events → learning_profiles → source_credibility_scores).
+      // Direct inserts to signal_feedback bypass all learning functions.
+      const { error } = await supabase.functions.invoke('process-feedback', {
+        body: {
+          objectType: 'signal',
+          objectId: signalId,
+          feedback: feedbackValue,
+          notes: feedbackNote.trim() || undefined,
+          correction: correctedSeverity || undefined,
+          sourceFunction: 'signal-detail-sheet',
+          feedbackContext: {
+            original_severity: signal.severity,
+            corrected_severity: correctedSeverity || null,
+            category: signal.category,
+            feedback_type: feedbackType,
+          },
+        },
       });
       if (error) throw error;
       setFeedbackGiven(feedbackType);
@@ -238,21 +262,45 @@ export function SignalDetailSheet({
                       Not Relevant
                     </Button>
                   </div>
-                  {signal.severity && signal.severity !== 'critical' && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full text-orange-500 border-orange-500/30 hover:bg-orange-500/10"
-                      disabled={feedbackLoading}
-                      onClick={() => {
-                        const upgrades: Record<string, string> = { low: 'medium', medium: 'high', high: 'critical' };
-                        submitFeedback('wrong_severity', upgrades[signal.severity!] || 'high');
-                      }}
-                    >
-                      <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
-                      Severity too low — escalate
-                    </Button>
-                  )}
+                  <div className="flex gap-2">
+                    {signal.severity && signal.severity !== 'critical' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-orange-500 border-orange-500/30 hover:bg-orange-500/10"
+                        disabled={feedbackLoading}
+                        onClick={() => {
+                          const upgrades: Record<string, string> = { low: 'medium', medium: 'high', high: 'critical' };
+                          submitFeedback('wrong_severity', upgrades[signal.severity!] || 'high');
+                        }}
+                      >
+                        <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
+                        Too low
+                      </Button>
+                    )}
+                    {signal.severity && signal.severity !== 'low' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 text-blue-500 border-blue-500/30 hover:bg-blue-500/10"
+                        disabled={feedbackLoading}
+                        onClick={() => {
+                          const downgrades: Record<string, string> = { critical: 'high', high: 'medium', medium: 'low' };
+                          submitFeedback('wrong_severity', downgrades[signal.severity!] || 'low');
+                        }}
+                      >
+                        <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
+                        Too high
+                      </Button>
+                    )}
+                  </div>
+                  <textarea
+                    className="w-full text-xs rounded border border-border bg-background p-2 resize-none text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    rows={2}
+                    placeholder="Optional note for AEGIS (e.g. 'false positive — routine maintenance')"
+                    value={feedbackNote}
+                    onChange={(e) => setFeedbackNote(e.target.value)}
+                  />
                 </div>
               )}
             </div>
@@ -508,27 +556,160 @@ export function SignalDetailSheet({
               </>
             )}
 
-            {/* Agent Pre-Analysis */}
+            {/* Agent Reasoning Chain */}
             {agentAnalyses.length > 0 && (
               <>
                 <Separator />
                 <div>
-                  <h4 className="text-sm font-medium mb-3">Agent Pre-Analysis</h4>
+                  <h4 className="text-sm font-medium mb-3 flex items-center gap-1.5">
+                    <Brain className="h-4 w-4 text-primary" />
+                    Agent Reasoning Chain
+                  </h4>
                   <div className="space-y-3">
-                    {agentAnalyses.map((a, i) => (
-                      <div key={i} className="rounded-md border bg-muted/30 p-3 text-sm space-y-1.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant="outline" className="font-mono text-xs">{a.agent_call_sign}</Badge>
-                          {a.confidence_score != null && (
-                            <span className="text-xs text-muted-foreground">{Math.round(a.confidence_score * 100)}% confidence</span>
+                    {agentAnalyses.map((a, i) => {
+                      const isExpanded = reasoningExpanded[i] ?? false;
+                      const bd = a.confidence_breakdown;
+                      const pm = a.pattern_matches;
+                      const rl: any[] = a.reasoning_log || [];
+                      const tier = a.analysis_tier || 'speculative';
+                      const tierColor = tier === 'tier1' ? 'text-blue-500 border-blue-500/30' : tier === 'tier2' ? 'text-purple-500 border-purple-500/30' : 'text-muted-foreground';
+                      const tierLabel = tier === 'tier1' ? 'Decision Engine' : tier === 'tier2' ? 'Tier 2 Review' : 'Pre-Scan';
+
+                      return (
+                        <div key={i} className="rounded-md border bg-muted/20 p-3 text-sm space-y-2">
+                          {/* Header row */}
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge variant="outline" className={`font-mono text-xs ${tierColor}`}>{a.agent_call_sign}</Badge>
+                              <Badge variant="outline" className={`text-xs ${tierColor}`}>{tierLabel}</Badge>
+                              {a.confidence_score != null && (
+                                <span className="text-xs font-medium">{Math.round(a.confidence_score * 100)}% composite</span>
+                              )}
+                              {pm?.verdict && (
+                                <Badge variant="secondary" className="text-xs capitalize">{pm.verdict}</Badge>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => setReasoningExpanded(prev => ({ ...prev, [i]: !isExpanded }))}
+                              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                            >
+                              {isExpanded ? <><ChevronUp className="h-3 w-3" />Less</> : <><ChevronDown className="h-3 w-3" />Details</>}
+                            </button>
+                          </div>
+
+                          {/* Confidence breakdown bar (always visible when data exists) */}
+                          {bd && (bd.ai_confidence != null || bd.composite_before != null) && (
+                            <div className="space-y-1.5">
+                              {bd.composite != null && (
+                                <div>
+                                  <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
+                                    <span>Composite confidence</span>
+                                    <span>{Math.round(bd.composite * 100)}%</span>
+                                  </div>
+                                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full ${bd.composite >= 0.75 ? 'bg-green-500' : bd.composite >= 0.65 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                                      style={{ width: `${Math.round(bd.composite * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                              {bd.ai_confidence != null && (
+                                <div className="grid grid-cols-3 gap-1 text-xs">
+                                  <div className="text-center">
+                                    <div className="text-muted-foreground">AI</div>
+                                    <div className="font-medium">{Math.round(bd.ai_confidence * 100)}%</div>
+                                    <div className="text-muted-foreground">×50%</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-muted-foreground">Relevance</div>
+                                    <div className="font-medium">{Math.round(bd.relevance_score * 100)}%</div>
+                                    <div className="text-muted-foreground">×35%</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-muted-foreground">Source</div>
+                                    <div className="font-medium">{Math.round(bd.source_credibility * 100)}%</div>
+                                    <div className="text-muted-foreground">×15%</div>
+                                  </div>
+                                </div>
+                              )}
+                              {bd.composite_before != null && (
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span>Before: {Math.round(bd.composite_before * 100)}%</span>
+                                  <span className={bd.confidence_delta >= 0 ? 'text-green-500' : 'text-red-500'}>
+                                    {bd.confidence_delta >= 0 ? '+' : ''}{Math.round(bd.confidence_delta * 100)}%
+                                  </span>
+                                  <span>After: {Math.round((bd.composite_after ?? bd.composite_before) * 100)}%</span>
+                                </div>
+                              )}
+                            </div>
                           )}
-                          {a.trigger_reason && (
-                            <span className="text-xs text-muted-foreground capitalize">{a.trigger_reason.replace(/_/g, ' ')}</span>
+
+                          {/* Pattern matches (always visible when data exists) */}
+                          {pm && (pm.matched_rules?.length > 0 || pm.entity_tags?.length > 0) && (
+                            <div className="flex flex-wrap gap-1">
+                              {pm.matched_rules?.map((r: string, ri: number) => (
+                                <Badge key={ri} variant="secondary" className="text-xs">
+                                  <ListChecks className="h-2.5 w-2.5 mr-1" />
+                                  {r}
+                                </Badge>
+                              ))}
+                              {pm.threat_level && (
+                                <Badge variant="outline" className="text-xs capitalize">{pm.threat_level}</Badge>
+                              )}
+                              {pm.is_historical && (
+                                <Badge variant="outline" className="text-xs text-amber-500 border-amber-500/30">Historical</Badge>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Analysis text */}
+                          <p className="text-muted-foreground leading-relaxed text-xs">{a.analysis}</p>
+
+                          {/* Expanded: full reasoning steps */}
+                          {isExpanded && rl.length > 0 && (
+                            <div className="mt-2 space-y-2 border-t pt-2">
+                              <p className="text-xs text-muted-foreground font-medium">Reasoning steps</p>
+                              {rl.map((step: any, si: number) => (
+                                <div key={si} className="rounded bg-muted/40 p-2 text-xs space-y-0.5">
+                                  <div className="font-mono text-muted-foreground capitalize">{step.step?.replace(/_/g, ' ')}</div>
+                                  {step.step === 'composite_gate' && step.breakdown && (
+                                    <div className="text-muted-foreground space-y-0.5">
+                                      <div>{step.breakdown.ai}</div>
+                                      <div>{step.breakdown.relevance}</div>
+                                      <div>{step.breakdown.source}</div>
+                                      <div className={`font-medium ${step.passed ? 'text-green-500' : 'text-red-500'}`}>
+                                        Composite: {Math.round(step.composite * 100)}% — {step.passed ? 'PASSED' : 'BELOW THRESHOLD'}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {step.step === 'ai_assessment' && (
+                                    <div className="text-muted-foreground">
+                                      <span className="capitalize">{step.threat_level}</span> threat · {Math.round((step.ai_confidence || 0) * 100)}% AI confidence
+                                      {step.is_historical && <span className="ml-2 text-amber-500">· historical content</span>}
+                                      {step.strategic_context && <div className="mt-1 text-xs opacity-80">{step.strategic_context}</div>}
+                                    </div>
+                                  )}
+                                  {step.step === 'rule_matching' && (
+                                    <div className="text-muted-foreground">
+                                      {step.rules_matched?.length > 0
+                                        ? `${step.rules_matched.length} rule(s) matched: ${step.rules_matched.join(', ')}`
+                                        : 'No rules matched'}
+                                    </div>
+                                  )}
+                                  {step.step === 'tier2_verdict' && (
+                                    <div className="text-muted-foreground">
+                                      <span className="capitalize font-medium">{step.verdict}</span> · delta {step.confidence_delta >= 0 ? '+' : ''}{Math.round((step.confidence_delta || 0) * 100)}%
+                                      · {step.context_signals} related signals · {step.active_incidents} active incidents
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           )}
                         </div>
-                        <p className="text-muted-foreground leading-relaxed">{a.analysis}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </>

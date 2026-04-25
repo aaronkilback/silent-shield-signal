@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -72,6 +72,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
   const [synthesizing, setSynthesizing] = useState(false);
   const [contentSynthesis, setContentSynthesis] = useState<string | null>(null);
   const [runningAssessment, setRunningAssessment] = useState(false);
+  const [activeTab, setActiveTab] = useState("details");
 
   const { data: entity, isLoading } = useQuery({
     queryKey: ['entity-detail', entityId],
@@ -139,6 +140,30 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     },
     enabled: !!entityId,
   });
+
+  // Reset synthesis when switching entities
+  useEffect(() => {
+    setContentSynthesis(null);
+  }, [entityId]);
+
+  // Pre-populate the Content tab synthesis blurb from the already-stored POI report
+  // so it persists across dialog close/reopen without requiring a re-run.
+  useEffect(() => {
+    if (contentSynthesis) return; // already populated this session
+    if (latestReport?.report_markdown) {
+      const md = latestReport.report_markdown as string;
+      // Try common section headers — report format may vary
+      const execMatch = md.match(/##\s*EXECUTIVE SUMMARY\s*\n([\s\S]*?)(?=\n##|$)/i)
+        || md.match(/##\s*SUMMARY\s*\n([\s\S]*?)(?=\n##|$)/i)
+        || md.match(/##\s*OVERVIEW\s*\n([\s\S]*?)(?=\n##|$)/i);
+      const posMatch = md.match(/##\s*(?:POSITIVE |KEY )?FINDINGS\s*\n([\s\S]*?)(?=\n##|$)/i);
+      const excerpt = [
+        execMatch?.[1]?.trim(),
+        posMatch ? `**Key Findings:**\n${posMatch[1]?.trim()}` : null,
+      ].filter(Boolean).join('\n\n');
+      setContentSynthesis(excerpt || md.substring(0, 1000));
+    }
+  }, [latestReport, contentSynthesis]);
 
   const { data: photos = [] } = useQuery({
     queryKey: ['entity-photos', entityId],
@@ -998,7 +1023,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           )}
         </DialogHeader>
 
-        <Tabs defaultValue="details" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="photos">Photos</TabsTrigger>
@@ -1606,9 +1631,22 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                       <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-line">
                         {contentSynthesis.substring(0, 600)}
                         {contentSynthesis.length > 600 && (
-                          <span className="text-primary cursor-pointer" onClick={() => {/* switch to report tab */}}> → See full report</span>
+                          <span className="text-primary cursor-pointer underline-offset-2 hover:underline" onClick={() => setActiveTab('report')}> → See full report</span>
                         )}
                       </p>
+                    ) : (entity as any)?.ai_assessment?.summary || (entity as any)?.ai_assessment?.risk_summary ? (
+                      // Fallback: show the structured assessment from the Assess button
+                      <div className="space-y-1.5">
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {((entity as any).ai_assessment.summary || (entity as any).ai_assessment.risk_summary).substring(0, 400)}
+                        </p>
+                        <button
+                          className="text-xs text-primary underline-offset-2 hover:underline"
+                          onClick={() => setActiveTab('assessment')}
+                        >
+                          → See full risk assessment
+                        </button>
+                      </div>
                     ) : (
                       <p className="text-xs text-muted-foreground">
                         {synthesizing ? 'Analyzing all intelligence sources...' : `${content.length} items collected. Click Analyze to generate a threat assessment.`}
@@ -1918,6 +1956,9 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           <TabsContent value="assessment" className="mt-4 space-y-4">
             {(entity as any).ai_assessment ? (() => {
               const assessment = (entity as any).ai_assessment;
+              // 'summary' is the current field name; 'risk_summary' was the old name
+              const summaryText = assessment.summary ?? assessment.risk_summary;
+              const assessedAt = (entity as any).ai_assessed_at ?? assessment.scan_date;
               const riskColor =
                 assessment.threat_level === 'critical' ? 'border-red-500 bg-red-500/5 text-red-700 dark:text-red-400' :
                 assessment.threat_level === 'high' ? 'border-orange-500 bg-orange-500/5 text-orange-700 dark:text-orange-400' :
@@ -1933,11 +1974,17 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         <span className="text-sm font-semibold uppercase tracking-wide">
                           {assessment.threat_level || 'Unknown'} Risk
                         </span>
+                        {assessment.confidence != null && (
+                          <span className="text-xs font-normal opacity-70">
+                            {Math.round(assessment.confidence * 100)}% confidence
+                            {assessment.confidence_basis ? ` · ${assessment.confidence_basis.replace(/_/g, ' ')}` : ''}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
-                        {assessment.scan_date && (
+                        {assessedAt && (
                           <span className="text-xs text-muted-foreground">
-                            Assessed: {format(new Date(assessment.scan_date), "MMM d, yyyy 'at' h:mm a")}
+                            Assessed: {format(new Date(assessedAt), "MMM d, yyyy 'at' h:mm a")}
                           </span>
                         )}
                         <Button
@@ -1954,24 +2001,65 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                         </Button>
                       </div>
                     </div>
-                    <p className="text-sm leading-relaxed">{assessment.risk_summary}</p>
+                    {summaryText && <p className="text-sm leading-relaxed">{summaryText}</p>}
                   </Card>
 
-                  {/* Key Findings */}
+                  {/* Key Findings — items may be objects {finding, source_type, verified} or plain strings */}
                   {assessment.key_findings?.length > 0 && (
                     <Card className="p-4">
                       <div className="flex items-center gap-2 mb-3">
                         <AlertTriangle className="w-4 h-4 text-orange-500" />
                         <span className="text-sm font-medium">Key Findings</span>
                       </div>
+                      <ul className="space-y-2.5">
+                        {assessment.key_findings.map((f: any, i: number) => {
+                          const text = typeof f === 'string' ? f : f.finding;
+                          const verified = typeof f === 'object' ? f.verified : null;
+                          return (
+                            <li key={i} className="flex items-start gap-2 text-sm">
+                              <span className="mt-1 w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
+                              <span className="flex-1">{text}</span>
+                              {verified === false && (
+                                <span className="text-xs text-muted-foreground italic shrink-0">inferred</span>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </Card>
+                  )}
+
+                  {/* Unverified Assessments (analytical inferences) */}
+                  {assessment.unverified_assessments?.length > 0 && (
+                    <Card className="p-4 border-dashed">
+                      <div className="flex items-center gap-2 mb-3">
+                        <AlertTriangle className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm font-medium text-muted-foreground">Analytical Inferences</span>
+                        <span className="text-xs text-muted-foreground">— not directly verified from source data</span>
+                      </div>
                       <ul className="space-y-2">
-                        {assessment.key_findings.map((finding: string, i: number) => (
-                          <li key={i} className="flex items-start gap-2 text-sm">
-                            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
-                            <span>{finding}</span>
+                        {assessment.unverified_assessments.map((item: string, i: number) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground italic">
+                            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-muted-foreground/50 shrink-0" />
+                            <span>{item}</span>
                           </li>
                         ))}
                       </ul>
+                    </Card>
+                  )}
+
+                  {/* Correlation */}
+                  {assessment.correlation_status && assessment.correlation_status !== 'insufficient_data' && (
+                    <Card className="p-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium">Correlation</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${assessment.correlation_status === 'correlated' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' : 'bg-muted text-muted-foreground'}`}>
+                          {assessment.correlation_status}
+                        </span>
+                      </div>
+                      {assessment.correlation_evidence && (
+                        <p className="text-sm text-muted-foreground">{assessment.correlation_evidence}</p>
+                      )}
                     </Card>
                   )}
 

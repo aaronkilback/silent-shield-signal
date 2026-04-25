@@ -84,7 +84,8 @@ export default function Entities() {
       }
 
       if (hideLowQuality) {
-        query = query.gte('quality_score', 5);
+        // Always show entities that have been assessed or investigated, regardless of quality score
+        query = query.or('quality_score.gte.5,ai_assessment.not.is.null,ai_assessed_at.not.is.null');
       }
 
       const { data, error } = await query;

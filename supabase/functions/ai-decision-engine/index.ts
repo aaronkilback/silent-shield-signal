@@ -680,6 +680,63 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
           (e: any) => console.warn('[AI-Decision] Failed to write composite_confidence:', e)
         );
 
+        // Phase 2B-bis: Write full reasoning row to signal_agent_analyses so analysts
+        // can see exactly HOW the confidence score was constructed.
+        supabase.from('signal_agent_analyses').insert({
+          signal_id: signal.id,
+          agent_call_sign: 'AI-DECISION-ENGINE',
+          analysis: (decision.reasoning || '').substring(0, 2000),
+          confidence_score: Math.round(compositeScore * 1000) / 1000,
+          trigger_reason: 'composite_confidence_gate',
+          analysis_tier: 'tier1',
+          confidence_breakdown: {
+            ai_confidence: Math.round(aiConfidence * 1000) / 1000,
+            ai_weight: 0.50,
+            relevance_score: Math.round(relevanceScore * 1000) / 1000,
+            relevance_weight: 0.35,
+            source_credibility: Math.round(sourceCredibility * 1000) / 1000,
+            source_weight: 0.15,
+            composite: Math.round(compositeScore * 1000) / 1000,
+          },
+          pattern_matches: {
+            matched_rules: matchedRules,
+            threat_level: decision.threat_level,
+            category: signal.category,
+            entity_tags: signal.entity_tags || [],
+            is_historical: decision.is_historical_content || false,
+          },
+          reasoning_log: [
+            {
+              step: 'rule_matching',
+              rules_matched: matchedRules,
+              tags_added: ruleTags,
+              rule_category: ruleCategory,
+            },
+            {
+              step: 'ai_assessment',
+              threat_level: decision.threat_level,
+              ai_confidence: Math.round(aiConfidence * 1000) / 1000,
+              is_historical: decision.is_historical_content || false,
+              strategic_context: (decision.strategic_context || '').substring(0, 300),
+              threat_correlation: (decision.threat_correlation || '').substring(0, 300),
+            },
+            {
+              step: 'composite_gate',
+              composite: Math.round(compositeScore * 1000) / 1000,
+              threshold: 0.65,
+              passed: compositeScore >= 0.65 || tier2_promotion,
+              breakdown: {
+                ai: `${Math.round(aiConfidence * 100)}% × 50% = ${Math.round(aiConfidence * 50)}%`,
+                relevance: `${Math.round(relevanceScore * 100)}% × 35% = ${Math.round(relevanceScore * 35)}%`,
+                source: `${Math.round(sourceCredibility * 100)}% × 15% = ${Math.round(sourceCredibility * 15)}%`,
+              },
+            },
+          ],
+        }).then(
+          () => {},
+          (e: any) => console.warn('[AI-Decision] Failed to write signal_agent_analyses row:', e)
+        );
+
         if (compositeScore < 0.65 && !tier2_promotion) {
           console.log(`[AI-Decision] Composite score ${compositeScore.toFixed(3)} below 0.65 — signal ${signal.id} monitored, no incident created.`);
           await supabase.from('incident_creation_failures').insert({
