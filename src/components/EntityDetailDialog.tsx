@@ -1024,14 +1024,14 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-6">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="photos">Photos</TabsTrigger>
-            <TabsTrigger value="content">Content</TabsTrigger>
-            <TabsTrigger value="relationships">Relationships</TabsTrigger>
-            <TabsTrigger value="signals">Signals</TabsTrigger>
-            <TabsTrigger value="assessment">
-              Risk Assessment
+          <TabsList className="flex w-full overflow-x-auto">
+            <TabsTrigger value="details" className="flex-shrink-0">Details</TabsTrigger>
+            <TabsTrigger value="photos" className="flex-shrink-0">Photos</TabsTrigger>
+            <TabsTrigger value="content" className="flex-shrink-0">Content</TabsTrigger>
+            <TabsTrigger value="relationships" className="flex-shrink-0">Relationships</TabsTrigger>
+            <TabsTrigger value="signals" className="flex-shrink-0">Signals</TabsTrigger>
+            <TabsTrigger value="assessment" className="flex-shrink-0">
+              Assessment
               {(entity as any).ai_assessment && (
                 <span className={`ml-1.5 text-xs px-1 rounded ${
                   (entity as any).ai_assessment.threat_level === 'critical' ? 'bg-destructive text-destructive-foreground' :
@@ -1043,7 +1043,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="report">
+            <TabsTrigger value="report" className="flex-shrink-0">
               Report
               {latestReport && (
                 <span className={`ml-1.5 text-xs px-1 rounded ${
