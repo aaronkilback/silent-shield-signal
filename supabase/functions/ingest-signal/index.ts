@@ -454,6 +454,31 @@ Respond ONLY with valid JSON.`
       }
     }
 
+    // ═══ UNKNOWN-CATEGORY REJECTION ═══
+    // The AI classifier has 25 categories including a generic "other". A `category=unknown`
+    // result means the AI failed entirely or returned malformed JSON — we have no signal
+    // about what this is. Default behaviour was to ingest as severity=medium/category=unknown,
+    // which is the largest single source of feed noise. Reject instead. Skipped for
+    // skip_relevance_gate (analyst uploads) and rules-matched signals (P1/P2 keywords already
+    // give us the priority). qa_test signals are also passed through so QA can verify.
+    const isQaTestForCategory = validationResult.data.sourceType === 'qa_test' || rawBody?.sourceType === 'qa_test' || is_test === true;
+    if (
+      classification.category === 'unknown' &&
+      !rulesResult.severity &&
+      !skip_relevance_gate &&
+      !isQaTestForCategory
+    ) {
+      console.log(`[Category Filter] Rejecting uncategorizable signal: ${signalText.substring(0, 100)}...`);
+      return new Response(
+        JSON.stringify({
+          status: 'rejected',
+          reason: 'uncategorizable',
+          message: 'AI classifier could not assign a category — signal lacks structure to be actionable intelligence'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Match signal to clients using keyword and AI-powered matching
     let clientId: string | null = validatedExplicitClientId || null; // Use validated explicit client_id if provided
     let matchedKeywords: string[] = [];
@@ -961,10 +986,11 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     // ===== AI RELEVANCE GATE: PECL-calibrated two-stage check =====
     // Stage 1: LLM scores relevance (0-1) + classifies connection type
-    // Stage 2: Threshold check at 0.45 — below = write to filtered_signals and reject
-    // Lowered from 0.60: signals scoring 0.45–0.60 are "moderate" (sector-wide risk,
-    // regulatory trends, protest tactics relevant to client's industry) — these ARE
-    // actionable PECL intelligence. 0.60 was blocking all sector-wide signals.
+    // Stage 2: Threshold check at 0.65 — below = write to filtered_signals and reject
+    // Threshold history: started at 0.60, briefly lowered to 0.45 to admit "moderate"
+    // sector-wide signals, but in practice that floor lets through job postings,
+    // generic "Canada" mentions, and entertainment fragments that all score 0.50–0.65.
+    // Raised back to 0.65 (bounds 0.55–0.80) to enforce a real connection requirement.
     if (skip_relevance_gate) {
       console.log(`[AI Relevance Gate] BYPASSED — upstream keyword matching already vetted this signal`);
     }
@@ -1081,9 +1107,9 @@ Score this signal's relevance and classify the connection.`
 
           // Phase 3C: Per-source threshold adjustment
           // Low-credibility sources face a higher bar; proven sources get more slack.
-          // Bounded ±0.10 from base (floor 0.35, ceiling 0.55) to prevent runaway suppression.
+          // Bounded ±0.15 from base (floor 0.55, ceiling 0.80) to prevent runaway suppression.
           // Also applies learned threshold adjustment from analyst feedback patterns.
-          let relevanceThreshold = Math.min(0.55, Math.max(0.35, 0.45 + learnedThresholdAdjustment));
+          let relevanceThreshold = Math.min(0.80, Math.max(0.55, 0.65 + learnedThresholdAdjustment));
           if (learnedThresholdAdjustment !== 0) {
             console.log(`[Learning] Threshold adjusted by analyst patterns: ${learnedThresholdAdjustment > 0 ? '+' : ''}${learnedThresholdAdjustment.toFixed(2)} → ${relevanceThreshold.toFixed(2)}`);
           }
@@ -1096,8 +1122,8 @@ Score this signal's relevance and classify the connection.`
             // Only adjust if we have enough signal history (thin data protection)
             if (credScore?.current_credibility && (credScore.total_signals ?? 0) >= 5) {
               const adjustment = (0.65 - credScore.current_credibility) * 0.40;
-              relevanceThreshold = Math.min(0.55, Math.max(0.35, 0.45 + adjustment));
-              if (Math.abs(relevanceThreshold - 0.45) > 0.005) {
+              relevanceThreshold = Math.min(0.80, Math.max(0.55, 0.65 + adjustment));
+              if (Math.abs(relevanceThreshold - 0.65) > 0.005) {
                 console.log(`[Phase3C] ${source_key} threshold adjusted: ${relevanceThreshold.toFixed(2)} (credibility: ${credScore.current_credibility.toFixed(3)}, signals: ${credScore.total_signals})`);
               }
             }
@@ -1148,8 +1174,22 @@ Score this signal's relevance and classify the connection.`
           }
         }
       } catch (gateError) {
-        // Non-blocking — if the gate fails, let the signal through
-        console.error('[AI Relevance Gate] Error (non-blocking):', gateError);
+        // Fail closed — if the gate fails, reject rather than admit unreviewed noise.
+        // Previous behaviour was non-blocking (let the signal through), but in practice
+        // gate timeouts/errors meant junk signals slipped past during AI gateway hiccups.
+        // qa_test signals still pass through so smoke tests remain reliable.
+        console.error('[AI Relevance Gate] Error (failing closed):', gateError);
+        const isQaTestForGate = validationResult.data.sourceType === 'qa_test' || rawBody?.sourceType === 'qa_test' || is_test === true;
+        if (!isQaTestForGate) {
+          return new Response(
+            JSON.stringify({
+              status: 'rejected',
+              reason: 'ai_relevance_gate_error',
+              message: 'Signal rejected because the AI relevance gate could not be evaluated'
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
       }
     }
 

@@ -21,6 +21,22 @@ export const FALSE_POSITIVE_PATTERNS = [
   // Music/entertainment
   /\breleases?\s+['"]?[A-Za-z]+['"]?\s+(LP|EP|album)\b/i,
   /\bannounced\s+the\s+release\s+of\s+their\s+(LP|EP|album)\b/i,
+  // Job postings — covers LinkedIn/Indeed/Glassdoor patterns and "Company hiring Title in City"
+  // The AI gate prompt lists job postings as a 0.0 categorical exclusion, but gpt-4o-mini
+  // does not enforce this reliably. Hard-reject at ingest instead.
+  /\bhiring\s+[A-Z][\w\s\-]{2,80}\s+in\s+[A-Z][a-z]+/,                       // "PETRONAS Canada hiring Policy Advisor in Calgary"
+  /\b(Job|Career)\s+(in|opening|posting|listing)\s+[A-Z]/i,                  // "Job in Calgary"
+  /-\s*(LinkedIn|Indeed|Glassdoor|ZipRecruiter|Monster|Workopolis|Eluta)\b/i, // "...- LinkedIn 4 hours ago"
+  /\b(Senior|Junior|Lead|Staff|Principal|Associate)\s+(Engineer|Analyst|Manager|Developer|Designer|Specialist|Advisor|Planner|Accountant|Consultant)\b.*\b(LinkedIn|Indeed|hiring|Job)\b/i,
+  /\b(Reliability|Mechanical|Electrical|Software|Data|Systems|Process|Project|Capital)\s+Engineer\b\s*[\-–]\s*[A-Z]/i, // "Reliability Engineer – PETRONAS Canada – Job"
+  /\b\d+\s+(hours?|days?|months?)\s+ago\s*\.?\s*$/i,                         // trailing "12 hours ago." (job-board telltale on tiny snippets)
+  // Celebrity/entertainment fragments — model leaks these despite gate prompt
+  /\b(Taylor\s+Swift|Ashley\s+Judd|Simone\s+Ashley|Ashnoor\s+Kaur|Bridgerton|Disney)\b/i,
+  /\b(runway\s+appearance|trademark\s+applications?|photo\s+on\s+social\s+media)\b/i,
+  // Foreign-language fragments — clients are Canada-only, English/French acceptable
+  // Match common non-Latin scripts and several non-English Latin-language markers
+  /[Ѐ-ӿ؀-ۿऀ-ॿ぀-ヿ一-鿿฀-๿]/, // Cyrillic, Arabic, Devanagari, Japanese, CJK, Thai
+  /\bPrinášame|melalui\s+karya|sombreros\s+disponibles|Kesan\s+RM\d/i,                 // observed Slovak/Indonesian/Spanish/Malay garbage
 ];
 
 // Check if content matches known false positive patterns
