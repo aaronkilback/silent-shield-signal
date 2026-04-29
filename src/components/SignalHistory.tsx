@@ -327,6 +327,24 @@ export const SignalHistory = () => {
 
       if (error) throw error;
 
+      // Record analyst rejections so the relevance gate sees them. Bulk delete
+      // was previously invisible to learning_profiles — typically the largest
+      // single source of analyst feedback (~240/month vs 56 explicit thumbs).
+      const { data: { user } } = await supabase.auth.getUser();
+      const feedbackRows = Array.from(selectedSignalIds).map((id) => ({
+        object_type: 'signal',
+        object_id: id,
+        feedback: 'irrelevant',
+        notes: 'Manually dismissed (bulk delete)',
+        source_function: 'SignalHistory.bulkDelete',
+        user_id: user?.id ?? null,
+      }));
+      // Best-effort — don't fail the delete if feedback write fails.
+      await supabase.from('feedback_events').insert(feedbackRows).then(
+        () => {},
+        (err: unknown) => console.warn('feedback_events bulk insert failed', err),
+      );
+
       toast.success(`Deleted ${selectedSignalIds.size} signal${selectedSignalIds.size > 1 ? 's' : ''}`);
       setSelectedSignalIds(new Set());
       loadSignals();

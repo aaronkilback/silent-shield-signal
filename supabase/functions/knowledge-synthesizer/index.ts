@@ -400,9 +400,16 @@ async function synthesizeOperationalBeliefs(params: {
       const callSign = agentKey.replace('agent:', '');
       const specialty = agentSpecialties[agentKey] || '';
       const domain = deriveDomain(specialty);
+      // Only agents whose own domain IS threat_intelligence receive the cross-cutting
+      // threat_intel categories. Previously every agent inherited those categories,
+      // which is why WILDFIRE/AUREUS-GUARD/NARCO-INTEL/MCM-ICS were producing
+      // beliefs about "social engineering tactics" and "LNG protests" — content
+      // outside their declared specialty. Audit on 2026-04-29 found 33 of 47 active
+      // agents had been credited with the same generic belief in a single nightly run.
+      const isThreatIntelAgent = domain === 'threat_intelligence';
       const relevantCategories = new Set([
         ...(DOMAIN_SIGNAL_CATEGORIES[domain] || []),
-        ...(DOMAIN_SIGNAL_CATEGORIES['threat_intelligence'] || []), // all agents get cross-cutting intel
+        ...(isThreatIntelAgent ? (DOMAIN_SIGNAL_CATEGORIES['threat_intelligence'] || []) : []),
       ]);
 
       // Filter signals to this agent's domain
@@ -416,12 +423,14 @@ async function synthesizeOperationalBeliefs(params: {
       const signalClientIds = [...new Set(domainSignals.map((s: any) => s.client_id).filter(Boolean))];
       const beliefClientId: string | null = signalClientIds.length === 1 ? signalClientIds[0] : null;
 
-      // All agents see all incidents and high-threat entities
-      // Require a minimum evidence base before forming beliefs.
-      // A single signal or one open incident is not a pattern.
-      const evidenceCount = domainSignals.length + incidents.length;
-      if (evidenceCount < 3) {
-        return { callSign, status: `skipped:insufficient_evidence (${domainSignals.length} signals + ${incidents.length} incidents)` };
+      // Require a minimum DOMAIN-SPECIFIC signal evidence base before forming beliefs.
+      // Previously incidents counted toward evidence too, which let agents with zero
+      // domain signals pass the gate (the global incident pool always exceeded 3) and
+      // produce off-domain beliefs. Domain-only gating means an agent only forms
+      // operational beliefs when its specialty actually has fresh signal coverage.
+      // Cross-domain seeding still happens via dispatchBeliefToMesh on confidence ≥ 0.82.
+      if (domainSignals.length < 3) {
+        return { callSign, status: `skipped:insufficient_domain_signals (${domainSignals.length} domain, ${incidents.length} incidents available but no longer used as gate)` };
       }
 
       const combinedData = buildOperationalSummary({

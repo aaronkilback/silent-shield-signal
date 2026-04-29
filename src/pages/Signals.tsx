@@ -184,6 +184,19 @@ const Signals = () => {
         await supabase.from("signals")
           .update({ deleted_at: new Date().toISOString(), deletion_reason: "manually_dismissed" })
           .eq("id", signal.primary_signal_id);
+
+        // Record the rejection so the relevance gate (ingest-signal) and
+        // learning_profiles see it. The deletion alone is invisible to the
+        // learning pipeline.
+        const { data: { user } } = await supabase.auth.getUser();
+        await supabase.from("feedback_events").insert({
+          object_type: "signal",
+          object_id: signal.primary_signal_id,
+          feedback: "irrelevant",
+          notes: "Manually dismissed (signal-correlation-group delete)",
+          source_function: "Signals.unmatched.delete",
+          user_id: user?.id ?? null,
+        });
       }
     },
     onSuccess: (_data, signal) => {

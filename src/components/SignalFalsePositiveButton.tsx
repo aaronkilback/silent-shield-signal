@@ -41,6 +41,20 @@ export const SignalFalsePositiveButton = ({
 
       if (signalError) throw signalError;
 
+      // Record analyst feedback so the relevance gate (ingest-signal) and
+      // learning_profiles table see this rejection. Without this insert, the
+      // analyst's FP click is invisible to the learning pipeline and the gate
+      // keeps letting through the same junk patterns.
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from("feedback_events").insert({
+        object_type: "signal",
+        object_id: signalId,
+        feedback: "irrelevant",
+        notes: "Marked false positive (auto)",
+        source_function: "SignalFalsePositiveButton",
+        user_id: user?.id ?? null,
+      });
+
       // Find and handle associated incident
       const { data: incidents, error: incidentFetchError } = await supabase
         .from("incidents")
