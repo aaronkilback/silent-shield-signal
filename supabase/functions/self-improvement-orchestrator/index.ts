@@ -66,15 +66,20 @@ Deno.serve(async (req) => {
 
     // ── 3b. Inject calibration bias corrections into system prompts ──────
     // This closes the loop: Brier scores → measured prompt adjustments
+    // Schema note: agent_calibration_scores uses `brier_score` (not `brier_score_mean`)
+    // and `total_predictions` (not `predictions_scored`). The column-name mismatch in
+    // earlier versions silently errored — every nightly run failed before reaching the
+    // CALIBRATION CORRECTION injection. As a result no agent prompt has ever been
+    // calibration-corrected. Fixed 2026-04-29.
     const { data: brierScores } = await supabase
       .from('agent_calibration_scores')
-      .select('call_sign, brier_score_mean, predictions_scored, last_updated_at')
-      .not('brier_score_mean', 'is', null)
-      .gte('predictions_scored', 5)
-      .order('brier_score_mean', { ascending: false }); // worst (highest Brier) first
+      .select('call_sign, brier_score, total_predictions, last_evaluated_at')
+      .not('brier_score', 'is', null)
+      .gte('total_predictions', 5)
+      .order('brier_score', { ascending: false }); // worst (highest Brier) first
 
     const BRIER_THRESHOLD = 0.25; // scores above this indicate poor calibration
-    const miscalibratedAgents = (brierScores || []).filter((s: any) => s.brier_score_mean > BRIER_THRESHOLD);
+    const miscalibratedAgents = (brierScores || []).filter((s: any) => s.brier_score > BRIER_THRESHOLD);
 
     for (const agent of miscalibratedAgents) {
       // Check if we've already injected a calibration note recently (last 7 days)
@@ -92,11 +97,11 @@ Deno.serve(async (req) => {
       // Compute how overconfident they are
       // Brier = (p - outcome)^2, mean 0.25 = roughly 50% off on predictions
       // Brier 0.25-0.35 = moderate overconfidence, 0.35+ = severe
-      const severity = agent.brier_score_mean > 0.35 ? 'severe' : 'moderate';
+      const severity = agent.brier_score > 0.35 ? 'severe' : 'moderate';
       const adjustmentPct = severity === 'severe' ? 20 : 12;
 
       const calibrationNote = `\n\n## CALIBRATION CORRECTION (applied ${new Date().toISOString().split('T')[0]})\n` +
-        `Your historical prediction Brier score is ${(agent.brier_score_mean * 100).toFixed(1)}% — indicating ${severity} overconfidence in your assessments. ` +
+        `Your historical prediction Brier score is ${(agent.brier_score * 100).toFixed(1)}% — indicating ${severity} overconfidence in your assessments. ` +
         `You have been systematically claiming higher confidence than your predictions warrant.\n` +
         `MANDATORY ADJUSTMENT: Reduce all confidence estimates by approximately ${adjustmentPct}% from your initial assessment. ` +
         `If you would say "I am 85% confident", say "I am ${85 - adjustmentPct}% confident" instead. ` +
@@ -113,8 +118,8 @@ Deno.serve(async (req) => {
           .eq('id', existingAgent.id);
       }
 
-      report.push(`📊 Injected calibration correction into ${agent.call_sign}: Brier=${(agent.brier_score_mean * 100).toFixed(1)}% (${severity}), -${adjustmentPct}% adjustment`);
-      actions.push({ type: 'calibration_correction', agent: agent.call_sign, detail: `Brier ${(agent.brier_score_mean * 100).toFixed(1)}%, ${severity} overconfidence` });
+      report.push(`📊 Injected calibration correction into ${agent.call_sign}: Brier=${(agent.brier_score * 100).toFixed(1)}% (${severity}), -${adjustmentPct}% adjustment`);
+      actions.push({ type: 'calibration_correction', agent: agent.call_sign, detail: `Brier ${(agent.brier_score * 100).toFixed(1)}%, ${severity} overconfidence` });
     }
 
     // ── 4. Apply pending self-improvement proposals ───────────────────────

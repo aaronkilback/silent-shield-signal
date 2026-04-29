@@ -51,7 +51,7 @@ FOR WELL-KNOWN PUBLIC FIGURES ONLY: If this subject is a widely documented publi
 
 For private individuals: Use ONLY what was gathered. Do not invent addresses, phone numbers, emails, employers, or associates.
 
-Label every claim: [OSINT: source-name URL] for gathered web data, [AGENT] for agent findings, [AI-KNOWLEDGE] for AI training knowledge (public figures only).
+Label every claim: [OSINT: source-name URL] for gathered web data, [AGENT] for agent findings from prior investigations, [TASK-FORCE: agent_call_sign] for findings from the current task force debate (if present), [AI-KNOWLEDGE] for AI training knowledge (public figures only).
 
 Format the report EXACTLY as follows (use these exact section headers):
 
@@ -373,6 +373,66 @@ Deno.serve(async (req) => {
         }).join('\n\n---\n\n')
       : null;
 
+    // ── Multi-agent task force debate ────────────────────────────────────────
+    // Triggers a structured debate between three specialty-matched agents, then
+    // injects their independent analyses + judge synthesis into the report
+    // prompt. Best-effort: if the debate fails or times out, the report still
+    // generates with the existing single-AI synthesis. Disabled with
+    // env POI_REPORT_DEBATE_ENABLED=false.
+    let taskForceDebateText: string | null = null;
+    if (Deno.env.get('POI_REPORT_DEBATE_ENABLED') !== 'false') {
+      try {
+        const debateCallSigns = ['GUARDIAN', 'MCGRAW', 'SHERLOCK'];
+        const debateQuestion =
+          `Provide a current threat-posture assessment for the following Person of Interest based on the available intelligence. ` +
+          `Subject: ${entity.name} (type: ${entity.type}). ` +
+          `Risk level: ${entity.risk_level || 'unknown'}. Threat score: ${entity.threat_score ?? 'not assessed'}/10. ` +
+          `Available evidence: ${(signals || []).length} signals, ${agentFindings.length} prior agent findings, ${(contentRows || []).length} OSINT sources, ${watchText ? 'on watch list' : 'not on watch list'}. ` +
+          `Surface: (a) the highest-priority concerns each of you sees from your specialty, ` +
+          `(b) where your analyses diverge, ` +
+          `(c) the recommended monitoring posture going forward.`;
+
+        const debateInvocation = await Promise.race([
+          supabase.functions.invoke('multi-agent-debate', {
+            body: { call_signs: debateCallSigns, question: debateQuestion, debate_type: 'poi_report' },
+          }),
+          new Promise<{ data: null; error: { message: string } }>((resolve) =>
+            setTimeout(() => resolve({ data: null, error: { message: 'task force debate timeout (90s)' } }), 90_000)
+          ),
+        ]);
+
+        const debateData: any = (debateInvocation as any)?.data;
+        if (debateData?.individual_analyses?.length) {
+          const analysesBlock = debateData.individual_analyses
+            .map((a: any) => {
+              const overall = a.overall_assessment || '(no overall assessment)';
+              const conf = a.confidence != null ? ` | confidence: ${a.confidence}` : '';
+              const hyps = (a.hypotheses || []).slice(0, 3)
+                .map((h: any, i: number) => `  ${i + 1}. ${h.statement || h.hypothesis || JSON.stringify(h).slice(0, 200)}`)
+                .join('\n');
+              return `### ${a.agent} — ${a.specialty}${conf}\n${overall}\n${hyps ? `Hypotheses:\n${hyps}` : ''}`;
+            })
+            .join('\n\n');
+
+          const synthesis = debateData.synthesis || {};
+          const synthesisSummary = synthesis.final_assessment || synthesis.summary || synthesis.content || '(no synthesis)';
+          const recs = (debateData.recommended_actions || []).slice(0, 5);
+          const recsBlock = recs.length ? `\nRecommended actions:\n${recs.map((r: any, i: number) => `  ${i + 1}. ${typeof r === 'string' ? r : (r.action || JSON.stringify(r).slice(0, 200))}`).join('\n')}` : '';
+
+          taskForceDebateText =
+            `Three specialist agents independently analysed this subject without seeing each other's work. ` +
+            `Judge consensus score: ${(debateData.consensus_score ?? 0).toFixed(0)}/100.\n\n` +
+            `${analysesBlock}\n\n### Judge synthesis\n${synthesisSummary}${recsBlock}`;
+
+          console.log(`[generate-poi-report] task force debate: ${debateData.agents_participated}/${debateCallSigns.length} agents, consensus ${debateData.consensus_score}`);
+        } else {
+          console.warn('[generate-poi-report] task force debate returned no analyses (non-fatal)');
+        }
+      } catch (debateErr) {
+        console.warn('[generate-poi-report] task force debate failed (non-fatal):', debateErr instanceof Error ? debateErr.message : String(debateErr));
+      }
+    }
+
     const userPrompt = `
 # INTELLIGENCE REPORT REQUEST
 
@@ -396,7 +456,7 @@ ${hibpText}
 ${aiAssessmentText ? `## PRIOR AI THREAT ASSESSMENT (stored from previous analysis)\n${aiAssessmentText}\n` : ''}## WATCH LIST STATUS
 ${watchText || 'Not currently on watch list.'}
 
-## PRIOR AGENT INVESTIGATION FINDINGS (${agentFindings.length} entries)
+${taskForceDebateText ? `## TASK FORCE DEBATE (current multi-agent analysis)\n${taskForceDebateText}\n\n` : ''}## PRIOR AGENT INVESTIGATION FINDINGS (${agentFindings.length} entries)
 The following findings were contributed by specialized AI agents during prior incident investigations involving this subject:
 
 ${agentFindingsText}
