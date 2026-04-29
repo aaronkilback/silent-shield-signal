@@ -64,6 +64,29 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
       setSignalStatus(newStatus);
       onSignalUpdated?.();
       toast.success(`Status set to ${newStatus.replace('_', ' ')}`);
+
+      // Record analyst feedback on status changes that imply a relevance
+      // judgement, so the gate (ingest-signal) and learning_profiles see it.
+      // Without this insert, status="false_positive" was invisible to the
+      // learning pipeline — the largest single source of analyst signal
+      // until now (~14/month) wasn't training the gate.
+      const feedbackMap: Record<string, string> = {
+        false_positive: 'irrelevant',
+        archived: 'irrelevant',
+        resolved: 'relevant',
+      };
+      const feedback = feedbackMap[newStatus];
+      if (feedback) {
+        const { data: { user } } = await supabase.auth.getUser();
+        await supabase.from('feedback_events').insert({
+          object_type: 'signal',
+          object_id: signal.id,
+          feedback,
+          notes: `Status set to ${newStatus} via SignalDetailDialog`,
+          source_function: 'SignalDetailDialog.statusChange',
+          user_id: user?.id ?? null,
+        }).then(() => {}, (e: unknown) => console.warn('feedback_events insert failed', e));
+      }
     }
   };
 
