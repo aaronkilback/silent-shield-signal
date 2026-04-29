@@ -1,6 +1,10 @@
 name = "email-intel-forwarder"
 main = "index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2026-04-01"
+
+# EMAIL_INGEST_SECRET is set via `wrangler secret put EMAIL_INGEST_SECRET`,
+# NOT via [vars]. Same value must be set on the Supabase side via
+# `supabase secrets set EMAIL_INGEST_SECRET=...`.
 
 [vars]
 SUPABASE_FUNCTION_URL = "https://kpuqukppbmwebiptqmog.supabase.co/functions/v1/ingest-email-intel"

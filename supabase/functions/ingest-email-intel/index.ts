@@ -66,6 +66,26 @@ function base64ToBytes(b64: string): Uint8Array {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // Shared-secret auth for the Cloudflare email worker. Optional during the
+  // rollout window: if EMAIL_INGEST_SECRET is not configured on the function,
+  // we accept (and warn). Once it is set, requests without a matching
+  // X-Ingest-Secret header are rejected. Function is deployed --no-verify-jwt
+  // (anyone could otherwise hit the URL with a forged Petronas payload), so
+  // this is the only auth on the path.
+  const expectedSecret = Deno.env.get("EMAIL_INGEST_SECRET");
+  if (expectedSecret) {
+    const provided = req.headers.get("x-ingest-secret");
+    if (provided !== expectedSecret) {
+      console.warn("[ingest-email-intel] rejected: missing or bad X-Ingest-Secret header");
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  } else {
+    console.warn("[ingest-email-intel] EMAIL_INGEST_SECRET not configured — accepting request without auth (rollout mode)");
+  }
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase    = createClient(supabaseUrl, serviceKey);
