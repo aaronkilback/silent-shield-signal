@@ -986,11 +986,11 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     // ===== AI RELEVANCE GATE: PECL-calibrated two-stage check =====
     // Stage 1: LLM scores relevance (0-1) + classifies connection type
-    // Stage 2: Threshold check at 0.65 — below = write to filtered_signals and reject
-    // Threshold history: started at 0.60, briefly lowered to 0.45 to admit "moderate"
-    // sector-wide signals, but in practice that floor lets through job postings,
-    // generic "Canada" mentions, and entertainment fragments that all score 0.50–0.65.
-    // Raised back to 0.65 (bounds 0.55–0.80) to enforce a real connection requirement.
+    // Stage 2: Threshold check at 0.55 — below = write to filtered_signals and reject
+    // Threshold history: 0.60 → 0.45 (admitted too much junk) → 0.65 (rejected legit
+    // signals like Coastal GasLink blockade + Petronas Canada at score 0.60) → 0.55.
+    // Empirically gpt-4o-mini scores direct-asset references at 0.55–0.70 and pure
+    // noise at 0.45–0.55, so 0.55 is the cleanest separator. Bounds 0.50–0.70.
     if (skip_relevance_gate) {
       console.log(`[AI Relevance Gate] BYPASSED — upstream keyword matching already vetted this signal`);
     }
@@ -1107,9 +1107,9 @@ Score this signal's relevance and classify the connection.`
 
           // Phase 3C: Per-source threshold adjustment
           // Low-credibility sources face a higher bar; proven sources get more slack.
-          // Bounded ±0.15 from base (floor 0.55, ceiling 0.80) to prevent runaway suppression.
+          // Bounded ±0.15 from base (floor 0.50, ceiling 0.70) to prevent runaway suppression.
           // Also applies learned threshold adjustment from analyst feedback patterns.
-          let relevanceThreshold = Math.min(0.80, Math.max(0.55, 0.65 + learnedThresholdAdjustment));
+          let relevanceThreshold = Math.min(0.70, Math.max(0.50, 0.55 + learnedThresholdAdjustment));
           if (learnedThresholdAdjustment !== 0) {
             console.log(`[Learning] Threshold adjusted by analyst patterns: ${learnedThresholdAdjustment > 0 ? '+' : ''}${learnedThresholdAdjustment.toFixed(2)} → ${relevanceThreshold.toFixed(2)}`);
           }
@@ -1122,8 +1122,8 @@ Score this signal's relevance and classify the connection.`
             // Only adjust if we have enough signal history (thin data protection)
             if (credScore?.current_credibility && (credScore.total_signals ?? 0) >= 5) {
               const adjustment = (0.65 - credScore.current_credibility) * 0.40;
-              relevanceThreshold = Math.min(0.80, Math.max(0.55, 0.65 + adjustment));
-              if (Math.abs(relevanceThreshold - 0.65) > 0.005) {
+              relevanceThreshold = Math.min(0.70, Math.max(0.50, 0.55 + adjustment));
+              if (Math.abs(relevanceThreshold - 0.55) > 0.005) {
                 console.log(`[Phase3C] ${source_key} threshold adjusted: ${relevanceThreshold.toFixed(2)} (credibility: ${credScore.current_credibility.toFixed(3)}, signals: ${credScore.total_signals})`);
               }
             }
