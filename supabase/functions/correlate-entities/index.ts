@@ -453,6 +453,125 @@ Deno.serve(async (req) => {
 
     console.log(`Correlation complete: ${matches.length} matches, ${suggestions.length} suggestions`);
 
+    // ───────────────────────────────────────────────────────────────────────
+    // PHASE 4E: ENTITY-MENTION AGENT DISPATCH
+    // For each matched entity that is actively monitored, dispatch a specialty
+    // agent to write a signal_agent_analyses row tying the new signal to the
+    // entity's prior history. This is what turns the entity graph from dead
+    // weight (1,400+ unused entities) into active analysis.
+    //
+    // Conservative defaults:
+    //   - Only fires for active_monitoring_enabled = true entities
+    //   - Top 3 matches by confidence per signal (cost cap)
+    //   - Skips if a row already exists for (signal_id, agent_call_sign, entity)
+    //   - Fire-and-forget — ingest pipeline is unaffected by failures
+    //   - Off by default (env ENTITY_MENTION_AUTO_DISPATCH=true to enable)
+    // ───────────────────────────────────────────────────────────────────────
+    if (sourceType === 'signal' && matches.length > 0 && Deno.env.get('ENTITY_MENTION_AUTO_DISPATCH') === 'true') {
+      try {
+        const topMatchIds = matches
+          .sort((a, b) => b.confidence - a.confidence)
+          .slice(0, 3)
+          .map(m => m.entityId);
+
+        const { data: monitoredEntities } = await supabase
+          .from('entities')
+          .select('id, name, type, attributes, client_id')
+          .in('id', topMatchIds)
+          .eq('active_monitoring_enabled', true);
+
+        if (monitoredEntities && monitoredEntities.length > 0) {
+          // Map entity.type → primary specialty agent. Generic fallback AEGIS-CMD.
+          const typeToAgent = (t: string): string => {
+            const n = (t || '').toLowerCase();
+            if (n === 'person') return 'MCGRAW';
+            if (n === 'organization' || n === 'org') return 'CERBERUS';
+            if (n === 'group' || n === 'movement') return 'ECHO-WATCH';
+            if (n === 'location' || n === 'place') return 'LOCUS-INTEL';
+            if (n === 'asset' || n === 'infrastructure') return 'CHAIN-WATCH';
+            return 'AEGIS-CMD';
+          };
+
+          // Fetch the signal once (we'll feed its text to each dispatched agent)
+          const { data: sig } = await supabase
+            .from('signals')
+            .select('id, title, normalized_text, severity, category, client_id')
+            .eq('id', sourceId)
+            .maybeSingle();
+
+          if (sig) {
+            for (const ent of monitoredEntities) {
+              const callSign = typeToAgent(String(ent.type ?? ''));
+              const triggerReason = `entity_mention:${ent.name}`;
+
+              // Skip if already analyzed for this (signal, agent, entity) trio
+              const { data: existing } = await supabase
+                .from('signal_agent_analyses')
+                .select('id')
+                .eq('signal_id', sig.id)
+                .eq('agent_call_sign', callSign)
+                .eq('trigger_reason', triggerReason)
+                .maybeSingle();
+              if (existing) continue;
+
+              // Look up the agent's id for agent-chat
+              const { data: agentRow } = await supabase
+                .from('ai_agents')
+                .select('id')
+                .eq('call_sign', callSign)
+                .eq('is_active', true)
+                .maybeSingle();
+              if (!agentRow) {
+                console.warn(`[Phase4E] Agent ${callSign} not found / not active — skipping ${ent.name}`);
+                continue;
+              }
+
+              // Fire-and-forget agent dispatch + record write. We don't await
+              // the response — ingest pipeline must not block.
+              (async () => {
+                try {
+                  const userMsg =
+                    `New signal mentions ${ent.name} (${ent.type}). ` +
+                    `Title: ${sig.title}. ` +
+                    `Severity: ${sig.severity}. Category: ${sig.category}. ` +
+                    (sig.normalized_text ? `Content: ${String(sig.normalized_text).slice(0, 1500)} ` : '') +
+                    `Drawing on what you know about ${ent.name} from prior investigations and your specialty, ` +
+                    `is this a meaningful development? What should we be watching for next? ` +
+                    `Be concise (≤180 words). Cite specific prior events if you recall them.`;
+
+                  const resp = await supabase.functions.invoke('agent-chat', {
+                    body: {
+                      agentId: agentRow.id,
+                      messages: [{ role: 'user', content: userMsg }],
+                      clientId: sig.client_id ?? ent.client_id ?? null,
+                      stream: false,
+                    },
+                  });
+
+                  const content: string | null = (resp?.data as any)?.response ?? null;
+                  if (!content) return;
+
+                  await supabase.from('signal_agent_analyses').insert({
+                    signal_id: sig.id,
+                    agent_call_sign: callSign,
+                    analysis: content.slice(0, 6000),
+                    confidence_score: 0.7,
+                    trigger_reason: triggerReason,
+                    analysis_tier: 'entity_mention',
+                  });
+                } catch (dispatchErr) {
+                  console.warn(`[Phase4E] dispatch ${callSign}/${ent.name} failed:`, dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr));
+                }
+              })();
+            }
+            console.log(`[Phase4E] Fired ${monitoredEntities.length} entity-mention dispatches for signal ${sig.id}`);
+          }
+        }
+      } catch (phase4eErr) {
+        console.error('[Phase4E] non-blocking failure:', phase4eErr instanceof Error ? phase4eErr.message : String(phase4eErr));
+      }
+    }
+
     return new Response(
       JSON.stringify({ success: true, matches, suggestions, totalMatches: matches.length, pendingSuggestions: suggestions.length }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

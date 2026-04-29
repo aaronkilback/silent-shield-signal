@@ -392,6 +392,16 @@ async function synthesizeOperationalBeliefs(params: {
   let totalUpdated = 0;
   const diagnostics: any[] = [];
 
+  // ── Build the client buckets we'll iterate over ──────────────────────────
+  // After the audit found Iran/religious-site beliefs leaking into Petronas
+  // scope, we split belief generation per-client so each agent forms a
+  // separate analytical conversation per client they cover. A "global" bucket
+  // (client_id = null) is intentionally excluded — global signals that
+  // weren't tied to any client by ingest-signal aren't worth turning into
+  // persistent agent beliefs (they pollute downstream chat context).
+  const allSignalClientIds = [...new Set(signals.map((s: any) => s.client_id).filter(Boolean))] as string[];
+  const clientBuckets: Array<string | null> = allSignalClientIds.length > 0 ? allSignalClientIds : [null];
+
   // Process agents in batches of 4
   const BATCH = 4;
   for (let i = 0; i < agentKeys.length; i += BATCH) {
@@ -412,90 +422,116 @@ async function synthesizeOperationalBeliefs(params: {
         ...(isThreatIntelAgent ? (DOMAIN_SIGNAL_CATEGORIES['threat_intelligence'] || []) : []),
       ]);
 
-      // Filter signals to this agent's domain
-      const domainSignals = signals.filter((s: any) => {
-        const cat = (s.category || s.rule_category || '').toLowerCase();
-        return relevantCategories.has(cat);
-      });
+      const perBucketStatuses: string[] = [];
+      let totalCreated = 0;
+      let totalUpdated = 0;
 
-      // If every contributing signal belongs to one client, beliefs are client-specific.
-      // Mixed-source or no-source signals produce global (NULL) beliefs.
-      const signalClientIds = [...new Set(domainSignals.map((s: any) => s.client_id).filter(Boolean))];
-      const beliefClientId: string | null = signalClientIds.length === 1 ? signalClientIds[0] : null;
+      // Iterate per-client so each (agent, client) pair gets its own belief
+      // partition. Audit 2026-04-29 found agents producing global beliefs that
+      // leaked into other clients' chat contexts. This explicit partition
+      // ensures MATRIX's Petronas conversation is separate from MATRIX's
+      // BCCH conversation.
+      for (const beliefClientId of clientBuckets) {
+        // Filter signals to (a) this agent's domain AND (b) this client bucket.
+        const domainSignals = signals.filter((s: any) => {
+          const cat = (s.category || s.rule_category || '').toLowerCase();
+          if (!relevantCategories.has(cat)) return false;
+          // beliefClientId === null shouldn't occur given clientBuckets construction
+          // above, but if it does, treat as global pass-through.
+          if (beliefClientId === null) return true;
+          return s.client_id === beliefClientId;
+        });
 
-      // Require a minimum DOMAIN-SPECIFIC signal evidence base before forming beliefs.
-      // Previously incidents counted toward evidence too, which let agents with zero
-      // domain signals pass the gate (the global incident pool always exceeded 3) and
-      // produce off-domain beliefs. Domain-only gating means an agent only forms
-      // operational beliefs when its specialty actually has fresh signal coverage.
-      // Cross-domain seeding still happens via dispatchBeliefToMesh on confidence ≥ 0.82.
-      if (domainSignals.length < 3) {
-        return { callSign, status: `skipped:insufficient_domain_signals (${domainSignals.length} domain, ${incidents.length} incidents available but no longer used as gate)` };
-      }
-
-      const combinedData = buildOperationalSummary({
-        callSign,
-        specialty,
-        domain,
-        signals: domainSignals.slice(0, 30),
-        incidents,
-        entities,
-        travel: (domain === 'travel_security' || domain === 'executive_protection' || domain === 'physical_security') ? travel : [],
-        windowDays,
-      });
-
-      if (combinedData.length < 100) return { callSign, status: 'skipped:insufficient_data' };
-
-      const { beliefs, geminiError } = await extractOperationalBeliefs(callSign, specialty, combinedData);
-      if (geminiError) return { callSign, status: `error:${geminiError}` };
-      if (!beliefs.length) return { callSign, status: 'no_beliefs_extracted' };
-
-      let created = 0, updated = 0;
-      for (const belief of beliefs) {
-        const { data: existing } = await supabase
-          .from('agent_beliefs')
-          .select('id, confidence, evolution_log')
-          .eq('agent_call_sign', callSign)
-          .eq('is_active', true)
-          .ilike('hypothesis', `%${belief.hypothesis.substring(0, 40).replace(/[%_]/g, ' ')}%`)
-          .limit(1);
-
-        if (existing?.length) {
-          const old = existing[0];
-          const newConf = Math.round(((old.confidence * 0.55) + (belief.confidence * 0.45)) * 100) / 100;
-          if (Math.abs(newConf - old.confidence) < 0.02) continue;
-          const log = [...(old.evolution_log || []), {
-            date: new Date().toISOString(),
-            old_confidence: old.confidence,
-            new_confidence: newConf,
-            reason: `Operational evidence update (${domainSignals.length} signals, ${incidents.length} incidents)`,
-          }];
-          await supabase.from('agent_beliefs')
-            .update({ confidence: newConf, last_updated_at: new Date().toISOString(), evolution_log: log })
-            .eq('id', old.id);
-          updated++;
-        } else {
-          await supabase.from('agent_beliefs').insert({
-            agent_call_sign: callSign,
-            hypothesis: belief.hypothesis,
-            belief_type: belief.belief_type || 'pattern',
-            confidence: belief.confidence,
-            related_domains: [domain],
-            client_id: beliefClientId,
-            evolution_log: [{
-              date: new Date().toISOString(),
-              old_confidence: null,
-              new_confidence: belief.confidence,
-              reason: `Formed from ${domainSignals.length} platform signals, ${incidents.length} active incidents`,
-            }],
-          });
-          created++;
+        // Require a minimum DOMAIN-SPECIFIC signal evidence base before forming beliefs.
+        // Previously incidents counted toward evidence too, which let agents with zero
+        // domain signals pass the gate (the global incident pool always exceeded 3) and
+        // produce off-domain beliefs. Domain-only gating means an agent only forms
+        // operational beliefs when its specialty actually has fresh signal coverage.
+        // Cross-domain seeding still happens via dispatchBeliefToMesh on confidence ≥ 0.82.
+        if (domainSignals.length < 3) {
+          perBucketStatuses.push(`client=${beliefClientId ?? 'global'}:skipped:insufficient_domain_signals (${domainSignals.length})`);
+          continue;
         }
-      }
 
-      totalCreated += created;
-      totalUpdated += updated;
-      return { callSign, domain, signals_used: domainSignals.length, beliefs_found: beliefs.length, created, updated };
+        const combinedData = buildOperationalSummary({
+          callSign,
+          specialty,
+          domain,
+          signals: domainSignals.slice(0, 30),
+          incidents,
+          entities,
+          travel: (domain === 'travel_security' || domain === 'executive_protection' || domain === 'physical_security') ? travel : [],
+          windowDays,
+        });
+
+        if (combinedData.length < 100) {
+          perBucketStatuses.push(`client=${beliefClientId ?? 'global'}:skipped:insufficient_data`);
+          continue;
+        }
+
+        const { beliefs, geminiError } = await extractOperationalBeliefs(callSign, specialty, combinedData);
+        if (geminiError) {
+          perBucketStatuses.push(`client=${beliefClientId ?? 'global'}:error:${geminiError}`);
+          continue;
+        }
+        if (!beliefs.length) {
+          perBucketStatuses.push(`client=${beliefClientId ?? 'global'}:no_beliefs`);
+          continue;
+        }
+
+        let created = 0, updated = 0;
+        for (const belief of beliefs) {
+          // Match within this (agent, client) partition only — different clients
+          // can hold the same hypothesis at different confidence levels.
+          let existingQuery = supabase
+            .from('agent_beliefs')
+            .select('id, confidence, evolution_log')
+            .eq('agent_call_sign', callSign)
+            .eq('is_active', true)
+            .ilike('hypothesis', `%${belief.hypothesis.substring(0, 40).replace(/[%_]/g, ' ')}%`);
+          existingQuery = beliefClientId === null
+            ? existingQuery.is('client_id', null)
+            : existingQuery.eq('client_id', beliefClientId);
+          const { data: existing } = await existingQuery.limit(1);
+
+          if (existing?.length) {
+            const old = existing[0];
+            const newConf = Math.round(((old.confidence * 0.55) + (belief.confidence * 0.45)) * 100) / 100;
+            if (Math.abs(newConf - old.confidence) < 0.02) continue;
+            const log = [...(old.evolution_log || []), {
+              date: new Date().toISOString(),
+              old_confidence: old.confidence,
+              new_confidence: newConf,
+              reason: `Operational evidence update (${domainSignals.length} signals, ${incidents.length} incidents, client=${beliefClientId ?? 'global'})`,
+            }];
+            await supabase.from('agent_beliefs')
+              .update({ confidence: newConf, last_updated_at: new Date().toISOString(), evolution_log: log })
+              .eq('id', old.id);
+            updated++;
+          } else {
+            await supabase.from('agent_beliefs').insert({
+              agent_call_sign: callSign,
+              hypothesis: belief.hypothesis,
+              belief_type: belief.belief_type || 'pattern',
+              confidence: belief.confidence,
+              related_domains: [domain],
+              client_id: beliefClientId,
+              evolution_log: [{
+                date: new Date().toISOString(),
+                old_confidence: null,
+                new_confidence: belief.confidence,
+                reason: `Formed from ${domainSignals.length} platform signals (client=${beliefClientId ?? 'global'})`,
+              }],
+            });
+            created++;
+          }
+        }
+
+        totalCreated += created;
+        totalUpdated += updated;
+        perBucketStatuses.push(`client=${beliefClientId ?? 'global'}:created=${created},updated=${updated}`);
+      } // end client bucket loop
+      return { callSign, domain, buckets: perBucketStatuses, created: totalCreated, updated: totalUpdated };
     }));
 
     if (debug) {
