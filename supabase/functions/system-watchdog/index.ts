@@ -2808,6 +2808,42 @@ Deno.serve(async (req) => {
       console.warn('[Watchdog] Behavioral health check failed:', behavioralErr);
     }
 
+    // Filter out recurring findings whose underlying metric is now resolved.
+    // Prompt-only verification is unreliable — the LLM still hallucinates the
+    // chronic finding even when telemetry says it's healthy. Removing the title
+    // from the recurringIssues list before the AI sees it is the deterministic fix.
+    //
+    // For each known chronic finding, we suppress its title from recurringIssues
+    // when the underlying metric is back in normal bounds. The hardcoded checks
+    // above (e.g. beliefAge > 48) remain the source of truth — if a condition
+    // is actually broken, the hardcoded check still creates a fresh finding.
+    const bugsHealthy = telemetry.bugReports.totalOpen <= telemetry.adaptiveThresholds.bugBacklogThreshold &&
+                       telemetry.bugReports.staleCount === 0;
+    const briefingHealthy = telemetry.dailyBriefing.sentToday === true;
+    // Agent-learning health: the hardcoded "stalled" check (beliefAge > 48) is
+    // earlier in this function. By the time we reach here, if it wasn't pushed
+    // to `findings`, the belief stream is healthy. We can always suppress the
+    // chronic title — the hardcoded check is authoritative for the live state.
+    const learningChronicHasFresh = findings.some((f: any) =>
+      f.title === 'Agent learning pipeline has stalled');
+
+    const filteredRecurringIssues = learningHistory.recurringIssues.filter((r: any) => {
+      const t = (r.title || '').toLowerCase();
+      if (bugsHealthy && t.includes('bug report') && (t.includes('exceeds') || t.includes('backlog'))) {
+        return false;
+      }
+      if (briefingHealthy && t.includes('briefing not sent')) {
+        return false;
+      }
+      if (!learningChronicHasFresh && t.includes('agent learning') && t.includes('stalled')) {
+        return false;
+      }
+      return true;
+    });
+    if (filteredRecurringIssues.length < learningHistory.recurringIssues.length) {
+      console.log(`[Watchdog] Suppressed ${learningHistory.recurringIssues.length - filteredRecurringIssues.length} resolved chronic finding(s) from AI input`);
+    }
+
     // Phase 2: AI Analysis WITH learning context
     console.log('[Watchdog] 🧠 Phase 2: AI analysis with learning context...');
     const analysisInput = {
@@ -2815,7 +2851,7 @@ Deno.serve(async (req) => {
       extraFindings: [...findings, ...behavioralFindings],
       learningHistory: {
         recentFindings: learningHistory.recentFindings.slice(0, 20),
-        recurringIssues: learningHistory.recurringIssues,
+        recurringIssues: filteredRecurringIssues,
         effectivenessStats: learningHistory.effectivenessStats,
         platformGrowth: learningHistory.platformGrowth,
         pastSelfNotes: learningHistory.pastSelfNotes.slice(0, 5),
