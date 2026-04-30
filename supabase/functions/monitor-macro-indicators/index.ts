@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 /**
  * monitor-macro-indicators
@@ -188,11 +189,13 @@ async function insertSignal(
     return false;
   }
   // Trigger ai-decision-engine async so this signal gets composite_confidence
-  // + agent_review like signals from ingest-signal would (see 2026-04-30 fix
-  // 5622394a for the same pattern in monitor-naad-alerts/community-outreach).
-  supabase.functions.invoke('ai-decision-engine', {
-    body: { signal_id: inserted.id, force_ai: false },
-  }).catch((err: any) => console.warn('[MacroIndicators] ai-decision-engine invoke failed:', err?.message || err));
+  // + agent_review like signals from ingest-signal would. Durable queue
+  // (replaces fire-and-forget invoke per 2026-04-30 queue rollout).
+  await enqueueJob(supabase, {
+    type: 'ai-decision-engine',
+    payload: { signal_id: inserted.id, force_ai: false },
+    idempotencyKey: `ai-decision-engine:${inserted.id}`,
+  }).catch((err: any) => console.warn('[MacroIndicators] enqueueJob failed:', err?.message || err));
   return true;
 }
 

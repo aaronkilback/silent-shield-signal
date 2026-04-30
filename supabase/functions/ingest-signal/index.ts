@@ -4,6 +4,7 @@ import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance-scorer.ts';
 import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
+import { enqueueJob } from '../_shared/queue.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1377,9 +1378,11 @@ Score this signal's relevance and classify the connection.`
       }).catch(() => {});
     }
 
-    // Non-blocking — anomaly scoring runs after insert
-    supabase.functions.invoke('score-signal-anomaly', {
-      body: {
+    // Non-blocking — anomaly scoring runs after insert. Enqueued via durable
+    // queue (was fire-and-forget invoke) so the work survives runtime teardown.
+    enqueueJob(supabase, {
+      type: 'score-signal-anomaly',
+      payload: {
         signal_id: signal.id,
         category: signal.category,
         severity: signal.severity,
@@ -1387,21 +1390,24 @@ Score this signal's relevance and classify the connection.`
         location: signal.location,
         normalized_text: signal.normalized_text,
         created_at: signal.created_at,
-      }
-    }).catch(err => console.error('[ingest-signal] anomaly scoring:', err));
+      },
+      idempotencyKey: `score-signal-anomaly:${signal.id}`,
+    }).catch(err => console.error('[ingest-signal] anomaly scoring enqueue:', err));
 
-    // Fire-and-forget speculative agent dispatch for high/critical signals
+    // Speculative agent dispatch for high/critical signals — durable queue.
     if (classification.severity === 'critical' || classification.severity === 'high') {
-      supabase.functions.invoke('speculative-dispatch', {
-        body: {
+      enqueueJob(supabase, {
+        type: 'speculative-dispatch',
+        payload: {
           signal_id: signal.id,
           signal_text: signal.normalized_text,
           category: classification.category,
           severity: classification.severity,
           client_id: clientId,
           trigger_reason: 'auto_ingest',
-        }
-      }).catch(err => console.error('[ingest-signal] speculative-dispatch fire-and-forget failed:', err));
+        },
+        idempotencyKey: `speculative-dispatch:${signal.id}`,
+      }).catch(err => console.error('[ingest-signal] speculative-dispatch enqueue failed:', err));
     }
 
     // Now create duplicate detection records if any near-duplicates found
@@ -1423,15 +1429,17 @@ Score this signal's relevance and classify the connection.`
       }
     }
     
-    // Use intelligent entity correlation system (async, non-blocking)
-    supabase.functions.invoke('correlate-entities', {
-      body: {
+    // Entity correlation — durable queue (was fire-and-forget invoke).
+    enqueueJob(supabase, {
+      type: 'correlate-entities',
+      payload: {
         text: signalText,
         sourceType: 'signal',
         sourceId: signal.id,
-        autoApprove: false
-      }
-    }).catch(err => console.error('Entity correlation error:', err));
+        autoApprove: false,
+      },
+      idempotencyKey: `correlate-entities:${signal.id}:standard`,
+    }).catch(err => console.error('Entity correlation enqueue error:', err));
     
     // ===== EXPERT KNOWLEDGE ENRICHMENT (async, non-blocking) =====
     // Match incoming signal against learned expert knowledge for contextual intelligence
@@ -1525,17 +1533,19 @@ Score this signal's relevance and classify the connection.`
         
         console.log(`[Knowledge Enrichment] ✅ Signal ${signal.id} enriched with ${matchedKnowledge.length} expert knowledge entries (domain: ${mappedDomain || 'cross-domain'})`);
         
-        // For high-severity signals, also trigger reactive learning if no matches found in the mapped domain
+        // For high-severity signals, trigger reactive learning if no matches in the mapped domain.
         if ((signalSeverity === 'critical' || signalSeverity === 'high') && matchedKnowledge.length < 2) {
-          console.log(`[Knowledge Enrichment] Knowledge gap detected for ${signalSeverity} signal — triggering reactive learning`);
-          supabase.functions.invoke('agent-self-learning', {
-            body: {
+          console.log(`[Knowledge Enrichment] Knowledge gap detected for ${signalSeverity} signal — enqueueing reactive learning`);
+          enqueueJob(supabase, {
+            type: 'agent-self-learning',
+            payload: {
               mode: 'reactive',
               topic: `${signalCategory} security threat: ${(classification.normalized_text || signalText).substring(0, 200)}`,
               context: `High-severity signal detected with insufficient expert knowledge coverage in domain "${mappedDomain || 'unknown'}"`,
               agent_call_sign: mappedDomain === 'cyber' ? 'NEO' : mappedDomain === 'physical_security' ? 'ARGUS' : mappedDomain === 'geopolitical' ? 'MERIDIAN' : 'AEGIS-CMD',
-            }
-          }).catch(err => console.error('[Knowledge Enrichment] Reactive learning error:', err));
+            },
+            idempotencyKey: `agent-self-learning:reactive:${signal.id}`,
+          }).catch(err => console.error('[Knowledge Enrichment] Reactive learning enqueue:', err));
         }
       } catch (enrichError) {
         console.error('[Knowledge Enrichment] Error (non-blocking):', enrichError);
@@ -1700,10 +1710,12 @@ Score this signal's relevance and classify the connection.`
         })
         .eq('id', signal.id);
 
-      // Phase 4B: entity correlation on fast-path critical signals
-      supabase.functions.invoke('correlate-entities', {
-        body: { text: signal.normalized_text || signalText, sourceType: 'signal', sourceId: signal.id, autoApprove: false }
-      }).catch((err: Error) => console.error('[Phase4B] Fast-path entity correlation failed:', err));
+      // Phase 4B: entity correlation on fast-path critical signals — durable queue.
+      enqueueJob(supabase, {
+        type: 'correlate-entities',
+        payload: { text: signal.normalized_text || signalText, sourceType: 'signal', sourceId: signal.id, autoApprove: false },
+        idempotencyKey: `correlate-entities:${signal.id}:fast-path`,
+      }).catch((err: Error) => console.error('[Phase4B] Fast-path entity correlation enqueue:', err));
       
       // Return immediately with fast-path confirmation
       return new Response(
@@ -1902,45 +1914,39 @@ Score this signal's relevance and classify the connection.`
       // Don't fail the main request if correlation fails
     }
 
-    // Phase 4B: Trigger entity correlation (async, don't wait for it)
-    // Matches signal text against the entity graph — name + aliases + trigram.
-    // Creates entity_mentions linking this signal to matched entities.
+    // Phase 4B: Entity correlation — durable queue (was fire-and-forget invoke).
+    // Matches signal text against the entity graph (name + aliases + trigram).
     // autoApprove: false means matches go to suggestions queue for analyst review.
     try {
-      supabase.functions.invoke('correlate-entities', {
-        body: {
+      await enqueueJob(supabase, {
+        type: 'correlate-entities',
+        payload: {
           text: signal.normalized_text || signalText,
           sourceType: 'signal',
           sourceId: signal.id,
           autoApprove: false,
-        }
-      }).then(({ error }) => {
-        if (error) console.error('[Phase4B] Entity correlation error:', error);
-        else console.log('[Phase4B] Entity correlation triggered for signal:', signal.id);
-      }).catch((err: Error) => console.error('[Phase4B] Entity correlation failed:', err));
+        },
+        idempotencyKey: `correlate-entities:${signal.id}:phase4b`,
+      });
     } catch (error) {
-      // Non-blocking — entity tagging failure never stops signal ingestion
-      console.error('[Phase4B] Failed to trigger entity correlation:', error);
+      console.error('[Phase4B] Failed to enqueue entity correlation:', error);
     }
 
-    // WRAITH: Signal threat DNA analysis (async, non-blocking)
+    // WRAITH: Signal threat DNA analysis — durable queue (was fire-and-forget invoke).
     // Detects AI-generated attacks, synthetic intel, and adversarial payloads.
-    // Blocked signals are soft-deleted. Suspicious signals are flagged in raw_json.
     try {
-      supabase.functions.invoke('wraith-security-advisor', {
-        body: {
+      await enqueueJob(supabase, {
+        type: 'wraith-security-advisor',
+        payload: {
           action: 'analyze_signal_threat_dna',
           signal_id: signal.id,
           signal_text: signal.normalized_text || signalText,
           signal_source_url: signal.source_url || undefined,
-        }
-      }).then(({ error }) => {
-        if (error) console.error('[WRAITH] Threat DNA analysis error:', error);
-        else console.log('[WRAITH] Threat DNA analysis triggered for signal:', signal.id);
-      }).catch((err: Error) => console.error('[WRAITH] Threat DNA failed:', err));
+        },
+        idempotencyKey: `wraith-threat-dna:${signal.id}`,
+      });
     } catch (error) {
-      // Non-blocking — WRAITH failure never stops signal ingestion
-      console.error('[WRAITH] Failed to trigger threat DNA analysis:', error);
+      console.error('[WRAITH] Failed to enqueue threat DNA analysis:', error);
     }
 
     // Enqueue signal for batch processing instead of immediate processing

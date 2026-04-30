@@ -14,6 +14,7 @@
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 const THREAT_SIGNAL_TYPES = new Set(['sabotage', 'protest', 'threat', 'violence', 'theft']);
 
@@ -363,8 +364,12 @@ Deno.serve(async (req) => {
             console.log(`[PatternDetect] type_cluster: ${typeClusterSignals.length} threat signals for ${client.name} → ${severity}`);
 
             if (escalatedScore >= 50) {
-              supabase.functions.invoke('check-incident-escalation', { body: { signalId: patternSignal.id } })
-                .catch(err => console.error('[PatternDetect] escalation invoke error:', err));
+              // Durable queue — was fire-and-forget invoke.
+              enqueueJob(supabase, {
+                type: 'check-incident-escalation',
+                payload: { signalId: patternSignal.id },
+                idempotencyKey: `check-incident-escalation:${patternSignal.id}`,
+              }).catch(err => console.error('[PatternDetect] escalation enqueue error:', err));
             }
           }
         }

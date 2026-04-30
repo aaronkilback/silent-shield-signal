@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts';
+import { enqueueJob } from "../_shared/queue.ts";
 
 // Regional APAC News Sources Configuration
 const APAC_SOURCES = [
@@ -507,11 +508,12 @@ Deno.serve(async (req) => {
               
               if (!ingestError && insertedDoc) {
                 documentsIngested++;
-                
-                // Trigger AI processing
-                supabase.functions.invoke('process-intelligence-document', {
-                  body: { documentId: insertedDoc.id }
-                }).catch(err => console.error('Failed to trigger processing:', err));
+                // Durable queue — was fire-and-forget invoke.
+                enqueueJob(supabase, {
+                  type: 'process-intelligence-document',
+                  payload: { documentId: insertedDoc.id },
+                  idempotencyKey: `process-intelligence-document:${insertedDoc.id}`,
+                }).catch(err => console.error('Failed to enqueue processing:', err));
               }
             }
           } catch (itemError) {

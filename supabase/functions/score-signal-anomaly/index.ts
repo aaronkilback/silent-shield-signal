@@ -12,6 +12,7 @@
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -151,8 +152,10 @@ Deno.serve(async (req) => {
       (maxZScore !== null && maxZScore > 2.0);
 
     if (shouldDispatch) {
-      supabase.functions.invoke('speculative-dispatch', {
-        body: {
+      // Durable queue — was fire-and-forget invoke.
+      enqueueJob(supabase, {
+        type: 'speculative-dispatch',
+        payload: {
           signal_id,
           signal_text: normalized_text || '',
           category: category || signal.signal_type || 'unknown',
@@ -161,8 +164,9 @@ Deno.serve(async (req) => {
           trigger_reason: severity === 'critical' ? 'critical_severity' :
                           severity === 'high' ? 'high_severity' : 'anomaly_z_score',
           z_score: maxZScore || null,
-        }
-      }).catch(err => console.error('[score-signal-anomaly] dispatch:', err));
+        },
+        idempotencyKey: `speculative-dispatch:${signal_id}:anomaly`,
+      }).catch(err => console.error('[score-signal-anomaly] enqueue:', err));
     }
 
     return successResponse({

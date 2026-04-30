@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 const AI_REFUSAL_PATTERNS = [
   /i cannot (fulfill|provide|complete|generate)/i,
@@ -951,14 +952,17 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
             const correlationText = [document.raw_text, document.post_caption, signal.description]
               .filter(Boolean).join('\n\n');
             if (correlationText.trim().length > 20) {
-              supabase.functions.invoke('correlate-entities', {
-                body: {
+              // Durable queue — was fire-and-forget invoke.
+              enqueueJob(supabase, {
+                type: 'correlate-entities',
+                payload: {
                   text: correlationText,
                   sourceType: 'signal',
                   sourceId: newSignal.id,
                   autoApprove: false,
-                }
-              }).catch(err => console.error('[ProcessDoc] Entity correlation error:', err));
+                },
+                idempotencyKey: `correlate-entities:${newSignal.id}:process-doc`,
+              }).catch(err => console.error('[ProcessDoc] Entity correlation enqueue:', err));
             }
           } catch (corrErr) {
             console.error('[ProcessDoc] Entity correlation setup error:', corrErr);

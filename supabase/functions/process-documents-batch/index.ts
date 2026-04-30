@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 // Access EdgeRuntime from global scope
 declare const EdgeRuntime: any;
@@ -40,17 +41,15 @@ Deno.serve(async (req) => {
       
       const promises = documentIds.map(async (docId, index) => {
         try {
-          console.log(`Triggering processing job ${index + 1}/${documentIds.length}: ${docId}`);
-          
-          // Fire and forget - don't wait for response
-          supabase.functions.invoke('process-stored-document', {
-            body: { documentId: docId }
-          }).catch(err => console.error(`Failed to trigger processing for ${docId}:`, err));
-          
-          // Small delay to avoid overwhelming the system
-          await new Promise(resolve => setTimeout(resolve, 100));
+          console.log(`Enqueueing processing job ${index + 1}/${documentIds.length}: ${docId}`);
+          // Durable queue — was fire-and-forget invoke.
+          await enqueueJob(supabase, {
+            type: 'process-stored-document',
+            payload: { documentId: docId },
+            idempotencyKey: `process-stored-document:${docId}`,
+          }).catch(err => console.error(`Failed to enqueue processing for ${docId}:`, err));
         } catch (error) {
-          console.error(`Error triggering processing for ${docId}:`, error);
+          console.error(`Error enqueueing processing for ${docId}:`, error);
         }
       });
       

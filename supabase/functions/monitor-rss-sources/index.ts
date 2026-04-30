@@ -1,6 +1,7 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { extractOGImage } from "../_shared/og-image.ts";
 import { extractYouTubeTranscript } from "../_shared/youtube-transcript.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 function isYouTubeUrl(url: string): boolean {
   return /(?:youtube\.com\/watch\?v=|youtu\.be\/)/.test(url);
@@ -216,11 +217,12 @@ Deno.serve(async (req) => {
 
             if (!ingestError && insertedDoc) {
               totalSignals++;
-              
-              // Trigger AI processing with correct documentId parameter
-              supabaseClient.functions.invoke('process-intelligence-document', {
-                body: { documentId: insertedDoc.id }
-              }).catch(err => console.error('Failed to trigger processing:', err));
+              // Durable queue — was fire-and-forget invoke.
+              enqueueJob(supabaseClient, {
+                type: 'process-intelligence-document',
+                payload: { documentId: insertedDoc.id },
+                idempotencyKey: `process-intelligence-document:${insertedDoc.id}`,
+              }).catch(err => console.error('Failed to enqueue processing:', err));
             }
           } catch (error) {
             console.error(`Error ingesting RSS item:`, error);

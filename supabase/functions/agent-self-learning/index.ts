@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat, type HeartbeatHandle } from "../_shared/heartbeat.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 /**
  * Agent Self-Learning Engine
@@ -232,12 +233,14 @@ Deno.serve(async (req) => {
       promoted_to_global: results.entries_created > 2,
     });
 
-    // Trigger monitoring proposal generation after learning
+    // Enqueue monitoring proposal generation after learning — durable queue.
     if (results.entries_created > 0) {
-      console.log('[agent-self-learning] Triggering monitoring proposal generation...');
-      supabase.functions.invoke('generate-monitoring-proposals', {
-        body: { agent_call_sign: agent_call_sign || 'CRUCIBLE' }
-      }).catch(err => console.error('[agent-self-learning] Proposal generation failed:', err));
+      console.log('[agent-self-learning] Enqueueing monitoring proposal generation...');
+      enqueueJob(supabase, {
+        type: 'generate-monitoring-proposals',
+        payload: { agent_call_sign: agent_call_sign || 'CRUCIBLE' },
+        idempotencyKey: `generate-monitoring-proposals:${agent_call_sign || 'CRUCIBLE'}:${new Date().toISOString().slice(0,10)}`,
+      }).catch(err => console.error('[agent-self-learning] Proposal generation enqueue failed:', err));
     }
 
     console.log(`[agent-self-learning] Complete: ${results.entries_created} new, ${results.entries_updated} updated`);

@@ -13,6 +13,7 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { generateHypothesisTree, resolveIncidentPredictions } from "../_shared/agent-intelligence.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -337,16 +338,18 @@ Deno.serve(async (req) => {
 
         // Trigger real learning if knowledge is sparse (< 10 entries)
         if ((knowledgeCount || 0) < 10) {
-          console.log(`[LoopCloser] Triggering literature_review for ${callSign} (${knowledgeCount || 0} knowledge entries)`);
-          
-          // Fire and don't await — the learning function handles its own lifecycle
-          supabase.functions.invoke('agent-self-learning', {
-            body: {
+          console.log(`[LoopCloser] Enqueueing literature_review for ${callSign} (${knowledgeCount || 0} knowledge entries)`);
+
+          // Durable queue — was fire-and-forget.
+          enqueueJob(supabase, {
+            type: 'agent-self-learning',
+            payload: {
               mode: 'literature_review',
               agent_call_sign: callSign,
-              max_queries: 3, // Cap to avoid excessive API usage
-            }
-          }).catch((err: Error) => console.error(`[LoopCloser] ${callSign} learning trigger failed:`, err));
+              max_queries: 3,
+            },
+            idempotencyKey: `agent-self-learning:literature:${callSign}:${new Date().toISOString().slice(0,10)}`,
+          }).catch((err: Error) => console.error(`[LoopCloser] ${callSign} learning enqueue failed:`, err));
 
           learningTriggered++;
           
@@ -512,10 +515,13 @@ Deno.serve(async (req) => {
 
         if ((recentDebates || 0) > 0) continue;
 
-        supabase.functions.invoke('multi-agent-debate', {
-          body: { incident_id: incident.id },
+        // Durable queue — was fire-and-forget.
+        enqueueJob(supabase, {
+          type: 'multi-agent-debate',
+          payload: { incident_id: incident.id },
+          idempotencyKey: `multi-agent-debate:${incident.id}`,
         }).catch((err: Error) =>
-          console.error(`[LoopCloser] Debate trigger failed for ${incident.id}:`, err)
+          console.error(`[LoopCloser] Debate enqueue failed for ${incident.id}:`, err)
         );
 
         debatesTriggered++;

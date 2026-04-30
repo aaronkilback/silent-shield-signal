@@ -1,6 +1,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -264,11 +265,14 @@ Return ONLY the JSON array.`;
       } catch (_) {}
     }
 
-    // ── 7. Trigger embedding of any new knowledge ──────────────────────────
+    // ── 7. Enqueue embedding of any new knowledge ─────────────────────────
     if (!dry_run) {
-      supabase.functions.invoke('semantic-embed-knowledge', {
-        body: { force: false, embed_agents: true }
-      }).catch((e: Error) => console.error('[self-improvement] Embedding trigger failed:', e));
+      // Durable queue — was fire-and-forget invoke.
+      enqueueJob(supabase, {
+        type: 'semantic-embed-knowledge',
+        payload: { force: false, embed_agents: true },
+        idempotencyKey: `semantic-embed-knowledge:${new Date().toISOString().slice(0,10)}`,
+      }).catch((e: Error) => console.error('[self-improvement] Embedding enqueue failed:', e));
     }
 
     // ── 8. Store orchestration record ─────────────────────────────────────

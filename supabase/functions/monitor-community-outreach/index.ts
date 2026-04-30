@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { recordHeartbeat } from "../_shared/heartbeat.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 /**
  * Community Outreach Monitor
@@ -582,9 +583,12 @@ async function createOutreachSignal(supabase: any, data: {
 
     console.log(`✓ Outreach signal [${data.outreachType}]: ${data.title.substring(0, 60)}`);
     if (insertedSignal?.id) {
-      supabase.functions.invoke('ai-decision-engine', {
-        body: { signal_id: insertedSignal.id, force_ai: false },
-      }).catch((err: any) => console.warn('[CommunityOutreach] ai-decision-engine invoke failed:', err?.message || err));
+      // Durable queue (was fire-and-forget invoke).
+      await enqueueJob(supabase, {
+        type: 'ai-decision-engine',
+        payload: { signal_id: insertedSignal.id, force_ai: false },
+        idempotencyKey: `ai-decision-engine:${insertedSignal.id}`,
+      }).catch((err: any) => console.warn('[CommunityOutreach] enqueueJob failed:', err?.message || err));
     }
     return true;
   } catch (err) {
