@@ -1,6 +1,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createHistoryEntry, completeHistoryEntry, failHistoryEntry } from "../_shared/monitoring-history.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 /**
  * NAAD (National Alert Aggregation & Dissemination) Emergency Alert Monitor
@@ -417,10 +418,17 @@ Deno.serve(async (req) => {
             priority: classification.priority,
             category: classification.category,
           });
-          // Async AI-decision pipeline — never block on this
-          supabase.functions.invoke('ai-decision-engine', {
-            body: { signal_id: insertedSignal.id, force_ai: classification.severity === 'high' || classification.severity === 'critical' },
-          }).catch((err: any) => console.warn('[NAAD] ai-decision-engine invoke failed:', err?.message || err));
+          // Enqueue durable async job rather than fire-and-forget. The worker
+          // drains function_jobs every minute with retry on failure. This
+          // replaces a fragile supabase.functions.invoke().catch() pattern that
+          // was being killed by Edge runtime teardown after monitor-naad-alerts
+          // returned. idempotency_key prevents duplicate enqueues if NAAD
+          // re-processes the same alert.
+          await enqueueJob(supabase, {
+            type: 'ai-decision-engine',
+            payload: { signal_id: insertedSignal.id, force_ai: classification.severity === 'high' || classification.severity === 'critical' },
+            idempotencyKey: `ai-decision-engine:${insertedSignal.id}`,
+          }).catch((err: any) => console.warn('[NAAD] enqueueJob failed:', err?.message || err));
         }
       }
     } catch (feedError) {
