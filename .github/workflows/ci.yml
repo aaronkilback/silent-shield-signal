@@ -84,6 +84,20 @@ jobs:
           SUPABASE_PAT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: kpuqukppbmwebiptqmog
 
+  db-types-drift:
+    name: DB Types Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify committed types.ts matches live schema
+        run: node scripts/gen-db-types.mjs --check
+        env:
+          SUPABASE_PAT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: kpuqukppbmwebiptqmog
+
   health-gate:
     name: Live System Health Gate
     runs-on: ubuntu-latest

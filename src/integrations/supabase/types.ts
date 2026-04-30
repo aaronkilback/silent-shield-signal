@@ -10,10 +10,751 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "13.0.5"
+    PostgrestVersion: "14.1"
   }
   public: {
     Tables: {
+      academy_agent_scores: {
+        Row: {
+          agent_call_sign: string
+          avg_judgment_delta: number | null
+          avg_retention_delta: number | null
+          course_id: string | null
+          created_at: string | null
+          domain: string
+          id: string
+          last_updated_at: string | null
+          learner_count: number | null
+          teaching_score: number | null
+        }
+        Insert: {
+          agent_call_sign: string
+          avg_judgment_delta?: number | null
+          avg_retention_delta?: number | null
+          course_id?: string | null
+          created_at?: string | null
+          domain: string
+          id?: string
+          last_updated_at?: string | null
+          learner_count?: number | null
+          teaching_score?: number | null
+        }
+        Update: {
+          agent_call_sign?: string
+          avg_judgment_delta?: number | null
+          avg_retention_delta?: number | null
+          course_id?: string | null
+          created_at?: string | null
+          domain?: string
+          id?: string
+          last_updated_at?: string | null
+          learner_count?: number | null
+          teaching_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_agent_scores_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_assessments: {
+        Row: {
+          created_at: string
+          id: string
+          module_id: string
+          passing_score: number
+          questions: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          module_id: string
+          passing_score?: number
+          questions?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          module_id?: string
+          passing_score?: number
+          questions?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_assessments_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: true
+            referencedRelation: "academy_modules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_certificates: {
+        Row: {
+          certificate_id: string | null
+          course_id: string
+          course_title: string
+          id: string
+          issued_at: string
+          user_id: string
+          user_name: string
+        }
+        Insert: {
+          certificate_id?: string | null
+          course_id: string
+          course_title: string
+          id?: string
+          issued_at?: string
+          user_id: string
+          user_name: string
+        }
+        Update: {
+          certificate_id?: string | null
+          course_id?: string
+          course_title?: string
+          id?: string
+          issued_at?: string
+          user_id?: string
+          user_name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_certificates_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_courses: {
+        Row: {
+          agent_call_sign: string | null
+          content_generated_at: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          difficulty_level: string
+          estimated_minutes: number | null
+          generation_error: string | null
+          generation_status: string
+          id: string
+          published: boolean | null
+          scenario_domain: string | null
+          slug: string
+          title: string
+          topic_cluster: string
+          trailer_cloudflare_uid: string | null
+          trailer_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          agent_call_sign?: string | null
+          content_generated_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          difficulty_level?: string
+          estimated_minutes?: number | null
+          generation_error?: string | null
+          generation_status?: string
+          id?: string
+          published?: boolean | null
+          scenario_domain?: string | null
+          slug: string
+          title: string
+          topic_cluster: string
+          trailer_cloudflare_uid?: string | null
+          trailer_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          agent_call_sign?: string | null
+          content_generated_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          difficulty_level?: string
+          estimated_minutes?: number | null
+          generation_error?: string | null
+          generation_status?: string
+          id?: string
+          published?: boolean | null
+          scenario_domain?: string | null
+          slug?: string
+          title?: string
+          topic_cluster?: string
+          trailer_cloudflare_uid?: string | null
+          trailer_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      academy_credentials: {
+        Row: {
+          agent_call_sign: string
+          course_id: string
+          course_title: string
+          domain: string
+          full_name: string
+          id: string
+          issued_at: string | null
+          judgment_delta: number
+          matched_tier: string
+          post_score: number
+          pre_score: number
+          user_id: string
+        }
+        Insert: {
+          agent_call_sign: string
+          course_id: string
+          course_title: string
+          domain: string
+          full_name: string
+          id?: string
+          issued_at?: string | null
+          judgment_delta: number
+          matched_tier: string
+          post_score: number
+          pre_score: number
+          user_id: string
+        }
+        Update: {
+          agent_call_sign?: string
+          course_id?: string
+          course_title?: string
+          domain?: string
+          full_name?: string
+          id?: string
+          issued_at?: string | null
+          judgment_delta?: number
+          matched_tier?: string
+          post_score?: number
+          pre_score?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_credentials_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_enrollments: {
+        Row: {
+          completed_at: string | null
+          course_id: string
+          enrolled_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          course_id: string
+          enrolled_at?: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          course_id?: string
+          enrolled_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_enrollments_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_judgment_progress: {
+        Row: {
+          agent_call_sign: string | null
+          course_id: string
+          created_at: string | null
+          enrolled_at: string | null
+          followup_completed_at: string | null
+          followup_due_at: string | null
+          followup_score: number | null
+          id: string
+          judgment_delta: number | null
+          post_completed_at: string | null
+          post_scenario_id: string | null
+          post_score: number | null
+          pre_completed_at: string | null
+          pre_scenario_id: string | null
+          pre_score: number | null
+          retention_delta: number | null
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          agent_call_sign?: string | null
+          course_id: string
+          created_at?: string | null
+          enrolled_at?: string | null
+          followup_completed_at?: string | null
+          followup_due_at?: string | null
+          followup_score?: number | null
+          id?: string
+          judgment_delta?: number | null
+          post_completed_at?: string | null
+          post_scenario_id?: string | null
+          post_score?: number | null
+          pre_completed_at?: string | null
+          pre_scenario_id?: string | null
+          pre_score?: number | null
+          retention_delta?: number | null
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          agent_call_sign?: string | null
+          course_id?: string
+          created_at?: string | null
+          enrolled_at?: string | null
+          followup_completed_at?: string | null
+          followup_due_at?: string | null
+          followup_score?: number | null
+          id?: string
+          judgment_delta?: number | null
+          post_completed_at?: string | null
+          post_scenario_id?: string | null
+          post_score?: number | null
+          pre_completed_at?: string | null
+          pre_scenario_id?: string | null
+          pre_score?: number | null
+          retention_delta?: number | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_judgment_progress_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "academy_judgment_progress_post_scenario_id_fkey"
+            columns: ["post_scenario_id"]
+            isOneToOne: false
+            referencedRelation: "academy_scenarios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "academy_judgment_progress_pre_scenario_id_fkey"
+            columns: ["pre_scenario_id"]
+            isOneToOne: false
+            referencedRelation: "academy_scenarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_learner_profiles: {
+        Row: {
+          address: string | null
+          city: string | null
+          confidence_gap: number | null
+          confidence_rating: number | null
+          country: string | null
+          created_at: string | null
+          current_status: string | null
+          email: string | null
+          experience_level: string | null
+          full_name: string | null
+          id: string
+          intake_answers: Json
+          matched_agent: string | null
+          matched_tier: string | null
+          phone: string | null
+          primary_domain: string | null
+          sector: string | null
+          self_reported_role: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          confidence_gap?: number | null
+          confidence_rating?: number | null
+          country?: string | null
+          created_at?: string | null
+          current_status?: string | null
+          email?: string | null
+          experience_level?: string | null
+          full_name?: string | null
+          id?: string
+          intake_answers?: Json
+          matched_agent?: string | null
+          matched_tier?: string | null
+          phone?: string | null
+          primary_domain?: string | null
+          sector?: string | null
+          self_reported_role?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          confidence_gap?: number | null
+          confidence_rating?: number | null
+          country?: string | null
+          created_at?: string | null
+          current_status?: string | null
+          email?: string | null
+          experience_level?: string | null
+          full_name?: string | null
+          id?: string
+          intake_answers?: Json
+          matched_agent?: string | null
+          matched_tier?: string | null
+          phone?: string | null
+          primary_domain?: string | null
+          sector?: string | null
+          self_reported_role?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      academy_modules: {
+        Row: {
+          cloudflare_uid: string | null
+          course_id: string
+          created_at: string
+          duration_seconds: number | null
+          estimated_minutes: number | null
+          heygen_video_id: string | null
+          id: string
+          key_takeaways: string[]
+          learning_objectives: string[]
+          lesson_script: string
+          position: number
+          title: string
+          video_error: string | null
+          video_status: string
+          video_url: string | null
+        }
+        Insert: {
+          cloudflare_uid?: string | null
+          course_id: string
+          created_at?: string
+          duration_seconds?: number | null
+          estimated_minutes?: number | null
+          heygen_video_id?: string | null
+          id?: string
+          key_takeaways?: string[]
+          learning_objectives?: string[]
+          lesson_script: string
+          position: number
+          title: string
+          video_error?: string | null
+          video_status?: string
+          video_url?: string | null
+        }
+        Update: {
+          cloudflare_uid?: string | null
+          course_id?: string
+          created_at?: string
+          duration_seconds?: number | null
+          estimated_minutes?: number | null
+          heygen_video_id?: string | null
+          id?: string
+          key_takeaways?: string[]
+          learning_objectives?: string[]
+          lesson_script?: string
+          position?: number
+          title?: string
+          video_error?: string | null
+          video_status?: string
+          video_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_modules_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_progress: {
+        Row: {
+          assessment_attempts: number
+          assessment_completed_at: string | null
+          assessment_passed: boolean
+          assessment_score: number | null
+          course_id: string
+          id: string
+          lesson_viewed: boolean
+          lesson_viewed_at: string | null
+          module_id: string
+          user_id: string
+        }
+        Insert: {
+          assessment_attempts?: number
+          assessment_completed_at?: string | null
+          assessment_passed?: boolean
+          assessment_score?: number | null
+          course_id: string
+          id?: string
+          lesson_viewed?: boolean
+          lesson_viewed_at?: string | null
+          module_id: string
+          user_id: string
+        }
+        Update: {
+          assessment_attempts?: number
+          assessment_completed_at?: string | null
+          assessment_passed?: boolean
+          assessment_score?: number | null
+          course_id?: string
+          id?: string
+          lesson_viewed?: boolean
+          lesson_viewed_at?: string | null
+          module_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_progress_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "academy_progress_module_id_fkey"
+            columns: ["module_id"]
+            isOneToOne: false
+            referencedRelation: "academy_modules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_responses: {
+        Row: {
+          base_score: number | null
+          completed_at: string | null
+          course_id: string
+          created_at: string | null
+          difficulty_rating: number | null
+          id: string
+          rationale_dangerous: string | null
+          rationale_optimal: string | null
+          rationale_score: number | null
+          scenario_id: string
+          selected_option: string
+          stage: string
+          time_spent_seconds: number | null
+          total_score: number | null
+          user_id: string
+        }
+        Insert: {
+          base_score?: number | null
+          completed_at?: string | null
+          course_id: string
+          created_at?: string | null
+          difficulty_rating?: number | null
+          id?: string
+          rationale_dangerous?: string | null
+          rationale_optimal?: string | null
+          rationale_score?: number | null
+          scenario_id: string
+          selected_option: string
+          stage: string
+          time_spent_seconds?: number | null
+          total_score?: number | null
+          user_id: string
+        }
+        Update: {
+          base_score?: number | null
+          completed_at?: string | null
+          course_id?: string
+          created_at?: string | null
+          difficulty_rating?: number | null
+          id?: string
+          rationale_dangerous?: string | null
+          rationale_optimal?: string | null
+          rationale_score?: number | null
+          scenario_id?: string
+          selected_option?: string
+          stage?: string
+          time_spent_seconds?: number | null
+          total_score?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_responses_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "academy_responses_scenario_id_fkey"
+            columns: ["scenario_id"]
+            isOneToOne: false
+            referencedRelation: "academy_scenarios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_scenarios: {
+        Row: {
+          agent_call_sign: string
+          course_id: string
+          created_at: string | null
+          difficulty_level: string | null
+          domain: string
+          generated_at: string | null
+          id: string
+          most_dangerous_choice: string
+          most_dangerous_rationale: string
+          optimal_choice: string
+          optimal_rationale: string
+          option_a: Json
+          option_b: Json
+          option_c: Json
+          option_d: Json
+          situation_brief: string
+          source_belief_ids: string[] | null
+          source_knowledge_ids: string[] | null
+          teaching_points: string[] | null
+          title: string
+          variant_index: number | null
+        }
+        Insert: {
+          agent_call_sign: string
+          course_id: string
+          created_at?: string | null
+          difficulty_level?: string | null
+          domain: string
+          generated_at?: string | null
+          id?: string
+          most_dangerous_choice: string
+          most_dangerous_rationale: string
+          optimal_choice: string
+          optimal_rationale: string
+          option_a: Json
+          option_b: Json
+          option_c: Json
+          option_d: Json
+          situation_brief: string
+          source_belief_ids?: string[] | null
+          source_knowledge_ids?: string[] | null
+          teaching_points?: string[] | null
+          title: string
+          variant_index?: number | null
+        }
+        Update: {
+          agent_call_sign?: string
+          course_id?: string
+          created_at?: string | null
+          difficulty_level?: string | null
+          domain?: string
+          generated_at?: string | null
+          id?: string
+          most_dangerous_choice?: string
+          most_dangerous_rationale?: string
+          optimal_choice?: string
+          optimal_rationale?: string
+          option_a?: Json
+          option_b?: Json
+          option_c?: Json
+          option_d?: Json
+          situation_brief?: string
+          source_belief_ids?: string[] | null
+          source_knowledge_ids?: string[] | null
+          teaching_points?: string[] | null
+          title?: string
+          variant_index?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academy_scenarios_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "academy_courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      academy_training_sessions: {
+        Row: {
+          agent_call_sign: string
+          completed_at: string | null
+          course_id: string
+          created_at: string
+          domain: string
+          id: string
+          last_message_at: string | null
+          message_count: number
+          opening_message: string | null
+          phases_visited: string[] | null
+          pre_choice: string | null
+          pre_is_optimal: boolean | null
+          pre_score: number | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          agent_call_sign: string
+          completed_at?: string | null
+          course_id: string
+          created_at?: string
+          domain: string
+          id?: string
+          last_message_at?: string | null
+          message_count?: number
+          opening_message?: string | null
+          phases_visited?: string[] | null
+          pre_choice?: string | null
+          pre_is_optimal?: boolean | null
+          pre_score?: number | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          agent_call_sign?: string
+          completed_at?: string | null
+          course_id?: string
+          created_at?: string
+          domain?: string
+          id?: string
+          last_message_at?: string | null
+          message_count?: number
+          opening_message?: string | null
+          phases_visited?: string[] | null
+          pre_choice?: string | null
+          pre_is_optimal?: boolean | null
+          pre_score?: number | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       agent_accuracy_metrics: {
         Row: {
           accuracy_score: number
@@ -115,6 +856,157 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      agent_assessments: {
+        Row: {
+          agent_id: string | null
+          assessed_at: string
+          call_sign: string
+          codename: string
+          goals: Json | null
+          id: string
+          improvements: Json | null
+          parse_error: string | null
+          prompt_context: string | null
+          raw_response: string | null
+          worries: Json | null
+        }
+        Insert: {
+          agent_id?: string | null
+          assessed_at?: string
+          call_sign: string
+          codename: string
+          goals?: Json | null
+          id?: string
+          improvements?: Json | null
+          parse_error?: string | null
+          prompt_context?: string | null
+          raw_response?: string | null
+          worries?: Json | null
+        }
+        Update: {
+          agent_id?: string | null
+          assessed_at?: string
+          call_sign?: string
+          codename?: string
+          goals?: Json | null
+          id?: string
+          improvements?: Json | null
+          parse_error?: string | null
+          prompt_context?: string | null
+          raw_response?: string | null
+          worries?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_assessments_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_beliefs: {
+        Row: {
+          agent_call_sign: string
+          belief_type: string
+          client_id: string | null
+          confidence: number
+          contradicting_entry_ids: string[] | null
+          contradiction_note: string | null
+          created_at: string | null
+          evolution_log: Json | null
+          has_contradiction: boolean
+          hypothesis: string
+          id: string
+          is_active: boolean | null
+          last_updated_at: string | null
+          related_agents: string[] | null
+          related_domains: string[] | null
+          supporting_entry_ids: string[] | null
+        }
+        Insert: {
+          agent_call_sign: string
+          belief_type?: string
+          client_id?: string | null
+          confidence?: number
+          contradicting_entry_ids?: string[] | null
+          contradiction_note?: string | null
+          created_at?: string | null
+          evolution_log?: Json | null
+          has_contradiction?: boolean
+          hypothesis: string
+          id?: string
+          is_active?: boolean | null
+          last_updated_at?: string | null
+          related_agents?: string[] | null
+          related_domains?: string[] | null
+          supporting_entry_ids?: string[] | null
+        }
+        Update: {
+          agent_call_sign?: string
+          belief_type?: string
+          client_id?: string | null
+          confidence?: number
+          contradicting_entry_ids?: string[] | null
+          contradiction_note?: string | null
+          created_at?: string | null
+          evolution_log?: Json | null
+          has_contradiction?: boolean
+          hypothesis?: string
+          id?: string
+          is_active?: boolean | null
+          last_updated_at?: string | null
+          related_agents?: string[] | null
+          related_domains?: string[] | null
+          supporting_entry_ids?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_beliefs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_calibration_scores: {
+        Row: {
+          brier_score: number | null
+          calibration_score: number | null
+          call_sign: string
+          correct_predictions: number | null
+          domain: string
+          id: string
+          last_evaluated_at: string | null
+          last_prediction_at: string | null
+          total_predictions: number | null
+        }
+        Insert: {
+          brier_score?: number | null
+          calibration_score?: number | null
+          call_sign: string
+          correct_predictions?: number | null
+          domain?: string
+          id?: string
+          last_evaluated_at?: string | null
+          last_prediction_at?: string | null
+          total_predictions?: number | null
+        }
+        Update: {
+          brier_score?: number | null
+          calibration_score?: number | null
+          call_sign?: string
+          correct_predictions?: number | null
+          domain?: string
+          id?: string
+          last_evaluated_at?: string | null
+          last_prediction_at?: string | null
+          total_predictions?: number | null
+        }
+        Relationships: []
       }
       agent_conversations: {
         Row: {
@@ -230,6 +1122,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      agent_interviews: {
+        Row: {
+          agent_codename: string
+          agent_id: string
+          agent_name: string
+          audio_url: string | null
+          created_at: string
+          duration_seconds: number | null
+          id: string
+          topic: string | null
+          transcript: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          agent_codename: string
+          agent_id: string
+          agent_name: string
+          audio_url?: string | null
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          topic?: string | null
+          transcript?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          agent_codename?: string
+          agent_id?: string
+          agent_name?: string
+          audio_url?: string | null
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          topic?: string | null
+          transcript?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       agent_investigation_memory: {
         Row: {
@@ -392,6 +1326,76 @@ export type Database = {
           },
         ]
       }
+      agent_mesh_messages: {
+        Row: {
+          client_id: string | null
+          content: string
+          created_at: string | null
+          from_agent: string
+          id: string
+          is_read: boolean | null
+          message_type: string
+          read_at: string | null
+          related_incident_id: string | null
+          related_signal_id: string | null
+          relevance_score: number | null
+          subject: string
+          to_agent: string
+        }
+        Insert: {
+          client_id?: string | null
+          content: string
+          created_at?: string | null
+          from_agent: string
+          id?: string
+          is_read?: boolean | null
+          message_type: string
+          read_at?: string | null
+          related_incident_id?: string | null
+          related_signal_id?: string | null
+          relevance_score?: number | null
+          subject: string
+          to_agent: string
+        }
+        Update: {
+          client_id?: string | null
+          content?: string
+          created_at?: string | null
+          from_agent?: string
+          id?: string
+          is_read?: boolean | null
+          message_type?: string
+          read_at?: string | null
+          related_incident_id?: string | null
+          related_signal_id?: string | null
+          relevance_score?: number | null
+          subject?: string
+          to_agent?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_mesh_messages_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_mesh_messages_related_incident_id_fkey"
+            columns: ["related_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_mesh_messages_related_signal_id_fkey"
+            columns: ["related_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_messages: {
         Row: {
           content: string
@@ -423,6 +1427,59 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "agent_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_missions: {
+        Row: {
+          assigned_agent: string
+          assigned_by: string | null
+          client_id: string | null
+          created_at: string
+          deadline: string | null
+          id: string
+          objective: string
+          progress_log: Json
+          reporting_cadence: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_agent: string
+          assigned_by?: string | null
+          client_id?: string | null
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          objective: string
+          progress_log?: Json
+          reporting_cadence?: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_agent?: string
+          assigned_by?: string | null
+          client_id?: string | null
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          objective?: string
+          progress_log?: Json
+          reporting_cadence?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_missions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
             referencedColumns: ["id"]
           },
         ]
@@ -494,6 +1551,133 @@ export type Database = {
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_specialty_embeddings: {
+        Row: {
+          agent_id: string | null
+          call_sign: string
+          embedding: string | null
+          id: string
+          last_embedded_at: string | null
+          specialty_text: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          call_sign: string
+          embedding?: string | null
+          id?: string
+          last_embedded_at?: string | null
+          specialty_text?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          call_sign?: string
+          embedding?: string | null
+          id?: string
+          last_embedded_at?: string | null
+          specialty_text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_specialty_embeddings_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_world_predictions: {
+        Row: {
+          agent_call_sign: string
+          client_id: string | null
+          confidence_probability: number
+          confirmation_signal_id: string | null
+          confirmed_at: string | null
+          created_at: string | null
+          domain: string
+          expected_by: string | null
+          falsifying_conditions: string[] | null
+          id: string
+          prediction_text: string
+          refuted_at: string | null
+          related_incident_id: string | null
+          related_signal_id: string | null
+          status: string
+          time_horizon_hours: number | null
+          triggering_conditions: string[] | null
+          updated_at: string | null
+        }
+        Insert: {
+          agent_call_sign: string
+          client_id?: string | null
+          confidence_probability: number
+          confirmation_signal_id?: string | null
+          confirmed_at?: string | null
+          created_at?: string | null
+          domain: string
+          expected_by?: string | null
+          falsifying_conditions?: string[] | null
+          id?: string
+          prediction_text: string
+          refuted_at?: string | null
+          related_incident_id?: string | null
+          related_signal_id?: string | null
+          status?: string
+          time_horizon_hours?: number | null
+          triggering_conditions?: string[] | null
+          updated_at?: string | null
+        }
+        Update: {
+          agent_call_sign?: string
+          client_id?: string | null
+          confidence_probability?: number
+          confirmation_signal_id?: string | null
+          confirmed_at?: string | null
+          created_at?: string | null
+          domain?: string
+          expected_by?: string | null
+          falsifying_conditions?: string[] | null
+          id?: string
+          prediction_text?: string
+          refuted_at?: string | null
+          related_incident_id?: string | null
+          related_signal_id?: string | null
+          status?: string
+          time_horizon_hours?: number | null
+          triggering_conditions?: string[] | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_world_predictions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_world_predictions_confirmation_signal_id_fkey"
+            columns: ["confirmation_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_world_predictions_related_incident_id_fkey"
+            columns: ["related_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_world_predictions_related_signal_id_fkey"
+            columns: ["related_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
             referencedColumns: ["id"]
           },
         ]
@@ -625,15 +1809,7 @@ export type Database = {
           updated_at?: string
           user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "ai_assistant_messages_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       alerts: {
         Row: {
@@ -902,6 +2078,7 @@ export type Database = {
           is_archival: boolean | null
           keywords: string[] | null
           metadata: Json | null
+          processing_status: string | null
           storage_path: string
           summary: string | null
           tags: string[] | null
@@ -924,6 +2101,7 @@ export type Database = {
           is_archival?: boolean | null
           keywords?: string[] | null
           metadata?: Json | null
+          processing_status?: string | null
           storage_path: string
           summary?: string | null
           tags?: string[] | null
@@ -946,6 +2124,7 @@ export type Database = {
           is_archival?: boolean | null
           keywords?: string[] | null
           metadata?: Json | null
+          processing_status?: string | null
           storage_path?: string
           summary?: string | null
           tags?: string[] | null
@@ -953,22 +2132,7 @@ export type Database = {
           upload_date?: string
           uploaded_by?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "archival_documents_client_id_fkey"
-            columns: ["client_id"]
-            isOneToOne: false
-            referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "archival_documents_uploaded_by_fkey"
-            columns: ["uploaded_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       asset_vulnerabilities: {
         Row: {
@@ -1303,6 +2467,7 @@ export type Database = {
           agent_call_sign: string
           alerts_generated: number | null
           created_at: string
+          deleted_at: string | null
           findings: Json
           id: string
           risk_score: number | null
@@ -1314,6 +2479,7 @@ export type Database = {
           agent_call_sign: string
           alerts_generated?: number | null
           created_at?: string
+          deleted_at?: string | null
           findings?: Json
           id?: string
           risk_score?: number | null
@@ -1325,6 +2491,7 @@ export type Database = {
           agent_call_sign?: string
           alerts_generated?: number | null
           created_at?: string
+          deleted_at?: string | null
           findings?: Json
           id?: string
           risk_score?: number | null
@@ -1927,12 +3094,17 @@ export type Database = {
       }
       bug_reports: {
         Row: {
+          affects_client_facing: boolean | null
+          ai_category: string | null
+          ai_diagnosis: string | null
+          ai_severity: string | null
           approved_at: string | null
           approved_by: string | null
           assigned_to: string | null
           browser_info: string | null
           conversation_log: Json | null
           created_at: string | null
+          deleted_at: string | null
           description: string
           fix_proposal: Json | null
           fix_status: string | null
@@ -1942,25 +3114,33 @@ export type Database = {
           notification_sent_at: string | null
           page_url: string | null
           reporter_email: string | null
+          resolution_notes: string | null
           resolved_at: string | null
           screenshots: string[] | null
           severity: string
           status: string
           test_results: Json | null
           title: string
+          triaged_at: string | null
           updated_at: string | null
           user_id: string | null
           verification_status: string | null
           verified_at: string | null
+          watchdog_note: string | null
           workflow_stage: string | null
         }
         Insert: {
+          affects_client_facing?: boolean | null
+          ai_category?: string | null
+          ai_diagnosis?: string | null
+          ai_severity?: string | null
           approved_at?: string | null
           approved_by?: string | null
           assigned_to?: string | null
           browser_info?: string | null
           conversation_log?: Json | null
           created_at?: string | null
+          deleted_at?: string | null
           description: string
           fix_proposal?: Json | null
           fix_status?: string | null
@@ -1970,25 +3150,33 @@ export type Database = {
           notification_sent_at?: string | null
           page_url?: string | null
           reporter_email?: string | null
+          resolution_notes?: string | null
           resolved_at?: string | null
           screenshots?: string[] | null
           severity: string
           status?: string
           test_results?: Json | null
           title: string
+          triaged_at?: string | null
           updated_at?: string | null
           user_id?: string | null
           verification_status?: string | null
           verified_at?: string | null
+          watchdog_note?: string | null
           workflow_stage?: string | null
         }
         Update: {
+          affects_client_facing?: boolean | null
+          ai_category?: string | null
+          ai_diagnosis?: string | null
+          ai_severity?: string | null
           approved_at?: string | null
           approved_by?: string | null
           assigned_to?: string | null
           browser_info?: string | null
           conversation_log?: Json | null
           created_at?: string | null
+          deleted_at?: string | null
           description?: string
           fix_proposal?: Json | null
           fix_status?: string | null
@@ -1998,16 +3186,19 @@ export type Database = {
           notification_sent_at?: string | null
           page_url?: string | null
           reporter_email?: string | null
+          resolution_notes?: string | null
           resolved_at?: string | null
           screenshots?: string[] | null
           severity?: string
           status?: string
           test_results?: Json | null
           title?: string
+          triaged_at?: string | null
           updated_at?: string | null
           user_id?: string | null
           verification_status?: string | null
           verified_at?: string | null
+          watchdog_note?: string | null
           workflow_stage?: string | null
         }
         Relationships: [
@@ -2117,6 +3308,80 @@ export type Database = {
           },
         ]
       }
+      client_authorizations: {
+        Row: {
+          authorized_at: string | null
+          client_email: string
+          client_name: string
+          compliance_id: string | null
+          created_at: string
+          created_by: string | null
+          data_retention_date: string | null
+          id: string
+          ip_address: string | null
+          otp_attempts: number
+          otp_code: string
+          otp_expires_at: string
+          scan_type: string
+          scope_summary: string | null
+          status: string
+          target_name: string
+          token: string
+          token_expires_at: string
+          user_agent: string | null
+        }
+        Insert: {
+          authorized_at?: string | null
+          client_email: string
+          client_name: string
+          compliance_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_retention_date?: string | null
+          id?: string
+          ip_address?: string | null
+          otp_attempts?: number
+          otp_code: string
+          otp_expires_at: string
+          scan_type: string
+          scope_summary?: string | null
+          status?: string
+          target_name: string
+          token: string
+          token_expires_at: string
+          user_agent?: string | null
+        }
+        Update: {
+          authorized_at?: string | null
+          client_email?: string
+          client_name?: string
+          compliance_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_retention_date?: string | null
+          id?: string
+          ip_address?: string | null
+          otp_attempts?: number
+          otp_code?: string
+          otp_expires_at?: string
+          scan_type?: string
+          scope_summary?: string | null
+          status?: string
+          target_name?: string
+          token?: string
+          token_expires_at?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_authorizations_compliance_id_fkey"
+            columns: ["compliance_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_compliance"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           competitor_names: string[] | null
@@ -2193,6 +3458,69 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      codebase_snapshot: {
+        Row: {
+          byte_size: number | null
+          content: string
+          file_path: string
+          file_type: string
+          function_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          byte_size?: number | null
+          content: string
+          file_path: string
+          file_type: string
+          function_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          byte_size?: number | null
+          content?: string
+          file_path?: string
+          file_type?: string
+          function_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      codebase_snapshots: {
+        Row: {
+          created_at: string
+          file_path: string
+          file_size: number | null
+          id: string
+          sha256: string | null
+          snapshotted_at: string
+          source_code: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          file_path: string
+          file_size?: number | null
+          id?: string
+          sha256?: string | null
+          snapshotted_at?: string
+          source_code: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          file_path?: string
+          file_size?: number | null
+          id?: string
+          sha256?: string | null
+          snapshotted_at?: string
+          source_code?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       consortia: {
         Row: {
@@ -2933,6 +4261,63 @@ export type Database = {
           },
         ]
       }
+      cron_heartbeat: {
+        Row: {
+          completed_at: string | null
+          duration_ms: number | null
+          error_message: string | null
+          id: string
+          job_name: string
+          result_summary: Json | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          job_name: string
+          result_summary?: Json | null
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          job_name?: string
+          result_summary?: Json | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      cron_job_registry: {
+        Row: {
+          created_at: string
+          description: string | null
+          expected_interval_minutes: number
+          is_critical: boolean
+          job_name: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          expected_interval_minutes?: number
+          is_critical?: boolean
+          job_name: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          expected_interval_minutes?: number
+          is_critical?: boolean
+          job_name?: string
+        }
+        Relationships: []
+      }
       cross_tenant_patterns: {
         Row: {
           affected_tenant_count: number | null
@@ -3213,6 +4598,98 @@ export type Database = {
           },
         ]
       }
+      debate_predictions: {
+        Row: {
+          call_sign: string
+          created_at: string | null
+          debate_record_id: string | null
+          domain: string | null
+          evaluated_at: string | null
+          hypothesis: string
+          id: string
+          outcome: string | null
+          outcome_confidence: number | null
+          stated_confidence: number | null
+        }
+        Insert: {
+          call_sign: string
+          created_at?: string | null
+          debate_record_id?: string | null
+          domain?: string | null
+          evaluated_at?: string | null
+          hypothesis: string
+          id?: string
+          outcome?: string | null
+          outcome_confidence?: number | null
+          stated_confidence?: number | null
+        }
+        Update: {
+          call_sign?: string
+          created_at?: string | null
+          debate_record_id?: string | null
+          domain?: string | null
+          evaluated_at?: string | null
+          hypothesis?: string
+          id?: string
+          outcome?: string | null
+          outcome_confidence?: number | null
+          stated_confidence?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "debate_predictions_debate_record_id_fkey"
+            columns: ["debate_record_id"]
+            isOneToOne: false
+            referencedRelation: "agent_debate_records"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      doctrine_documents: {
+        Row: {
+          content: string
+          created_at: string
+          document_type: string | null
+          extracted_text: string | null
+          file_name: string | null
+          file_path: string | null
+          file_size_bytes: number | null
+          file_type: string | null
+          id: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          document_type?: string | null
+          extracted_text?: string | null
+          file_name?: string | null
+          file_path?: string | null
+          file_size_bytes?: number | null
+          file_type?: string | null
+          id?: string
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          document_type?: string | null
+          extracted_text?: string | null
+          file_name?: string | null
+          file_path?: string | null
+          file_size_bytes?: number | null
+          file_type?: string | null
+          id?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       doctrine_library: {
         Row: {
           content_text: string | null
@@ -3351,6 +4828,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "document_hashes_archival_document_id_fkey"
+            columns: ["archival_document_id"]
+            isOneToOne: false
+            referencedRelation: "stuck_documents"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "document_hashes_signal_id_fkey"
             columns: ["signal_id"]
             isOneToOne: false
@@ -3465,6 +4949,8 @@ export type Database = {
           address_postal_code: string | null
           address_province: string | null
           address_street: string | null
+          ai_assessed_at: string | null
+          ai_assessment: Json | null
           aliases: string[] | null
           associations: string[] | null
           attributes: Json | null
@@ -3473,12 +4959,16 @@ export type Database = {
           created_at: string
           created_by: string | null
           current_location: string | null
+          deleted_at: string | null
+          deletion_reason: string | null
           description: string | null
           entity_status: string | null
           id: string
           is_active: boolean | null
           monitoring_radius_km: number | null
           name: string
+          priority_scan_requested_at: string | null
+          quality_score: number | null
           risk_level: string | null
           tenant_id: string | null
           threat_indicators: string[] | null
@@ -3493,6 +4983,8 @@ export type Database = {
           address_postal_code?: string | null
           address_province?: string | null
           address_street?: string | null
+          ai_assessed_at?: string | null
+          ai_assessment?: Json | null
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
@@ -3501,12 +4993,16 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           current_location?: string | null
+          deleted_at?: string | null
+          deletion_reason?: string | null
           description?: string | null
           entity_status?: string | null
           id?: string
           is_active?: boolean | null
           monitoring_radius_km?: number | null
           name: string
+          priority_scan_requested_at?: string | null
+          quality_score?: number | null
           risk_level?: string | null
           tenant_id?: string | null
           threat_indicators?: string[] | null
@@ -3521,6 +5017,8 @@ export type Database = {
           address_postal_code?: string | null
           address_province?: string | null
           address_street?: string | null
+          ai_assessed_at?: string | null
+          ai_assessment?: Json | null
           aliases?: string[] | null
           associations?: string[] | null
           attributes?: Json | null
@@ -3529,12 +5027,16 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           current_location?: string | null
+          deleted_at?: string | null
+          deletion_reason?: string | null
           description?: string | null
           entity_status?: string | null
           id?: string
           is_active?: boolean | null
           monitoring_radius_km?: number | null
           name?: string
+          priority_scan_requested_at?: string | null
+          quality_score?: number | null
           risk_level?: string | null
           tenant_id?: string | null
           threat_indicators?: string[] | null
@@ -3768,7 +5270,10 @@ export type Database = {
           feedback_by: string | null
           feedback_rating: number | null
           id: string
+          is_primary: boolean | null
+          metadata: Json | null
           source: string | null
+          source_url: string | null
           storage_path: string
           updated_at: string
         }
@@ -3781,7 +5286,10 @@ export type Database = {
           feedback_by?: string | null
           feedback_rating?: number | null
           id?: string
+          is_primary?: boolean | null
+          metadata?: Json | null
           source?: string | null
+          source_url?: string | null
           storage_path: string
           updated_at?: string
         }
@@ -3794,7 +5302,10 @@ export type Database = {
           feedback_by?: string | null
           feedback_rating?: number | null
           id?: string
+          is_primary?: boolean | null
+          metadata?: Json | null
           source?: string | null
+          source_url?: string | null
           storage_path?: string
           updated_at?: string
         }
@@ -3890,6 +5401,10 @@ export type Database = {
       }
       entity_suggestions: {
         Row: {
+          ai_assessed_at: string | null
+          ai_assessment: Json | null
+          ai_risk_level: string | null
+          ai_threat_score: number | null
           confidence: number | null
           context: string | null
           created_at: string
@@ -3907,6 +5422,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_assessed_at?: string | null
+          ai_assessment?: Json | null
+          ai_risk_level?: string | null
+          ai_threat_score?: number | null
           confidence?: number | null
           context?: string | null
           created_at?: string
@@ -3924,6 +5443,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_assessed_at?: string | null
+          ai_assessment?: Json | null
+          ai_risk_level?: string | null
+          ai_threat_score?: number | null
           confidence?: number | null
           context?: string | null
           created_at?: string
@@ -3953,6 +5476,86 @@ export type Database = {
             columns: ["reviewed_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_suggestions_source_fk"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "archival_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_suggestions_source_fk"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "stuck_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      entity_watch_list: {
+        Row: {
+          added_by: string
+          added_by_type: string
+          client_id: string | null
+          created_at: string
+          entity_id: string | null
+          entity_name: string
+          expiry_date: string | null
+          id: string
+          is_active: boolean
+          metadata: Json
+          reason: string
+          severity_boost: number
+          updated_at: string
+          watch_level: string
+        }
+        Insert: {
+          added_by: string
+          added_by_type?: string
+          client_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_name: string
+          expiry_date?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          reason: string
+          severity_boost?: number
+          updated_at?: string
+          watch_level?: string
+        }
+        Update: {
+          added_by?: string
+          added_by_type?: string
+          client_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_name?: string
+          expiry_date?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          reason?: string
+          severity_boost?: number
+          updated_at?: string
+          watch_level?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_watch_list_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_watch_list_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
             referencedColumns: ["id"]
           },
         ]
@@ -3986,6 +5589,264 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      episode_arc_appearances: {
+        Row: {
+          arc_id: string
+          created_at: string
+          episode_id: string
+          id: string
+          notes: string | null
+          role: string | null
+        }
+        Insert: {
+          arc_id: string
+          created_at?: string
+          episode_id: string
+          id?: string
+          notes?: string | null
+          role?: string | null
+        }
+        Update: {
+          arc_id?: string
+          created_at?: string
+          episode_id?: string
+          id?: string
+          notes?: string | null
+          role?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "episode_arc_appearances_arc_id_fkey"
+            columns: ["arc_id"]
+            isOneToOne: false
+            referencedRelation: "episode_arcs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      episode_arcs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          name: string
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      episode_embeddings: {
+        Row: {
+          chunk_index: number
+          content_text: string
+          created_at: string
+          embedding: string | null
+          episode_id: string
+          id: string
+          metadata: Json | null
+        }
+        Insert: {
+          chunk_index?: number
+          content_text: string
+          created_at?: string
+          embedding?: string | null
+          episode_id: string
+          id?: string
+          metadata?: Json | null
+        }
+        Update: {
+          chunk_index?: number
+          content_text?: string
+          created_at?: string
+          embedding?: string | null
+          episode_id?: string
+          id?: string
+          metadata?: Json | null
+        }
+        Relationships: []
+      }
+      episode_feedback: {
+        Row: {
+          created_at: string
+          episode_id: string
+          id: string
+          pacing_feedback: string | null
+          rating: number
+          story_quality_feedback: string | null
+          tone_feedback: string | null
+          updated_at: string
+          user_id: string
+          what_didnt_work: string | null
+          what_worked: string | null
+        }
+        Insert: {
+          created_at?: string
+          episode_id: string
+          id?: string
+          pacing_feedback?: string | null
+          rating: number
+          story_quality_feedback?: string | null
+          tone_feedback?: string | null
+          updated_at?: string
+          user_id: string
+          what_didnt_work?: string | null
+          what_worked?: string | null
+        }
+        Update: {
+          created_at?: string
+          episode_id?: string
+          id?: string
+          pacing_feedback?: string | null
+          rating?: number
+          story_quality_feedback?: string | null
+          tone_feedback?: string | null
+          updated_at?: string
+          user_id?: string
+          what_didnt_work?: string | null
+          what_worked?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "episode_feedback_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "episodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      episode_judgments: {
+        Row: {
+          created_at: string
+          episode_id: string
+          id: string
+          judge_agent: string | null
+          judgment_type: string
+          notes: string | null
+          pass_fail: boolean | null
+          score: number | null
+        }
+        Insert: {
+          created_at?: string
+          episode_id: string
+          id?: string
+          judge_agent?: string | null
+          judgment_type: string
+          notes?: string | null
+          pass_fail?: boolean | null
+          score?: number | null
+        }
+        Update: {
+          created_at?: string
+          episode_id?: string
+          id?: string
+          judge_agent?: string | null
+          judgment_type?: string
+          notes?: string | null
+          pass_fail?: boolean | null
+          score?: number | null
+        }
+        Relationships: []
+      }
+      episodes: {
+        Row: {
+          audio_url: string | null
+          content_length: number
+          created_at: string
+          episode_number: number
+          episode_summary: string | null
+          guest_id: string | null
+          id: string
+          key_stories: string[] | null
+          output_mode: string
+          people_mentioned: string[] | null
+          risk_domains: string[]
+          script_content: string | null
+          status: string | null
+          target_audience: string
+          themes: string[] | null
+          title: string
+          tone_intensity: string
+          topic: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          audio_url?: string | null
+          content_length?: number
+          created_at?: string
+          episode_number?: number
+          episode_summary?: string | null
+          guest_id?: string | null
+          id?: string
+          key_stories?: string[] | null
+          output_mode?: string
+          people_mentioned?: string[] | null
+          risk_domains?: string[]
+          script_content?: string | null
+          status?: string | null
+          target_audience: string
+          themes?: string[] | null
+          title: string
+          tone_intensity?: string
+          topic: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          audio_url?: string | null
+          content_length?: number
+          created_at?: string
+          episode_number?: number
+          episode_summary?: string | null
+          guest_id?: string | null
+          id?: string
+          key_stories?: string[] | null
+          output_mode?: string
+          people_mentioned?: string[] | null
+          risk_domains?: string[]
+          script_content?: string | null
+          status?: string | null
+          target_audience?: string
+          themes?: string[] | null
+          title?: string
+          tone_intensity?: string
+          topic?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "episodes_guest_id_fkey"
+            columns: ["guest_id"]
+            isOneToOne: false
+            referencedRelation: "guest_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       escalation_rules: {
         Row: {
@@ -4078,12 +5939,17 @@ export type Database = {
           content: string
           created_at: string
           domain: string
+          embedding: string | null
+          expert_name: string | null
+          expert_profile_id: string | null
           id: string
           is_active: boolean | null
           knowledge_type: string
           last_validated_at: string | null
+          media_type: string | null
           source_id: string | null
           source_type: string | null
+          source_url: string | null
           subdomain: string | null
           title: string
           updated_at: string
@@ -4095,12 +5961,17 @@ export type Database = {
           content: string
           created_at?: string
           domain: string
+          embedding?: string | null
+          expert_name?: string | null
+          expert_profile_id?: string | null
           id?: string
           is_active?: boolean | null
           knowledge_type?: string
           last_validated_at?: string | null
+          media_type?: string | null
           source_id?: string | null
           source_type?: string | null
+          source_url?: string | null
           subdomain?: string | null
           title: string
           updated_at?: string
@@ -4112,17 +5983,29 @@ export type Database = {
           content?: string
           created_at?: string
           domain?: string
+          embedding?: string | null
+          expert_name?: string | null
+          expert_profile_id?: string | null
           id?: string
           is_active?: boolean | null
           knowledge_type?: string
           last_validated_at?: string | null
+          media_type?: string | null
           source_id?: string | null
           source_type?: string | null
+          source_url?: string | null
           subdomain?: string | null
           title?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "expert_knowledge_expert_profile_id_fkey"
+            columns: ["expert_profile_id"]
+            isOneToOne: false
+            referencedRelation: "expert_profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "expert_knowledge_source_id_fkey"
             columns: ["source_id"]
@@ -4131,6 +6014,81 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      expert_profiles: {
+        Row: {
+          auto_discovered: boolean | null
+          bio: string | null
+          created_at: string
+          discovered_by_agent: string | null
+          expertise_domains: string[] | null
+          id: string
+          ingestion_count: number | null
+          ingestion_topics: string[] | null
+          is_active: boolean | null
+          last_ingested_at: string | null
+          linkedin_url: string | null
+          name: string
+          notes: string | null
+          podcast_name: string | null
+          podcast_rss_url: string | null
+          relevant_agent_call_signs: string[] | null
+          title: string | null
+          twitter_handle: string | null
+          updated_at: string
+          website_url: string | null
+          youtube_channel_id: string | null
+          youtube_channel_url: string | null
+        }
+        Insert: {
+          auto_discovered?: boolean | null
+          bio?: string | null
+          created_at?: string
+          discovered_by_agent?: string | null
+          expertise_domains?: string[] | null
+          id?: string
+          ingestion_count?: number | null
+          ingestion_topics?: string[] | null
+          is_active?: boolean | null
+          last_ingested_at?: string | null
+          linkedin_url?: string | null
+          name: string
+          notes?: string | null
+          podcast_name?: string | null
+          podcast_rss_url?: string | null
+          relevant_agent_call_signs?: string[] | null
+          title?: string | null
+          twitter_handle?: string | null
+          updated_at?: string
+          website_url?: string | null
+          youtube_channel_id?: string | null
+          youtube_channel_url?: string | null
+        }
+        Update: {
+          auto_discovered?: boolean | null
+          bio?: string | null
+          created_at?: string
+          discovered_by_agent?: string | null
+          expertise_domains?: string[] | null
+          id?: string
+          ingestion_count?: number | null
+          ingestion_topics?: string[] | null
+          is_active?: boolean | null
+          last_ingested_at?: string | null
+          linkedin_url?: string | null
+          name?: string
+          notes?: string | null
+          podcast_name?: string | null
+          podcast_rss_url?: string | null
+          relevant_agent_call_signs?: string[] | null
+          title?: string | null
+          twitter_handle?: string | null
+          updated_at?: string
+          website_url?: string | null
+          youtube_channel_id?: string | null
+          youtube_channel_url?: string | null
+        }
+        Relationships: []
       }
       false_positive_patterns: {
         Row: {
@@ -4231,6 +6189,92 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      filtered_signals: {
+        Row: {
+          client_id: string | null
+          filter_reason: string
+          filtered_at: string | null
+          id: string
+          primary_connection: string | null
+          raw_text: string | null
+          relevance_reason: string | null
+          relevance_score: number | null
+          source_name: string | null
+          source_url: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          filter_reason: string
+          filtered_at?: string | null
+          id?: string
+          primary_connection?: string | null
+          raw_text?: string | null
+          relevance_reason?: string | null
+          relevance_score?: number | null
+          source_name?: string | null
+          source_url?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          filter_reason?: string
+          filtered_at?: string | null
+          id?: string
+          primary_connection?: string | null
+          raw_text?: string | null
+          relevance_reason?: string | null
+          relevance_score?: number | null
+          source_name?: string | null
+          source_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "filtered_signals_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      frontend_errors: {
+        Row: {
+          component: string | null
+          error_type: string
+          id: string
+          message: string
+          metadata: Json | null
+          occurred_at: string
+          page_path: string | null
+          stack: string | null
+          user_agent: string | null
+          user_id: string | null
+        }
+        Insert: {
+          component?: string | null
+          error_type: string
+          id?: string
+          message: string
+          metadata?: Json | null
+          occurred_at?: string
+          page_path?: string | null
+          stack?: string | null
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          component?: string | null
+          error_type?: string
+          id?: string
+          message?: string
+          metadata?: Json | null
+          occurred_at?: string
+          page_path?: string | null
+          stack?: string | null
+          user_agent?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
       }
       generated_reports: {
         Row: {
@@ -4462,6 +6506,132 @@ export type Database = {
         }
         Relationships: []
       }
+      guest_invitations: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          expires_at: string
+          guest_email: string | null
+          guest_name: string
+          guest_user_id: string | null
+          host_user_id: string
+          id: string
+          invite_token: string
+          status: string
+          topic: string | null
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          expires_at?: string
+          guest_email?: string | null
+          guest_name: string
+          guest_user_id?: string | null
+          host_user_id: string
+          id?: string
+          invite_token?: string
+          status?: string
+          topic?: string | null
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          expires_at?: string
+          guest_email?: string | null
+          guest_name?: string
+          guest_user_id?: string | null
+          host_user_id?: string
+          id?: string
+          invite_token?: string
+          status?: string
+          topic?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      guest_profiles: {
+        Row: {
+          bio: string
+          created_at: string
+          cta_text: string | null
+          cta_url: string | null
+          display_name: string
+          expertise: string[]
+          id: string
+          invitation_id: string | null
+          name: string
+          notable_quotes: string[] | null
+          onboarding_completed: boolean | null
+          social_links: Json | null
+          speaking_style: string | null
+          updated_at: string
+          user_id: string
+          voice_id: string
+        }
+        Insert: {
+          bio: string
+          created_at?: string
+          cta_text?: string | null
+          cta_url?: string | null
+          display_name: string
+          expertise?: string[]
+          id?: string
+          invitation_id?: string | null
+          name: string
+          notable_quotes?: string[] | null
+          onboarding_completed?: boolean | null
+          social_links?: Json | null
+          speaking_style?: string | null
+          updated_at?: string
+          user_id: string
+          voice_id?: string
+        }
+        Update: {
+          bio?: string
+          created_at?: string
+          cta_text?: string | null
+          cta_url?: string | null
+          display_name?: string
+          expertise?: string[]
+          id?: string
+          invitation_id?: string | null
+          name?: string
+          notable_quotes?: string[] | null
+          onboarding_completed?: boolean | null
+          social_links?: Json | null
+          speaking_style?: string | null
+          updated_at?: string
+          user_id?: string
+          voice_id?: string
+        }
+        Relationships: []
+      }
+      host_signoffs: {
+        Row: {
+          created_at: string
+          id: string
+          last_used_at: string | null
+          phrase: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_used_at?: string | null
+          phrase: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_used_at?: string | null
+          phrase?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       hypothesis_branches: {
         Row: {
           confirmed_at: string | null
@@ -4582,7 +6752,15 @@ export type Database = {
           signal_id?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "implicit_feedback_signal_fk"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       improvements: {
         Row: {
@@ -4706,6 +6884,51 @@ export type Database = {
           },
         ]
       }
+      incident_creation_failures: {
+        Row: {
+          attempted_at: string
+          attempted_data: Json | null
+          client_id: string | null
+          failure_reason: string
+          id: string
+          signal_id: string | null
+          source_function: string | null
+        }
+        Insert: {
+          attempted_at?: string
+          attempted_data?: Json | null
+          client_id?: string | null
+          failure_reason: string
+          id?: string
+          signal_id?: string | null
+          source_function?: string | null
+        }
+        Update: {
+          attempted_at?: string
+          attempted_data?: Json | null
+          client_id?: string | null
+          failure_reason?: string
+          id?: string
+          signal_id?: string | null
+          source_function?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incident_creation_failures_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "incident_creation_failures_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       incident_entities: {
         Row: {
           created_at: string | null
@@ -4790,6 +7013,8 @@ export type Database = {
       incident_outcomes: {
         Row: {
           created_at: string
+          credibility_updated: boolean | null
+          credibility_updated_at: string | null
           false_positive: boolean | null
           id: string
           improvement_suggestions: string[] | null
@@ -4802,6 +7027,8 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          credibility_updated?: boolean | null
+          credibility_updated_at?: string | null
           false_positive?: boolean | null
           id?: string
           improvement_suggestions?: string[] | null
@@ -4814,6 +7041,8 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          credibility_updated?: boolean | null
+          credibility_updated_at?: string | null
           false_positive?: boolean | null
           id?: string
           improvement_suggestions?: string[] | null
@@ -4876,7 +7105,9 @@ export type Database = {
           closed_at: string | null
           contained_at: string | null
           created_at: string
+          created_by_function: string | null
           deleted_at: string | null
+          deletion_reason: string | null
           id: string
           incident_type: string | null
           information_accuracy: string | null
@@ -4885,8 +7116,14 @@ export type Database = {
           is_read: boolean | null
           is_test: boolean | null
           opened_at: string
+          outcome_notes: string | null
+          outcome_recorded_at: string | null
+          outcome_type: string | null
           owner_user_id: string | null
           priority: Database["public"]["Enums"]["incident_priority"]
+          provenance_id: string | null
+          provenance_summary: string | null
+          provenance_type: string | null
           resolved_at: string | null
           severity_level: string | null
           signal_id: string | null
@@ -4908,7 +7145,9 @@ export type Database = {
           closed_at?: string | null
           contained_at?: string | null
           created_at?: string
+          created_by_function?: string | null
           deleted_at?: string | null
+          deletion_reason?: string | null
           id?: string
           incident_type?: string | null
           information_accuracy?: string | null
@@ -4917,8 +7156,14 @@ export type Database = {
           is_read?: boolean | null
           is_test?: boolean | null
           opened_at?: string
+          outcome_notes?: string | null
+          outcome_recorded_at?: string | null
+          outcome_type?: string | null
           owner_user_id?: string | null
           priority?: Database["public"]["Enums"]["incident_priority"]
+          provenance_id?: string | null
+          provenance_summary?: string | null
+          provenance_type?: string | null
           resolved_at?: string | null
           severity_level?: string | null
           signal_id?: string | null
@@ -4940,7 +7185,9 @@ export type Database = {
           closed_at?: string | null
           contained_at?: string | null
           created_at?: string
+          created_by_function?: string | null
           deleted_at?: string | null
+          deletion_reason?: string | null
           id?: string
           incident_type?: string | null
           information_accuracy?: string | null
@@ -4949,8 +7196,14 @@ export type Database = {
           is_read?: boolean | null
           is_test?: boolean | null
           opened_at?: string
+          outcome_notes?: string | null
+          outcome_recorded_at?: string | null
+          outcome_type?: string | null
           owner_user_id?: string | null
           priority?: Database["public"]["Enums"]["incident_priority"]
+          provenance_id?: string | null
+          provenance_summary?: string | null
+          provenance_type?: string | null
           resolved_at?: string | null
           severity_level?: string | null
           signal_id?: string | null
@@ -5297,6 +7550,47 @@ export type Database = {
           },
         ]
       }
+      interview_sessions: {
+        Row: {
+          created_at: string
+          final_video_url: string | null
+          guest_user_id: string
+          host_user_id: string
+          id: string
+          invitation_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          final_video_url?: string | null
+          guest_user_id: string
+          host_user_id: string
+          id?: string
+          invitation_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          final_video_url?: string | null
+          guest_user_id?: string
+          host_user_id?: string
+          id?: string
+          invitation_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "interview_sessions_invitation_id_fkey"
+            columns: ["invitation_id"]
+            isOneToOne: false
+            referencedRelation: "guest_invitations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       investigation_attachments: {
         Row: {
           description: string | null
@@ -5608,10 +7902,12 @@ export type Database = {
           approved_by: string | null
           checklist: Json
           created_at: string
+          data_retention_date: string | null
           id: string
           jurisdiction: string | null
           legal_basis: string | null
           scan_type: string
+          secure_notes: string | null
           target_id: string | null
           target_name: string
           updated_at: string
@@ -5622,10 +7918,12 @@ export type Database = {
           approved_by?: string | null
           checklist?: Json
           created_at?: string
+          data_retention_date?: string | null
           id?: string
           jurisdiction?: string | null
           legal_basis?: string | null
           scan_type?: string
+          secure_notes?: string | null
           target_id?: string | null
           target_name: string
           updated_at?: string
@@ -5636,10 +7934,12 @@ export type Database = {
           approved_by?: string | null
           checklist?: Json
           created_at?: string
+          data_retention_date?: string | null
           id?: string
           jurisdiction?: string | null
           legal_basis?: string | null
           scan_type?: string
+          secure_notes?: string | null
           target_id?: string | null
           target_name?: string
           updated_at?: string
@@ -5924,6 +8224,78 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investigation_threads: {
+        Row: {
+          client_id: string | null
+          confidence: number | null
+          created_at: string | null
+          domain: string
+          id: string
+          last_activity_at: string | null
+          participating_agents: string[] | null
+          primary_agent: string
+          related_incident_id: string | null
+          resolved_at: string | null
+          started_at: string | null
+          status: string | null
+          thread_name: string
+          thread_summary: string | null
+          threat_actor: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          domain: string
+          id?: string
+          last_activity_at?: string | null
+          participating_agents?: string[] | null
+          primary_agent: string
+          related_incident_id?: string | null
+          resolved_at?: string | null
+          started_at?: string | null
+          status?: string | null
+          thread_name: string
+          thread_summary?: string | null
+          threat_actor?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          domain?: string
+          id?: string
+          last_activity_at?: string | null
+          participating_agents?: string[] | null
+          primary_agent?: string
+          related_incident_id?: string | null
+          resolved_at?: string | null
+          started_at?: string | null
+          status?: string | null
+          thread_name?: string
+          thread_summary?: string | null
+          threat_actor?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investigation_threads_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investigation_threads_related_incident_id_fkey"
+            columns: ["related_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
             referencedColumns: ["id"]
           },
         ]
@@ -6306,6 +8678,54 @@ export type Database = {
         }
         Relationships: []
       }
+      knowledge_connections: {
+        Row: {
+          agents_involved: string[] | null
+          connection_strength: number | null
+          created_at: string | null
+          id: string
+          relationship_type: string
+          source_entry_id: string | null
+          synthesis_note: string
+          target_entry_id: string | null
+        }
+        Insert: {
+          agents_involved?: string[] | null
+          connection_strength?: number | null
+          created_at?: string | null
+          id?: string
+          relationship_type?: string
+          source_entry_id?: string | null
+          synthesis_note: string
+          target_entry_id?: string | null
+        }
+        Update: {
+          agents_involved?: string[] | null
+          connection_strength?: number | null
+          created_at?: string | null
+          id?: string
+          relationship_type?: string
+          source_entry_id?: string | null
+          synthesis_note?: string
+          target_entry_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_connections_source_entry_id_fkey"
+            columns: ["source_entry_id"]
+            isOneToOne: false
+            referencedRelation: "expert_knowledge"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_connections_target_entry_id_fkey"
+            columns: ["target_entry_id"]
+            isOneToOne: false
+            referencedRelation: "expert_knowledge"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       knowledge_freshness_audits: {
         Row: {
           actions_taken: Json | null
@@ -6432,6 +8852,170 @@ export type Database = {
           weight?: number | null
         }
         Relationships: []
+      }
+      learnings: {
+        Row: {
+          applied_at: string | null
+          applied_to_version: number | null
+          created_at: string
+          description: string | null
+          id: string
+          kind: Database["public"]["Enums"]["learning_kind"]
+          proposed_by: string | null
+          proposed_change: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          source_episode_ids: string[] | null
+          source_feedback_ids: string[] | null
+          status: Database["public"]["Enums"]["learning_status"]
+          target_function: string | null
+          title: string
+        }
+        Insert: {
+          applied_at?: string | null
+          applied_to_version?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          kind: Database["public"]["Enums"]["learning_kind"]
+          proposed_by?: string | null
+          proposed_change?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_episode_ids?: string[] | null
+          source_feedback_ids?: string[] | null
+          status?: Database["public"]["Enums"]["learning_status"]
+          target_function?: string | null
+          title: string
+        }
+        Update: {
+          applied_at?: string | null
+          applied_to_version?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          kind?: Database["public"]["Enums"]["learning_kind"]
+          proposed_by?: string | null
+          proposed_change?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_episode_ids?: string[] | null
+          source_feedback_ids?: string[] | null
+          status?: Database["public"]["Enums"]["learning_status"]
+          target_function?: string | null
+          title?: string
+        }
+        Relationships: []
+      }
+      listener_feedback: {
+        Row: {
+          content: string | null
+          created_at: string
+          episode_id: string | null
+          feedback_type: string | null
+          id: string
+          rating: number | null
+          raw_metadata: Json | null
+          sentiment: string | null
+          source: string | null
+        }
+        Insert: {
+          content?: string | null
+          created_at?: string
+          episode_id?: string | null
+          feedback_type?: string | null
+          id?: string
+          rating?: number | null
+          raw_metadata?: Json | null
+          sentiment?: string | null
+          source?: string | null
+        }
+        Update: {
+          content?: string | null
+          created_at?: string
+          episode_id?: string | null
+          feedback_type?: string | null
+          id?: string
+          rating?: number | null
+          raw_metadata?: Json | null
+          sentiment?: string | null
+          source?: string | null
+        }
+        Relationships: []
+      }
+      macro_indicators: {
+        Row: {
+          captured_at: string
+          created_at: string
+          id: string
+          indicator_name: string
+          raw_json: Json | null
+          region: string | null
+          source: string
+          unit: string
+          value: number
+        }
+        Insert: {
+          captured_at?: string
+          created_at?: string
+          id?: string
+          indicator_name: string
+          raw_json?: Json | null
+          region?: string | null
+          source: string
+          unit: string
+          value: number
+        }
+        Update: {
+          captured_at?: string
+          created_at?: string
+          id?: string
+          indicator_name?: string
+          raw_json?: Json | null
+          region?: string | null
+          source?: string
+          unit?: string
+          value?: number
+        }
+        Relationships: []
+      }
+      marketing_assets: {
+        Row: {
+          asset_type: string
+          content: string
+          created_at: string
+          episode_id: string
+          id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          asset_type: string
+          content: string
+          created_at?: string
+          episode_id: string
+          id?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          asset_type?: string
+          content?: string
+          created_at?: string
+          episode_id?: string
+          id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "marketing_assets_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "episodes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       memory_access_log: {
         Row: {
@@ -6923,6 +9507,7 @@ export type Database = {
       pipeline_test_results: {
         Row: {
           created_at: string
+          deleted_at: string | null
           duration_ms: number | null
           error_message: string | null
           error_stack: string | null
@@ -6935,6 +9520,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           duration_ms?: number | null
           error_message?: string | null
           error_stack?: string | null
@@ -6947,6 +9533,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           duration_ms?: number | null
           error_message?: string | null
           error_stack?: string | null
@@ -6985,6 +9572,186 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      podcast_profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          role: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          role?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          role?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      poi_investigations: {
+        Row: {
+          created_at: string
+          entity_id: string
+          error_message: string | null
+          hibp_breaches: Json | null
+          hibp_checked: boolean
+          id: string
+          queries_run: Json
+          report_id: string | null
+          results_found: number
+          sources_searched: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id: string
+          error_message?: string | null
+          hibp_breaches?: Json | null
+          hibp_checked?: boolean
+          id?: string
+          queries_run?: Json
+          report_id?: string | null
+          results_found?: number
+          sources_searched?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string
+          error_message?: string | null
+          hibp_breaches?: Json | null
+          hibp_checked?: boolean
+          id?: string
+          queries_run?: Json
+          report_id?: string | null
+          results_found?: number
+          sources_searched?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_poi_investigations_report_id"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "poi_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "poi_investigations_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      poi_reports: {
+        Row: {
+          confidence_score: number | null
+          created_at: string
+          entity_id: string
+          id: string
+          investigation_id: string | null
+          report_markdown: string
+          subject_profile: Json | null
+          threat_level: string | null
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string
+          entity_id: string
+          id?: string
+          investigation_id?: string | null
+          report_markdown: string
+          subject_profile?: Json | null
+          threat_level?: string | null
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string
+          entity_id?: string
+          id?: string
+          investigation_id?: string | null
+          report_markdown?: string
+          subject_profile?: Json | null
+          threat_level?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "poi_reports_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "poi_reports_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "poi_investigations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_deviations: {
+        Row: {
+          created_at: string | null
+          deviation_magnitude: number | null
+          deviation_note: string | null
+          deviation_type: string
+          id: string
+          prediction_id: string | null
+          signal_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          deviation_magnitude?: number | null
+          deviation_note?: string | null
+          deviation_type: string
+          id?: string
+          prediction_id?: string | null
+          signal_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          deviation_magnitude?: number | null
+          deviation_note?: string | null
+          deviation_type?: string
+          id?: string
+          prediction_id?: string | null
+          signal_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_deviations_prediction_id_fkey"
+            columns: ["prediction_id"]
+            isOneToOne: false
+            referencedRelation: "agent_world_predictions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_deviations_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       predictive_incident_scores: {
         Row: {
@@ -7119,63 +9886,6 @@ export type Database = {
           },
         ]
       }
-      principal_alert_preferences: {
-        Row: {
-          alert_threshold: string | null
-          auto_escalate_after_minutes: number | null
-          created_at: string
-          entity_id: string
-          escalation_contacts: Json | null
-          id: string
-          preferred_channels: string[] | null
-          quiet_hours: Json | null
-          risk_appetite: string | null
-          tenant_id: string | null
-          updated_at: string
-        }
-        Insert: {
-          alert_threshold?: string | null
-          auto_escalate_after_minutes?: number | null
-          created_at?: string
-          entity_id: string
-          escalation_contacts?: Json | null
-          id?: string
-          preferred_channels?: string[] | null
-          quiet_hours?: Json | null
-          risk_appetite?: string | null
-          tenant_id?: string | null
-          updated_at?: string
-        }
-        Update: {
-          alert_threshold?: string | null
-          auto_escalate_after_minutes?: number | null
-          created_at?: string
-          entity_id?: string
-          escalation_contacts?: Json | null
-          id?: string
-          preferred_channels?: string[] | null
-          quiet_hours?: Json | null
-          risk_appetite?: string | null
-          tenant_id?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "principal_alert_preferences_entity_id_fkey"
-            columns: ["entity_id"]
-            isOneToOne: true
-            referencedRelation: "entities"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "principal_alert_preferences_tenant_id_fkey"
-            columns: ["tenant_id"]
-            isOneToOne: false
-            referencedRelation: "tenants"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       processing_queue: {
         Row: {
           completed_at: string | null
@@ -7261,6 +9971,90 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      prompt_versions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          deployed_at: string | null
+          function_name: string
+          id: string
+          notes: string | null
+          prompt_hash: string | null
+          prompt_text: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          deployed_at?: string | null
+          function_name: string
+          id?: string
+          notes?: string | null
+          prompt_hash?: string | null
+          prompt_text: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          deployed_at?: string | null
+          function_name?: string
+          id?: string
+          notes?: string | null
+          prompt_hash?: string | null
+          prompt_text?: string
+          version?: number
+        }
+        Relationships: []
+      }
+      qa_test_results: {
+        Row: {
+          actual_outcome: string | null
+          deleted_at: string | null
+          error_message: string | null
+          expected_outcome: string | null
+          id: string
+          is_known_broken: boolean | null
+          known_broken_reason: string | null
+          passed: boolean
+          response_time_ms: number | null
+          severity: string | null
+          test_name: string
+          test_suite: string
+          tested_at: string | null
+        }
+        Insert: {
+          actual_outcome?: string | null
+          deleted_at?: string | null
+          error_message?: string | null
+          expected_outcome?: string | null
+          id?: string
+          is_known_broken?: boolean | null
+          known_broken_reason?: string | null
+          passed: boolean
+          response_time_ms?: number | null
+          severity?: string | null
+          test_name: string
+          test_suite: string
+          tested_at?: string | null
+        }
+        Update: {
+          actual_outcome?: string | null
+          deleted_at?: string | null
+          error_message?: string | null
+          expected_outcome?: string | null
+          id?: string
+          is_known_broken?: boolean | null
+          known_broken_reason?: string | null
+          passed?: boolean
+          response_time_ms?: number | null
+          severity?: string | null
+          test_name?: string
+          test_suite?: string
+          tested_at?: string | null
+        }
+        Relationships: []
       }
       radical_activity_tracking: {
         Row: {
@@ -7354,6 +10148,30 @@ export type Database = {
           },
         ]
       }
+      rate_limit_log: {
+        Row: {
+          function_name: string
+          id: string
+          request_count: number
+          user_id: string
+          window_start: string
+        }
+        Insert: {
+          function_name: string
+          id?: string
+          request_count?: number
+          user_id: string
+          window_start?: string
+        }
+        Update: {
+          function_name?: string
+          id?: string
+          request_count?: number
+          user_id?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
       rate_limit_tracking: {
         Row: {
           action_type: string
@@ -7377,6 +10195,139 @@ export type Database = {
           window_start?: string
         }
         Relationships: []
+      }
+      recording_segments: {
+        Row: {
+          created_at: string
+          end_time: number | null
+          id: string
+          is_retake: boolean | null
+          original_segment_id: string | null
+          segment_number: number
+          session_id: string
+          start_time: number | null
+          status: string
+          transcript: string | null
+          updated_at: string
+          video_url: string | null
+        }
+        Insert: {
+          created_at?: string
+          end_time?: number | null
+          id?: string
+          is_retake?: boolean | null
+          original_segment_id?: string | null
+          segment_number: number
+          session_id: string
+          start_time?: number | null
+          status?: string
+          transcript?: string | null
+          updated_at?: string
+          video_url?: string | null
+        }
+        Update: {
+          created_at?: string
+          end_time?: number | null
+          id?: string
+          is_retake?: boolean | null
+          original_segment_id?: string | null
+          segment_number?: number
+          session_id?: string
+          start_time?: number | null
+          status?: string
+          transcript?: string | null
+          updated_at?: string
+          video_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_segments_original_segment_id_fkey"
+            columns: ["original_segment_id"]
+            isOneToOne: false
+            referencedRelation: "recording_segments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_segments_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "interview_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      red_team_assessments: {
+        Row: {
+          adjusted_confidence: number | null
+          alternative_hypothesis: string | null
+          client_id: string | null
+          confidence_adjustment: number | null
+          created_at: string | null
+          id: string
+          incident_id: string | null
+          original_conclusion: string
+          original_confidence: number | null
+          red_team_challenge: string
+          signal_id: string | null
+          target_agent: string
+          was_accepted: boolean | null
+          weakest_evidence_link: string | null
+        }
+        Insert: {
+          adjusted_confidence?: number | null
+          alternative_hypothesis?: string | null
+          client_id?: string | null
+          confidence_adjustment?: number | null
+          created_at?: string | null
+          id?: string
+          incident_id?: string | null
+          original_conclusion: string
+          original_confidence?: number | null
+          red_team_challenge: string
+          signal_id?: string | null
+          target_agent: string
+          was_accepted?: boolean | null
+          weakest_evidence_link?: string | null
+        }
+        Update: {
+          adjusted_confidence?: number | null
+          alternative_hypothesis?: string | null
+          client_id?: string | null
+          confidence_adjustment?: number | null
+          created_at?: string | null
+          id?: string
+          incident_id?: string | null
+          original_conclusion?: string
+          original_confidence?: number | null
+          red_team_challenge?: string
+          signal_id?: string | null
+          target_agent?: string
+          was_accepted?: boolean | null
+          weakest_evidence_link?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "red_team_assessments_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "red_team_assessments_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "red_team_assessments_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       rejected_content_hashes: {
         Row: {
@@ -7938,6 +10889,45 @@ export type Database = {
           },
         ]
       }
+      self_improvement_log: {
+        Row: {
+          applied: boolean | null
+          applied_at: string | null
+          created_at: string | null
+          description: string | null
+          id: string
+          improvement_score: number | null
+          improvement_type: string
+          proposed_change: string | null
+          target_agent: string | null
+          title: string
+        }
+        Insert: {
+          applied?: boolean | null
+          applied_at?: string | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          improvement_score?: number | null
+          improvement_type: string
+          proposed_change?: string | null
+          target_agent?: string | null
+          title: string
+        }
+        Update: {
+          applied?: boolean | null
+          applied_at?: string | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          improvement_score?: number | null
+          improvement_type?: string
+          proposed_change?: string | null
+          target_agent?: string | null
+          title?: string
+        }
+        Relationships: []
+      }
       sentiment_tracking: {
         Row: {
           alert_reason: string | null
@@ -8360,6 +11350,130 @@ export type Database = {
           },
         ]
       }
+      signal_agent_analyses: {
+        Row: {
+          agent_call_sign: string
+          analysis: string
+          analysis_tier: string | null
+          confidence_breakdown: Json | null
+          confidence_score: number | null
+          created_at: string | null
+          id: string
+          pattern_matches: Json | null
+          reasoning_log: Json | null
+          signal_id: string | null
+          trigger_reason: string | null
+        }
+        Insert: {
+          agent_call_sign: string
+          analysis: string
+          analysis_tier?: string | null
+          confidence_breakdown?: Json | null
+          confidence_score?: number | null
+          created_at?: string | null
+          id?: string
+          pattern_matches?: Json | null
+          reasoning_log?: Json | null
+          signal_id?: string | null
+          trigger_reason?: string | null
+        }
+        Update: {
+          agent_call_sign?: string
+          analysis?: string
+          analysis_tier?: string | null
+          confidence_breakdown?: Json | null
+          confidence_score?: number | null
+          created_at?: string | null
+          id?: string
+          pattern_matches?: Json | null
+          reasoning_log?: Json | null
+          signal_id?: string | null
+          trigger_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_agent_analyses_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_anomaly_scores: {
+        Row: {
+          anomaly_details: Json | null
+          anomaly_type: string | null
+          computed_at: string | null
+          id: string
+          is_anomalous: boolean | null
+          signal_id: string | null
+          z_score: number | null
+        }
+        Insert: {
+          anomaly_details?: Json | null
+          anomaly_type?: string | null
+          computed_at?: string | null
+          id?: string
+          is_anomalous?: boolean | null
+          signal_id?: string | null
+          z_score?: number | null
+        }
+        Update: {
+          anomaly_details?: Json | null
+          anomaly_type?: string | null
+          computed_at?: string | null
+          id?: string
+          is_anomalous?: boolean | null
+          signal_id?: string | null
+          z_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_anomaly_scores_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_baselines: {
+        Row: {
+          day_of_week: number | null
+          ewma: number | null
+          hour_of_day: number | null
+          id: string
+          last_computed_at: string | null
+          mean_count: number | null
+          sample_count: number | null
+          signal_type: string
+          std_dev: number | null
+        }
+        Insert: {
+          day_of_week?: number | null
+          ewma?: number | null
+          hour_of_day?: number | null
+          id?: string
+          last_computed_at?: string | null
+          mean_count?: number | null
+          sample_count?: number | null
+          signal_type: string
+          std_dev?: number | null
+        }
+        Update: {
+          day_of_week?: number | null
+          ewma?: number | null
+          hour_of_day?: number | null
+          id?: string
+          last_computed_at?: string | null
+          mean_count?: number | null
+          sample_count?: number | null
+          signal_type?: string
+          std_dev?: number | null
+        }
+        Relationships: []
+      }
       signal_clusters: {
         Row: {
           agent_analysis: string | null
@@ -8503,6 +11617,7 @@ export type Database = {
           created_at: string
           id: string
           location: string | null
+          match_confidence: string | null
           normalized_text: string | null
           primary_signal_id: string
           severity: string | null
@@ -8516,6 +11631,7 @@ export type Database = {
           created_at?: string
           id?: string
           location?: string | null
+          match_confidence?: string | null
           normalized_text?: string | null
           primary_signal_id: string
           severity?: string | null
@@ -8529,6 +11645,7 @@ export type Database = {
           created_at?: string
           id?: string
           location?: string | null
+          match_confidence?: string | null
           normalized_text?: string | null
           primary_signal_id?: string
           severity?: string | null
@@ -8572,6 +11689,56 @@ export type Database = {
           },
           {
             foreignKeyName: "signal_documents_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_feedback: {
+        Row: {
+          corrected_category: string | null
+          corrected_severity: string | null
+          created_at: string | null
+          created_by: string | null
+          feedback_source: string
+          feedback_type: string
+          id: string
+          notes: string | null
+          original_category: string | null
+          original_severity: string | null
+          signal_id: string | null
+        }
+        Insert: {
+          corrected_category?: string | null
+          corrected_severity?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          feedback_source?: string
+          feedback_type: string
+          id?: string
+          notes?: string | null
+          original_category?: string | null
+          original_severity?: string | null
+          signal_id?: string | null
+        }
+        Update: {
+          corrected_category?: string | null
+          corrected_severity?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          feedback_source?: string
+          feedback_type?: string
+          id?: string
+          notes?: string | null
+          original_category?: string | null
+          original_severity?: string | null
+          signal_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_feedback_signal_id_fkey"
             columns: ["signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
@@ -8626,6 +11793,45 @@ export type Database = {
           {
             foreignKeyName: "signal_merge_proposals_primary_signal_id_fkey"
             columns: ["primary_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_pattern_contributors: {
+        Row: {
+          contributing_signal_id: string
+          created_at: string
+          id: string
+          pattern_signal_id: string
+          pattern_type: string
+        }
+        Insert: {
+          contributing_signal_id: string
+          created_at?: string
+          id?: string
+          pattern_signal_id: string
+          pattern_type: string
+        }
+        Update: {
+          contributing_signal_id?: string
+          created_at?: string
+          id?: string
+          pattern_signal_id?: string
+          pattern_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_pattern_contributors_contributing_signal_id_fkey"
+            columns: ["contributing_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_pattern_contributors_pattern_signal_id_fkey"
+            columns: ["pattern_signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
             referencedColumns: ["id"]
@@ -8844,6 +12050,54 @@ export type Database = {
           },
         ]
       }
+      signal_verifications: {
+        Row: {
+          id: string
+          signal_id: string
+          source_key: string | null
+          verification_method: string | null
+          verification_note: string | null
+          verified_at: string | null
+          verified_by: string | null
+          was_accurate: boolean
+        }
+        Insert: {
+          id?: string
+          signal_id: string
+          source_key?: string | null
+          verification_method?: string | null
+          verification_note?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+          was_accurate: boolean
+        }
+        Update: {
+          id?: string
+          signal_id?: string
+          source_key?: string | null
+          verification_method?: string | null
+          verification_note?: string | null
+          verified_at?: string | null
+          verified_by?: string | null
+          was_accurate?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_verifications_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: true
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_verifications_verified_by_fkey"
+            columns: ["verified_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       signals: {
         Row: {
           applied_rules: Json | null
@@ -8851,6 +12105,7 @@ export type Database = {
           category: string | null
           client_id: string | null
           comments: Json | null
+          composite_confidence: number | null
           confidence: number | null
           content_embedding: string | null
           content_hash: string | null
@@ -8858,6 +12113,8 @@ export type Database = {
           correlation_confidence: number | null
           correlation_group_id: string | null
           created_at: string
+          deleted_at: string | null
+          deletion_reason: string | null
           description: string | null
           engagement_metrics: Json | null
           entity_tags: string[] | null
@@ -8866,6 +12123,7 @@ export type Database = {
           feedback_score: number | null
           hashtags: string[] | null
           id: string
+          image_url: string | null
           information_accuracy: string | null
           is_primary_signal: boolean | null
           is_read: boolean | null
@@ -8890,6 +12148,7 @@ export type Database = {
           signal_type: string | null
           source_id: string | null
           source_reliability: string | null
+          source_url: string | null
           status: Database["public"]["Enums"]["signal_status"]
           tenant_id: string | null
           thumbnail_url: string | null
@@ -8903,6 +12162,7 @@ export type Database = {
           category?: string | null
           client_id?: string | null
           comments?: Json | null
+          composite_confidence?: number | null
           confidence?: number | null
           content_embedding?: string | null
           content_hash?: string | null
@@ -8910,6 +12170,8 @@ export type Database = {
           correlation_confidence?: number | null
           correlation_group_id?: string | null
           created_at?: string
+          deleted_at?: string | null
+          deletion_reason?: string | null
           description?: string | null
           engagement_metrics?: Json | null
           entity_tags?: string[] | null
@@ -8918,6 +12180,7 @@ export type Database = {
           feedback_score?: number | null
           hashtags?: string[] | null
           id?: string
+          image_url?: string | null
           information_accuracy?: string | null
           is_primary_signal?: boolean | null
           is_read?: boolean | null
@@ -8942,6 +12205,7 @@ export type Database = {
           signal_type?: string | null
           source_id?: string | null
           source_reliability?: string | null
+          source_url?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
           tenant_id?: string | null
           thumbnail_url?: string | null
@@ -8955,6 +12219,7 @@ export type Database = {
           category?: string | null
           client_id?: string | null
           comments?: Json | null
+          composite_confidence?: number | null
           confidence?: number | null
           content_embedding?: string | null
           content_hash?: string | null
@@ -8962,6 +12227,8 @@ export type Database = {
           correlation_confidence?: number | null
           correlation_group_id?: string | null
           created_at?: string
+          deleted_at?: string | null
+          deletion_reason?: string | null
           description?: string | null
           engagement_metrics?: Json | null
           entity_tags?: string[] | null
@@ -8970,6 +12237,7 @@ export type Database = {
           feedback_score?: number | null
           hashtags?: string[] | null
           id?: string
+          image_url?: string | null
           information_accuracy?: string | null
           is_primary_signal?: boolean | null
           is_read?: boolean | null
@@ -8994,6 +12262,7 @@ export type Database = {
           signal_type?: string | null
           source_id?: string | null
           source_reliability?: string | null
+          source_url?: string | null
           status?: Database["public"]["Enums"]["signal_status"]
           tenant_id?: string | null
           thumbnail_url?: string | null
@@ -9180,6 +12449,51 @@ export type Database = {
           },
         ]
       }
+      source_credibility_scores: {
+        Row: {
+          confirmed_signals: number | null
+          created_at: string | null
+          current_credibility: number | null
+          id: string
+          last_updated_at: string | null
+          prior_credibility: number | null
+          refuted_signals: number | null
+          signal_type_scores: Json | null
+          source_key: string
+          source_name: string | null
+          total_signals: number | null
+          unverified_signals: number | null
+        }
+        Insert: {
+          confirmed_signals?: number | null
+          created_at?: string | null
+          current_credibility?: number | null
+          id?: string
+          last_updated_at?: string | null
+          prior_credibility?: number | null
+          refuted_signals?: number | null
+          signal_type_scores?: Json | null
+          source_key: string
+          source_name?: string | null
+          total_signals?: number | null
+          unverified_signals?: number | null
+        }
+        Update: {
+          confirmed_signals?: number | null
+          created_at?: string | null
+          current_credibility?: number | null
+          id?: string
+          last_updated_at?: string | null
+          prior_credibility?: number | null
+          refuted_signals?: number | null
+          signal_type_scores?: Json | null
+          source_key?: string
+          source_name?: string | null
+          total_signals?: number | null
+          unverified_signals?: number | null
+        }
+        Relationships: []
+      }
       source_reliability_metrics: {
         Row: {
           accurate_signals: number | null
@@ -9254,6 +12568,57 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      speculative_analyses: {
+        Row: {
+          analysis: string
+          call_sign: string
+          confidence: number | null
+          created_at: string | null
+          id: string
+          incident_id: string | null
+          signal_id: string | null
+          structured: Json | null
+          was_viewed: boolean | null
+        }
+        Insert: {
+          analysis: string
+          call_sign: string
+          confidence?: number | null
+          created_at?: string | null
+          id?: string
+          incident_id?: string | null
+          signal_id?: string | null
+          structured?: Json | null
+          was_viewed?: boolean | null
+        }
+        Update: {
+          analysis?: string
+          call_sign?: string
+          confidence?: number | null
+          created_at?: string | null
+          id?: string
+          incident_id?: string | null
+          signal_id?: string | null
+          structured?: Json | null
+          was_viewed?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "speculative_analyses_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "speculative_analyses_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       structured_debate_arguments: {
         Row: {
@@ -9959,6 +13324,90 @@ export type Database = {
         }
         Relationships: []
       }
+      thread_memories: {
+        Row: {
+          added_at: string | null
+          id: string
+          is_pivotal: boolean | null
+          memory_id: string
+          sequence_position: number | null
+          thread_id: string
+        }
+        Insert: {
+          added_at?: string | null
+          id?: string
+          is_pivotal?: boolean | null
+          memory_id: string
+          sequence_position?: number | null
+          thread_id: string
+        }
+        Update: {
+          added_at?: string | null
+          id?: string
+          is_pivotal?: boolean | null
+          memory_id?: string
+          sequence_position?: number | null
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "thread_memories_memory_id_fkey"
+            columns: ["memory_id"]
+            isOneToOne: false
+            referencedRelation: "agent_investigation_memory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "thread_memories_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      thread_timeline: {
+        Row: {
+          event_description: string
+          event_type: string
+          id: string
+          occurred_at: string | null
+          signal_id: string | null
+          thread_id: string
+        }
+        Insert: {
+          event_description: string
+          event_type: string
+          id?: string
+          occurred_at?: string | null
+          signal_id?: string | null
+          thread_id: string
+        }
+        Update: {
+          event_description?: string
+          event_type?: string
+          id?: string
+          occurred_at?: string | null
+          signal_id?: string | null
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "thread_timeline_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "thread_timeline_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "investigation_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       threat_analysis_requests: {
         Row: {
           analysis_type: string
@@ -10174,6 +13623,163 @@ export type Database = {
           },
         ]
       }
+      threat_trajectories: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          historical_accuracy: number | null
+          id: string
+          is_active: boolean | null
+          source: string | null
+          threat_type: string
+          total_phases: number
+          trajectory_name: string
+          typical_duration_hours: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          historical_accuracy?: number | null
+          id?: string
+          is_active?: boolean | null
+          source?: string | null
+          threat_type: string
+          total_phases: number
+          trajectory_name: string
+          typical_duration_hours?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          historical_accuracy?: number | null
+          id?: string
+          is_active?: boolean | null
+          source?: string | null
+          threat_type?: string
+          total_phases?: number
+          trajectory_name?: string
+          typical_duration_hours?: number | null
+        }
+        Relationships: []
+      }
+      trajectory_phases: {
+        Row: {
+          description: string | null
+          id: string
+          indicators: string[] | null
+          next_phase_probability: number | null
+          phase_name: string
+          phase_number: number
+          trajectory_id: string
+          typical_duration_hours: number | null
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          indicators?: string[] | null
+          next_phase_probability?: number | null
+          phase_name: string
+          phase_number: number
+          trajectory_id: string
+          typical_duration_hours?: number | null
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          indicators?: string[] | null
+          next_phase_probability?: number | null
+          phase_name?: string
+          phase_number?: number
+          trajectory_id?: string
+          typical_duration_hours?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trajectory_phases_trajectory_id_fkey"
+            columns: ["trajectory_id"]
+            isOneToOne: false
+            referencedRelation: "threat_trajectories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      trajectory_positions: {
+        Row: {
+          client_id: string | null
+          confidence: number | null
+          created_at: string | null
+          current_phase: number
+          estimated_next_phase_at: string | null
+          id: string
+          incident_id: string | null
+          is_active: boolean | null
+          notes: string | null
+          positioned_by: string | null
+          signal_id: string | null
+          trajectory_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          current_phase: number
+          estimated_next_phase_at?: string | null
+          id?: string
+          incident_id?: string | null
+          is_active?: boolean | null
+          notes?: string | null
+          positioned_by?: string | null
+          signal_id?: string | null
+          trajectory_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          current_phase?: number
+          estimated_next_phase_at?: string | null
+          id?: string
+          incident_id?: string | null
+          is_active?: boolean | null
+          notes?: string | null
+          positioned_by?: string | null
+          signal_id?: string | null
+          trajectory_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trajectory_positions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trajectory_positions_incident_id_fkey"
+            columns: ["incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trajectory_positions_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trajectory_positions_trajectory_id_fkey"
+            columns: ["trajectory_id"]
+            isOneToOne: false
+            referencedRelation: "threat_trajectories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       travel_alerts: {
         Row: {
           acknowledged: boolean | null
@@ -10252,6 +13858,50 @@ export type Database = {
             columns: ["traveler_id"]
             isOneToOne: false
             referencedRelation: "travelers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      travel_itineraries: {
+        Row: {
+          client_id: string | null
+          created_at: string | null
+          destination: string
+          id: string
+          notes: string | null
+          risk_level: string | null
+          travel_end: string
+          travel_start: string
+          updated_at: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string | null
+          destination: string
+          id?: string
+          notes?: string | null
+          risk_level?: string | null
+          travel_end: string
+          travel_start: string
+          updated_at?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string | null
+          destination?: string
+          id?: string
+          notes?: string | null
+          risk_level?: string | null
+          travel_end?: string
+          travel_start?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "travel_itineraries_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
             referencedColumns: ["id"]
           },
         ]
@@ -10475,6 +14125,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      user_last_seen: {
+        Row: {
+          last_seen_at: string
+          previous_seen_at: string | null
+          user_id: string
+        }
+        Insert: {
+          last_seen_at?: string
+          previous_seen_at?: string | null
+          user_id: string
+        }
+        Update: {
+          last_seen_at?: string
+          previous_seen_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       user_mfa_settings: {
         Row: {
@@ -10791,6 +14459,131 @@ export type Database = {
           },
         ]
       }
+      video_clips: {
+        Row: {
+          ai_score: number | null
+          ai_suggested: boolean | null
+          aspect_ratio: string
+          caption_style: Json | null
+          captions: Json | null
+          created_at: string
+          duration_seconds: number | null
+          end_time: number
+          export_status: string | null
+          exported_path: string | null
+          headline_text: string | null
+          id: string
+          platform: string | null
+          source_video_id: string
+          start_time: number
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          ai_score?: number | null
+          ai_suggested?: boolean | null
+          aspect_ratio?: string
+          caption_style?: Json | null
+          captions?: Json | null
+          created_at?: string
+          duration_seconds?: number | null
+          end_time: number
+          export_status?: string | null
+          exported_path?: string | null
+          headline_text?: string | null
+          id?: string
+          platform?: string | null
+          source_video_id: string
+          start_time: number
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          ai_score?: number | null
+          ai_suggested?: boolean | null
+          aspect_ratio?: string
+          caption_style?: Json | null
+          captions?: Json | null
+          created_at?: string
+          duration_seconds?: number | null
+          end_time?: number
+          export_status?: string | null
+          exported_path?: string | null
+          headline_text?: string | null
+          id?: string
+          platform?: string | null
+          source_video_id?: string
+          start_time?: number
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "video_clips_source_video_id_fkey"
+            columns: ["source_video_id"]
+            isOneToOne: false
+            referencedRelation: "video_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      video_uploads: {
+        Row: {
+          created_at: string
+          description: string | null
+          duration_seconds: number | null
+          file_size_bytes: number | null
+          id: string
+          mime_type: string | null
+          original_filename: string
+          status: string
+          storage_path: string
+          thumbnail_path: string | null
+          title: string
+          transcription: string | null
+          transcription_segments: Json | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          duration_seconds?: number | null
+          file_size_bytes?: number | null
+          id?: string
+          mime_type?: string | null
+          original_filename: string
+          status?: string
+          storage_path: string
+          thumbnail_path?: string | null
+          title: string
+          transcription?: string | null
+          transcription_segments?: Json | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          duration_seconds?: number | null
+          file_size_bytes?: number | null
+          id?: string
+          mime_type?: string | null
+          original_filename?: string
+          status?: string
+          storage_path?: string
+          thumbnail_path?: string | null
+          title?: string
+          transcription?: string | null
+          transcription_segments?: Json | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       violation_reports: {
         Row: {
           assigned_to: string | null
@@ -11063,6 +14856,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      wildfire_station_ratings: {
+        Row: {
+          created_at: string
+          danger_code: string
+          danger_rating: string
+          days_at_current_rating: number
+          fwi: number | null
+          id: string
+          precip_mm: number | null
+          rating_date: string
+          rh_min_pct: number | null
+          station_id: string
+          station_name: string
+          temp_max_c: number | null
+          wind_dir_deg: number | null
+          wind_max_kph: number | null
+        }
+        Insert: {
+          created_at?: string
+          danger_code: string
+          danger_rating: string
+          days_at_current_rating?: number
+          fwi?: number | null
+          id?: string
+          precip_mm?: number | null
+          rating_date?: string
+          rh_min_pct?: number | null
+          station_id: string
+          station_name: string
+          temp_max_c?: number | null
+          wind_dir_deg?: number | null
+          wind_max_kph?: number | null
+        }
+        Update: {
+          created_at?: string
+          danger_code?: string
+          danger_rating?: string
+          days_at_current_rating?: number
+          fwi?: number | null
+          id?: string
+          precip_mm?: number | null
+          rating_date?: string
+          rh_min_pct?: number | null
+          station_id?: string
+          station_name?: string
+          temp_max_c?: number | null
+          wind_dir_deg?: number | null
+          wind_max_kph?: number | null
+        }
+        Relationships: []
       }
       workspace_audit_log: {
         Row: {
@@ -11386,8 +15230,218 @@ export type Database = {
         }
         Relationships: []
       }
+      wraith_prompt_injection_log: {
+        Row: {
+          action_taken: string
+          analysis_model: string | null
+          confidence: number
+          created_at: string
+          id: string
+          indicators: Json
+          injection_type: string | null
+          message_preview: string
+          session_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action_taken: string
+          analysis_model?: string | null
+          confidence: number
+          created_at?: string
+          id?: string
+          indicators?: Json
+          injection_type?: string | null
+          message_preview: string
+          session_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action_taken?: string
+          analysis_model?: string | null
+          confidence?: number
+          created_at?: string
+          id?: string
+          indicators?: Json
+          injection_type?: string | null
+          message_preview?: string
+          session_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      wraith_signal_threat_scores: {
+        Row: {
+          adversarial_score: number | null
+          ai_generated_score: number
+          analysis_model: string | null
+          confidence: number
+          created_at: string
+          id: string
+          model_fingerprints: Json | null
+          signal_id: string
+          synthetic_intel_score: number | null
+          threat_indicators: Json
+          verdict: string
+        }
+        Insert: {
+          adversarial_score?: number | null
+          ai_generated_score: number
+          analysis_model?: string | null
+          confidence: number
+          created_at?: string
+          id?: string
+          model_fingerprints?: Json | null
+          signal_id: string
+          synthetic_intel_score?: number | null
+          threat_indicators?: Json
+          verdict?: string
+        }
+        Update: {
+          adversarial_score?: number | null
+          ai_generated_score?: number
+          analysis_model?: string | null
+          confidence?: number
+          created_at?: string
+          id?: string
+          model_fingerprints?: Json | null
+          signal_id?: string
+          synthetic_intel_score?: number | null
+          threat_indicators?: Json
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wraith_signal_threat_scores_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wraith_vulnerability_findings: {
+        Row: {
+          created_at: string
+          cvss_score: number | null
+          cwe_id: string | null
+          description: string
+          file_path: string
+          id: string
+          location: string | null
+          recommendation: string
+          scan_id: string
+          severity: string
+          signal_id: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          cvss_score?: number | null
+          cwe_id?: string | null
+          description: string
+          file_path: string
+          id?: string
+          location?: string | null
+          recommendation: string
+          scan_id: string
+          severity: string
+          signal_id?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          cvss_score?: number | null
+          cwe_id?: string | null
+          description?: string
+          file_path?: string
+          id?: string
+          location?: string | null
+          recommendation?: string
+          scan_id?: string
+          severity?: string
+          signal_id?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wraith_vulnerability_findings_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
+      dlq_health: {
+        Row: {
+          exhausted_retries: number | null
+          function_name: string | null
+          max_retries_seen: number | null
+          oldest_item: string | null
+          queue_depth: number | null
+          stale_items: number | null
+          status: string | null
+        }
+        Relationships: []
+      }
+      stalled_cron_jobs: {
+        Row: {
+          description: string | null
+          expected_interval_minutes: number | null
+          is_critical: boolean | null
+          job_name: string | null
+          last_attempt: string | null
+          last_success: string | null
+          minutes_since_last_success: number | null
+          recent_failures: number | null
+          stall_status: string | null
+        }
+        Relationships: []
+      }
+      stuck_documents: {
+        Row: {
+          client_id: string | null
+          created_at: string | null
+          file_size: number | null
+          file_type: string | null
+          filename: string | null
+          id: string | null
+          minutes_stuck: number | null
+          processing_status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string | null
+          file_size?: number | null
+          file_type?: string | null
+          filename?: string | null
+          id?: string | null
+          minutes_stuck?: never
+          processing_status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string | null
+          file_size?: number | null
+          file_type?: string | null
+          filename?: string | null
+          id?: string | null
+          minutes_stuck?: never
+          processing_status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       watchdog_effectiveness: {
         Row: {
           avg_effectiveness: number | null
@@ -11403,6 +15457,7 @@ export type Database = {
       }
     }
     Functions: {
+      auto_archive_stale_entities: { Args: never; Returns: number }
       calculate_signal_hash: { Args: { text_content: string }; Returns: string }
       calibrate_agent_accuracy: { Args: never; Returns: number }
       calibrate_analyst_accuracy: { Args: never; Returns: number }
@@ -11453,6 +15508,7 @@ export type Database = {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
       }
+      expire_watch_list_entries: { Args: never; Returns: number }
       find_similar_signals_by_embedding: {
         Args: {
           p_embedding: string
@@ -11482,6 +15538,13 @@ export type Database = {
           p_last_validated_at: string
         }
         Returns: number
+      }
+      get_service_role_key: { Args: never; Returns: string }
+      get_user_accessible_client_ids: {
+        Args: never
+        Returns: {
+          client_id: string
+        }[]
       }
       get_user_consortium_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
@@ -11596,6 +15659,14 @@ export type Database = {
           similarity: number
         }[]
       }
+      pattern_already_detected: {
+        Args: {
+          p_client_id: string
+          p_pattern_type: string
+          p_window_hours?: number
+        }
+        Returns: boolean
+      }
       record_violation: {
         Args: {
           p_category: string
@@ -11608,15 +15679,55 @@ export type Database = {
         }
         Returns: string
       }
-      refresh_signal_feedback_scores: { Args: never; Returns: number }
-      restore_ai_messages: {
-        Args: { message_ids: string[] }
+      refresh_entity_quality_score: {
+        Args: { p_entity_id: string }
         Returns: undefined
+      }
+      refresh_signal_feedback_scores: { Args: never; Returns: number }
+      route_to_agents: {
+        Args: { query_embedding: string; top_k?: number }
+        Returns: {
+          call_sign: string
+          similarity: number
+        }[]
+      }
+      search_expert_knowledge_semantic: {
+        Args: {
+          call_sign_filter?: string
+          match_count?: number
+          match_threshold?: number
+          query_embedding: string
+        }
+        Returns: {
+          citation: string
+          content: string
+          domain: string
+          id: string
+          knowledge_type: string
+          similarity: number
+          title: string
+        }[]
+      }
+      seed_default_signoffs: {
+        Args: { target_user_id: string }
+        Returns: number
       }
       set_current_client: {
         Args: { client_id_param: string }
         Returns: undefined
       }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
+      upsert_rate_limit: {
+        Args: {
+          p_function_name: string
+          p_max_requests: number
+          p_user_id: string
+          p_window_start: string
+        }
+        Returns: Json
+      }
+      uuid_generate_v4: { Args: never; Returns: string }
     }
     Enums: {
       alert_status: "pending" | "sent" | "delivered" | "failed" | "acknowledged"
@@ -11659,6 +15770,7 @@ export type Database = {
         | "resolved"
         | "closed"
         | "mitigated"
+        | "investigating"
       intel_product_type:
         | "blof"
         | "intel_briefing"
@@ -11667,13 +15779,24 @@ export type Database = {
         | "situational_report"
         | "warning_order"
         | "flash_report"
+      learning_kind:
+        | "prompt_change"
+        | "rule_addition"
+        | "voice_correction"
+        | "topic_avoidance"
+        | "metadata_fix"
+      learning_status:
+        | "proposed"
+        | "approved"
+        | "applied"
+        | "rejected"
+        | "deferred"
       mission_phase:
         | "intake"
         | "briefing"
         | "execution"
         | "synthesis"
         | "completed"
-        | "cancelled"
       mission_type:
         | "risk_snapshot"
         | "incident_response"
@@ -11705,6 +15828,7 @@ export type Database = {
         | "investigating"
         | "resolved"
         | "false_positive"
+        | "archived"
       task_force_role:
         | "leader"
         | "intelligence_analyst"
@@ -11906,6 +16030,7 @@ export const Constants = {
         "resolved",
         "closed",
         "mitigated",
+        "investigating",
       ],
       intel_product_type: [
         "blof",
@@ -11916,13 +16041,26 @@ export const Constants = {
         "warning_order",
         "flash_report",
       ],
+      learning_kind: [
+        "prompt_change",
+        "rule_addition",
+        "voice_correction",
+        "topic_avoidance",
+        "metadata_fix",
+      ],
+      learning_status: [
+        "proposed",
+        "approved",
+        "applied",
+        "rejected",
+        "deferred",
+      ],
       mission_phase: [
         "intake",
         "briefing",
         "execution",
         "synthesis",
         "completed",
-        "cancelled",
       ],
       mission_type: [
         "risk_snapshot",
@@ -11958,6 +16096,7 @@ export const Constants = {
         "investigating",
         "resolved",
         "false_positive",
+        "archived",
       ],
       task_force_role: [
         "leader",

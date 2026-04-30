@@ -12,7 +12,9 @@
     "postinstall": "patch-package",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "gen:types": "node scripts/gen-db-types.mjs",
+    "check:types-drift": "node scripts/gen-db-types.mjs --check"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
