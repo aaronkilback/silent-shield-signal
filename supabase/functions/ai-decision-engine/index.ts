@@ -673,12 +673,16 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         // Phase 2B: Write composite score back to signal row for auditability.
         // Stored regardless of whether the gate passes or fails — every signal
         // gets a queryable score showing exactly why it did or didn't become an incident.
-        supabase.from('signals').update({
+        // Awaited (used to be fire-and-forget) — when called from cron via
+        // net.http_post the runtime tore down before the async update landed,
+        // leaving composite_confidence null on most signals. That blocked the
+        // downstream review-signal-agent trigger gate.
+        const compositeWriteResult = await supabase.from('signals').update({
           composite_confidence: Math.round(compositeScore * 1000) / 1000
-        }).eq('id', signal.id).then(
-          () => {},
-          (e: any) => console.warn('[AI-Decision] Failed to write composite_confidence:', e)
-        );
+        }).eq('id', signal.id);
+        if (compositeWriteResult.error) {
+          console.warn('[AI-Decision] Failed to write composite_confidence:', compositeWriteResult.error);
+        }
 
         // Phase 2B-bis: Write full reasoning row to signal_agent_analyses so analysts
         // can see exactly HOW the confidence score was constructed.
