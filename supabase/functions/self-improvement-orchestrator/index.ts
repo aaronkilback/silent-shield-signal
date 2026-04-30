@@ -232,17 +232,34 @@ Return ONLY the JSON array.`;
         const cleaned = aiResult.content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
         const improvements = JSON.parse(cleaned);
         if (Array.isArray(improvements) && !dry_run) {
-          const rows = improvements.map((imp: any) => ({
-            improvement_type: imp.improvement_type || 'general',
-            target_agent: imp.target_agent || null,
-            title: imp.title || 'Untitled',
-            description: imp.description || '',
-            proposed_change: imp.proposed_change || null,
-            applied: false,
-          }));
-          await supabase.from('self_improvement_log').insert(rows);
-          report.push(`🧠 AI generated ${rows.length} new improvement proposals`);
-          actions.push({ type: 'ai_proposals', detail: `${rows.length} proposals queued` });
+          // Dedupe against existing unapplied proposals — the AI tends to re-suggest
+          // the same systemic improvements every cycle (target_agent=null proposals
+          // never auto-apply, so they pile up). Skip insert if a proposal with the
+          // same title already exists with applied=false.
+          const titles = improvements.map((i: any) => i.title || 'Untitled');
+          const { data: existingPending } = await supabase
+            .from('self_improvement_log')
+            .select('title')
+            .eq('applied', false)
+            .in('title', titles);
+          const existingTitles = new Set((existingPending || []).map((r: any) => r.title));
+
+          const rows = improvements
+            .filter((imp: any) => !existingTitles.has(imp.title || 'Untitled'))
+            .map((imp: any) => ({
+              improvement_type: imp.improvement_type || 'general',
+              target_agent: imp.target_agent || null,
+              title: imp.title || 'Untitled',
+              description: imp.description || '',
+              proposed_change: imp.proposed_change || null,
+              applied: false,
+            }));
+          const skipped = improvements.length - rows.length;
+          if (rows.length > 0) {
+            await supabase.from('self_improvement_log').insert(rows);
+          }
+          report.push(`🧠 AI generated ${rows.length} new proposals${skipped ? ` (${skipped} duplicates skipped)` : ''}`);
+          actions.push({ type: 'ai_proposals', detail: `${rows.length} new, ${skipped} duplicates skipped` });
         }
       } catch (_) {}
     }

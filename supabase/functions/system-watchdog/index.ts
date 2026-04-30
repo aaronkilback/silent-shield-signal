@@ -2738,12 +2738,12 @@ Deno.serve(async (req) => {
 
       const { data: recentLearningUpdate } = await supabase
         .from('learning_profiles')
-        .select('updated_at')
-        .order('updated_at', { ascending: false })
+        .select('last_updated')
+        .order('last_updated', { ascending: false })
         .limit(1);
 
-      const learningAge = recentLearningUpdate?.[0]?.updated_at
-        ? Date.now() - new Date(recentLearningUpdate[0].updated_at).getTime()
+      const learningAge = recentLearningUpdate?.[0]?.last_updated
+        ? Date.now() - new Date(recentLearningUpdate[0].last_updated).getTime()
         : Infinity;
 
       if ((recentFeedback?.length ?? 0) > 0 && learningAge > 48 * 3600000) {
@@ -2754,6 +2754,31 @@ Deno.serve(async (req) => {
           analysis: `Feedback events exist in the last 7 days but learning_profiles last updated ${Math.round(learningAge / 3600000)}h ago.`,
           plainEnglish: `Analysts are rating signals but those ratings are not improving the relevance filter. The learning loop is broken.`,
           action: `Check process-feedback function logs. Verify it is writing to learning_profiles table.`,
+        });
+      }
+
+      // 5. Self-improvement proposal backlog — systemic proposals never auto-apply
+      // (apply path requires target_agent IS NOT NULL; AI generates target_agent=null
+      // for network-wide ideas). Surface the backlog so it does not pile up invisibly.
+      const { data: pendingProposals } = await supabase
+        .from('self_improvement_log')
+        .select('title, target_agent, created_at')
+        .eq('applied', false)
+        .neq('improvement_type', 'orchestration_cycle')
+        .order('created_at', { ascending: false });
+
+      if ((pendingProposals?.length ?? 0) >= 5) {
+        const titles = (pendingProposals || []).slice(0, 5).map((p: any) => `"${p.title}"`).join(', ');
+        const oldestDays = pendingProposals?.length
+          ? Math.round((Date.now() - new Date(pendingProposals[pendingProposals.length - 1].created_at).getTime()) / (24 * 3600000))
+          : 0;
+        behavioralFindings.push({
+          category: 'behavioral_health',
+          severity: 'medium',
+          title: `${pendingProposals?.length} self-improvement proposals awaiting review`,
+          analysis: `${pendingProposals?.length} proposals in self_improvement_log have applied=false. Oldest is ${oldestDays}d old. Examples: ${titles}.`,
+          plainEnglish: `The self-improvement orchestrator is generating ideas but most are network-wide (target_agent=null) and the auto-apply path only handles per-agent prompt edits. These proposals need either human review or a broader apply mechanism.`,
+          action: `Review pending proposals in self_improvement_log and either apply them manually, mark as applied=true if obsolete, or extend the orchestrator to handle systemic changes.`,
         });
       }
 
