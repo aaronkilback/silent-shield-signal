@@ -499,6 +499,53 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
 
     console.log('AI Decision (post-guardrail):', decision);
 
+    // ═══ PHASE 2: COMPOSITE CONFIDENCE GATE — runs FIRST and ALWAYS ═══
+    // Three independent inputs (AI confidence, relevance, source) feed a single
+    // score that gates incident creation AND review-signal-agent escalation.
+    // Previously the composite write lived inside the should_create_incident
+    // branch, so any signal the AI declined (the majority) silently kept
+    // composite_confidence=null, which blocked review-signal-agent and left
+    // raw_json.agent_review unset network-wide.
+    const aiConfidence = decision.confidence || 0;
+    const relevanceScore = signal.relevance_score || 0.5;
+    const compositeScore = (aiConfidence * 0.50) + (relevanceScore * 0.35) + (sourceCredibility * 0.15);
+    console.log(`[AI-Decision] Composite score: ${compositeScore.toFixed(3)} (ai=${aiConfidence.toFixed(2)}, relevance=${relevanceScore.toFixed(2)}, source=${sourceCredibility.toFixed(2)})`);
+
+    const compositeWriteResult = await supabase.from('signals').update({
+      composite_confidence: Math.round(compositeScore * 1000) / 1000,
+      raw_json: {
+        ...signal.raw_json,
+        ai_decision: decision,
+        processing_method: 'ai',
+      },
+    }).eq('id', signal.id);
+    if (compositeWriteResult.error) {
+      console.warn('[AI-Decision] Failed to write composite_confidence:', compositeWriteResult.error);
+    }
+
+    // Async tier-2 review (composite ≥ 0.60). Fire-and-forget — never blocks.
+    // Same logic as the inline branch below; runs whether or not we create an
+    // incident, so signals the AI declined still get reviewed.
+    const isAmbiguousTier_pre = compositeScore >= 0.60 && compositeScore < 0.75;
+    const isHighValueSignal_pre = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
+    if (isAmbiguousTier_pre || isHighValueSignal_pre) {
+      const supabaseUrlPre = Deno.env.get('SUPABASE_URL');
+      const serviceRoleKeyPre = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (supabaseUrlPre && serviceRoleKeyPre) {
+        fetch(`${supabaseUrlPre}/functions/v1/review-signal-agent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceRoleKeyPre}` },
+          body: JSON.stringify({
+            signal_id: signal.id,
+            composite_score: compositeScore,
+            ai_confidence: aiConfidence,
+            relevance_score: relevanceScore,
+            source_credibility: sourceCredibility,
+          }),
+        }).catch((e: any) => console.warn('[AI-Decision] Pre-incident review fire-and-forget failed:', e));
+      }
+    }
+
     // Execute autonomous actions based on AI decision
     let incident_id = null;
 
