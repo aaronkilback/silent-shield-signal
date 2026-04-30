@@ -47,6 +47,21 @@ USE THIS HISTORY TO:
 5. Recommend NEW remediation strategies if old ones aren't working
 6. Note when the platform is growing (more signals, more users) and adjust baselines
 
+## CRITICAL — VERIFY BEFORE RE-EMITTING RECURRING FINDINGS
+The recurringIssues list shows what HAS been flagged before, not what is wrong NOW.
+Before you re-emit a finding from that list, check the current telemetry that would
+have triggered it originally. If the metric is now within normal bounds, the issue
+is RESOLVED — DO NOT re-emit it. Examples:
+- "High Number of Open Bug Reports Exceeds Backlog Threshold" — only emit if
+  bugReports.totalOpen > bugBacklogThreshold AND bugReports.staleCount > 0.
+  If totalOpen is 3 and threshold is 112, the issue is resolved, do not emit.
+- "Daily Briefing Not Sent" — only emit if dailyBriefing.sentToday is false AND
+  it is past 14:00 UTC. Do not carry it forward across runs once a briefing lands.
+- "Agent learning pipeline has stalled" — only emit if agent_beliefs and
+  learning_profiles last_updated are both > 48h old. Recent activity = resolved.
+Carrying findings forward solely because they appear in past runs creates noise
+and erodes operator trust in the email.
+
 ## PLATFORM ARCHITECTURE
 Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 
@@ -573,7 +588,13 @@ For each remediation attempt, you received the original finding, the outcome, AN
 Use the effectiveness history to:
 1. Downgrade confidence if this fix has a poor track record
 2. Suggest alternative approaches if the same fix keeps failing
-3. Mark issues as "chronic" if they've recurred 3+ times
+3. Mark issues as "chronic" ONLY if they have recurred 3+ times AND the underlying
+   condition is STILL TRUE in the current telemetry. Before re-emitting a recurring
+   finding, verify the metric that originally triggered it. If the metric is now
+   within normal bounds (e.g. openBugs=3 vs bugBacklogThreshold=112, or beliefAge
+   below 48h), the issue is RESOLVED — classify it as "fixed" or omit it entirely
+   rather than perpetuating it as chronic. Do NOT carry findings forward solely
+   because they appeared in past runs.
 
 ## OUTPUT FORMAT (JSON only, no markdown):
 {

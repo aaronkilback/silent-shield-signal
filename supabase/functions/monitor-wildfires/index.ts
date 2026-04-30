@@ -86,6 +86,94 @@ interface CWFISHotspot {
   age: number;       // hours since detection
 }
 
+// ── Fetch NASA FIRMS MODIS static-land-source hotspots ───────────────────────
+//
+// FIRMS MODIS responses include a `type` field that classifies each hotspot:
+//   0 = presumed vegetation fire
+//   1 = active volcano
+//   2 = other static land source (gas flares, industrial heat sources)
+//   3 = offshore
+//
+// We use type=2 to override the heuristic classifier when CWFIS returns a
+// hotspot at a location FIRMS has classified as a static gas-flare source.
+// This catches flaring sites that are not in the static INDUSTRIAL_FACILITIES
+// list — the classifier's previous false positives in NE BC (Peace/Montney)
+// were exactly this case: real flare stacks producing high-FRP/high-HFI
+// signatures that defeated the off-season-override and proximity rules.
+//
+// Requires NASA_FIRMS_MAP_KEY (free from https://firms.modaps.eosdis.nasa.gov/api/map_key/).
+// Free tier: 5000 transactions / 10 min — well under our load.
+//
+// Note: VIIRS feeds (VIIRS_SNPP_NRT, VIIRS_NOAA20_NRT) do NOT include the type
+// field. Only MODIS_NRT does. So this overlay fixes ~half of false-positives
+// (the MODIS-detected ones). The other half (VIIRS-detected) still depend on
+// the heuristic rules.
+async function fetchFirmsStaticSources(): Promise<Array<{ lat: number; lon: number }>> {
+  const mapKey = Deno.env.get('NASA_FIRMS_MAP_KEY');
+  if (!mapKey) {
+    console.log('[Wildfires] NASA_FIRMS_MAP_KEY not set — skipping static-source overlay');
+    return [];
+  }
+
+  // OPS_BBOX is "minLon,minLat,maxLon,maxLat" — FIRMS expects "west,south,east,north"
+  const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${mapKey}/MODIS_NRT/${OPS_BBOX}/1`;
+
+  try {
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'FortressAI/1.0' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) {
+      console.warn(`[Wildfires] FIRMS overlay fetch failed: ${resp.status} ${resp.statusText}`);
+      return [];
+    }
+    const csv = await resp.text();
+    const lines = csv.trim().split('\n');
+    if (lines.length < 2) return [];
+    const headers = lines[0].split(',').map(h => h.trim());
+    const latIdx = headers.indexOf('latitude');
+    const lonIdx = headers.indexOf('longitude');
+    const typeIdx = headers.indexOf('type');
+    if (latIdx < 0 || lonIdx < 0 || typeIdx < 0) {
+      console.warn('[Wildfires] FIRMS CSV missing expected columns');
+      return [];
+    }
+
+    const sources: Array<{ lat: number; lon: number }> = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',');
+      if (cols.length <= typeIdx) continue;
+      if (cols[typeIdx].trim() !== '2') continue; // only static land sources
+      const lat = parseFloat(cols[latIdx]);
+      const lon = parseFloat(cols[lonIdx]);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        sources.push({ lat, lon });
+      }
+    }
+    console.log(`[Wildfires] FIRMS overlay: ${sources.length} static-source hotspots in zone`);
+    return sources;
+  } catch (err) {
+    console.warn('[Wildfires] FIRMS overlay error:', err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+// Match radius for FIRMS overlay — 0.05° ≈ 5.5km at NE BC latitudes
+const FIRMS_MATCH_DEG = 0.05;
+
+function isFirmsStaticSource(
+  lat: number,
+  lon: number,
+  staticSources: Array<{ lat: number; lon: number }>,
+): boolean {
+  for (const s of staticSources) {
+    if (Math.abs(s.lat - lat) <= FIRMS_MATCH_DEG && Math.abs(s.lon - lon) <= FIRMS_MATCH_DEG) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ── Fetch CWFIS hotspots for operational zones ────────────────────────────────
 async function fetchCWFISHotspots(): Promise<CWFISHotspot[]> {
   const url = `https://cwfis.cfs.nrcan.gc.ca/geoserver/wfs` +
@@ -243,8 +331,23 @@ interface Classification {
   note?: string;
 }
 
-function classifyHotspot(hs: CWFISHotspot): Classification {
+function classifyHotspot(
+  hs: CWFISHotspot,
+  firmsStaticSources: Array<{ lat: number; lon: number }> = [],
+): Classification {
   const season = getFireSeason();
+
+  // FIRMS overlay: if NASA FIRMS MODIS has classified this lat/lon as type=2
+  // (static land source / gas flare) within the last 24h, that is authoritative
+  // — override before any heuristic. Catches flaring sites we have not yet
+  // added to INDUSTRIAL_FACILITIES.
+  if (isFirmsStaticSource(hs.lat, hs.lon, firmsStaticSources)) {
+    return {
+      type: 'industrial_flaring',
+      confidence: 'high',
+      note: `NASA FIRMS MODIS classified this location as type=2 (static land source). Likely a gas flare or industrial heat source. Add to INDUSTRIAL_FACILITIES if you can identify the operator.`,
+    };
+  }
 
   let nearestFacility: { name: string; type: string; distKm: number } | null = null;
   for (const f of INDUSTRIAL_FACILITIES) {
@@ -686,14 +789,17 @@ Deno.serve(async (req) => {
     if (clientsError) throw clientsError;
     const client = (clients ?? [])[0];
 
-    // Fetch CWFIS hotspots, perimeters, and lightning in parallel
-    const [hotspots, perimeters, lightningStrikes] = await Promise.all([
+    // Fetch CWFIS hotspots, perimeters, lightning, AND the NASA FIRMS static-source
+    // overlay in parallel. FIRMS overlay is best-effort — if the API key is missing
+    // or the call fails we proceed without it.
+    const [hotspots, perimeters, lightningStrikes, firmsStaticSources] = await Promise.all([
       fetchCWFISHotspots(),
       fetchFirePerimeters(),
       fetchLightningStrikes(),
+      fetchFirmsStaticSources(),
     ]);
 
-    console.log(`[Wildfires] CWFIS: ${hotspots.length} hotspots, ${perimeters.length} perimeters, ${lightningStrikes.length} lightning strikes`);
+    console.log(`[Wildfires] CWFIS: ${hotspots.length} hotspots, ${perimeters.length} perimeters, ${lightningStrikes.length} lightning strikes, ${firmsStaticSources.length} FIRMS static sources`);
 
     let signalsCreated = 0;
     let flaringsDetected = 0;
@@ -731,7 +837,7 @@ Deno.serve(async (req) => {
 
       if (!client) continue;
 
-      const classification = classifyHotspot(hs);
+      const classification = classifyHotspot(hs, firmsStaticSources);
       const region = zone;
 
       if (classification.type === 'industrial_flaring') {
@@ -897,6 +1003,7 @@ Deno.serve(async (req) => {
           hotspots_fetched: hotspots.length,
           perimeters_fetched: perimeters.length,
           lightning_strikes_fetched: lightningStrikes.length,
+          firms_static_sources: firmsStaticSources.length,
           signals_created: signalsCreated,
           industrial_flaring_events: flaringsDetected,
           ambiguous_near_facility: ambiguousDetected,
