@@ -714,7 +714,12 @@ Deno.serve(async (req) => {
       if (seenThisRun.has(dedupeKey)) { duplicatesSuppressed++; continue; }
       seenThisRun.add(dedupeKey);
 
-      const stableUrl = `https://cwfis.cfs.nrcan.gc.ca/firemaps/?lat=${hs.lat.toFixed(3)}&lon=${hs.lon.toFixed(3)}`;
+      // NASA FIRMS Fire Map URL — the URL fragment #d:24hrs;@LON,LAT,ZOOM IS
+      // parsed by the FIRMS SPA and centers the map on the hotspot with the past
+      // 24h VIIRS/MODIS overlay, so operators can actually verify the detection.
+      // (CWFIS firemaps ignored the lat/lon query params and always loaded the
+      // default Canada-wide view.)
+      const stableUrl = `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${hs.lon.toFixed(3)},${hs.lat.toFixed(3)},12.0z`;
       // Check signals table (not ingested_documents — ingest-signal never writes there)
       const { data: existing } = await supabase
         .from('signals')
@@ -833,7 +838,7 @@ Deno.serve(async (req) => {
         const season = getFireSeason();
         if (!season.isFireSeason && !season.isShoulder) continue;
 
-        const stableUrl = `https://cwfis.cfs.nrcan.gc.ca/firemaps/?lat=${strike.lat.toFixed(3)}&lon=${strike.lon.toFixed(3)}`;
+        const stableUrl = `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${strike.lon.toFixed(3)},${strike.lat.toFixed(3)},12.0z`;
         const { data: existingStrike } = await supabase
           .from('signals')
           .select('id')
