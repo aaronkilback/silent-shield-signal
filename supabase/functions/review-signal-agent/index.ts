@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
     // ── 1. Fetch the signal ──────────────────────────────────────────────────
     const { data: signal, error: signalError } = await supabase
       .from('signals')
-      .select('id, normalized_text, category, severity, entity_tags, source_key, client_id, raw_json, relevance_score, composite_confidence')
+      .select('id, normalized_text, category, severity, entity_tags, source_id, client_id, raw_json, relevance_score, composite_confidence')
       .eq('id', signal_id)
       .single();
 
