@@ -20,6 +20,8 @@
 
 // Circuit breaker import removed — direct provider calls use simple retry instead
 import { logError } from "./error-logger.ts";
+import { recordTelemetry, classifyError } from "./observability.ts";
+import { createServiceClient } from "./supabase-client.ts";
 import { getCriticalDateContext, validateAIOutput } from "./anti-hallucination.ts";
 
 interface AiGatewayRequest {
@@ -215,11 +217,33 @@ function getProviderConfig(model: string): ProviderConfig {
  */
 export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewayResponse> {
   const provider = getProviderConfig(request.model);
+  // Provider for telemetry: derive from URL since the keyName has historical drift
+  const aiProvider: 'openai' | 'gemini' | 'perplexity' =
+    provider.url.includes('googleapis.com') ? 'gemini' :
+    provider.url.includes('perplexity.ai') ? 'perplexity' : 'openai';
+  const callStartedAt = Date.now();
+  // Telemetry client is best-effort. Service-role-only writes (RLS); if unavailable,
+  // recordTelemetry swallows. We re-use one client per call.
+  const telemetryClient = (() => {
+    try { return createServiceClient(); } catch { return null; }
+  })();
+
   if (!provider.apiKey) {
     await logError(new Error(`${provider.keyName} not configured`), {
       functionName: request.functionName,
       severity: 'critical',
     });
+    if (telemetryClient) {
+      await recordTelemetry(telemetryClient, {
+        functionName: request.functionName,
+        durationMs: Date.now() - callStartedAt,
+        status: 'error',
+        aiProvider,
+        aiModel: provider.model,
+        errorClass: 'auth',
+        errorMessage: `${provider.keyName} not configured`,
+      });
+    }
     return { content: null, raw: null, error: `${provider.keyName} not configured`, circuitOpen: false };
   }
 
@@ -256,6 +280,7 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
 
       const data = await response.json();
       const content = data?.choices?.[0]?.message?.content || null;
+      const usage = data?.usage || {};
 
       let hallucinationWarnings: string[] = [];
       if (content && !request.skipGuardrails) {
@@ -266,16 +291,44 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
         }
       }
 
+      if (telemetryClient) {
+        await recordTelemetry(telemetryClient, {
+          functionName: request.functionName,
+          durationMs: Date.now() - callStartedAt,
+          status: 'success',
+          aiProvider,
+          aiModel: provider.model,
+          tokensIn: usage.prompt_tokens ?? usage.input_tokens,
+          tokensOut: usage.completion_tokens ?? usage.output_tokens,
+          context: hallucinationWarnings.length > 0
+            ? { hallucination_warnings: hallucinationWarnings.length, attempt }
+            : { attempt },
+        });
+      }
+
       return { content, raw: data, error: null, circuitOpen: false, hallucinationWarnings };
 
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
+      const status = (error as any)?.status as number | undefined;
       if (attempt < maxRetries) {
         const delay = 1000 * Math.pow(2, attempt);
         console.warn(`[${request.functionName}] Attempt ${attempt + 1} failed, retrying in ${delay}ms: ${errMsg}`);
         await new Promise(r => setTimeout(r, delay));
       } else {
         console.error(`[${request.functionName}] All attempts failed: ${errMsg}`);
+        if (telemetryClient) {
+          await recordTelemetry(telemetryClient, {
+            functionName: request.functionName,
+            durationMs: Date.now() - callStartedAt,
+            status: 'error',
+            aiProvider,
+            aiModel: provider.model,
+            errorClass: classifyError(error, status),
+            errorMessage: errMsg,
+            context: { attempts: attempt + 1, status_code: status ?? null },
+          });
+        }
         return { content: null, raw: null, error: errMsg, circuitOpen: false };
       }
     }
