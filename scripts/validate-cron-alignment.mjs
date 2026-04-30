@@ -33,9 +33,13 @@ function extractHeartbeatNames(fnDir) {
     let src;
     try { src = readFileSync(indexPath, 'utf8'); } catch { continue; }
 
-    // Match: job_name: 'some-name' or job_name: "some-name"
-    const matches = [...src.matchAll(/job_name:\s*['"]([^'"]+)['"]/g)];
-    const unique = [...new Set(matches.map(m => m[1]))];
+    // Match either:
+    //   - object literal style: job_name: 'some-name' or job_name: "some-name"
+    //   - shared helper style: startHeartbeat(supabase, 'some-name') or
+    //                          recordHeartbeat(supabase, 'some-name', ...)
+    const literalMatches = [...src.matchAll(/job_name:\s*['"]([^'"]+)['"]/g)];
+    const helperMatches = [...src.matchAll(/(?:start|record)Heartbeat\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]/g)];
+    const unique = [...new Set([...literalMatches, ...helperMatches].map(m => m[1]))];
     for (const jobName of unique) {
       results.push({ function: dir, jobName });
     }

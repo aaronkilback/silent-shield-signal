@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * GitHub Monitor
@@ -21,24 +22,14 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
-  const heartbeatAt = new Date().toISOString();
-  const heartbeatMs = Date.now();
+  const hb = await startHeartbeat(supabase, 'monitor-github-6h');
 
   try {
     const githubToken = Deno.env.get('GITHUB_TOKEN');
 
     if (!githubToken) {
       console.log('[GitHub] GITHUB_TOKEN not configured — skipping. Add via: supabase secrets set GITHUB_TOKEN=ghp_...');
-
-      await supabase.from('cron_heartbeat').insert({
-        job_name: 'monitor-github-6h',
-        started_at: heartbeatAt,
-        completed_at: new Date().toISOString(),
-        status: 'completed',
-        duration_ms: Date.now() - heartbeatMs,
-        result_summary: { signals_created: 0, note: 'GITHUB_TOKEN not configured' },
-      }).catch(() => {});
-
+      await completeHeartbeat(supabase, hb, { signals_created: 0, note: 'GITHUB_TOKEN not configured' });
       return successResponse({ success: true, signals_created: 0, note: 'GITHUB_TOKEN not configured' });
     }
 
@@ -116,14 +107,10 @@ Deno.serve(async (req) => {
 
     console.log(`[GitHub] Complete. ${signalsCreated} signals created.`);
 
-    await supabase.from('cron_heartbeat').insert({
-      job_name: 'monitor-github-6h',
-      started_at: heartbeatAt,
-      completed_at: new Date().toISOString(),
-      status: 'completed',
-      duration_ms: Date.now() - heartbeatMs,
-      result_summary: { signals_created: signalsCreated, clients_checked: clients?.length || 0 },
-    }).catch(() => {});
+    await completeHeartbeat(supabase, hb, {
+      signals_created: signalsCreated,
+      clients_checked: clients?.length || 0,
+    });
 
     return successResponse({
       success: true,
@@ -134,16 +121,7 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('[GitHub] Fatal error:', error);
-
-    await supabase.from('cron_heartbeat').insert({
-      job_name: 'monitor-github-6h',
-      started_at: heartbeatAt,
-      completed_at: new Date().toISOString(),
-      status: 'failed',
-      duration_ms: Date.now() - heartbeatMs,
-      result_summary: { error: error.message },
-    }).catch(() => {});
-
+    await failHeartbeat(supabase, hb, error);
     return errorResponse(error.message, 500);
   }
 });

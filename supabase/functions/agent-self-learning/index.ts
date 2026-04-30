@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat, type HeartbeatHandle } from "../_shared/heartbeat.ts";
 
 /**
  * Agent Self-Learning Engine
@@ -76,6 +77,9 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  const supabase = createServiceClient();
+  let hb: HeartbeatHandle | null = null;
+
   try {
     const body = await req.json().catch(() => ({})) as LearningRequest;
     const { mode = 'proactive', agent_call_sign, topic, context, incident_id, max_queries, domain_focus } = body;
@@ -86,7 +90,9 @@ Deno.serve(async (req) => {
     }
     const PERPLEXITY_API_KEY = OPENAI_API_KEY; // Route through OpenAI
 
-    const supabase = createServiceClient();
+    if (mode === 'proactive') {
+      hb = await startHeartbeat(supabase, 'agent-self-learning-proactive-8h');
+    }
     const queryLimit = max_queries || (mode === 'deep_dive' ? 5 : mode === 'literature_review' ? 6 : 3);
     const results: { topics_researched: string[]; entries_created: number; entries_updated: number } = {
       topics_researched: [],
@@ -236,12 +242,24 @@ Deno.serve(async (req) => {
 
     console.log(`[agent-self-learning] Complete: ${results.entries_created} new, ${results.entries_updated} updated`);
 
+    if (hb) {
+      await completeHeartbeat(supabase, hb, {
+        mode,
+        topics_researched: results.topics_researched.length,
+        entries_created: results.entries_created,
+        entries_updated: results.entries_updated,
+      });
+    }
+
     return successResponse({
       message: `Agent learning complete (${mode})`,
       ...results,
     });
   } catch (error) {
     console.error('[agent-self-learning] Error:', error);
+    if (hb) {
+      await failHeartbeat(supabase, hb, error);
+    }
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

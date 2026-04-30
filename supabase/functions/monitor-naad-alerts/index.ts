@@ -1,5 +1,6 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createHistoryEntry, completeHistoryEntry, failHistoryEntry } from "../_shared/monitoring-history.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * NAAD (National Alert Aggregation & Dissemination) Emergency Alert Monitor
@@ -222,6 +223,7 @@ Deno.serve(async (req) => {
 
   const supabase = createServiceClient();
   const historyEntry = await createHistoryEntry(supabase, 'NAAD Emergency Alerts');
+  const hb = await startHeartbeat(supabase, 'monitor-naad-alerts-15min');
 
   try {
     console.log('[NAAD] Starting emergency alert scan...');
@@ -418,6 +420,14 @@ Deno.serve(async (req) => {
       await completeHistoryEntry(supabase, historyEntry.id, totalAlerts, signalsCreated);
     }
 
+    await completeHeartbeat(supabase, hb, {
+      alerts_scanned: totalAlerts,
+      french_filtered: filteredFrench,
+      low_priority_filtered: filteredLowPriority,
+      signals_created: signalsCreated,
+      nested_updates: nestedAsUpdates,
+    });
+
     console.log(`[NAAD] Complete. Total: ${totalAlerts}, French filtered: ${filteredFrench}, Low-priority filtered: ${filteredLowPriority}, New signals: ${signalsCreated}, Nested updates: ${nestedAsUpdates}`);
 
     return successResponse({
@@ -436,6 +446,7 @@ Deno.serve(async (req) => {
     if (historyEntry?.id) {
       await failHistoryEntry(supabase, historyEntry.id, errorMessage);
     }
+    await failHeartbeat(supabase, hb, error);
     return errorResponse(errorMessage, 500);
   }
 });

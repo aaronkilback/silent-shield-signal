@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const SECURITY_KEYWORDS = [
   'espionage', 'terrorism', 'cybersecurity', 'foreign interference', 'threat',
@@ -10,10 +11,11 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  const supabaseClient = createServiceClient();
+  const hb = await startHeartbeat(supabaseClient, 'monitor-csis-6h');
+
   try {
     console.log('Starting CSIS (Canadian Security Intelligence Service) monitoring scan');
-
-    const supabaseClient = createServiceClient();
 
     // Fetch all clients
     const { data: clients, error: clientsError } = await supabaseClient
@@ -134,6 +136,11 @@ Deno.serve(async (req) => {
 
     console.log(`CSIS monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources`);
 
+    await completeHeartbeat(supabaseClient, hb, {
+      signals_created: signalsCreated,
+      sources_scanned: sources.length,
+    });
+
     return successResponse({
       success: true,
       message: `Scanned ${sources.length} CSIS/security intelligence sources`,
@@ -143,6 +150,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('CSIS monitoring error:', error);
+    await failHeartbeat(supabaseClient, hb, error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

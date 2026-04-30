@@ -123,7 +123,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test, client_id, clientId: clientIdCamel, skip_relevance_gate } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate } = validationResult.data;
+    // Auto-flag any signal whose source URL points at example.com / qa.test / localhost
+    // as is_test=true, regardless of caller. These domains are always test fixtures and
+    // must never appear in the production live feed (operators have mistaken them for
+    // real intel before — see 2026-04-30 pipeline audit).
+    const effectiveSourceUrl = (source_url || url || '') as string;
+    const isTestSourceUrl = /^https?:\/\/(?:[\w.-]+\.)?(?:example\.com|qa\.test|localhost)\b/i.test(effectiveSourceUrl);
+    const is_test = is_test_input || isTestSourceUrl;
     const explicitClientId = client_id || clientIdCamel || null;
     
     // CRITICAL FIX: Validate explicit client_id if provided

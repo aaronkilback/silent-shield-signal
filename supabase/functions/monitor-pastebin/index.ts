@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * Pastebin Monitor
@@ -18,8 +19,7 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
-  const heartbeatAt = new Date().toISOString();
-  const heartbeatMs = Date.now();
+  const hb = await startHeartbeat(supabase, 'monitor-pastebin-6h');
 
   try {
     console.log('[Pastebin] Starting monitoring scan...');
@@ -95,14 +95,11 @@ Deno.serve(async (req) => {
 
     console.log(`[Pastebin] Complete. ${signalsCreated} signals created.`);
 
-    await supabase.from('cron_heartbeat').insert({
-      job_name: 'monitor-pastebin-6h',
-      started_at: heartbeatAt,
-      completed_at: new Date().toISOString(),
-      status: 'completed',
-      duration_ms: Date.now() - heartbeatMs,
-      result_summary: { signals_created: signalsCreated, note: note || null },
-    }).catch(() => {});
+    await completeHeartbeat(supabase, hb, {
+      signals_created: signalsCreated,
+      clients_scanned: clients?.length || 0,
+      ...(note ? { note } : {}),
+    });
 
     return successResponse({
       success: true,
@@ -114,16 +111,7 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('[Pastebin] Fatal error:', error);
-
-    await supabase.from('cron_heartbeat').insert({
-      job_name: 'monitor-pastebin-6h',
-      started_at: heartbeatAt,
-      completed_at: new Date().toISOString(),
-      status: 'failed',
-      duration_ms: Date.now() - heartbeatMs,
-      result_summary: { error: error.message },
-    }).catch(() => {});
-
+    await failHeartbeat(supabase, hb, error);
     return errorResponse(error.message, 500);
   }
 });

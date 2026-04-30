@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const COURT_KEYWORDS = [
   'fraud', 'theft', 'assault', 'breach', 'violation', 'charge', 'convicted',
@@ -10,10 +11,11 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  const supabaseClient = createServiceClient();
+  const hb = await startHeartbeat(supabaseClient, 'monitor-court-registry-4h');
+
   try {
     console.log('Starting court registry monitoring scan');
-
-    const supabaseClient = createServiceClient();
 
     // Fetch all clients and entities
     const { data: clients } = await supabaseClient.from('clients').select('*');
@@ -129,6 +131,11 @@ Deno.serve(async (req) => {
 
     console.log(`Court registry monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources`);
 
+    await completeHeartbeat(supabaseClient, hb, {
+      signals_created: signalsCreated,
+      sources_scanned: sources.length,
+    });
+
     return successResponse({
       success: true,
       message: `Scanned ${sources.length} court registry sources`,
@@ -138,6 +145,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Court registry monitoring error:', error);
+    await failHeartbeat(supabaseClient, hb, error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });

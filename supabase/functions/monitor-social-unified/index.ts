@@ -1,5 +1,6 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGatewayJson } from "../_shared/ai-gateway.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 import {
   extractMentions,
   extractHashtags,
@@ -66,15 +67,16 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  const supabase = createServiceClient();
+  const hb = await startHeartbeat(supabase, 'monitor-social-unified');
+
   try {
-    const supabase = createServiceClient();
-    const heartbeatAt = new Date().toISOString();
-    const heartbeatMs = Date.now();
     const apiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
     const engineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
     if (!apiKey || !engineId) {
       console.log('Google Search API not configured, skipping unified social monitor');
+      await completeHeartbeat(supabase, hb, { signals_created: 0, note: 'GOOGLE_SEARCH_API_KEY/ENGINE_ID not configured' });
       return successResponse({ success: true, message: 'Google Search API not configured', signals_created: 0 });
     }
 
@@ -409,16 +411,12 @@ Deno.serve(async (req) => {
 
     console.log(`[SocialUnified] Complete. Searches: ${totalSearches}, Signals: ${signalsCreated}, AI-rejected: ${aiRejected}`);
 
-    try {
-      await supabase.from('cron_heartbeat').insert({
-        job_name: 'monitor-social-unified',
-        started_at: heartbeatAt,
-        completed_at: new Date().toISOString(),
-        status: 'completed',
-        duration_ms: Date.now() - heartbeatMs,
-        result_summary: { signals_created: signalsCreated, searches: totalSearches },
-      });
-    } catch (_) {}
+    await completeHeartbeat(supabase, hb, {
+      signals_created: signalsCreated,
+      searches: totalSearches,
+      ai_rejected: aiRejected,
+      budget_remaining: searchBudgetRemaining,
+    });
 
     return successResponse({
       success: true,
@@ -431,6 +429,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('[SocialUnified] Fatal error:', error);
+    await failHeartbeat(supabase, hb, error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
