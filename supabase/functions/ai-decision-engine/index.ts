@@ -523,26 +523,32 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       console.warn('[AI-Decision] Failed to write composite_confidence:', compositeWriteResult.error);
     }
 
-    // Async tier-2 review (composite ≥ 0.60). Fire-and-forget — never blocks.
-    // Same logic as the inline branch below; runs whether or not we create an
-    // incident, so signals the AI declined still get reviewed.
+    // Tier-2 review (composite ≥ 0.60). Awaited — fire-and-forget races with the
+    // Edge runtime teardown after this function returns, so the fetch dies and
+    // raw_json.agent_review never lands. Awaiting adds ~3-5s to total latency
+    // but is the only way to ensure the review actually runs in production.
     const isAmbiguousTier_pre = compositeScore >= 0.60 && compositeScore < 0.75;
     const isHighValueSignal_pre = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
     if (isAmbiguousTier_pre || isHighValueSignal_pre) {
       const supabaseUrlPre = Deno.env.get('SUPABASE_URL');
       const serviceRoleKeyPre = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
       if (supabaseUrlPre && serviceRoleKeyPre) {
-        fetch(`${supabaseUrlPre}/functions/v1/review-signal-agent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceRoleKeyPre}` },
-          body: JSON.stringify({
-            signal_id: signal.id,
-            composite_score: compositeScore,
-            ai_confidence: aiConfidence,
-            relevance_score: relevanceScore,
-            source_credibility: sourceCredibility,
-          }),
-        }).catch((e: any) => console.warn('[AI-Decision] Pre-incident review fire-and-forget failed:', e));
+        try {
+          await fetch(`${supabaseUrlPre}/functions/v1/review-signal-agent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceRoleKeyPre}` },
+            body: JSON.stringify({
+              signal_id: signal.id,
+              composite_score: compositeScore,
+              ai_confidence: aiConfidence,
+              relevance_score: relevanceScore,
+              source_credibility: sourceCredibility,
+            }),
+            signal: AbortSignal.timeout(20000),
+          });
+        } catch (e: any) {
+          console.warn('[AI-Decision] review-signal-agent call failed:', e?.message || e);
+        }
       }
     }
 
