@@ -741,7 +741,9 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
 
         // Phase 2B-bis: Write full reasoning row to signal_agent_analyses so analysts
         // can see exactly HOW the confidence score was constructed.
-        supabase.from('signal_agent_analyses').insert({
+        // Awaited (was fire-and-forget via .then) so the audit trail row lands
+        // before the runtime tears down.
+        const analysesResult = await supabase.from('signal_agent_analyses').insert({
           signal_id: signal.id,
           agent_call_sign: 'AI-DECISION-ENGINE',
           analysis: (decision.reasoning || '').substring(0, 2000),
@@ -791,10 +793,10 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
               },
             },
           ],
-        }).then(
-          () => {},
-          (e: any) => console.warn('[AI-Decision] Failed to write signal_agent_analyses row:', e)
-        );
+        });
+        if (analysesResult.error) {
+          console.warn('[AI-Decision] Failed to write signal_agent_analyses row:', analysesResult.error);
+        }
 
         if (compositeScore < 0.65 && !tier2_promotion) {
           console.log(`[AI-Decision] Composite score ${compositeScore.toFixed(3)} below 0.65 — signal ${signal.id} monitored, no incident created.`);

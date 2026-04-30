@@ -185,7 +185,10 @@ ${activeIncidents.length === 0
       .eq('id', signal_id);
 
     // ── 6b. Write Tier 2 reasoning row to signal_agent_analyses ─────────────
-    supabase.from('signal_agent_analyses').insert({
+    // Awaited (was fire-and-forget via .then()) so the audit trail row lands
+    // before the function returns. When invoked from net.http_post the runtime
+    // tore down before the row landed, leaving holes in signal_agent_analyses.
+    const analysesWrite = await supabase.from('signal_agent_analyses').insert({
       signal_id,
       agent_call_sign: 'TIER2-REVIEW',
       analysis: agentReview.reasoning,
@@ -215,10 +218,10 @@ ${activeIncidents.length === 0
           reviewed_at: agentReview.reviewed_at,
         },
       ],
-    }).then(
-      () => {},
-      (e: any) => console.warn('[ReviewAgent] Failed to write signal_agent_analyses row:', e)
-    );
+    });
+    if (analysesWrite.error) {
+      console.warn('[ReviewAgent] Failed to write signal_agent_analyses row:', analysesWrite.error);
+    }
 
     // ── 7. Execute verdict ───────────────────────────────────────────────────
     if (agentReview.verdict === 'promote' && isSubThreshold) {
