@@ -172,7 +172,7 @@ async function insertSignal(
     sourceUrl?: string;
   }
 ): Promise<boolean> {
-  const { error } = await supabase.from('signals').insert({
+  const { data: inserted, error } = await supabase.from('signals').insert({
     title:           params.title,
     normalized_text: params.normalizedText,
     severity:        params.severity,
@@ -182,11 +182,17 @@ async function insertSignal(
     raw_json:        params.rawJson,
     client_id:       clientId,
     source_url:      params.sourceUrl ?? null,
-  });
-  if (error) {
-    console.error(`[MacroIndicators] Signal insert error (${params.title}):`, error.message);
+  }).select('id').single();
+  if (error || !inserted) {
+    console.error(`[MacroIndicators] Signal insert error (${params.title}):`, error?.message);
     return false;
   }
+  // Trigger ai-decision-engine async so this signal gets composite_confidence
+  // + agent_review like signals from ingest-signal would (see 2026-04-30 fix
+  // 5622394a for the same pattern in monitor-naad-alerts/community-outreach).
+  supabase.functions.invoke('ai-decision-engine', {
+    body: { signal_id: inserted.id, force_ai: false },
+  }).catch((err: any) => console.warn('[MacroIndicators] ai-decision-engine invoke failed:', err?.message || err));
   return true;
 }
 
