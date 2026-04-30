@@ -89,7 +89,11 @@ Deno.serve(async (req) => {
 
     if (clientError) throw clientError;
 
-    // Fetch signals with full details for traceability — exclude test signals
+    // Fetch signals with full details for traceability.
+    // Exclude: test signals, archived signals, soft-deleted signals
+    // (deleted_at IS NOT NULL means the operator dismissed it — must NOT appear
+    // in executive output), and historical-tagged signals (signal_type='historical'
+    // or triage_override='historical' — these are old context, not current intel).
     const { data: signals, error: signalsError } = await supabase
       .from('signals')
       .select('*')
@@ -98,6 +102,9 @@ Deno.serve(async (req) => {
       .lte('received_at', periodEnd.toISOString())
       .neq('status', 'archived')
       .neq('is_test', true)
+      .is('deleted_at', null)
+      .or('signal_type.is.null,signal_type.neq.historical')
+      .or('triage_override.is.null,triage_override.neq.historical')
       .order('received_at', { ascending: false });
 
     if (signalsError) throw signalsError;
@@ -117,7 +124,7 @@ Deno.serve(async (req) => {
       return s.severity === 'critical' && isPECLRelevant;
     }) ?? [];
 
-    // Fetch incidents with classification rationale
+    // Fetch incidents with classification rationale (excluding deleted + test)
     const { data: incidents, error: incidentsError } = await supabase
       .from('incidents')
       .select(`
@@ -133,6 +140,7 @@ Deno.serve(async (req) => {
       .gte('opened_at', periodStart.toISOString())
       .lte('opened_at', periodEnd.toISOString())
       .neq('is_test', true)
+      .is('deleted_at', null)
       .order('opened_at', { ascending: false });
 
     if (incidentsError) throw incidentsError;
