@@ -19,6 +19,7 @@ import { registerTool, type ToolHandler } from "./agent-tools.ts";
 import { callAiGatewayJson } from "./ai-gateway.ts";
 import { embedText } from "./embed.ts";
 import { proposeAction } from "./agent-actions.ts";
+import { getArcGISClient } from "./arcgis.ts";
 
 // ── Tool 1: lookup_historical_signals ───────────────────────────────────────
 
@@ -684,7 +685,125 @@ const notifyOncallViaSlack: ToolHandler = {
   },
 };
 
-// ── Register all twelve ────────────────────────────────────────────────────
+// ── ArcGIS spatial intelligence tools ──────────────────────────────────────
+// Available when the signal's client has an active client_arcgis_connections
+// row. Tools return { available: false } gracefully when not configured —
+// agents simply move on without spatial context.
+
+const arcgisListLayers: ToolHandler = {
+  name: 'arcgis_list_layers',
+  description:
+    "List the spatial layers available for this client's ArcGIS connection (e.g. pipeline_centerline, compressor_stations, operational_easement). Use this once before calling the proximity / query tools so you know what's queryable. Returns {available: false} if the client has no ArcGIS connection.",
+  parameters: {
+    type: 'object',
+    properties: {},
+  },
+  async execute(_args, ctx, supabase) {
+    if (!ctx.contextClientId) return { available: false, reason: 'no client_id in context' };
+    const arcgis = await getArcGISClient(supabase, ctx.contextClientId);
+    if (!arcgis) return { available: false, reason: 'no active ArcGIS connection for this client' };
+    const layers = arcgis.layers();
+    if (layers.length === 0) return { available: true, layers: [], message: 'connection exists but no layer aliases configured yet' };
+    return { available: true, count: layers.length, layers };
+  },
+};
+
+const arcgisCheckSignalProximity: ToolHandler = {
+  name: 'arcgis_check_signal_proximity',
+  description:
+    "Given a layer alias and the current signal's location (or an explicit lat/lon), find the client's assets within radius_km. Returns up to 10 nearest features with their attributes and geometry. Use this to answer 'is this signal close to any of OUR pipelines / facilities / sensitive zones?' — the answer becomes evidence the agent can cite. Returns {available: false} if not configured.",
+  parameters: {
+    type: 'object',
+    properties: {
+      layer_alias: { type: 'string', description: 'Friendly layer name from arcgis_list_layers, e.g. "pipeline_centerline".' },
+      lat: { type: 'number', description: 'Latitude (WGS84). Defaults to the signal\'s location if not provided.' },
+      lon: { type: 'number', description: 'Longitude (WGS84). Defaults to the signal\'s location if not provided.' },
+      radius_km: { type: 'number', description: 'Search radius in km. Default 5.' },
+    },
+    required: ['layer_alias'],
+  },
+  async execute(args, ctx, supabase) {
+    if (!ctx.contextClientId) return { available: false, reason: 'no client_id in context' };
+    const arcgis = await getArcGISClient(supabase, ctx.contextClientId);
+    if (!arcgis) return { available: false, reason: 'no active ArcGIS connection for this client' };
+
+    let lat = Number(args.lat);
+    let lon = Number(args.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      // Fall back to the signal's location text — best-effort. Real geo
+      // resolution would need PostGIS or a geocoder; we skip if no coords
+      // were passed.
+      if (!ctx.contextSignalId) return { error: 'lat/lon required when signal has no resolvable coordinates' };
+      const { data: sig } = await supabase
+        .from('signals')
+        .select('raw_json')
+        .eq('id', ctx.contextSignalId)
+        .maybeSingle();
+      const rj = (sig?.raw_json as any) || {};
+      lat = Number(rj.lat ?? rj.latitude);
+      lon = Number(rj.lon ?? rj.longitude ?? rj.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return { error: 'no coordinates available — pass lat/lon explicitly' };
+      }
+    }
+
+    const radiusKm = Math.max(0.1, Math.min(100, Number(args.radius_km) || 5));
+    try {
+      const features = await arcgis.findNear(String(args.layer_alias), lat, lon, radiusKm, ['*']);
+      // Compress: just attributes (geometry is too verbose for the prompt)
+      const compact = features.slice(0, 10).map((f) => ({
+        attributes: f.attributes,
+      }));
+      return {
+        layer: args.layer_alias,
+        center: { lat, lon },
+        radius_km: radiusKm,
+        feature_count: features.length,
+        features: compact,
+      };
+    } catch (e: any) {
+      return { error: e?.message || String(e) };
+    }
+  },
+};
+
+const arcgisQueryLayer: ToolHandler = {
+  name: 'arcgis_query_layer',
+  description:
+    "Run a free-form attribute query against a configured layer alias. Use when you want to find features by attribute, not location, e.g. 'all compressor stations marked offline' or 'all easements with status=ACTIVE'. The where_clause uses ArcGIS SQL-92 syntax. Returns up to 25 features.",
+  parameters: {
+    type: 'object',
+    properties: {
+      layer_alias: { type: 'string', description: 'Friendly layer name.' },
+      where_clause: { type: 'string', description: "SQL-92 where, e.g. \"STATUS='ACTIVE' AND SEVERITY > 3\". Default: 1=1 (all features)." },
+      out_fields: { type: 'array', items: { type: 'string' }, description: 'Attribute names to return. Default: all.' },
+    },
+    required: ['layer_alias'],
+  },
+  async execute(args, ctx, supabase) {
+    if (!ctx.contextClientId) return { available: false, reason: 'no client_id in context' };
+    const arcgis = await getArcGISClient(supabase, ctx.contextClientId);
+    if (!arcgis) return { available: false, reason: 'no active ArcGIS connection' };
+    try {
+      const result = await arcgis.query(String(args.layer_alias), {
+        where: String(args.where_clause || '1=1'),
+        outFields: Array.isArray(args.out_fields) && args.out_fields.length > 0 ? args.out_fields as string[] : ['*'],
+        returnGeometry: false,
+        resultRecordCount: 25,
+      });
+      return {
+        layer: args.layer_alias,
+        where: args.where_clause || '1=1',
+        feature_count: result.count,
+        features: result.features.slice(0, 25).map((f) => ({ attributes: f.attributes })),
+      };
+    } catch (e: any) {
+      return { error: e?.message || String(e) };
+    }
+  },
+};
+
+// ── Register all sixteen ───────────────────────────────────────────────────
 
 registerTool(lookupHistoricalSignals);
 registerTool(queryEntityRelationships);
@@ -699,3 +818,6 @@ registerTool(fileFollowupTask);
 registerTool(scheduleEntityRescan);
 registerTool(proposeSeverityCorrection);
 registerTool(notifyOncallViaSlack);
+registerTool(arcgisListLayers);
+registerTool(arcgisCheckSignalProximity);
+registerTool(arcgisQueryLayer);

@@ -388,6 +388,15 @@ function summarizeToolResult(toolName: string, result: unknown): string {
     case 'propose_severity_correction':
     case 'notify_oncall_via_slack':
       return `proposed (awaiting approval): ${r.action_id?.substring(0, 8) ?? ''}`;
+    case 'arcgis_list_layers':
+      if (r.available === false) return `ArcGIS not configured: ${r.reason}`;
+      return `${r.count ?? 0} layer(s) configured`;
+    case 'arcgis_check_signal_proximity':
+      if (r.available === false) return `ArcGIS not configured: ${r.reason}`;
+      return `${r.feature_count ?? 0} feature(s) within ${r.radius_km}km on layer "${r.layer}"`;
+    case 'arcgis_query_layer':
+      if (r.available === false) return `ArcGIS not configured: ${r.reason}`;
+      return `${r.feature_count ?? 0} feature(s) match "${r.where ?? '?'}" on layer "${r.layer}"`;
     default:
       return JSON.stringify(r).substring(0, 180);
   }
