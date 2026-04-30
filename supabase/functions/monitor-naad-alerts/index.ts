@@ -379,7 +379,12 @@ Deno.serve(async (req) => {
         }
 
         // 8. Create clean signal
-        const { error: signalError } = await supabase
+        // We bypass ingest-signal to preserve the bilingual content-hash dedup
+        // applied above. After insert, fire-and-forget ai-decision-engine so the
+        // signal still gets composite_confidence + agent_review enrichment that
+        // ingest-signal would normally trigger. Without this, NAAD signals
+        // entered the feed without AI context (caught by watchdog 2026-04-30).
+        const { data: insertedSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
             client_id: matchedClientId,
@@ -400,9 +405,11 @@ Deno.serve(async (req) => {
             },
             status: 'new',
             confidence: 0.95,
-          });
+          })
+          .select('id')
+          .single();
 
-        if (!signalError) {
+        if (!signalError && insertedSignal?.id) {
           signalsCreated++;
           console.log(`[NAAD] ✓ ${classification.priority.toUpperCase()}: ${alert.title.substring(0, 80)}`);
           processedAlerts.push({
@@ -410,6 +417,10 @@ Deno.serve(async (req) => {
             priority: classification.priority,
             category: classification.category,
           });
+          // Async AI-decision pipeline — never block on this
+          supabase.functions.invoke('ai-decision-engine', {
+            body: { signal_id: insertedSignal.id, force_ai: classification.severity === 'high' || classification.severity === 'critical' },
+          }).catch((err: any) => console.warn('[NAAD] ai-decision-engine invoke failed:', err?.message || err));
         }
       }
     } catch (feedError) {

@@ -546,7 +546,11 @@ async function createOutreachSignal(supabase: any, data: {
 
     const normalizedText = `[Community Outreach] ${data.title}\n\n${data.description}`;
 
-    const { error } = await supabase
+    // Direct insert preserves the custom geo+keyword scoring + dedup applied
+    // earlier in this function. After insert, fire-and-forget ai-decision-engine
+    // so the signal still gets composite_confidence + agent_review enrichment.
+    // Watchdog 2026-04-30 surfaced these as missing AI context.
+    const { data: insertedSignal, error } = await supabase
       .from('signals')
       .insert({
         client_id: data.clientId,
@@ -567,7 +571,9 @@ async function createOutreachSignal(supabase: any, data: {
           published_date: data.publishedDate,
         },
         received_at: new Date().toISOString(),
-      });
+      })
+      .select('id')
+      .single();
 
     if (error) {
       console.error('Error creating outreach signal:', error);
@@ -575,6 +581,11 @@ async function createOutreachSignal(supabase: any, data: {
     }
 
     console.log(`✓ Outreach signal [${data.outreachType}]: ${data.title.substring(0, 60)}`);
+    if (insertedSignal?.id) {
+      supabase.functions.invoke('ai-decision-engine', {
+        body: { signal_id: insertedSignal.id, force_ai: false },
+      }).catch((err: any) => console.warn('[CommunityOutreach] ai-decision-engine invoke failed:', err?.message || err));
+    }
     return true;
   } catch (err) {
     console.error('Error in createOutreachSignal:', err);
