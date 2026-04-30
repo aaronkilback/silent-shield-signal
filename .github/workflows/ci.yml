@@ -70,6 +70,20 @@ jobs:
           [ "$COUNT" -gt "0" ] && echo "WARNING: $COUNT vip_id references found"
           exit 0
 
+  cron-alignment:
+    name: Cron Schedule Alignment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate cron alignment (static + live drift)
+        run: node scripts/validate-cron-alignment.mjs
+        env:
+          SUPABASE_PAT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: kpuqukppbmwebiptqmog
+
   health-gate:
     name: Live System Health Gate
     runs-on: ubuntu-latest

@@ -212,6 +212,66 @@ for (const dir of allFunctionDirs) {
 }
 if (!deprecatedServeFound) console.log('  ✅ All functions use Deno.serve()');
 
+// ── Check 5: Live pg_cron drift (requires SUPABASE_PAT) ───────────────────
+// Compares the static schedule manifest from migrations against what is
+// actually loaded in pg_cron right now. Catches schedules that were applied
+// out-of-band (via SQL Editor) but never made it into a migration, AND
+// migrations that were never applied to prod.
+//
+// Optional — only runs if SUPABASE_PAT or SUPABASE_ACCESS_TOKEN is set.
+// CI runs the static-only path; ops/release scripts can opt in to live drift.
+console.log('\n── Check 5: Live pg_cron drift (optional) ──');
+const livePat = process.env.SUPABASE_PAT || process.env.SUPABASE_ACCESS_TOKEN;
+const projectRef = process.env.SUPABASE_PROJECT_REF || 'kpuqukppbmwebiptqmog';
+if (!livePat) {
+  console.log('  ⚪ SKIPPED — set SUPABASE_PAT to compare against live pg_cron');
+} else {
+  try {
+    const apiUrl = `https://api.supabase.com/v1/projects/${projectRef}/database/query`;
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${livePat}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: "SELECT jobname, schedule FROM cron.job WHERE active = true ORDER BY jobname" }),
+    });
+    if (!resp.ok) {
+      console.log(`  ⚠️  Live check API call failed: ${resp.status} ${resp.statusText}`);
+      warnings++;
+    } else {
+      const live = await resp.json();
+      const liveByName = new Map(live.map(r => [r.jobname, r.schedule]));
+      const manifestNames = new Set(activeByName.keys());
+
+      // In live but not in manifest = applied out-of-band
+      const ghostsInLive = [...liveByName.keys()].filter(n => !manifestNames.has(n));
+      // In manifest but not in live = migration not applied
+      const missingInLive = [...manifestNames].filter(n => !liveByName.has(n));
+
+      let driftFound = false;
+      for (const name of ghostsInLive) {
+        // Some non-Fortress system jobs are expected (e.g. pg_cron internals)
+        // — only flag jobs whose names follow our schedule pattern
+        const isFortressJob = /^(monitor-|agent-|knowledge-|self-|watchdog|fortress|thread-|auto-|review-|daily-|generate-|run-|invoke-|process-|scan-|sync-|track-|trigger-|aegis-|wraith-|ingest-|enrich-)/i.test(name);
+        if (isFortressJob) {
+          console.log(`  ❌ GHOST     '${name}' — exists in pg_cron but no migration declares it`);
+          errors++;
+          driftFound = true;
+        }
+      }
+      for (const name of missingInLive) {
+        console.log(`  ❌ MISSING   '${name}' — declared in migration but not loaded in pg_cron`);
+        errors++;
+        driftFound = true;
+      }
+      if (!driftFound) {
+        console.log(`  ✅ Live pg_cron matches migration manifest (${liveByName.size} jobs live, ${manifestNames.size} declared)`);
+      }
+    }
+  } catch (e) {
+    console.log(`  ⚠️  Live check error: ${e.message}`);
+    warnings++;
+  }
+}
+
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log('\n═══════════════════════════════════════════');
 console.log(`  ${heartbeats.length} monitored functions checked`);
