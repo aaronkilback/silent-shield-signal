@@ -219,10 +219,14 @@ ${activeIncidents.length === 0
     // Awaited (was fire-and-forget via .then()) so the audit trail row lands
     // before the function returns. When invoked from net.http_post the runtime
     // tore down before the row landed, leaving holes in signal_agent_analyses.
+    // Embedding generated for future semantic recall.
+    const { embedText: embedReviewText } = await import('../_shared/embed.ts');
+    const reviewEmbedding = await embedReviewText(agentReview.reasoning || '');
     const analysesWrite = await supabase.from('signal_agent_analyses').insert({
       signal_id,
       agent_call_sign: 'TIER2-REVIEW',
       analysis: agentReview.reasoning,
+      embedding: reviewEmbedding,
       confidence_score: adjustedScore,
       trigger_reason: isSubThreshold ? 'sub_threshold_review' : 'high_value_enrichment',
       analysis_tier: 'tier2',
@@ -368,6 +372,22 @@ function summarizeToolResult(toolName: string, result: unknown): string {
       return `prediction recorded (${r.prediction_id?.substring(0, 8) ?? '?'}…), expected_by ${r.expected_by ?? '?'}`;
     case 'agent_consult':
       return `${r.specialist}: ${(r.assessment ?? '').substring(0, 120)} (conf ${r.confidence})`;
+    case 'get_signal_velocity':
+      return `recent ${r.counts?.recent ?? 0} vs baseline ${r.counts?.baseline ?? 0} → ${r.multiplier_vs_baseline ?? '?'}x — ${r.interpretation ?? ''}`;
+    case 'detect_escalation_pattern':
+      return `${r.count ?? 0} signal(s) over ${r.days_searched ?? '?'}d — ${r.verdict ?? ''}`;
+    case 'get_anomaly_score':
+      if (r.found === false) return 'no anomaly score recorded';
+      return `z=${r.z_score?.toFixed?.(2) ?? r.z_score}, type=${r.anomaly_type}, anomalous=${r.is_anomalous}`;
+    case 'analyze_signal_image':
+      if (r.found === false) return 'no image to analyze';
+      return `image findings: ${(r.summary ?? '').substring(0, 150)}`;
+    case 'file_followup_task':
+    case 'schedule_entity_rescan':
+      return `auto action ${r.status}: ${r.action_id?.substring(0, 8) ?? ''}`;
+    case 'propose_severity_correction':
+    case 'notify_oncall_via_slack':
+      return `proposed (awaiting approval): ${r.action_id?.substring(0, 8) ?? ''}`;
     default:
       return JSON.stringify(r).substring(0, 180);
   }

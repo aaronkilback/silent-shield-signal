@@ -490,11 +490,15 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 <p className="text-sm">{decodedText}</p>
               )}
 
-              {/* Thumbnail/Media */}
-              {signal.thumbnail_url && (
+              {/* Thumbnail/Media — fall back through thumbnail_url -> image_url
+                  -> first media_urls entry. The OG-image extractor in
+                  ingest-signal writes to image_url, the news monitor writes to
+                  image_url, but the dialog used to only render thumbnail_url
+                  which most pipelines never populate. */}
+              {(signal.thumbnail_url || signal.image_url || signal.media_urls?.[0]) && (
                 <div className="flex gap-2">
                   <ImageLightbox
-                    src={signal.thumbnail_url}
+                    src={signal.thumbnail_url || signal.image_url || signal.media_urls?.[0]}
                     alt="Signal media"
                     className="h-32 w-auto rounded-lg object-contain border bg-muted"
                   />

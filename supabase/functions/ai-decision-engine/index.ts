@@ -778,10 +778,16 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         // can see exactly HOW the confidence score was constructed.
         // Awaited (was fire-and-forget via .then) so the audit trail row lands
         // before the runtime tears down.
+        // Embedding generated for future semantic recall via the
+        // retrieve_similar_past_decisions tool (vector cosine search).
+        const { embedText: embedAnalysis } = await import('../_shared/embed.ts');
+        const analysisText = (decision.reasoning || '').substring(0, 2000);
+        const analysisEmbedding = await embedAnalysis(analysisText);
         const analysesResult = await supabase.from('signal_agent_analyses').insert({
           signal_id: signal.id,
           agent_call_sign: 'AI-DECISION-ENGINE',
-          analysis: (decision.reasoning || '').substring(0, 2000),
+          analysis: analysisText,
+          embedding: analysisEmbedding,
           confidence_score: Math.round(compositeScore * 1000) / 1000,
           trigger_reason: 'composite_confidence_gate',
           analysis_tier: 'tier1',
@@ -847,6 +853,23 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         });
         if (analysesResult.error) {
           console.warn('[AI-Decision] Failed to write signal_agent_analyses row:', analysesResult.error);
+        }
+
+        // Enqueue RED-TEAM adversarial review for high-stakes calls.
+        // Composite >= 0.75 means the AI has high confidence — exactly when
+        // overconfidence catches you out. RED-TEAM produces a dissenting
+        // view that lands in signal_agent_analyses alongside this verdict.
+        if (compositeScore >= 0.75) {
+          try {
+            const { enqueueJob } = await import('../_shared/queue.ts');
+            await enqueueJob(supabase, {
+              type: 'red-team-review',
+              payload: { signal_id: signal.id },
+              idempotencyKey: `red-team-review:${signal.id}`,
+            });
+          } catch (rtErr: any) {
+            console.warn('[AI-Decision] red-team-review enqueue failed:', rtErr?.message || rtErr);
+          }
         }
 
         if (compositeScore < 0.65 && !tier2_promotion) {
@@ -1305,6 +1328,22 @@ function summarizeToolResult(toolName: string, result: unknown): string {
       return `prediction recorded (${r.prediction_id?.substring(0, 8) ?? '?'}…), expected_by ${r.expected_by ?? '?'}`;
     case 'agent_consult':
       return `${r.specialist}: ${(r.assessment ?? '').substring(0, 120)} (conf ${r.confidence})`;
+    case 'get_signal_velocity':
+      return `recent ${r.counts?.recent ?? 0} vs baseline ${r.counts?.baseline ?? 0} → ${r.multiplier_vs_baseline ?? '?'}x — ${r.interpretation ?? ''}`;
+    case 'detect_escalation_pattern':
+      return `${r.count ?? 0} signal(s) over ${r.days_searched ?? '?'}d — ${r.verdict ?? ''}`;
+    case 'get_anomaly_score':
+      if (r.found === false) return 'no anomaly score recorded';
+      return `z=${r.z_score?.toFixed?.(2) ?? r.z_score}, type=${r.anomaly_type}, anomalous=${r.is_anomalous}`;
+    case 'analyze_signal_image':
+      if (r.found === false) return 'no image to analyze';
+      return `image findings: ${(r.summary ?? '').substring(0, 150)}`;
+    case 'file_followup_task':
+    case 'schedule_entity_rescan':
+      return `auto action ${r.status}: ${r.action_id?.substring(0, 8) ?? ''}`;
+    case 'propose_severity_correction':
+    case 'notify_oncall_via_slack':
+      return `proposed (awaiting approval): ${r.action_id?.substring(0, 8) ?? ''}`;
     default:
       return JSON.stringify(r).substring(0, 180);
   }
