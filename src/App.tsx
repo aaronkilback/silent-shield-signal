@@ -72,6 +72,7 @@ const SecurityAdvisor = lazyWithRetry(() => import("./pages/SecurityAdvisor"));
 const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"));
 const ClientAuthorization = lazyWithRetry(() => import("./pages/ClientAuthorization"));
 const Agents = lazyWithRetry(() => import("./pages/Agents"));
+const AgentActions = lazyWithRetry(() => import("./pages/AgentActions"));
 const Intelligence = lazyWithRetry(() => import("./pages/Intelligence"));
 const ThreatIntel = lazyWithRetry(() => import("./pages/ThreatIntel"));
 const Operations = lazyWithRetry(() => import("./pages/Operations"));
@@ -153,6 +154,7 @@ const App = () => {
                       <Route path="/consortia" element={<ProtectedRoute><Consortia /></ProtectedRoute>} />
                       <Route path="/intelligence-hub" element={<ProtectedRoute><IntelligenceHub /></ProtectedRoute>} />
                       <Route path="/agents" element={<ProtectedRoute><Agents /></ProtectedRoute>} />
+                      <Route path="/agent-actions" element={<ProtectedRoute><AgentActions /></ProtectedRoute>} />
                       <Route path="/intelligence" element={<ProtectedRoute><Intelligence /></ProtectedRoute>} />
                       <Route path="/threat-intel" element={<ProtectedRoute><ThreatIntel /></ProtectedRoute>} />
                       <Route path="/operations" element={<ProtectedRoute><Operations /></ProtectedRoute>} />

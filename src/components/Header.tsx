@@ -39,12 +39,28 @@ export const Header = () => {
         .from('entity_suggestions')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending');
-      
+
       if (error) throw error;
       return count || 0;
     },
     enabled: isAdmin || isSuperAdmin,
     refetchInterval: 30000
+  });
+
+  // Pending agent actions awaiting analyst approval (propose-tier from
+  // _shared/agent-tools-core.ts: severity corrections, oncall pages, etc.)
+  const { data: pendingAgentActions } = useQuery({
+    queryKey: ['pending-agent-actions-count'],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from('agent_actions')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'awaiting_approval');
+      if (error) throw error;
+      return count || 0;
+    },
+    enabled: isAdmin || isSuperAdmin,
+    refetchInterval: 30000,
   });
 
   // Get pending approvals count — only for admins
@@ -94,6 +110,7 @@ export const Header = () => {
   // Operations dropdown items
   const operationsItems = [
     { path: "/command-center", icon: Bot, label: "Agents" },
+    { path: "/agent-actions", icon: CheckCircle, label: "Agent Actions", badge: pendingAgentActions },
     { path: "/task-force", icon: Swords, label: "Task Force" },
     ...(isSuperAdmin ? [{ path: "/vip-deep-scan", icon: ScanEye, label: "Vulnerability Scan" }] : []),
     { path: "/travel", icon: Plane, label: "Travel" },
