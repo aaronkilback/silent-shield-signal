@@ -620,6 +620,7 @@ interface TelemetryData {
   edgeFunctions: { name: string; status: string; responseTime?: number; error?: string }[];
   signalPipeline: {
     recentSignalCount: number;
+    last24hSignalCount: number;
     staleSources: string[];
     last24hCategories: Record<string, number>;
   };
@@ -1181,6 +1182,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     edgeFunctions,
     signalPipeline: {
       recentSignalCount: recentSignalsResult.count || 0,
+      last24hSignalCount: recentNewSignalsResult.count || 0,
       staleSources: (staleSourcesResult.data || []).map((s: any) => s.source_name),
       last24hCategories: categoryBreakdown,
     },
@@ -2247,7 +2249,15 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
 
   const resolved = analysis.findings.filter(f => f.remediationStatus === 'fixed');
   const chronic = analysis.findings.filter(f => f.remediationStatus === 'chronic');
-  const unresolved = analysis.findings.filter(f => f.severity === 'critical' || f.severity === 'warning');
+  // unresolved must EXCLUDE chronic, otherwise chronic items render three
+  // times in the email (Actions Required bullet list + Chronic Issues cards
+  // + Requires Attention cards). Operator complained about the repetition
+  // on 2026-04-30 — splitting these makes each finding appear at most twice
+  // (once as a bullet in Actions Required, once as a card in either Chronic
+  // OR Requires Attention).
+  const unresolved = analysis.findings.filter(
+    f => (f.severity === 'critical' || f.severity === 'warning') && f.remediationStatus !== 'chronic'
+  );
   const info = analysis.findings.filter(f => f.severity === 'info');
 
   const renderFinding = (f: Finding, textColor: string, accentColor: string, bgColor: string) => {
@@ -2332,18 +2342,18 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
     </div>
     
     <div style="padding: 22px 28px;">
-      ${unresolved.length > 0 ? `
+      ${(unresolved.length + chronic.length) > 0 ? `
   <div style="background: #1a0505; border: 1px solid #ef4444; padding: 18px; margin-bottom: 20px; border-radius: 6px;">
     <h2 style="color: #ef4444; font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">&#9889; Actions Required Today</h2>
     <ol style="margin: 0; padding-left: 20px;">
-      ${unresolved.filter((f: any) => f.action).map((f: any, i: number) => `
-        <li style="color: #fca5a5; font-size: 13px; line-height: 1.6; margin-bottom: 6px;">
-          <strong>${f.title}:</strong> ${f.action}
+      ${[...chronic, ...unresolved].filter((f: any) => f.action).map((f: any) => `
+        <li style="color: ${f.remediationStatus === 'chronic' ? '#c4b5fd' : '#fca5a5'}; font-size: 13px; line-height: 1.6; margin-bottom: 6px;">
+          ${f.remediationStatus === 'chronic' ? '&#128257; ' : ''}<strong>${f.title}:</strong> ${f.action}
         </li>
       `).join('')}
-      ${unresolved.filter((f: any) => !f.action).map((f: any) => `
-        <li style="color: #fca5a5; font-size: 13px; line-height: 1.6; margin-bottom: 6px;">
-          <strong>${f.title}</strong> — investigate and resolve
+      ${[...chronic, ...unresolved].filter((f: any) => !f.action).map((f: any) => `
+        <li style="color: ${f.remediationStatus === 'chronic' ? '#c4b5fd' : '#fca5a5'}; font-size: 13px; line-height: 1.6; margin-bottom: 6px;">
+          ${f.remediationStatus === 'chronic' ? '&#128257; ' : ''}<strong>${f.title}</strong> — investigate and resolve
         </li>
       `).join('')}
     </ol>
@@ -2389,7 +2399,11 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
       const knownBrokenCount = analysis.findings.filter(f => f.severity === 'critical' && f.remediationStatus !== 'fixed').length;
       const nextReportDate = new Date(Date.now() + 20 * 3600000);
       const nextReportUTC = nextReportDate.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
-      const signalCount = telemetry.signalPipeline.recentSignalCount;
+      // Email stat block was previously labeled "Signals (24h)" but used the
+      // 6-hour count (recentSignalCount). Switched to last24hSignalCount so
+      // the number actually matches the label. Operator was getting confused
+      // by "5 signals" when reality was 29.
+      const signalCount = telemetry.signalPipeline.last24hSignalCount;
       const bugCount = telemetry.bugReports.totalOpen;
       const dbMs = telemetry.database.responseTimeMs;
       const qaPassRate = (telemetry as any).qaPassRate || 'No tests run yet';
