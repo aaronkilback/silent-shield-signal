@@ -511,13 +511,15 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
     const compositeScore = (aiConfidence * 0.50) + (relevanceScore * 0.35) + (sourceCredibility * 0.15);
     console.log(`[AI-Decision] Composite score: ${compositeScore.toFixed(3)} (ai=${aiConfidence.toFixed(2)}, relevance=${relevanceScore.toFixed(2)}, source=${sourceCredibility.toFixed(2)})`);
 
+    // Write composite ONLY — do NOT touch raw_json here. The downstream
+    // review-signal-agent merges agent_review into raw_json; if we wrote
+    // raw_json from a stale in-memory snapshot we would clobber that merge
+    // on every retrigger. The full ai_decision detail is captured in
+    // signal_agent_analyses below; raw_json.ai_decision will continue to
+    // be set only by the should_create_incident branch where it matters
+    // for the incident audit trail.
     const compositeWriteResult = await supabase.from('signals').update({
       composite_confidence: Math.round(compositeScore * 1000) / 1000,
-      raw_json: {
-        ...signal.raw_json,
-        ai_decision: decision,
-        processing_method: 'ai',
-      },
     }).eq('id', signal.id);
     if (compositeWriteResult.error) {
       console.warn('[AI-Decision] Failed to write composite_confidence:', compositeWriteResult.error);
