@@ -12,6 +12,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
+    const runStartedAt = new Date().toISOString();
 
     // Get Petronas Canada client_id
     const { data: petronasData } = await supabase
@@ -348,13 +349,52 @@ Deno.serve(async (req) => {
 
     console.log(`[QA Agent] Complete: ${passed} passed, ${failed} failed, ${knownBrokenCount} known broken`);
 
+    // ── Test data cleanup ───────────────────────────────────────────────────
+    // QA test signals (is_test=true) used to leak into AEGIS, dashboards, and
+    // the daily briefing — downstream processing ran on them despite the flag.
+    // Soft-delete every QA signal+incident not yet deleted. Hard delete is not
+    // an option: 34 tables FK-reference signals.id without ON DELETE CASCADE,
+    // and historic accuracy/learning rows should keep their references intact.
+    // Soft-delete matches the pattern user-driven dismissal already uses, and
+    // every read path that filters `deleted_at IS NULL` naturally hides them.
+    let cleanedSignals = 0;
+    let cleanedIncidents = 0;
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: purgedSignals } = await supabase
+        .from('signals')
+        .update({ deleted_at: nowIso, deletion_reason: 'qa_test_cleanup' })
+        .eq('is_test', true)
+        .is('deleted_at', null)
+        .select('id');
+      cleanedSignals = (purgedSignals || []).length;
+
+      const { data: purgedIncidents } = await supabase
+        .from('incidents')
+        .update({ deleted_at: nowIso })
+        .eq('is_test', true)
+        .is('deleted_at', null)
+        .select('id');
+      cleanedIncidents = (purgedIncidents || []).length;
+
+      if (cleanedSignals + cleanedIncidents > 0) {
+        console.log(`[QA Agent] Soft-deleted ${cleanedSignals} test signals + ${cleanedIncidents} test incidents`);
+      }
+    } catch (cleanupErr: any) {
+      console.warn('[QA Agent] Cleanup failed (non-fatal):', cleanupErr?.message || cleanupErr);
+    }
+
     return successResponse({
       success: true,
       total: tests.length,
       passed,
       failed,
       knownBroken: knownBrokenCount,
-      passRate: `${passed}/${tests.length}`
+      passRate: `${passed}/${tests.length}`,
+      cleanup: {
+        signals_purged: cleanedSignals,
+        incidents_purged: cleanedIncidents,
+      },
     });
   } catch (error: any) {
     console.error('[QA Agent] Fatal error:', error);
