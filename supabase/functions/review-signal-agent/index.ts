@@ -138,12 +138,38 @@ ${activeIncidents.length === 0
       ? `You are a Tier 2 Signal Review Agent for a corporate security intelligence platform. A signal scored ${compositeScore.toFixed(3)} composite confidence — just below the 0.65 incident creation threshold. The automated tier-1 gates passed this signal as relevant. Your job is to review it with broader context and decide if an incident should be created.\n\nReturn JSON with exactly: { "verdict": "promote"|"dismiss", "reasoning": "1-2 sentences", "confidence_delta": number between -0.10 and +0.10 }\n\nRules:\n- "promote" only if the context clearly corroborates a real threat (related signals, active incidents, escalating pattern)\n- "dismiss" if the signal appears isolated, low-quality, or not corroborated by context\n- confidence_delta: how much you'd adjust the composite score (+= for promotion, -= for dismiss)\n- Be conservative: only promote if genuinely warranted by evidence`
       : `You are a Tier 2 Signal Review Agent for a corporate security intelligence platform. A signal scored ${compositeScore.toFixed(3)} composite confidence — above threshold but in the 0.65–0.75 range where additional review adds value. An incident was already created. Your job is to assess whether the incident needs enrichment or a low-confidence flag.\n\nReturn JSON with exactly: { "verdict": "enrich"|"flag"|"dismiss", "reasoning": "1-2 sentences", "confidence_delta": number between -0.10 and +0.10 }\n\nRules:\n- "enrich" if context adds meaningful intelligence to the existing incident\n- "flag" if the signal appears weak, isolated, or potentially a false positive — adds a low_confidence note\n- "dismiss" if the incident is already well-contextualized and no action needed\n- confidence_delta: suggested score adjustment`;
 
-    // ── 5. Call AI ───────────────────────────────────────────────────────────
+    // ── 5a. Investigation phase (tool use) ───────────────────────────────────
+    // Before making the verdict, let the agent investigate using tools:
+    // lookup_historical_signals, query_entity_relationships,
+    // retrieve_similar_past_decisions, agent_consult, emit_prediction.
+    // Tool calls get audited in signal_agent_analyses via the consult tool
+    // and in the trace returned below.
+    let investigationSummary = '';
+    try {
+      const { runAgentLoop } = await import("../_shared/agent-tools.ts");
+      await import("../_shared/agent-tools-core.ts"); // side-effect: registers tools
+      const investigation = await runAgentLoop(supabase, {
+        agentCallSign: 'TIER2-REVIEW',
+        functionName: 'review-signal-agent:investigation',
+        model: 'openai/gpt-5.2',
+        contextSignalId: signal.id,
+        contextClientId: signal.client_id,
+        maxIterations: 4,
+        systemPrompt: `You are a Tier 2 Signal Review investigator. Use the tools available to gather evidence about this signal before a verdict is made. Specifically:\n  - Look up historical signals about the entities mentioned\n  - Check entity relationships if a person/org is named\n  - Retrieve your prior reasoning on similar signals (category=${signal.category})\n  - Consult specialists if confidence is low and another agent has stronger expertise\n  - Emit at least one falsifiable prediction tied to your evolving assessment\nKeep tool calls focused — 2-3 calls max — and then return a 3-4 sentence INVESTIGATION SUMMARY in plain text describing what you found and how it changes your read on this signal.`,
+        userMessage: context,
+      });
+      investigationSummary = investigation.finalContent ?? '(no investigation output)';
+    } catch (invError) {
+      console.warn('[ReviewAgent] Investigation phase non-fatal error:', invError);
+      investigationSummary = '(investigation phase failed — proceeding with base context only)';
+    }
+
+    // ── 5b. Verdict call (structured JSON) ──────────────────────────────────
     const aiResult = await callAiGatewayJson<AgentReview>({
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: context },
+        { role: 'user', content: `${context}\n\nInvestigation findings:\n${investigationSummary}` },
       ],
       functionName: 'review-signal-agent',
       extraBody: { response_format: { type: 'json_object' } },

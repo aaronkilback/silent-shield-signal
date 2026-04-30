@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { enqueueJob } from "../_shared/queue.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -28,6 +29,17 @@ Deno.serve(async (req) => {
       .single();
 
     if (feedbackError) throw feedbackError;
+
+    // Close the operator-feedback → agent-prompt loop. Enqueue (durable, retry-
+    // safe) rather than fire-and-forget. Skipped for non-signal feedback —
+    // entity/incident feedback goes through the type-specific handlers below.
+    if (objectType === 'signal' && feedbackEvent?.id) {
+      await enqueueJob(supabase, {
+        type: 'apply-feedback-to-agent',
+        payload: { feedback_id: feedbackEvent.id },
+        idempotencyKey: `apply-feedback-to-agent:${feedbackEvent.id}`,
+      }).catch((err: any) => console.warn('[process-feedback] enqueue apply-feedback-to-agent:', err?.message || err));
+    }
 
     // Route to type-specific handler
     const learningActions: string[] = [];
