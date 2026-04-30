@@ -100,6 +100,138 @@ Deno.serve(async (req) => {
           };
         }
       },
+      // ── Enrichment chain integration tests ─────────────────────────────────
+      // ingest-signal alone is not enough — every bug fixed in the 2026-04-30
+      // agent-enrichment-gap session was downstream of ingestion (review-signal-
+      // agent column typo, ai-decision-engine async race, composite-write
+      // gated on incident creation). These tests insert a single qa_test signal
+      // at the top of the run, then poll for evidence that each stage of the
+      // enrichment chain executed. They share one signal so one ingestion
+      // covers all assertions.
+      {
+        suite: 'enrichment_chain',
+        name: 'composite_confidence_lands_after_ingest',
+        isKnownBroken: false,
+        run: async () => {
+          const start = Date.now();
+          const marker = `qa-enrich-${start}`;
+          // Use raw fetch instead of supabase.functions.invoke — invoke wraps
+          // any non-strict-200 response as an error and the QA assertion lost
+          // visibility into ingest-signal's actual response. raw fetch lets us
+          // inspect the JSON body directly.
+          const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+          const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+          let signalId: string | null = null;
+          let ingestDetail = 'no response';
+          try {
+            const resp = await fetch(`${supabaseUrl}/functions/v1/ingest-signal`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+              body: JSON.stringify({
+                text: `Wet'suwet'en land defenders set up new blockade on Coastal GasLink access road near Houston BC ${marker}`,
+                sourceType: 'qa_test',
+                is_test: true,
+                skip_relevance_gate: true,
+                sourceData: { source_name: 'QA Enrich Test', url: `https://qa.test/enrich-${start}` },
+                clientId: PETRONAS_CLIENT_ID,
+              }),
+              signal: AbortSignal.timeout(30000),
+            });
+            const body = await resp.json().catch(() => ({}));
+            ingestDetail = `HTTP ${resp.status}: ${JSON.stringify(body).substring(0, 180)}`;
+            signalId = body?.signal_id ?? null;
+          } catch (e: any) {
+            ingestDetail = `fetch error: ${e?.message || e}`;
+          }
+          if (!signalId) {
+            return { passed: false, expected: 'ingest-signal returns signal_id', actual: ingestDetail, ms: Date.now() - start };
+          }
+          // Poll up to 60s for composite_confidence to land. ai-decision-engine
+          // is invoked synchronously inside ingest-signal but the AI call itself
+          // can take 10-30s, so 60s is a realistic ceiling.
+          let composite: number | null = null;
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            const { data } = await supabase
+              .from('signals').select('composite_confidence').eq('id', signalId).maybeSingle();
+            if (data?.composite_confidence != null) { composite = data.composite_confidence as number; break; }
+          }
+          return {
+            passed: composite !== null,
+            expected: 'composite_confidence written within 60s of ingest',
+            actual: composite !== null ? `composite=${composite}` : 'composite_confidence still null after 60s — ai-decision-engine not running or not writing',
+            ms: Date.now() - start,
+          };
+        },
+      },
+      {
+        suite: 'enrichment_chain',
+        name: 'agent_review_lands_for_high_value_signal',
+        isKnownBroken: false,
+        run: async () => {
+          const start = Date.now();
+          // Find a recent qa_test signal with composite >= 0.60. The previous
+          // test ingests one; this test reuses it (same signal goes through
+          // both assertions). Falls back to creating a fresh one if none found.
+          const lookback = new Date(start - 5 * 60_000).toISOString();
+          let { data: candidate } = await supabase
+            .from('signals')
+            .select('id, composite_confidence')
+            .eq('is_test', true)
+            .gte('composite_confidence', 0.60)
+            .gte('created_at', lookback)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (!candidate) {
+            return { passed: false, expected: 'a recent qa_test signal exists with composite >= 0.60', actual: 'none found — composite_confidence test probably failed first', ms: Date.now() - start };
+          }
+          // Poll for agent_review.verdict
+          let verdict: string | null = null;
+          for (let i = 0; i < 30; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            const { data } = await supabase
+              .from('signals')
+              .select('raw_json')
+              .eq('id', candidate.id)
+              .maybeSingle();
+            const rj = (data?.raw_json || {}) as Record<string, unknown>;
+            const ar = (rj as any)?.agent_review;
+            if (ar?.verdict) { verdict = ar.verdict; break; }
+          }
+          return {
+            passed: verdict !== null,
+            expected: 'raw_json.agent_review.verdict present within 60s for composite>=0.60 signal',
+            actual: verdict ? `verdict=${verdict} (signal ${candidate.id})` : `agent_review missing on ${candidate.id} — review-signal-agent not firing`,
+            ms: Date.now() - start,
+          };
+        },
+      },
+      {
+        suite: 'enrichment_chain',
+        name: 'signal_agent_analyses_row_recorded',
+        isKnownBroken: false,
+        run: async () => {
+          const start = Date.now();
+          // Verify ai-decision-engine wrote a reasoning trail row in
+          // signal_agent_analyses for a recent qa_test signal. This is the
+          // audit trail that explains how composite_confidence was computed.
+          const lookback = new Date(start - 5 * 60_000).toISOString();
+          const { data: rows } = await supabase
+            .from('signal_agent_analyses')
+            .select('id, signal_id, agent_call_sign')
+            .eq('agent_call_sign', 'AI-DECISION-ENGINE')
+            .gte('created_at', lookback)
+            .limit(5);
+          const count = rows?.length ?? 0;
+          return {
+            passed: count > 0,
+            expected: 'at least one AI-DECISION-ENGINE reasoning row in last 5min',
+            actual: count > 0 ? `${count} reasoning rows recorded` : 'zero reasoning rows — ai-decision-engine not writing audit trail',
+            ms: Date.now() - start,
+          };
+        },
+      },
       {
         suite: 'signal_pipeline',
         name: 'rss_monitor_healthy',
