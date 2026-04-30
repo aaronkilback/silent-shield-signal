@@ -154,13 +154,48 @@ function getProviderConfig(model: string): ProviderConfig {
     };
   }
 
-  // Perplexity Sonar
+  // Perplexity Sonar — falls back to a cheaper provider when PERPLEXITY_API_KEY
+  // isn't configured. Operator dropped Perplexity in 2026-04 after their pricing
+  // moved to a $50 minimum that didn't match our usage. Sonar callers (14
+  // functions including agent-knowledge-seeker, agent-self-learning, monitor-social,
+  // entity-deep-scan etc.) don't need to change — gateway substitutes here.
+  //
+  // Caveat: Perplexity's primary value was real-time web grounding. The
+  // OpenAI/Gemini fallbacks DO NOT search the web — they answer from training
+  // data only. For functions that genuinely need fresh search results (e.g.
+  // agent-knowledge-seeker pulling current events), the operator needs to
+  // either set PERPLEXITY_API_KEY (re-enable Perplexity per call) or migrate
+  // those specific functions to use Gemini with the google_search tool via
+  // the native Gemini endpoint (separate work — see SONAR_FALLBACK_NEEDS_SEARCH
+  // env override below).
   if (model.startsWith('sonar')) {
+    const perplexityKey = Deno.env.get('PERPLEXITY_API_KEY') ?? '';
+    if (perplexityKey) {
+      return {
+        url: 'https://api.perplexity.ai/chat/completions',
+        apiKey: perplexityKey,
+        model,
+        keyName: 'PERPLEXITY_API_KEY',
+      };
+    }
+
+    // Configurable fallback: SONAR_FALLBACK_MODEL controls which non-Perplexity
+    // model gets the call. Default 'gpt-4o-mini' (OpenAI). Set to 'gemini-2.5-flash'
+    // to use Gemini instead. Either way, NO web grounding — pure LLM answer.
+    const fallbackModel = Deno.env.get('SONAR_FALLBACK_MODEL') ?? 'gpt-4o-mini';
+    if (fallbackModel.startsWith('gemini-')) {
+      return {
+        url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        apiKey: Deno.env.get('GEMINI_API_KEY') ?? '',
+        model: fallbackModel,
+        keyName: 'GEMINI_API_KEY',
+      };
+    }
     return {
-      url: 'https://api.perplexity.ai/chat/completions',
-      apiKey: Deno.env.get('PERPLEXITY_API_KEY') ?? '',
-      model,
-      keyName: 'PERPLEXITY_API_KEY',
+      url: 'https://api.openai.com/v1/chat/completions',
+      apiKey: Deno.env.get('OPENAI_API_KEY') ?? '',
+      model: fallbackModel,
+      keyName: 'OPENAI_API_KEY',
     };
   }
 
