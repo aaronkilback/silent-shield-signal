@@ -45,9 +45,10 @@ Deno.serve(async (req) => {
       supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence')
         .gte('created_at', cutoff24h)
         .neq('status', 'false_positive')
+        .neq('is_test', true)
         .order('created_at', { ascending: false }).limit(50),
       supabase.from('incidents').select('id, priority, status, opened_at')
-        .eq('status', 'open').limit(50),
+        .eq('status', 'open').neq('is_test', true).limit(50),
       supabase.from('autonomous_scan_results').select('risk_score, findings, created_at')
         .order('created_at', { ascending: false }).limit(1),
       supabase.from('autonomous_actions_log').select('action_type, action_details, created_at')
@@ -121,7 +122,8 @@ Deno.serve(async (req) => {
       .select('id, severity')
       .gte('created_at', previousPeriodStart)
       .lt('created_at', cutoff24h)
-      .neq('status', 'false_positive');
+      .neq('status', 'false_positive')
+      .neq('is_test', true);
 
     const previousCriticalCount = (previousSignals || []).filter((s: any) => s.severity === 'critical').length;
     const previousHighCount = (previousSignals || []).filter((s: any) => s.severity === 'high').length;
