@@ -142,9 +142,12 @@ ${activeIncidents.length === 0
     // Before making the verdict, let the agent investigate using tools:
     // lookup_historical_signals, query_entity_relationships,
     // retrieve_similar_past_decisions, agent_consult, emit_prediction.
-    // Tool calls get audited in signal_agent_analyses via the consult tool
-    // and in the trace returned below.
+    // The full tool-call trace is captured here and persisted alongside the
+    // verdict in signal_agent_analyses.reasoning_log so analysts can review
+    // exactly what the agent investigated to reach its conclusion.
     let investigationSummary = '';
+    let investigationTrace: any[] = [];
+    let investigationIterations = 0;
     try {
       const { runAgentLoop } = await import("../_shared/agent-tools.ts");
       await import("../_shared/agent-tools-core.ts"); // side-effect: registers tools
@@ -159,6 +162,8 @@ ${activeIncidents.length === 0
         userMessage: context,
       });
       investigationSummary = investigation.finalContent ?? '(no investigation output)';
+      investigationTrace = investigation.toolCalls;
+      investigationIterations = investigation.iterations;
     } catch (invError) {
       console.warn('[ReviewAgent] Investigation phase non-fatal error:', invError);
       investigationSummary = '(investigation phase failed — proceeding with base context only)';
@@ -233,8 +238,8 @@ ${activeIncidents.length === 0
         verdict: agentReview.verdict,
         is_sub_threshold: isSubThreshold,
       },
-      reasoning_log: [
-        {
+      reasoning_log: {
+        verdict_step: {
           step: 'tier2_verdict',
           verdict: agentReview.verdict,
           reasoning: agentReview.reasoning,
@@ -243,7 +248,21 @@ ${activeIncidents.length === 0
           active_incidents: activeIncidents.length,
           reviewed_at: agentReview.reviewed_at,
         },
-      ],
+        // Full investigation trace — surfaced to analysts in the UI Reasoning
+        // panel so they can see what the agent looked up before deciding.
+        investigation: {
+          summary: investigationSummary,
+          iterations: investigationIterations,
+          tool_calls: investigationTrace.map((tc: any) => ({
+            iteration: tc.iteration,
+            tool: tc.toolName,
+            args: tc.args,
+            result_summary: summarizeToolResult(tc.toolName, tc.result),
+            duration_ms: tc.durationMs,
+            error: tc.errorMessage ?? null,
+          })),
+        },
+      },
     });
     if (analysesWrite.error) {
       console.warn('[ReviewAgent] Failed to write signal_agent_analyses row:', analysesWrite.error);
@@ -328,3 +347,28 @@ ${activeIncidents.length === 0
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
+
+// Compress raw tool output into one human-readable line for the UI Reasoning
+// panel. Each known tool gets a tailored summary; unknown tools fall back to
+// a JSON snippet capped at 180 chars. Stored in reasoning_log so analysts
+// can scan "what did the agent investigate?" without parsing raw payloads.
+function summarizeToolResult(toolName: string, result: unknown): string {
+  if (!result || typeof result !== 'object') return String(result ?? 'no result').substring(0, 180);
+  const r: any = result;
+  if (r.error) return `error: ${String(r.error).substring(0, 160)}`;
+  switch (toolName) {
+    case 'lookup_historical_signals':
+      return `found ${r.count ?? 0} signal(s) for "${r.term ?? '?'}" in last ${r.days_searched ?? '?'}d`;
+    case 'query_entity_relationships':
+      if (r.found === false) return `no matching entity for "${r.entity_name}"`;
+      return `entity ${r.entity_name} (${r.type}): ${r.related_entities?.length ?? 0} related, ${r.mentions_last_90d ?? 0} mentions in 90d, monitoring=${r.monitoring_enabled}`;
+    case 'retrieve_similar_past_decisions':
+      return `${r.count ?? 0} past decision(s) for ${r.agent_call_sign} in category=${r.category}${r.entity_hint ? ` entity=${r.entity_hint}` : ''}`;
+    case 'emit_prediction':
+      return `prediction recorded (${r.prediction_id?.substring(0, 8) ?? '?'}…), expected_by ${r.expected_by ?? '?'}`;
+    case 'agent_consult':
+      return `${r.specialist}: ${(r.assessment ?? '').substring(0, 120)} (conf ${r.confidence})`;
+    default:
+      return JSON.stringify(r).substring(0, 180);
+  }
+}

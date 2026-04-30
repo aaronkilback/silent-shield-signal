@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, RefreshCw, Link as LinkIcon, Copy, Check, FileWarning, ExternalLink, Shield, MessageCircle, Heart, Share2, Hash, AtSign, Archive, ChevronDown } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SignalUpdatesTimeline } from "@/components/signals/SignalUpdatesTimeline";
+import { SignalReasoningPanel } from "@/components/signals/SignalReasoningPanel";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "@/components/signals/FacebookVideoEmbed";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
@@ -51,6 +52,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [showRelated, setShowRelated] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!signal?.id) return;
@@ -962,6 +964,25 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
               {showTimeline && (
                 <div className="pt-3 space-y-3">
                   <SignalUpdatesTimeline signalId={signal.id} />
+                </div>
+              )}
+            </div>
+
+            {/* 3h — Reasoning collapsible: AI decision trail with tool calls + predictions */}
+            <div>
+              <button
+                onClick={() => setShowReasoning(v => !v)}
+                className="flex items-center justify-between w-full text-sm font-semibold py-2 border-b border-border hover:text-primary transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Brain className="w-4 h-4" />
+                  Reasoning trail
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showReasoning ? 'rotate-180' : ''}`} />
+              </button>
+              {showReasoning && (
+                <div className="pt-3">
+                  <SignalReasoningPanel signalId={signal.id} />
                 </div>
               )}
             </div>

@@ -311,7 +311,39 @@ Deno.serve(async (req) => {
       severity: signal.severity,
       client: signal.clients?.name
     });
-    
+
+    // ── Tier-1 investigation phase (NEW 2026-04-30 capability uplift) ─────
+    // Before the existing structured-decision AI call, run an investigation
+    // pass with tool use so the decision is grounded in what the agent could
+    // actually verify (historical signals, entity graph, prior reasoning,
+    // specialist consultation). The decision call below stays unchanged and
+    // load-bearing — investigation summary is injected as additional context
+    // ahead of it, not in place of it.
+    let investigationSummary = '';
+    let investigationTrace: any[] = [];
+    let investigationIterations = 0;
+    try {
+      const { runAgentLoop } = await import('../_shared/agent-tools.ts');
+      await import('../_shared/agent-tools-core.ts');
+      const investigation = await runAgentLoop(supabase, {
+        agentCallSign: 'AEGIS-CMD',
+        functionName: 'ai-decision-engine:investigation',
+        model: 'openai/gpt-5.2',
+        contextSignalId: signal.id,
+        contextClientId: signal.client_id,
+        maxIterations: 4,
+        systemPrompt: `You are AEGIS-CMD investigating a signal before the AI decision engine assigns severity. Use tools to verify what you can:\n  - Look up historical signals for entities mentioned (have we seen this before?)\n  - Check entity relationships (is this person/org connected to known threat actors or active monitoring targets?)\n  - Retrieve your prior reasoning on similar signals in category=${signal.category} (have you decided this pattern before? what happened?)\n  - Consult a specialist if the signal is in a domain (cyber=NEO, supply chain=OUROBOROS, geopolitical=MERIDIAN, physical_security=ARGUS) where another agent has stronger expertise\n  - Emit a falsifiable prediction tied to your read on whether this signal will materialise into something actionable\nKeep tool calls focused — 2-3 calls max. Then return a 3-5 sentence INVESTIGATION SUMMARY that the decision engine will weigh.`,
+        userMessage: `Signal under investigation:\n- Title: ${(signal.title || '').substring(0, 200)}\n- Category: ${signal.category}\n- Severity: ${signal.severity}\n- Entity tags: ${(signal.entity_tags || []).join(', ') || 'none'}\n- Client: ${signal.clients?.name || 'unknown'}\n- Text excerpt: ${(signal.normalized_text || '').substring(0, 500)}`,
+      });
+      investigationSummary = investigation.finalContent ?? '(no investigation output)';
+      investigationTrace = investigation.toolCalls;
+      investigationIterations = investigation.iterations;
+    } catch (invError) {
+      console.warn('[AI-Decision] Investigation phase non-fatal error:', invError);
+      investigationSummary = '(investigation phase failed — proceeding with base context only)';
+    }
+
+
     const aiResult = await callAiGateway({
       model: 'openai/gpt-5.2',
       messages: [
@@ -381,6 +413,9 @@ Respond with structured JSON containing:
         {
           role: 'user',
           content: `Analyze this security signal with strategic intelligence focus:
+
+=== INVESTIGATION FINDINGS (gathered before this decision via tool use) ===
+${investigationSummary}
 
 === CURRENT SIGNAL ===
 Signal: ${signal.normalized_text}
@@ -766,33 +801,49 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
             entity_tags: signal.entity_tags || [],
             is_historical: decision.is_historical_content || false,
           },
-          reasoning_log: [
-            {
-              step: 'rule_matching',
-              rules_matched: matchedRules,
-              tags_added: ruleTags,
-              rule_category: ruleCategory,
-            },
-            {
-              step: 'ai_assessment',
-              threat_level: decision.threat_level,
-              ai_confidence: Math.round(aiConfidence * 1000) / 1000,
-              is_historical: decision.is_historical_content || false,
-              strategic_context: (decision.strategic_context || '').substring(0, 300),
-              threat_correlation: (decision.threat_correlation || '').substring(0, 300),
-            },
-            {
-              step: 'composite_gate',
-              composite: Math.round(compositeScore * 1000) / 1000,
-              threshold: 0.65,
-              passed: compositeScore >= 0.65 || tier2_promotion,
-              breakdown: {
-                ai: `${Math.round(aiConfidence * 100)}% × 50% = ${Math.round(aiConfidence * 50)}%`,
-                relevance: `${Math.round(relevanceScore * 100)}% × 35% = ${Math.round(relevanceScore * 35)}%`,
-                source: `${Math.round(sourceCredibility * 100)}% × 15% = ${Math.round(sourceCredibility * 15)}%`,
+          reasoning_log: {
+            steps: [
+              {
+                step: 'rule_matching',
+                rules_matched: matchedRules,
+                tags_added: ruleTags,
+                rule_category: ruleCategory,
               },
+              {
+                step: 'ai_assessment',
+                threat_level: decision.threat_level,
+                ai_confidence: Math.round(aiConfidence * 1000) / 1000,
+                is_historical: decision.is_historical_content || false,
+                strategic_context: (decision.strategic_context || '').substring(0, 300),
+                threat_correlation: (decision.threat_correlation || '').substring(0, 300),
+              },
+              {
+                step: 'composite_gate',
+                composite: Math.round(compositeScore * 1000) / 1000,
+                threshold: 0.65,
+                passed: compositeScore >= 0.65 || tier2_promotion,
+                breakdown: {
+                  ai: `${Math.round(aiConfidence * 100)}% × 50% = ${Math.round(aiConfidence * 50)}%`,
+                  relevance: `${Math.round(relevanceScore * 100)}% × 35% = ${Math.round(relevanceScore * 35)}%`,
+                  source: `${Math.round(sourceCredibility * 100)}% × 15% = ${Math.round(sourceCredibility * 15)}%`,
+                },
+              },
+            ],
+            // Investigation phase trace — what the agent looked up before the
+            // decision call. Surfaced to analysts in the UI Reasoning panel.
+            investigation: {
+              summary: investigationSummary,
+              iterations: investigationIterations,
+              tool_calls: investigationTrace.map((tc: any) => ({
+                iteration: tc.iteration,
+                tool: tc.toolName,
+                args: tc.args,
+                result_summary: summarizeToolResult(tc.toolName, tc.result),
+                duration_ms: tc.durationMs,
+                error: tc.errorMessage ?? null,
+              })),
             },
-          ],
+          },
         });
         if (analysesResult.error) {
           console.warn('[AI-Decision] Failed to write signal_agent_analyses row:', analysesResult.error);
@@ -1235,3 +1286,26 @@ Generated: ${new Date().toISOString()}
     );
   }
 });
+
+// Compress a raw tool-call result into one human-readable line for the UI
+// Reasoning panel. Mirrors the helper in review-signal-agent.
+function summarizeToolResult(toolName: string, result: unknown): string {
+  if (!result || typeof result !== 'object') return String(result ?? 'no result').substring(0, 180);
+  const r: any = result;
+  if (r.error) return `error: ${String(r.error).substring(0, 160)}`;
+  switch (toolName) {
+    case 'lookup_historical_signals':
+      return `found ${r.count ?? 0} signal(s) for "${r.term ?? '?'}" in last ${r.days_searched ?? '?'}d`;
+    case 'query_entity_relationships':
+      if (r.found === false) return `no matching entity for "${r.entity_name}"`;
+      return `entity ${r.entity_name} (${r.type}): ${r.related_entities?.length ?? 0} related, ${r.mentions_last_90d ?? 0} mentions in 90d, monitoring=${r.monitoring_enabled}`;
+    case 'retrieve_similar_past_decisions':
+      return `${r.count ?? 0} past decision(s) for ${r.agent_call_sign} in category=${r.category}${r.entity_hint ? ` entity=${r.entity_hint}` : ''}`;
+    case 'emit_prediction':
+      return `prediction recorded (${r.prediction_id?.substring(0, 8) ?? '?'}…), expected_by ${r.expected_by ?? '?'}`;
+    case 'agent_consult':
+      return `${r.specialist}: ${(r.assessment ?? '').substring(0, 120)} (conf ${r.confidence})`;
+    default:
+      return JSON.stringify(r).substring(0, 180);
+  }
+}
