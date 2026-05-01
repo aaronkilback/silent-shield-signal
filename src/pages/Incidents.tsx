@@ -77,6 +77,7 @@ const Incidents = () => {
           .from("incidents")
           .select("*, clients(name)")
           .is("deleted_at", null) // Filter out soft-deleted incidents
+          .neq("is_test", true) // Hide synthetic QA-test incidents from operators
           .order("opened_at", { ascending: false });
 
         if (selectedClientId) {

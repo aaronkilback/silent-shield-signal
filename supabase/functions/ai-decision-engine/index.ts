@@ -532,6 +532,21 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       decision.reasoning = `[HISTORICAL] ${decision.reasoning}`;
     }
 
+    // ═══ TEST-SIGNAL GUARDRAIL ═══
+    // Synthetic signals from fortress-qa-agent (is_test=true) had been
+    // creating real Petronas incidents — Wet'suwet'en blockade variants
+    // showed up under OPEN status. Block incident creation outright; we
+    // still run the rest of the pipeline so analysis lands for QA, but
+    // it never escalates.
+    if (signal.is_test === true) {
+      console.log(`[TEST GUARDRAIL] Signal ${signal_id} is is_test=true — suppressing incident creation`);
+      decision.should_create_incident = false;
+      decision.alert_recipients = [];
+      if (!decision.reasoning.includes('[TEST]')) {
+        decision.reasoning = `[TEST] ${decision.reasoning}`;
+      }
+    }
+
     console.log('AI Decision (post-guardrail):', decision);
 
     // ═══ PHASE 2: COMPOSITE CONFIDENCE GATE — runs FIRST and ALWAYS ═══
