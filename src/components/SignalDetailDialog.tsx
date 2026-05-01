@@ -333,7 +333,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex flex-col p-0 gap-0 max-w-3xl max-h-[90vh]">
+      <DialogContent className="flex flex-col p-0 gap-0 max-w-3xl max-h-[90vh] overflow-hidden">
         {/* Hidden accessible title */}
         <DialogHeader className="sr-only">
           <DialogTitle>Signal Detail</DialogTitle>
@@ -469,7 +469,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         </div>
 
         {/* Section 3 — Scrollable body */}
-        <ScrollArea className="flex-1 overflow-hidden">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="px-6 py-4 space-y-5" onMouseUp={handleTextSelection}>
 
             {/* 3a — Signal content */}
