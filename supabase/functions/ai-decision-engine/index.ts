@@ -547,6 +547,59 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       }
     }
 
+    // ═══ CISA KEV / GENERIC CYBER ADVISORY GUARDRAIL ═══
+    // CISA's Known Exploited Vulnerabilities feed is a global cybersec
+    // bulletin, not a per-client threat. Each entry was creating a P2
+    // OPEN incident (cPanel, SimpleHelp, D-Link, Marimo, Craft CMS,
+    // Google Dawn, TrueConf...) implying response was owed. Treat them
+    // as informational signals only; promote to incident manually if
+    // analyst confirms the vulnerable product is in the client stack.
+    {
+      const url = (signal.source_url || '').toLowerCase();
+      const text = (signal.normalized_text || '').toLowerCase();
+      const title = (signal.title || '').toLowerCase();
+      const isCisaKev =
+        /cisa\.gov\/known-exploited-vulnerabilities/.test(url) ||
+        /cisa known exploited vulnerabilit/i.test(`${text} ${title}`) ||
+        /\bkev catalog\b/i.test(`${text} ${title}`);
+      if (isCisaKev) {
+        console.log(`[CISA-KEV GUARDRAIL] Signal ${signal_id} is a CISA KEV advisory — suppressing incident creation`);
+        decision.should_create_incident = false;
+        decision.alert_recipients = [];
+        if (!decision.reasoning.includes('[CISA-KEV]')) {
+          decision.reasoning = `[CISA-KEV — informational, not auto-actionable] ${decision.reasoning}`;
+        }
+      }
+    }
+
+    // ═══ WILDFIRE PROXIMITY GUARDRAIL ═══
+    // Every wildfire detection within 100km of NE BC was auto-creating
+    // an incident at severity=high. Only escalate when fire behavior
+    // and proximity together justify an operational response:
+    //   - facility proximity < 15km, AND
+    //   - HFI > 4000 kW/m (sustained crown-fire potential), AND
+    //   - currently in fire season (May–Sep)
+    // Otherwise the wildfire stays a signal — analyst can promote.
+    {
+      const cat = (signal.category || '').toLowerCase();
+      if (cat === 'wildfire') {
+        const meta = signal.raw_json || {};
+        const proximityKm = Number(meta.facility_proximity_km ?? meta.proximity_km ?? Infinity);
+        const hfi = Number(meta.hfi ?? meta.head_fire_intensity ?? 0);
+        const month = new Date().getUTCMonth() + 1; // 1=Jan
+        const inFireSeason = month >= 5 && month <= 9;
+        const operationallyCritical = proximityKm < 15 && hfi > 4000 && inFireSeason;
+        if (!operationallyCritical) {
+          console.log(`[WILDFIRE GUARDRAIL] Signal ${signal_id} — proximity=${proximityKm}km, HFI=${hfi}, fireSeason=${inFireSeason} — suppressing incident creation`);
+          decision.should_create_incident = false;
+          decision.alert_recipients = [];
+          if (!decision.reasoning.includes('[WILDFIRE-NON-CRITICAL]')) {
+            decision.reasoning = `[WILDFIRE-NON-CRITICAL — proximity ${proximityKm}km, HFI ${hfi}, season ${inFireSeason ? 'in' : 'off'}] ${decision.reasoning}`;
+          }
+        }
+      }
+    }
+
     console.log('AI Decision (post-guardrail):', decision);
 
     // ═══ PHASE 2: COMPOSITE CONFIDENCE GATE — runs FIRST and ALWAYS ═══
