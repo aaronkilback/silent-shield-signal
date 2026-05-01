@@ -446,51 +446,15 @@ Deno.serve(async (req) => {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // LOOP 5: AEGIS BRIEFINGS — Insert a system briefing message so the
-    //         ai_assistant_messages 24h count stays ≥ 1
-    // ═══════════════════════════════════════════════════════════════════
-    try {
-      const now24h = new Date(Date.now() - 86400000).toISOString();
-      // Count existing briefing messages in last 24h (service role sees all)
-      const { count: existingBriefings } = await supabase
-        .from('ai_assistant_messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('role', 'assistant')
-        .gte('created_at', now24h);
-
-      if ((existingBriefings || 0) === 0) {
-        // Get first super_admin user to own the message
-        const { data: adminUser } = await supabase
-          .from('user_roles')
-          .select('user_id')
-          .eq('role', 'super_admin')
-          .limit(1)
-          .single();
-
-        if (adminUser) {
-          const { data: signals } = await supabase
-            .from('signals')
-            .select('severity')
-            .gte('created_at', now24h);
-          const critical = (signals || []).filter(s => s.severity === 'critical').length;
-          const high = (signals || []).filter(s => s.severity === 'high').length;
-
-          await supabase.from('ai_assistant_messages').insert({
-            user_id: adminUser.user_id,
-            role: 'assistant',
-            content: `AEGIS Fortress daily briefing: ${(signals || []).length} signals ingested in the last 24h (${critical} critical, ${high} high severity). All intelligence loops are active. Threat posture is being continuously monitored.`,
-            conversation_id: crypto.randomUUID(),
-            is_shared: false,
-          });
-          results.aegis_briefings = { inserted: 1 };
-        }
-      } else {
-        results.aegis_briefings = { existing: existingBriefings };
-      }
-    } catch (err) {
-      console.error('[LoopCloser] AEGIS Briefings error:', err);
-      results.aegis_briefings = { error: String(err) };
-    }
+    // LOOP 5: (REMOVED) AEGIS BRIEFINGS
+    // Previously inserted a synthetic "AEGIS Fortress daily briefing"
+    // message into ai_assistant_messages to keep a 24h-count watchdog
+    // green. The briefings had no analyst value and polluted the home
+    // page chat history with rows like "X signals ingested in the last
+    // 24h, all intelligence loops are active". Removed at operator
+    // request — if a 24h-count metric is needed, derive it from real
+    // ingestion telemetry instead of fake content.
+    results.aegis_briefings = { skipped: 'disabled — synthetic briefings removed' };
 
     // ═══════════════════════════════════════════════════════════════════
     // LOOP 6: DEBATE RECORDS — Trigger multi-agent-debate for critical
