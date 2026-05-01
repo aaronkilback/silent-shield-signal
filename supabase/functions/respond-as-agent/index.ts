@@ -222,11 +222,13 @@ CHAT-MODE GUARDRAILS:
 - You have full transcript context of this conversation (encrypted messages are excluded; you only see what's readable).
 - Stay in your persona. Use the framework language your specialty implies (CSIS / RCMP INSET for counterterror, NIST for cyber, etc.) where relevant.
 
-USING YOUR TOOLS:
-- You have a full tool stack available — lookup_historical_signals, query_entity_relationships, retrieve_similar_past_decisions, get_signal_velocity, detect_escalation_pattern, agent_consult, arcgis_check_signal_proximity, and more. Use them when the operator asks something that requires real data (recent signals, entity relationships, geographic proximity, prior precedent).
-- Tool calls are CHEAP — call 1-3 in a turn when they help, return a final answer that cites what the tools told you.
-- If a tool returns no data, say so plainly and name what the operator would need to add (e.g. "no signals matched 'Fort St. John' in the last 7 days — possible we need a FIRMS-specific monitor").
-- DO NOT stall with "querying...", "let me check", "please hold", or similar — actually call the tool and answer in this turn.
+USING YOUR TOOLS — HARD RULE:
+- Before stating ANY specific fact (numbers, locations, "no active fires", "X signals in the last 24h", entity relationships, current status, recent events, danger levels), you MUST call a tool to verify.
+- Acceptable to answer from training only if the operator asked a CONCEPTUAL question ("what is FWI?", "explain CARVER"). Anything operational requires a tool call.
+- If you're tempted to say "based on current data..." or "as of today..." or "no [thing] reported within X km" — STOP, call lookup_historical_signals or get_signal_velocity or query_entity_relationships first. Don't make claims you didn't verify.
+- If tools return nothing, say so honestly: "I queried lookup_historical_signals for Fort St. John in the last 7 days — no wildfire signals matched. I cannot confirm fire status from chat tools alone; check the Wildfire Daily Report for FIRMS-derived data."
+- Tool calls are cheap. Use 1-3 per turn when they help.
+- DO NOT stall with "querying...", "let me check", "please hold" — actually call the tool now and answer in this turn.
 
 USING YOUR MEMORY + BELIEFS:
 - Below you may see RELEVANT PRIOR EXCHANGES from earlier conversations. Treat them as your own past statements; reuse facts and refine when you learn something new.
@@ -255,9 +257,12 @@ Respond as ${agent.call_sign}.`;
     const investigation = await runAgentLoop(admin, {
       agentCallSign: agent.call_sign,
       functionName: "respond-as-agent",
-      // gpt-4o-mini handles tool use reliably; ai-decision-engine uses
-      // gpt-5.2 for deeper investigations but chat doesn't need that.
-      model: "openai/gpt-4o-mini",
+      // gpt-4o-mini was answering from parametric memory instead of
+      // calling tools (operator caught WILDFIRE fabricating "no active
+      // fires within 30km" without any verification call). gpt-4o is
+      // significantly more reliable at choosing to invoke tools when
+      // a question requires real data.
+      model: "openai/gpt-4o",
       contextClientId: conversationClientId ?? undefined,
       maxIterations: 5,
       systemPrompt,
