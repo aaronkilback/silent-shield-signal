@@ -333,14 +333,14 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex flex-col p-0 gap-0 max-w-3xl max-h-[90vh] overflow-hidden">
+      <DialogContent className="flex flex-col p-0 gap-0 max-w-3xl h-[90vh] overflow-hidden">
         {/* Hidden accessible title */}
         <DialogHeader className="sr-only">
           <DialogTitle>Signal Detail</DialogTitle>
         </DialogHeader>
 
         {/* Section 1 — Header */}
-        <div className="px-6 pt-5 pb-4 border-b">
+        <div className="px-6 pt-5 pb-4 border-b shrink-0">
           {/* Row 1: severity + category + status select */}
           <div className="flex items-center gap-2">
             <Badge variant={getSeverityColor(signal.severity) as any}>
@@ -416,7 +416,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         </div>
 
         {/* Section 2 — Action bar */}
-        <div className="px-6 py-2 border-b bg-muted/40 flex items-center gap-2 flex-wrap">
+        <div className="px-6 py-2 border-b bg-muted/40 flex items-center gap-2 flex-wrap shrink-0">
           <Button
             variant="destructive"
             size="sm"
