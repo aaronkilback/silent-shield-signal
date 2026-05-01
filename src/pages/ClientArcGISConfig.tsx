@@ -33,10 +33,12 @@ interface Connection {
   id: string;
   client_id: string;
   label: string;
-  portal_url: string;
+  portal_url: string | null;
   oauth_client_id: string | null;
   oauth_client_secret_ref: string | null;
   api_key_secret_ref: string | null;
+  experience_url: string | null;
+  experience_label: string | null;
   layer_aliases: Record<string, { url: string; description?: string; geometry_type?: string }>;
   discovered_layers: any;
   is_active: boolean;
@@ -65,6 +67,8 @@ export default function ClientArcGISConfig() {
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthSecretRef, setOauthSecretRef] = useState("");
   const [apiKeyRef, setApiKeyRef] = useState("");
+  const [experienceUrl, setExperienceUrl] = useState("");
+  const [experienceLabel, setExperienceLabel] = useState("");
 
   // Form state for adding layer aliases
   const [newAliasName, setNewAliasName] = useState("");
@@ -83,10 +87,12 @@ export default function ClientArcGISConfig() {
       .maybeSingle();
     if (data) {
       setConn(data as Connection);
-      setPortalUrl(data.portal_url);
+      setPortalUrl(data.portal_url || 'https://www.arcgis.com');
       setOauthClientId(data.oauth_client_id || '');
       setOauthSecretRef(data.oauth_client_secret_ref || '');
       setApiKeyRef(data.api_key_secret_ref || '');
+      setExperienceUrl((data as any).experience_url || '');
+      setExperienceLabel((data as any).experience_label || '');
     } else {
       setConn(null);
     }
@@ -96,7 +102,11 @@ export default function ClientArcGISConfig() {
   useEffect(() => { if (clientId) loadConnection(); }, [clientId]);
 
   const handleSaveBasic = async () => {
-    if (!clientId || !portalUrl) return;
+    if (!clientId) return;
+    if (!portalUrl) {
+      toast.error("Portal URL required");
+      return;
+    }
     if (!oauthClientId && !apiKeyRef) {
       toast.error("Provide either OAuth credentials or an API key secret name");
       return;
@@ -119,6 +129,37 @@ export default function ClientArcGISConfig() {
       if (error) return toast.error(`Save failed: ${error.message}`);
     }
     toast.success("Saved. Run Test connection next.");
+    await loadConnection();
+  };
+
+  // Save just the public Experience URL — used for Path 3 (link-only mode)
+  // when no API credentials are available. Creates a row with portal_url=null
+  // if none exists; otherwise just updates the experience fields.
+  const handleSaveExperienceLink = async () => {
+    if (!clientId) return;
+    if (!experienceUrl) {
+      toast.error("Experience URL required");
+      return;
+    }
+    const trimmedUrl = experienceUrl.trim();
+    const trimmedLabel = experienceLabel.trim() || null;
+    if (conn) {
+      const { error } = await supabase
+        .from('client_arcgis_connections')
+        .update({ experience_url: trimmedUrl, experience_label: trimmedLabel, updated_at: new Date().toISOString() })
+        .eq('id', conn.id);
+      if (error) return toast.error(`Save failed: ${error.message}`);
+    } else {
+      const { error } = await supabase.from('client_arcgis_connections').insert({
+        client_id: clientId,
+        label: 'Primary ArcGIS',
+        experience_url: trimmedUrl,
+        experience_label: trimmedLabel,
+        is_active: true,
+      });
+      if (error) return toast.error(`Save failed: ${error.message}`);
+    }
+    toast.success("Operational map link saved. Visible on every signal for this client.");
     await loadConnection();
   };
 
@@ -190,6 +231,48 @@ export default function ClientArcGISConfig() {
           facilities, and operational layers as evidence when assessing signals.
         </p>
       </div>
+
+      {/* Step 0: link-only (Experience URL). Path 3 — no API credentials
+          needed. The link surfaces on every signal scoped to this client. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Operational map link (no API access required)</CardTitle>
+          <CardDescription>
+            If the client has a published ArcGIS Experience but no API access, paste the URL here.
+            It'll appear as a "View on operational map" link on every signal for this client. Analysts
+            click through and view the map in their own browser session. Agents can't query the data
+            without API access — for that, configure credentials in step 1 below.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <Label htmlFor="experience_url">Experience URL</Label>
+            <Input
+              id="experience_url"
+              value={experienceUrl}
+              onChange={(e) => setExperienceUrl(e.target.value)}
+              placeholder="https://experience.arcgis.com/experience/..."
+            />
+          </div>
+          <div>
+            <Label htmlFor="experience_label">Display label (optional)</Label>
+            <Input
+              id="experience_label"
+              value={experienceLabel}
+              onChange={(e) => setExperienceLabel(e.target.value)}
+              placeholder="Petronas operational map"
+            />
+            <p className="text-xs text-muted-foreground mt-1">Defaults to "View operational map" if blank.</p>
+          </div>
+          <Button onClick={handleSaveExperienceLink} disabled={!experienceUrl}>Save operational map link</Button>
+          {conn?.experience_url && (
+            <p className="text-xs text-green-400">
+              <CheckCircle className="w-3 h-3 inline mr-1" />
+              Currently linking to: <a href={conn.experience_url} target="_blank" rel="noreferrer" className="underline">{conn.experience_url.substring(0, 80)}{conn.experience_url.length > 80 ? '…' : ''}</a>
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Step 1: credentials */}
       <Card>

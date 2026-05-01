@@ -6,6 +6,7 @@ import { Brain, TrendingUp, Network, Building2, Clock, AlertTriangle, UserPlus, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SignalUpdatesTimeline } from "@/components/signals/SignalUpdatesTimeline";
 import { SignalReasoningPanel } from "@/components/signals/SignalReasoningPanel";
+import { ArcGISExperienceLink } from "@/components/signals/ArcGISExperienceLink";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "@/components/signals/FacebookVideoEmbed";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
@@ -504,6 +505,10 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                   />
                 </div>
               )}
+
+              {/* Operational map link if the signal's client has an ArcGIS
+                  Experience URL configured. One-click context for analysts. */}
+              {signal.client_id && <ArcGISExperienceLink clientId={signal.client_id} />}
 
               {/* Source Reliability & Information Accuracy */}
               {(signal.source_reliability || signal.information_accuracy) && (
