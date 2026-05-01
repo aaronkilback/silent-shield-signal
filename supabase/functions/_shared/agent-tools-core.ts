@@ -821,3 +821,10 @@ registerTool(notifyOncallViaSlack);
 registerTool(arcgisListLayers);
 registerTool(arcgisCheckSignalProximity);
 registerTool(arcgisQueryLayer);
+
+// ── Domain bundles ─────────────────────────────────────────────────────────
+// Side-effect imports: each module calls registerTool() at load time.
+// Adding a new bundle here makes its tools available to every agent /
+// chat surface that imports agent-tools-core.ts (respond-as-agent,
+// aegis-chat, …) on the next deploy.
+import "./agent-tools-wildfire.ts";
