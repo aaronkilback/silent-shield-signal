@@ -187,8 +187,8 @@ export function SignalDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg">
-        <SheetHeader>
+      <SheetContent className="w-full sm:max-w-lg flex flex-col p-0">
+        <SheetHeader className="p-6 pb-0 shrink-0">
           <div className="flex items-center justify-between">
             <div>
               <SheetTitle>Signal Details</SheetTitle>
@@ -204,7 +204,7 @@ export function SignalDetailSheet({
           </div>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(100vh-200px)] mt-6 pr-4">
+        <ScrollArea className="flex-1 min-h-0 mt-6 px-6 pr-10">
           <div className="space-y-6">
             {/* Severity & Category */}
             <div className="flex flex-wrap gap-2">
@@ -785,7 +785,7 @@ export function SignalDetailSheet({
         </ScrollArea>
 
         {/* Actions */}
-        <div className="absolute bottom-0 left-0 right-0 p-6 bg-background border-t">
+        <div className="shrink-0 p-6 bg-background border-t">
           <div className="flex gap-2">
             <Button
               variant="outline"
