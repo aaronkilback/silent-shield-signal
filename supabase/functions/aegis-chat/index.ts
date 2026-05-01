@@ -17,10 +17,14 @@ serve(async (req) => {
     const conversationId = body?.conversationId ?? null;
     const platformContext = body?.platformContext ?? null;
     const agentConfig = body?.agentConfig ?? null;
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
 
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured");
+    // Original mobile repo hardcoded gemini-2.0-flash via the OpenAI-compat
+    // Gemini endpoint. That model is deprecated for new API keys and now
+    // returns 500s. Fortress's main ai-gateway already maps it to OpenAI
+    // gpt-4o-mini — mirroring that here so mobile chat actually works.
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    if (!OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is not configured");
     }
 
     const operatorLine = operator?.id
@@ -102,14 +106,14 @@ Communication style:
 
 Remember: You are the trusted AI partner for security professionals. Every interaction matters for mission success.${operatorLine}${platformStatusLine}`;
 
-    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${GEMINI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gemini-2.0-flash",
+        model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
           ...messages.map((m: { role: string; content: string }) => {
@@ -139,8 +143,10 @@ Remember: You are the trusted AI partner for security professionals. Every inter
       }
       const text = await response.text();
       console.error("AI gateway error:", response.status, text);
+      // Surface the upstream message so future failures are diagnosable
+      // instead of returning the same opaque "AI gateway error" string.
       return new Response(
-        JSON.stringify({ error: "AI gateway error" }),
+        JSON.stringify({ error: `AI gateway error (${response.status}): ${text.slice(0, 300)}` }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
