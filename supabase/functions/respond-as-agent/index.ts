@@ -25,6 +25,7 @@
 // because no authenticated user_id is responsible for it).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { recallChatContext, learnFromChatExchange } from "../_shared/agent-chat-memory.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -195,71 +196,12 @@ Deno.serve(async (req) => {
       return (convRow as any)?.client_id ?? null;
     })();
 
-    let memoryEmbedding: number[] | null = null;
-    let memories: Array<{ operator_excerpt: string; agent_excerpt: string; similarity: number }> = [];
-    let beliefs: Array<{ claim: string; confidence: number; reinforcements: number }> = [];
-    try {
-      const embedResp = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "text-embedding-3-small",
-          input: trigger.content.slice(0, 4000),
-        }),
-      });
-      if (embedResp.ok) {
-        const j = await embedResp.json();
-        memoryEmbedding = j.data?.[0]?.embedding ?? null;
-      }
-    } catch (e) {
-      console.warn("[respond-as-agent] embed failed:", e);
-    }
-
-    if (memoryEmbedding) {
-      const [memRes, belRes] = await Promise.all([
-        admin.rpc("match_agent_memories", {
-          _agent_id: agent.id,
-          _query: memoryEmbedding,
-          _client: conversationClientId,
-          _limit: 8,
-        }),
-        admin.rpc("match_agent_chat_beliefs", {
-          _agent_id: agent.id,
-          _query: memoryEmbedding,
-          _client: conversationClientId,
-          _limit: 6,
-        }),
-      ]);
-      // Filter to meaningful matches only (cosine similarity > 0.4 to
-      // avoid noise; below that threshold the memory probably isn't
-      // about the same topic).
-      memories = (memRes.data ?? []).filter((m: any) => (m.similarity ?? 0) > 0.4);
-      beliefs = (belRes.data ?? []).filter((b: any) => (b.similarity ?? 0) > 0.45);
-    }
-
-    const memorySection =
-      memories.length > 0
-        ? `\n\nRELEVANT PRIOR EXCHANGES (oldest → newest, your own past responses are signed AGENT):\n${memories
-            .reverse()
-            .map(
-              (m, i) =>
-                `[${i + 1}] OPERATOR: ${m.operator_excerpt.slice(0, 220)}\n    AGENT: ${m.agent_excerpt.slice(0, 280)}`
-            )
-            .join("\n")}`
-        : "";
-
-    const beliefsSection =
-      beliefs.length > 0
-        ? `\n\nYOUR CURRENT BELIEFS (claim — confidence — # reinforcements):\n${beliefs
-            .map(
-              (b) =>
-                `• ${b.claim} — ${Math.round((b.confidence ?? 0) * 100)}% — n=${b.reinforcements ?? 1}`
-            )
-            .join("\n")}`
-        : "";
+    const recall = await recallChatContext(admin, {
+      agentId: agent.id,
+      query: trigger.content,
+      clientId: conversationClientId,
+    });
+    const { memories, beliefs, queryEmbedding: memoryEmbedding } = recall;
 
     // Build system prompt — agent persona + framework + chat-mode
     // guardrails so the agent stays terse and on-topic.
@@ -278,7 +220,7 @@ CHAT-MODE GUARDRAILS:
 
 USING YOUR MEMORY + BELIEFS:
 - Below you may see RELEVANT PRIOR EXCHANGES from earlier conversations. Treat them as your own past statements; reuse facts and refine when you learn something new.
-- YOUR CURRENT BELIEFS are claims you've accumulated over time, with confidence + reinforcement count. If your belief is being challenged in this conversation, acknowledge that directly. If a new exchange should update a belief, say so plainly so we can record it.${memorySection}${beliefsSection}`;
+- YOUR CURRENT BELIEFS are claims you've accumulated over time, with confidence + reinforcement count. If your belief is being challenged in this conversation, acknowledge that directly. If a new exchange should update a belief, say so plainly so we can record it.${recall.promptInjection}`;
 
     // Build user message — chat history + the trigger
     const triggerSpeaker = profileMap[trigger.sender_id ?? ""] || "OPERATOR";
@@ -342,168 +284,19 @@ Respond as ${agent.call_sign}.`;
       });
     }
 
-    // ── PERSIST MEMORY ───────────────────────────────────────────────
-    // Embed the [trigger + response] pair so future questions can
-    // retrieve this exchange. Uses the same query embedding when we
-    // already computed one to save a round-trip; otherwise embeds the
-    // joined text now.
-    try {
-      const memoryText = `Q: ${trigger.content.slice(0, 1000)}\nA: ${content.slice(0, 1500)}`;
-      let memEmbed = memoryEmbedding;
-      if (!memEmbed || trigger.content.length > 200) {
-        const e = await fetch("https://api.openai.com/v1/embeddings", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "text-embedding-3-small",
-            input: memoryText.slice(0, 4000),
-          }),
-        });
-        if (e.ok) {
-          const j = await e.json();
-          memEmbed = j.data?.[0]?.embedding ?? memEmbed;
-        }
-      }
-      await admin.from("agent_conversation_memory").insert({
-        agent_id: agent.id,
-        conversation_id: conversationId,
-        trigger_message_id: trigger.id,
-        response_message_id: agentMsg.id,
-        operator_excerpt: trigger.content.slice(0, 1000),
-        agent_excerpt: content.slice(0, 1500),
-        embedding: memEmbed,
-        operator_id: trigger.sender_id,
-        client_id: conversationClientId,
-      });
-    } catch (e) {
-      console.warn("[respond-as-agent] memory persist failed:", e);
-    }
-
-    // ── BELIEF EXTRACTION (async, fire-and-forget) ──────────────────
-    // Have the model distill claims from its own response. Each claim
-    // gets embedded; if a similar belief already exists (cosine > 0.85),
-    // reinforce it; else insert. This is non-blocking — the operator
-    // already has the agent's reply.
-    (async () => {
-      try {
-        const claimResp = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content:
-                  "Extract atomic, falsifiable claims from the agent response. Return JSON: {claims: [{claim: string, confidence: number 0-1}]}. Only include claims the agent stated as true (not questions, not conditionals). Maximum 5 claims. Return strictly JSON, no commentary.",
-              },
-              {
-                role: "user",
-                content: `Agent: ${agent.call_sign}\nResponse:\n${content}`,
-              },
-            ],
-            response_format: { type: "json_object" },
-          }),
-        });
-        if (!claimResp.ok) return;
-        const cj = await claimResp.json();
-        const raw = cj?.choices?.[0]?.message?.content;
-        if (!raw) return;
-        let parsed: { claims?: Array<{ claim: string; confidence?: number }> } = {};
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          return;
-        }
-        const claims = (parsed.claims ?? []).filter(
-          (c) => c?.claim && c.claim.length > 12 && c.claim.length < 400
-        );
-        if (claims.length === 0) return;
-
-        // Embed all claims in one call
-        const embReq = await fetch("https://api.openai.com/v1/embeddings", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "text-embedding-3-small",
-            input: claims.map((c) => c.claim),
-          }),
-        });
-        if (!embReq.ok) return;
-        const embJson = await embReq.json();
-        const embeddings: number[][] = (embJson.data ?? []).map((d: any) => d.embedding);
-
-        for (let i = 0; i < claims.length; i++) {
-          const claim = claims[i].claim.trim();
-          const confidence = Math.max(
-            0.3,
-            Math.min(0.95, claims[i].confidence ?? 0.6)
-          );
-          const emb = embeddings[i];
-          if (!emb) continue;
-
-          // Look for an existing belief with cosine > 0.85
-          const { data: matches } = await admin.rpc("match_agent_chat_beliefs", {
-            _agent_id: agent.id,
-            _query: emb,
-            _client: conversationClientId,
-            _limit: 1,
-          });
-          const existing = (matches ?? [])[0];
-          if (existing && (existing.similarity ?? 0) > 0.85) {
-            // Reinforce: bump count, average confidence (weighted by reinforcements),
-            // refresh last_reinforced_at
-            const newReinforcements = (existing.reinforcements ?? 1) + 1;
-            const newConfidence =
-              ((existing.confidence ?? 0.5) * (existing.reinforcements ?? 1) + confidence) /
-              newReinforcements;
-            await admin
-              .from("agent_chat_beliefs")
-              .update({
-                confidence: newConfidence,
-                reinforcements: newReinforcements,
-                last_reinforced_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                origin_conversation_ids: undefined, // append below
-              })
-              .eq("id", existing.id);
-            // Append the new conversation/message to provenance arrays
-            await admin.rpc("append_belief_provenance" as any, {
-              _belief_id: existing.id,
-              _conversation_id: conversationId,
-              _message_id: agentMsg.id,
-            }).then(
-              () => {},
-              () => {
-                // RPC may not exist — best-effort, ignore
-              }
-            );
-          } else {
-            await admin.from("agent_chat_beliefs").insert({
-              agent_id: agent.id,
-              claim,
-              claim_embedding: emb,
-              confidence,
-              reinforcements: 1,
-              origin_conversation_ids: [conversationId],
-              origin_message_ids: [agentMsg.id],
-              scope_client_id: conversationClientId,
-            });
-          }
-        }
-      } catch (e) {
-        console.warn("[respond-as-agent] belief extraction failed:", e);
-      }
-    })();
+    // ── LEARN: persist memory + extract beliefs (fire-and-forget) ───
+    void learnFromChatExchange(admin, {
+      agentId: agent.id,
+      agentCallSign: agent.call_sign,
+      conversationId,
+      triggerMessageId: trigger.id,
+      responseMessageId: agentMsg.id,
+      operatorExcerpt: trigger.content,
+      agentExcerpt: content,
+      operatorId: trigger.sender_id,
+      clientId: conversationClientId,
+      queryEmbedding: memoryEmbedding,
+    });
 
     return new Response(
       JSON.stringify({

@@ -1,8 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  recallChatContext,
+  learnFromChatExchange,
+} from "../_shared/agent-chat-memory.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 serve(async (req) => {
@@ -17,11 +23,12 @@ serve(async (req) => {
     const conversationId = body?.conversationId ?? null;
     const platformContext = body?.platformContext ?? null;
     const agentConfig = body?.agentConfig ?? null;
+    // Fortress ai_agents.id (UUID). Mobile resolves slug → UUID via
+    // src/lib/agent-mappings.ts and sends both. If absent, memory +
+    // belief recall/learn is skipped (graceful degrade).
+    const agentFortressId: string | null = body?.agentFortressId ?? null;
+    const clientId: string | null = body?.clientId ?? null;
 
-    // Original mobile repo hardcoded gemini-2.0-flash via the OpenAI-compat
-    // Gemini endpoint. That model is deprecated for new API keys and now
-    // returns 500s. Fortress's main ai-gateway already maps it to OpenAI
-    // gpt-4o-mini — mirroring that here so mobile chat actually works.
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     if (!OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY is not configured");
@@ -37,52 +44,11 @@ serve(async (req) => {
       ? `\n\nCURRENT PLATFORM STATUS:\n${platformContext}\n\nYou have full access to platform intelligence. Reference signals, team status, available agents, and locations when relevant to the operator's queries.`
       : "";
 
-    // Use agent-specific system prompt if provided
     const baseSystemPrompt = agentConfig?.systemPrompt || `You are Aegis, the lead AI security agent for Silent Shield Security Operations Center. You are:
 - Professional, tactical, and concise
 - Expert in security operations, threat assessment, travel risk analysis, and team coordination
 - Connected to a network of specialized agents (Sentinel, OSINT, Monitor, etc.)
 - Protective of your operators and always prioritizing their safety
-
-Your capabilities:
-- Threat Analysis: Analyze and explain security threats in detail
-- Flight Tracking: Real-time flight status, delays, cancellations, gate changes
-  * When operators ask about flights, you can look up current status
-  * Track delays and provide ETAs
-  * Monitor multiple flights for travel coordination
-- Travel Risk Assessment: Comprehensive travel risk scanning considering:
-  * Weather conditions (storms, extreme temperatures, forecasts)
-  * Natural disasters (earthquakes, tsunamis, volcanoes, wildfires, floods)
-  * Geopolitical issues (conflicts, protests, civil unrest, terrorism, sanctions)
-  * Security threats (crime rates, kidnapping risks, violence, cartel activity)
-  * Health risks (disease outbreaks, epidemics, medical infrastructure quality)
-  * Infrastructure status (power outages, transportation disruptions, fuel shortages)
-  * Travel restrictions (visa requirements, entry bans, quarantine mandates)
-  * News and current events affecting the region
-- Travel Security Briefing Generation: Generate comprehensive ISOS/Control Risks style security briefings
-  * Create detailed location-specific security briefings on demand
-  * Include risk ratings (Insignificant/Low/Medium/High/Extreme)
-  * Cover crime, road safety, social unrest, natural hazards, terrorism, and health
-  * Provide transportation and accommodation recommendations
-  * List areas of concern and emergency contacts
-  * Operators can request: "Generate a security briefing for [City], [Country]"
-- Report Analysis: Parse and analyze uploaded travel risk reports
-  * Accept reports from International SOS, Control Risks, and other providers
-  * Extract structured intelligence from PDF reports
-  * Cross-reference with platform signals for enhanced situational awareness
-- System Monitoring: Check status of agents and security systems
-- Command Coordination: Direct specialized agents for specific tasks
-- Intelligence Briefings: Provide security updates and situational reports
-- Emergency Response: Guide operators through crisis situations
-
-When performing travel risk analysis:
-1. Cross-reference ALL available platform signals across categories
-2. Consider temporal factors (time of year, upcoming events, seasonal patterns)
-3. Assess cumulative risk from multiple threat vectors
-4. Provide actionable recommendations with risk mitigation strategies
-5. Identify evacuation routes and emergency contacts where relevant
-6. Rate overall risk level (LOW/MODERATE/ELEVATED/HIGH/CRITICAL)
-7. Reference any uploaded ISOS/Control Risks reports for the location if available
 
 When asked about flights:
 - Ask for the flight number if not provided (e.g., "UA123", "BA456")
@@ -94,6 +60,38 @@ When asked to generate a security briefing:
 - Optionally ask for travel dates and purpose for more tailored advice
 - Generate comprehensive ISOS-style briefings with all risk categories`;
 
+    // ── MEMORY + BELIEFS RECALL ──────────────────────────────────────
+    // Pull the agent's relevant prior exchanges and current beliefs,
+    // inject as a prompt section. Same shared module as respond-as-agent
+    // so a chat in any surface (mobile 1:1, mobile team @-mention,
+    // Fortress webapp) builds the same memory layer.
+    let memorySection = "";
+    let queryEmbedding: number[] | null = null;
+    const lastUserMsg = messages
+      .slice()
+      .reverse()
+      .find((m: any) => m?.role === "user");
+    const lastUserContent = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+
+    let admin: ReturnType<typeof createClient> | null = null;
+    if (agentFortressId && lastUserContent) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceKey =
+        Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      admin = createClient(supabaseUrl, serviceKey);
+      try {
+        const recall = await recallChatContext(admin, {
+          agentId: agentFortressId,
+          query: lastUserContent,
+          clientId,
+        });
+        memorySection = recall.promptInjection;
+        queryEmbedding = recall.queryEmbedding;
+      } catch (e) {
+        console.warn("[aegis-chat] recall failed:", e);
+      }
+    }
+
     const systemPrompt = `${baseSystemPrompt}
 
 Communication style:
@@ -104,7 +102,7 @@ Communication style:
 - Use markdown formatting for clarity (headers, bullets, bold for emphasis)
 - Reference current signals, team status, and locations when relevant
 
-Remember: You are the trusted AI partner for security professionals. Every interaction matters for mission success.${operatorLine}${platformStatusLine}`;
+Remember: You are the trusted AI partner for security professionals. Every interaction matters for mission success.${operatorLine}${platformStatusLine}${memorySection}`;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -143,15 +141,71 @@ Remember: You are the trusted AI partner for security professionals. Every inter
       }
       const text = await response.text();
       console.error("AI gateway error:", response.status, text);
-      // Surface the upstream message so future failures are diagnosable
-      // instead of returning the same opaque "AI gateway error" string.
       return new Response(
         JSON.stringify({ error: `AI gateway error (${response.status}): ${text.slice(0, 300)}` }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    return new Response(response.body, {
+    if (!response.body) {
+      return new Response(response.body, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      });
+    }
+
+    // Tee the stream — pass it through to the client unchanged while
+    // accumulating the assistant's content. When the upstream completes
+    // we fire the memory+belief learn step against the assembled text.
+    const decoder = new TextDecoder();
+    let assistantContent = "";
+
+    const learnAfterStream = async () => {
+      if (!admin || !agentFortressId || !lastUserContent || !assistantContent.trim()) return;
+      try {
+        await learnFromChatExchange(admin, {
+          agentId: agentFortressId,
+          agentCallSign: agentConfig?.name || agentConfig?.codename || "AEGIS-CMD",
+          conversationId: conversationId || "(no conversation)",
+          triggerMessageId: null,
+          responseMessageId: null,
+          operatorExcerpt: lastUserContent,
+          agentExcerpt: assistantContent,
+          operatorId: operator?.id ?? null,
+          clientId,
+          queryEmbedding,
+        });
+      } catch (e) {
+        console.warn("[aegis-chat] learn failed:", e);
+      }
+    };
+
+    const transform = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+        // Decode + extract delta.content from SSE events to build the
+        // assistant text. OpenAI emits `data: {...json...}\n\n` lines.
+        const text = decoder.decode(chunk, { stream: true });
+        for (const line of text.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (typeof delta === "string") assistantContent += delta;
+          } catch {
+            // ignore malformed line
+          }
+        }
+      },
+      async flush() {
+        // Stream finished — fire the learn step. Don't await so the
+        // response bytes finish being delivered first.
+        void learnAfterStream();
+      },
+    });
+
+    return new Response(response.body.pipeThrough(transform), {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (error) {
