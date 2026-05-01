@@ -65,10 +65,12 @@ ORDER BY calls DESC;
 -- per-tenant data, so it must not leak across tenants via RLS misconfig.
 ALTER TABLE public.function_telemetry ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "function_telemetry_super_admin_read" ON public.function_telemetry;
 CREATE POLICY "function_telemetry_super_admin_read" ON public.function_telemetry
   FOR SELECT TO authenticated
   USING (public.has_role(auth.uid(), 'super_admin'));
 
+DROP POLICY IF EXISTS "function_telemetry_service_role_write" ON public.function_telemetry;
 CREATE POLICY "function_telemetry_service_role_write" ON public.function_telemetry
   FOR INSERT TO service_role
   WITH CHECK (true);

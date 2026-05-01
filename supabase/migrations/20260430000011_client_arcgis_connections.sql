@@ -79,11 +79,13 @@ CREATE INDEX IF NOT EXISTS idx_arcgis_connections_client_active
 -- Service role has full access for the agent tools to query.
 ALTER TABLE public.client_arcgis_connections ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "arcgis_connections_super_admin_all" ON public.client_arcgis_connections;
 CREATE POLICY "arcgis_connections_super_admin_all" ON public.client_arcgis_connections
   FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'super_admin'))
   WITH CHECK (public.has_role(auth.uid(), 'super_admin'));
 
+DROP POLICY IF EXISTS "arcgis_connections_service_role_all" ON public.client_arcgis_connections;
 CREATE POLICY "arcgis_connections_service_role_all" ON public.client_arcgis_connections
   FOR ALL TO service_role
   USING (true) WITH CHECK (true);

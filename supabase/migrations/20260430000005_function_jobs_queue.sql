@@ -99,10 +99,12 @@ ORDER BY total DESC;
 -- for the producer helper and worker.
 ALTER TABLE public.function_jobs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "function_jobs_super_admin_read" ON public.function_jobs;
 CREATE POLICY "function_jobs_super_admin_read" ON public.function_jobs
   FOR SELECT TO authenticated
   USING (public.has_role(auth.uid(), 'super_admin'));
 
+DROP POLICY IF EXISTS "function_jobs_service_role_all" ON public.function_jobs;
 CREATE POLICY "function_jobs_service_role_all" ON public.function_jobs
   FOR ALL TO service_role
   USING (true) WITH CHECK (true);

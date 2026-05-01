@@ -87,11 +87,13 @@ ORDER BY total DESC;
 
 ALTER TABLE public.agent_actions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "agent_actions_super_admin_all" ON public.agent_actions;
 CREATE POLICY "agent_actions_super_admin_all" ON public.agent_actions
   FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'super_admin'))
   WITH CHECK (public.has_role(auth.uid(), 'super_admin'));
 
+DROP POLICY IF EXISTS "agent_actions_service_role_all" ON public.agent_actions;
 CREATE POLICY "agent_actions_service_role_all" ON public.agent_actions
   FOR ALL TO service_role
   USING (true) WITH CHECK (true);
