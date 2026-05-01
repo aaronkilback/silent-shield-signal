@@ -64,6 +64,11 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const conversationId: string = body.conversation_id;
     const messageId: string = body.message_id;
+    // When the operator @-mentions multiple agents in one message the
+    // mobile client fans out one call per agent and passes the agent's
+    // UUID in agent_id_override. If absent we fall back to the trigger
+    // message's mentioned_agent_id (the single-agent path).
+    const agentIdOverride: string | null = body.agent_id_override ?? null;
     if (!conversationId || !messageId) {
       return new Response(
         JSON.stringify({ error: "conversation_id and message_id required" }),
@@ -97,9 +102,10 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    if (!trigger.mentioned_agent_id) {
+    const targetAgentId = agentIdOverride ?? trigger.mentioned_agent_id;
+    if (!targetAgentId) {
       return new Response(
-        JSON.stringify({ error: "trigger message has no mentioned_agent_id" }),
+        JSON.stringify({ error: "no agent specified (agent_id_override or mentioned_agent_id required)" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -108,7 +114,7 @@ Deno.serve(async (req) => {
     const { data: agent, error: agentErr } = await admin
       .from("ai_agents")
       .select("id, call_sign, codename, persona, specialty, mission_scope, system_prompt")
-      .eq("id", trigger.mentioned_agent_id)
+      .eq("id", targetAgentId)
       .maybeSingle();
     if (agentErr || !agent) {
       return new Response(JSON.stringify({ error: "agent not found" }), {
