@@ -26,6 +26,12 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { recallChatContext, learnFromChatExchange } from "../_shared/agent-chat-memory.ts";
+import { runAgentLoop } from "../_shared/agent-tools.ts";
+// Side-effect import — registers every tool defined in agent-tools-core.ts.
+// Adding a new tool there (or in any other file that calls registerTool)
+// makes it automatically available to chat agents on next deploy. No
+// per-function plumbing required.
+import "../_shared/agent-tools-core.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -216,12 +222,11 @@ CHAT-MODE GUARDRAILS:
 - You have full transcript context of this conversation (encrypted messages are excluded; you only see what's readable).
 - Stay in your persona. Use the framework language your specialty implies (CSIS / RCMP INSET for counterterror, NIST for cyber, etc.) where relevant.
 
-ANSWER-OR-DECLINE RULE — ABSOLUTE:
-- You DO NOT have realtime tool access in this chat surface. You cannot query NASA FIRMS, Coastal GasLink data feeds, dark web sources, or any external API in this turn.
-- NEVER stall with "querying", "gathering", "let me check", "please hold", "I'll look into it", "one moment", "checking now", or similar holding phrases. There is no second turn coming where you do the work — you only get this one response.
-- Either answer the question now using what's in your prompt context (memory, beliefs, prior transcript, the operator's own message), OR explicitly say what you'd need to actually answer (e.g. "I'd need a current FIRMS hotspot pull for Fort St. John — that's not wired into chat yet; check the Wildfire Daily Report or escalate to AEGIS-CMD which has signal access").
-- If the operator gives you data in their message (location, timestamps, pasted content), reason about THAT directly. Don't pretend it isn't there.
-- If you don't actually know, say "I don't have that" plainly and name the gap.
+USING YOUR TOOLS:
+- You have a full tool stack available — lookup_historical_signals, query_entity_relationships, retrieve_similar_past_decisions, get_signal_velocity, detect_escalation_pattern, agent_consult, arcgis_check_signal_proximity, and more. Use them when the operator asks something that requires real data (recent signals, entity relationships, geographic proximity, prior precedent).
+- Tool calls are CHEAP — call 1-3 in a turn when they help, return a final answer that cites what the tools told you.
+- If a tool returns no data, say so plainly and name what the operator would need to add (e.g. "no signals matched 'Fort St. John' in the last 7 days — possible we need a FIRMS-specific monitor").
+- DO NOT stall with "querying...", "let me check", "please hold", or similar — actually call the tool and answer in this turn.
 
 USING YOUR MEMORY + BELIEFS:
 - Below you may see RELEVANT PRIOR EXCHANGES from earlier conversations. Treat them as your own past statements; reuse facts and refine when you learn something new.
@@ -241,34 +246,48 @@ ${triggerSpeaker}: ${trigger.content}${
 
 Respond as ${agent.call_sign}.`;
 
-    const llm = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
+    // ── ITERATIVE TOOL LOOP ──────────────────────────────────────────
+    // Run the agent through the same tool-use loop ai-decision-engine
+    // uses for signal investigation. Every tool registered in
+    // _shared/agent-tools-core.ts is automatically available — when a
+    // new tool is added there, chat agents inherit it on next deploy.
+    // No per-function plumbing, no allow-list to maintain.
+    const investigation = await runAgentLoop(admin, {
+      agentCallSign: agent.call_sign,
+      functionName: "respond-as-agent",
+      // gpt-4o-mini handles tool use reliably; ai-decision-engine uses
+      // gpt-5.2 for deeper investigations but chat doesn't need that.
+      model: "openai/gpt-4o-mini",
+      contextClientId: conversationClientId ?? undefined,
+      maxIterations: 5,
+      systemPrompt,
+      userMessage: userPrompt,
     });
 
-    if (!llm.ok) {
-      const text = await llm.text();
-      console.error("[respond-as-agent] OpenAI error:", llm.status, text);
+    if (investigation.error && !investigation.finalContent) {
+      console.error("[respond-as-agent] tool loop error:", investigation.error);
       return new Response(
-        JSON.stringify({ error: `LLM upstream error (${llm.status}): ${text.slice(0, 240)}` }),
+        JSON.stringify({ error: `agent loop error: ${investigation.error}` }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const llmJson = await llm.json();
-    const content: string = llmJson?.choices?.[0]?.message?.content?.trim() || "(no response)";
+    const content: string = (investigation.finalContent ?? "").trim() || "(no response)";
 
     // Insert agent message — sender_id null, agent_id set, not encrypted.
+    // Persist the tool-call trace in metadata so the UI can later show
+    // "what tools the agent used to answer this".
+    const toolCallSummary =
+      investigation.toolCalls.length > 0
+        ? investigation.toolCalls.map((t) => ({
+            name: t.toolName,
+            args: t.args,
+            iteration: t.iteration,
+            duration_ms: t.durationMs,
+            error: t.errorMessage ?? null,
+          }))
+        : null;
+
     const { data: agentMsg, error: insErr } = await admin
       .from("messages")
       .insert({
@@ -312,6 +331,9 @@ Respond as ${agent.call_sign}.`;
         created_at: agentMsg.created_at,
         memories_used: memories.length,
         beliefs_used: beliefs.length,
+        tool_calls: toolCallSummary,
+        iterations: investigation.iterations,
+        capped_at_max: investigation.cappedAtMax,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
