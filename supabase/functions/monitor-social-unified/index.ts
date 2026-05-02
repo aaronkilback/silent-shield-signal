@@ -497,38 +497,14 @@ async function executeSearch(
         continue;
       }
 
-      // ═══ COMMENT-POLLUTION GATE ═══
-      // Google CSE often injects post comments / replies / quoted posts
-      // into `snippet`. If the term we searched for only shows up in the
-      // snippet — never in the title or the URL path — the "match" is
-      // almost always a comment on a post about something unrelated, and
-      // the resulting signal will have a title that doesn't match its
-      // source link. Require the source name's distinctive tokens to
-      // appear in the title or URL before trusting the snippet.
-      // Skip for entity scans: those target a specific profile URL where
-      // the entity name may live in the handle rather than the title.
-      const isEntityScanLocal = search.sourceType === 'entity';
-      if (!isEntityScanLocal && search.sourceName) {
-        const distinctiveTokens = search.sourceName
-          .toLowerCase()
-          .replace(/['"]/g, '')
-          .split(/[\s,]+/)
-          .filter((t) => t.length >= 4);
-        if (distinctiveTokens.length > 0) {
-          const titleLower = title.toLowerCase();
-          const urlLower = url.toLowerCase();
-          const groundedInTitleOrUrl = distinctiveTokens.some(
-            (t) => titleLower.includes(t) || urlLower.includes(t),
-          );
-          if (!groundedInTitleOrUrl) {
-            console.log(
-              `[SocialUnified] ✗ Comment-pollution gate: "${search.sourceName}" tokens absent from title/URL: "${title.substring(0, 60)}"`
-            );
-            rejected++;
-            continue;
-          }
-        }
-      }
+      // The Facebook-specific comment-pollution gate that previously
+      // lived here was killing legitimate Twitter/Instagram CSE results
+      // — those platforms put the post text in snippet (not title), so
+      // requiring the search term to appear in title/URL rejected almost
+      // every match. Removed entirely now that facebook is no longer in
+      // PLATFORMS (the original reason for the gate). If facebook ever
+      // comes back via CSE, scope this guard to URL host containing
+      // 'facebook.com' so it doesn't catch Twitter/Instagram.
 
       // ═══ HARD TEMPORAL FILTER ═══
       // For campaign/client searches: reject URLs or snippets with obvious old dates (pre-2025).

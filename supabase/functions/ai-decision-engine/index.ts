@@ -712,13 +712,26 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       console.warn('[AI-Decision] Tier-1 analysis write threw:', analysisErr?.message || analysisErr);
     }
 
-    // Tier-2 review (composite ≥ 0.60). Awaited — fire-and-forget races with the
-    // Edge runtime teardown after this function returns, so the fetch dies and
-    // raw_json.agent_review never lands. Awaiting adds ~3-5s to total latency
-    // but is the only way to ensure the review actually runs in production.
+    // Tier-2 review. Awaited — fire-and-forget races with the Edge runtime
+    // teardown after this function returns, so the fetch dies and
+    // raw_json.agent_review never lands. Awaiting adds ~3-5s to total
+    // latency but is the only way to ensure the review actually runs in
+    // production.
+    //
+    // Three trigger conditions:
+    //   - composite 0.60-0.75 (ambiguous tier — needs deeper read)
+    //   - composite ≥ 0.75 + severity_score ≥ 50 (high-value confirmed)
+    //   - severity in ('high','critical') (REGARDLESS of composite —
+    //     watchdog measures coverage as 'agent_review on high-severity
+    //     signals' and a wildfire/lightning signal at composite ~0.45
+    //     was previously bypassing review entirely, leaving 18% coverage
+    //     against a 50% threshold. Severity = 'high' alone justifies a
+    //     deeper agent read.)
+    const severityLabel = String(signal.severity || '').toLowerCase();
+    const isHighSeverityLabel = severityLabel === 'high' || severityLabel === 'critical';
     const isAmbiguousTier_pre = compositeScore >= 0.60 && compositeScore < 0.75;
     const isHighValueSignal_pre = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
-    if (isAmbiguousTier_pre || isHighValueSignal_pre) {
+    if (isAmbiguousTier_pre || isHighValueSignal_pre || isHighSeverityLabel) {
       const supabaseUrlPre = Deno.env.get('SUPABASE_URL');
       const serviceRoleKeyPre = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
       if (supabaseUrlPre && serviceRoleKeyPre) {
@@ -1082,13 +1095,17 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         } // end confidence threshold else
 
         // ═══ PHASE 2C: TIER 2 ASYNC AGENT REVIEW ═══
-        // Fires review-signal-agent for two cases:
-        // 1. Ambiguous tier (0.60–0.75): no incident yet or incident just created — agent promotes/enriches/flags
-        // 2. High-value signals (≥0.75, severity_score ≥50): most important signals get enrichment context, not just the ambiguous ones
+        // Fires review-signal-agent for three cases:
+        //   1. Ambiguous tier (0.60–0.75)
+        //   2. High-value signals (≥0.75, severity_score ≥50)
+        //   3. severity label = 'high' or 'critical' regardless of composite
+        //      (matches the watchdog's coverage expectation)
         // Never blocks — fire-and-forget fetch.
+        const severityLabel = String(signal.severity || '').toLowerCase();
+        const isHighSeverityLabel = severityLabel === 'high' || severityLabel === 'critical';
         const isAmbiguousTier = compositeScore >= 0.60 && compositeScore < 0.75;
         const isHighValueSignal = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
-        if (!tier2_promotion && (isAmbiguousTier || isHighValueSignal)) {
+        if (!tier2_promotion && (isAmbiguousTier || isHighValueSignal || isHighSeverityLabel)) {
           const supabaseUrlT2 = Deno.env.get('SUPABASE_URL');
           const serviceRoleKeyT2 = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
           if (supabaseUrlT2 && serviceRoleKeyT2) {
