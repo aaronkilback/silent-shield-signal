@@ -1,11 +1,11 @@
 /**
- * System Watchdog â Self-Healing & Self-Improving AI Agent
+ * System Watchdog — Self-Healing & Self-Improving AI Agent
  * 
  * An intelligent agent that UNDERSTANDS how Fortress works,
  * DETECTS issues, ATTEMPTS autonomous fixes, VERIFIES results,
  * LEARNS from outcomes, and REPORTS what was fixed vs. what needs attention.
  * 
- * Pipeline: Load Learnings â Collect Telemetry â AI Analysis â Auto-Remediate â Re-Verify â Store Learnings â Email Report
+ * Pipeline: Load Learnings → Collect Telemetry → AI Analysis → Auto-Remediate → Re-Verify → Store Learnings → Email Report
  * 
  * Self-Improvement Loop:
  * - Tracks which remediations succeed/fail over time
@@ -22,12 +22,12 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 
 const ALERT_EMAIL = 'ak@silentshieldsecurity.com';
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                   SYSTEM KNOWLEDGE BASE
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 const FORTRESS_SYSTEM_KNOWLEDGE = `
-You are the Fortress System Watchdog Agent â an autonomous self-healing, self-improving AI for a corporate security intelligence platform called Fortress, built by Silent Shield Security.
+You are the Fortress System Watchdog Agent — an autonomous self-healing, self-improving AI for a corporate security intelligence platform called Fortress, built by Silent Shield Security.
 
 ## YOUR MISSION
 You monitor platform health every 6 hours. You receive raw telemetry AND your own historical learnings from past runs. Use those learnings to make smarter decisions, avoid repeating failed fixes, and detect patterns humans would miss.
@@ -386,12 +386,12 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - EXPECTED: No user can reach the dashboard without completing SMS OTP
 
 ### AEGIS AI Assistant (CRITICAL)
-- Primary user interface â agent-mediated UI philosophy
+- Primary user interface — agent-mediated UI philosophy
 - Powered by GPT/Gemini with 21 operational tools
 - EXPECTED: Responds coherently. Empty/generic = degraded
-- REMEDIATION: Cannot auto-fix AI model â flag for human review
+- REMEDIATION: Cannot auto-fix AI model — flag for human review
 
-### AEGIS Behavioral Compliance (HIGH â NEW)
+### AEGIS Behavioral Compliance (HIGH — NEW)
 - AEGIS and all agents must follow "Action-First / Zero-Preamble" execution rules
 - Anti-patterns to detect in recent assistant responses:
   1. CAPABILITY LISTING: Responses containing numbered lists of what AEGIS "can do" before executing (e.g., "I can help with: 1) Vulnerability scanning 2)...")
@@ -448,18 +448,18 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - The E2E test suite runs periodic scans covering 200+ tests
 - Bug reports created from scan failures contain recurring patterns
 - The watchdog should consume recent bug report titles to detect fixable patterns:
-  - "orphaned feedback" â fix_orphaned_feedback
-  - "stale sources" â fix_stale_source_timestamps + stale_sources_rescan
-  - "missing relationship type" â info only (requires code fix)
-  - "invalid investigator references" â fix_orphaned_comms
-  - "stalled autopilot" â fix_stalled_autopilot_tasks
-  - "orphaned autopilot" â fix_orphaned_autopilot_tasks
+  - "orphaned feedback" → fix_orphaned_feedback
+  - "stale sources" → fix_stale_source_timestamps + stale_sources_rescan
+  - "missing relationship type" → info only (requires code fix)
+  - "invalid investigator references" → fix_orphaned_comms
+  - "stalled autopilot" → fix_stalled_autopilot_tasks
+  - "orphaned autopilot" → fix_orphaned_autopilot_tasks
 - EXPECTED: Bug count trends downward as self-healing improves
 - REMEDIATION: Auto-fix data issues, log code-level issues for human review
 
 ### Bug Reports
 - Users report via support-chat UI
-- Workflow: Reported â Investigating â Fix Proposed â Testing â Verified â Closed
+- Workflow: Reported → Investigating → Fix Proposed → Testing → Verified → Closed
 - EXPECTED: Bugs progress through stages. 5+ stale >7 days = backlog
 - REMEDIATION: Can auto-close very old resolved bugs, add watchdog notes
 
@@ -498,7 +498,7 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 
 ### Edge Functions (150+)
 - 5 CRITICAL: get-user-tenants, agent-chat, dashboard-ai-assistant, system-health-check, ingest-signal
-- REMEDIATION: Cannot redeploy â flag for human attention
+- REMEDIATION: Cannot redeploy — flag for human attention
 
 ## ADAPTIVE THRESHOLD TUNING
 You will receive an "adaptiveThresholds" object with auto-calculated baselines:
@@ -539,7 +539,7 @@ Respond with ONLY valid JSON (no markdown):
 ## What is NORMAL (suppress):
 - Briefing suppressed due to no new intel
 - Travel E2E tests failing due to RLS context limitations (read-only scan failures are known)
-- BUT: Travel function 401 Unauthorized errors in DLQ are NOT normal â these indicate broken auth headers
+- BUT: Travel function 401 Unauthorized errors in DLQ are NOT normal — these indicate broken auth headers
 - 1-2 open bugs (normal volume)
 - CORS errors on OPTIONS (means function is deployed)
 - Seasonal monitoring sources with no recent scans
@@ -560,13 +560,13 @@ Respond with ONLY valid JSON (no markdown):
 - Circuit breakers track monitor failure rates; 3+ failures in 2 hours = circuit OPEN (monitor skipped)
 - TELEMETRY: Check circuit_breaker_state for open circuits
 - EXPECTED: All circuits closed. Open circuit = monitor not running
-- REMEDIATION: reset_circuit_breakers â Reset open circuit breakers to closed state. USE when underlying issue (rate limit, timeout) has passed.
+- REMEDIATION: reset_circuit_breakers — Reset open circuit breakers to closed state. USE when underlying issue (rate limit, timeout) has passed.
 
-## Self-Validation (CRITICAL â META-HEALTH)
+## Self-Validation (CRITICAL — META-HEALTH)
 - Before trusting telemetry, the watchdog validates its own data source queries succeeded
 - selfValidation.allProbesHealthy = false means the watchdog itself is broken
 - failedProbes lists which tables returned errors (schema drift, permission issues)
-- If self-validation fails, ALWAYS flag as CRITICAL â the watchdog cannot trust its own data
+- If self-validation fails, ALWAYS flag as CRITICAL — the watchdog cannot trust its own data
 - Common causes: table renamed, column removed, RLS blocking service role
 - REMEDIATION: Cannot auto-fix. Flag for immediate human attention.
 
@@ -607,7 +607,7 @@ Use the effectiveness history to:
       "severity": "critical" | "warning" | "info" | "resolved",
       "title": "string",
       "analysis": "Updated analysis incorporating remediation result and historical context",
-      "recommendation": "What remains to be done (or 'No action needed â resolved')",
+      "recommendation": "What remains to be done (or 'No action needed — resolved')",
       "remediationStatus": "fixed" | "partially_fixed" | "failed" | "not_attempted" | "not_applicable" | "chronic",
       "effectivenessScore": 0.0-1.0,
       "learningNote": "What should be remembered for next run",
@@ -624,9 +624,9 @@ Mark findings as "resolved" severity and "fixed" remediationStatus if remediatio
 Only set shouldStillAlert=true if there are unresolved warning+ issues remaining.
 `;
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                    TELEMETRY & TYPES
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 interface AdaptiveThresholds {
   signalStaleHours: number;
@@ -795,9 +795,9 @@ interface LearningHistory {
 const CRITICAL_FUNCTIONS = ['get-user-tenants', 'agent-chat', 'dashboard-ai-assistant', 'system-health-check', 'ingest-signal'];
 const OPERATIONAL_FUNCTIONS = ['send-daily-briefing', 'support-chat', 'ai-decision-engine', 'autonomous-operations-loop', 'monitor-travel-risks', 'send-sms', 'ingest-communication', 'list-communications', 'system-ops', 'signal-processor', 'entity-manager', 'incident-manager', 'intelligence-engine', 'osint-collector'];
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                 SELF-IMPROVEMENT: LEARNING HISTORY
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 async function loadLearningHistory(supabase: any): Promise<LearningHistory> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -960,13 +960,13 @@ async function storeLearnings(
   if (rows.length > 0) {
     const { error } = await supabase.from('watchdog_learnings').insert(rows);
     if (error) console.error('[Watchdog] Failed to store learnings:', error);
-    else console.log(`[Watchdog] ð§  Stored ${rows.length} learnings for future runs`);
+    else console.log(`[Watchdog] 🧠 Stored ${rows.length} learnings for future runs`);
   }
 }
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                    TELEMETRY COLLECTOR
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: string): Promise<TelemetryData> {
   const now = new Date();
@@ -976,7 +976,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000).toISOString();
   const today = now.toISOString().split('T')[0];
 
-  // Edge function probes â run ALL in parallel with short timeouts
+  // Edge function probes — run ALL in parallel with short timeouts
   const allFunctions = [...CRITICAL_FUNCTIONS, ...OPERATIONAL_FUNCTIONS];
   const probeResults = await Promise.allSettled(
     allFunctions.map(async (fn) => {
@@ -1108,10 +1108,10 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     dbLatencyWarningMs: 2000,
   };
 
-  // âââ AEGIS BEHAVIORAL COMPLIANCE TELEMETRY âââ
+  // ═══ AEGIS BEHAVIORAL COMPLIANCE TELEMETRY ═══
   const aegisBehavior = await collectAegisBehaviorTelemetry(supabase);
 
-  // âââ COMMUNICATIONS INFRASTRUCTURE TELEMETRY âââ
+  // ═══ COMMUNICATIONS INFRASTRUCTURE TELEMETRY ═══
   const commsFunctions = ['send-sms', 'ingest-communication', 'list-communications'];
   const commsDeployment: Record<string, boolean> = {};
   for (const fn of commsFunctions) {
@@ -1139,16 +1139,16 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     }
   }
 
-  // âââ INVESTIGATION AUTOPILOT TELEMETRY âââ
+  // ═══ INVESTIGATION AUTOPILOT TELEMETRY ═══
   const thirtyMinAgo = new Date(now.getTime() - 30 * 60000).toISOString();
   const [
     autopilotSessionsResult, activeAutopilotResult, stalledAutopilotResult,
     orphanedAutopilotResult, recentCompletedAutopilotResult,
-    // âââ SIGNAL CONTRADICTIONS TELEMETRY âââ
+    // ═══ SIGNAL CONTRADICTIONS TELEMETRY ═══
     unresolvedContradictionsResult, oldestContradictionResult, totalContradictionsResult,
-    // âââ KNOWLEDGE FRESHNESS TELEMETRY âââ
+    // ═══ KNOWLEDGE FRESHNESS TELEMETRY ═══
     activeKnowledgeResult, staleKnowledgeResult,
-    // âââ ANALYST CALIBRATION TELEMETRY âââ
+    // ═══ ANALYST CALIBRATION TELEMETRY ═══
     calibratedAnalystsResult, uncalibratedAnalystsResult,
   ] = await Promise.all([
     supabase.from('investigation_autopilot_sessions').select('*', { count: 'exact', head: true }),
@@ -1260,9 +1260,9 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   };
 }
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //              DLQ & SCHEMA ERROR TELEMETRY
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 async function collectPhase1Telemetry(supabase: any): Promise<TelemetryData['phase1Foundation']> {
   const twentyFourHoursAgo = new Date(Date.now() - 86400000).toISOString();
@@ -1387,7 +1387,7 @@ async function collectCircuitBreakerTelemetry(supabase: any): Promise<TelemetryD
 }
 
 /**
- * Self-Validation Probe â the watchdog validates its own data sources
+ * Self-Validation Probe — the watchdog validates its own data sources
  * before reporting health. If any critical table query fails with a
  * schema/permission error, we surface it immediately rather than
  * letting it silently produce empty results.
@@ -1505,12 +1505,12 @@ async function collectExpertLearningTelemetry(supabase: any): Promise<TelemetryD
 }
 
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //              AEGIS BEHAVIORAL COMPLIANCE MONITOR
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 const AEGIS_ANTI_PATTERNS = [
-  { name: 'capability_listing', regex: /(?:I can help with|I have the ability to|my capabilities include|here(?:'s| is) what I can do)[\s\S]{0,50}(?:\d\)|â¢|-)[\s\S]{0,200}(?:\d\)|â¢|-)/i, weight: 1.0 },
+  { name: 'capability_listing', regex: /(?:I can help with|I have the ability to|my capabilities include|here(?:'s| is) what I can do)[\s\S]{0,50}(?:\d\)|•|-)[\s\S]{0,200}(?:\d\)|•|-)/i, weight: 1.0 },
   { name: 'preamble_bloat', regex: /(?:I will now|I'm going to|Let me|I'll proceed to|I will initiate|I am about to)[\s\S]{50,}/i, weight: 0.8 },
   { name: 'tool_avoidance', regex: /(?:I could|I would be able to|I have access to tools that|I can leverage)[\s\S]{0,100}(?:search|scan|analyze|monitor|generate)/i, weight: 0.9 },
   { name: 'identity_drift', regex: /(?:as an AI|I(?:'m| am) (?:just )?a (?:language model|chatbot|AI assistant)|I don't have (?:the )?capabilit|I cannot generate|I(?:'m| am) not able to)/i, weight: 1.0 },
@@ -1520,7 +1520,7 @@ const AEGIS_ANTI_PATTERNS = [
 async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryData['aegisBehavior']> {
   const sixHoursAgo = new Date(Date.now() - 6 * 3600000).toISOString();
   
-  // Sample recent messages â both assistant AND user messages for context awareness
+  // Sample recent messages — both assistant AND user messages for context awareness
   const { data: recentMessages } = await supabase
     .from('ai_assistant_messages')
     .select('content, created_at, role')
@@ -1571,7 +1571,7 @@ async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryDa
     /KEY OBSERVATIONS/i,
     /THREAT ASSESSMENT/i,
     /IMPACT ASSESSMENT/i,
-    /â{3,}/,  // Section dividers used in formatted reports
+    /━{3,}/,  // Section dividers used in formatted reports
     /#{1,3}\s+\d+\.\s+/,  // Numbered markdown headers (report sections)
   ];
   
@@ -1637,9 +1637,9 @@ async function collectAegisBehaviorTelemetry(supabase: any): Promise<TelemetryDa
   };
 }
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                    AI ANALYSIS ENGINE
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 async function callAI(systemPrompt: string, userMessage: string): Promise<any> {
   const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
@@ -1689,9 +1689,9 @@ async function callAI(systemPrompt: string, userMessage: string): Promise<any> {
   throw new Error(`AI synthesis failed after ${MAX_ATTEMPTS} attempts: ${lastError.message}`);
 }
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                  REMEDIATION ENGINE
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 async function executeRemediation(
   finding: Finding,
@@ -1705,14 +1705,14 @@ async function executeRemediation(
   // Check if this remediation has a poor track record
   const pastEffectiveness = learningHistory.effectivenessStats.find(e => e.action === action);
   if (pastEffectiveness && pastEffectiveness.totalAttempts > 3 && pastEffectiveness.successRate < 0.2) {
-    console.log(`[Watchdog] â­ï¸ Skipping ${action} â historical success rate too low (${(pastEffectiveness.successRate * 100).toFixed(0)}% over ${pastEffectiveness.totalAttempts} attempts)`);
+    console.log(`[Watchdog] ⏭️ Skipping ${action} — historical success rate too low (${(pastEffectiveness.successRate * 100).toFixed(0)}% over ${pastEffectiveness.totalAttempts} attempts)`);
     return {
       action, finding, success: false,
       details: `Skipped: historical success rate is ${(pastEffectiveness.successRate * 100).toFixed(0)}% over ${pastEffectiveness.totalAttempts} attempts. Needs human intervention or new strategy.`,
     };
   }
 
-  console.log(`[Watchdog] ð§ Attempting remediation: ${action} for "${finding.title}"`);
+  console.log(`[Watchdog] 🔧 Attempting remediation: ${action} for "${finding.title}"`);
 
   try {
     switch (action) {
@@ -1723,7 +1723,7 @@ async function executeRemediation(
         for (const monitorAction of scanActions) {
           try {
             const controller = new AbortController();
-            // RSS sources needs longer â it scans 400+ items across dozens of feeds
+            // RSS sources needs longer — it scans 400+ items across dozens of feeds
             const timeoutMs = monitorAction === 'monitor-rss' ? 60000 : 20000;
             const timeout = setTimeout(() => controller.abort(), timeoutMs);
             const resp = await fetch(`${supabaseUrl}/functions/v1/osint-collector`, {
@@ -1733,7 +1733,7 @@ async function executeRemediation(
               signal: controller.signal,
             });
             clearTimeout(timeout);
-            // Accept 2xx as success â the function started processing
+            // Accept 2xx as success — the function started processing
             if (resp.ok || resp.status === 200) triggered++;
             else triggered++; // Even non-200 means function is deployed and responding
           } catch (e) {
@@ -1812,11 +1812,19 @@ async function executeRemediation(
 
         if (allIds.length === 0) return { action, finding, success: true, details: 'No bugs eligible for auto-close' };
 
+        // fix_status CHECK constraint allows only:
+        //   'no_fix', 'proposal_ready', 'approved', 'implemented', 'rejected'
+        // Stale auto-generated noise is best categorised as 'no_fix' — no
+        // user-actionable code change is required, the bug is being closed
+        // because it's noise. Was previously 'auto_closed_by_watchdog'
+        // which violated bug_reports_fix_status_check on every run, so
+        // the close_stale_bugs remediation was always failing.
         const { error } = await supabase.from('bug_reports').update({
           status: 'resolved',
           resolved_at: new Date().toISOString(),
           workflow_stage: 'Closed',
-          fix_status: 'auto_closed_by_watchdog',
+          fix_status: 'no_fix',
+          resolution_notes: 'Auto-closed by watchdog (stale auto-generated noise — no user-actionable code change).',
         }).in('id', allIds);
 
         const totalOld = oldBugs?.length || 0;
@@ -1848,14 +1856,14 @@ async function executeRemediation(
           severity: 'info',
           finding_category: 'Self-Improvement',
           finding_title: `Threshold Adjusted: ${adjustment.metric}`,
-          ai_learning_note: `${adjustment.metric}: ${adjustment.currentValue} â ${adjustment.suggestedValue}. Reason: ${adjustment.reason}`,
+          ai_learning_note: `${adjustment.metric}: ${adjustment.currentValue} → ${adjustment.suggestedValue}. Reason: ${adjustment.reason}`,
           effectiveness_score: 1.0,
           telemetry_snapshot: { adjustment },
         });
         
         return { 
           action, finding, success: !error, 
-          details: error ? `Failed to store adjustment: ${error.message}` : `Threshold ${adjustment.metric} adjusted: ${adjustment.currentValue} â ${adjustment.suggestedValue} (${adjustment.reason})` 
+          details: error ? `Failed to store adjustment: ${error.message}` : `Threshold ${adjustment.metric} adjusted: ${adjustment.currentValue} → ${adjustment.suggestedValue} (${adjustment.reason})` 
         };
       }
 
@@ -1866,13 +1874,13 @@ async function executeRemediation(
 Recent analysis detected persona drift violations. REINFORCE THESE RULES:
 1. ACTION-FIRST: Your FIRST response token must trigger a tool call when a mapped action exists.
 2. ZERO-PREAMBLE: NEVER write introductory paragraphs before tool calls.
-3. NO CAPABILITY LISTING: NEVER enumerate what you can do â JUST DO IT.
+3. NO CAPABILITY LISTING: NEVER enumerate what you can do — JUST DO IT.
 4. CONCISE: 2-5 sentences max for action results. Elaborate only when asked.
-5. NO IDENTITY DISCLAIMERS: Never say "As an AI" or "I don't have the capability" â you have 21 tools.
+5. NO IDENTITY DISCLAIMERS: Never say "As an AI" or "I don't have the capability" — you have 21 tools.
 This correction was triggered because compliance score dropped below threshold. Execute tools immediately.`;
 
         const { error } = await supabase.from('agent_memory').insert({
-          agent_id: null, // Global â applies to all AEGIS instances
+          agent_id: null, // Global — applies to all AEGIS instances
           content: correctionNote,
           memory_type: 'behavioral_correction',
           scope: 'global',
@@ -1907,7 +1915,7 @@ This correction was triggered because compliance score dropped below threshold. 
         const orphaned = feedback.filter((f: any) => f.object_id && !validIds.has(f.object_id));
 
         if (orphaned.length === 0) {
-          return { action, finding, success: true, details: 'No orphaned feedback â data integrity clean' };
+          return { action, finding, success: true, details: 'No orphaned feedback — data integrity clean' };
         }
 
         let deleted = 0;
@@ -1979,7 +1987,7 @@ This correction was triggered because compliance score dropped below threshold. 
         const orphaned = comms.filter((c: any) => c.investigation_id && !validInvIds.has(c.investigation_id));
 
         if (orphaned.length === 0) {
-          return { action, finding, success: true, details: 'No orphaned communications â data integrity clean' };
+          return { action, finding, success: true, details: 'No orphaned communications — data integrity clean' };
         }
 
         let deleted = 0;
@@ -2007,7 +2015,7 @@ This correction was triggered because compliance score dropped below threshold. 
         const ids = stalled.map((t: any) => t.id);
         const { error: updateErr } = await supabase
           .from('investigation_autopilot_tasks')
-          .update({ status: 'failed', error_message: 'Marked as failed by watchdog â exceeded 30 min running time', completed_at: new Date().toISOString() })
+          .update({ status: 'failed', error_message: 'Marked as failed by watchdog — exceeded 30 min running time', completed_at: new Date().toISOString() })
           .in('id', ids);
 
         return {
@@ -2109,7 +2117,7 @@ This correction was triggered because compliance score dropped below threshold. 
           return { action, finding, success: true, details: 'No exhausted DLQ entries to retry' };
         }
 
-        // Filter out auth failures (401) â those need code fixes, not retries
+        // Filter out auth failures (401) — those need code fixes, not retries
         const retryable = exhausted.filter((d: any) => {
           const msg = (d.error_message || '').toLowerCase();
           return !msg.includes('401') && !msg.includes('unauthorized') && !msg.includes('forbidden');
@@ -2117,7 +2125,7 @@ This correction was triggered because compliance score dropped below threshold. 
         const nonRetryable = exhausted.length - retryable.length;
 
         if (retryable.length === 0) {
-          return { action, finding, success: false, details: `All ${exhausted.length} exhausted entries are auth failures (401/403) â need code fix, not retry` };
+          return { action, finding, success: false, details: `All ${exhausted.length} exhausted entries are auth failures (401/403) — need code fix, not retry` };
         }
 
         const ids = retryable.map((d: any) => d.id);
@@ -2154,7 +2162,7 @@ This correction was triggered because compliance score dropped below threshold. 
         const ids = exhausted.map((d: any) => d.id);
         const { error: updateErr } = await supabase
           .from('dead_letter_queue')
-          .update({ status: 'cancelled', error_message: `[Watchdog] Cancelled â requires code-level fix. Cleaned at ${new Date().toISOString()}` })
+          .update({ status: 'cancelled', error_message: `[Watchdog] Cancelled — requires code-level fix. Cleaned at ${new Date().toISOString()}` })
           .in('id', ids);
 
         return {
@@ -2175,7 +2183,7 @@ This correction was triggered because compliance score dropped below threshold. 
           .limit(20);
 
         if (!openBreakers || openBreakers.length === 0) {
-          return { action, finding, success: true, details: 'No open circuit breakers â all monitors healthy' };
+          return { action, finding, success: true, details: 'No open circuit breakers — all monitors healthy' };
         }
 
         const ids = openBreakers.map((b: any) => b.id);
@@ -2258,15 +2266,15 @@ This correction was triggered because compliance score dropped below threshold. 
   }
 }
 
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 //                    EMAIL BUILDER
-// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ═══════════════════════════════════════════════════════════════
 
 function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remediations: RemediationResult[], learningHistory: LearningHistory): string {
   const now = new Date().toLocaleString('en-US', { timeZone: 'America/Edmonton' });
 
   const severityColor: Record<string, string> = { critical: '#7f1d1d', degraded: '#78350f', monitoring: '#1e3a5f', healthy: '#14532d' };
-  const severityIcon: Record<string, string> = { critical: 'ð´', degraded: 'â ï¸', monitoring: 'ð', healthy: 'â' };
+  const severityIcon: Record<string, string> = { critical: '🔴', degraded: '⚠️', monitoring: '🔍', healthy: '✅' };
 
   const resolved = analysis.findings.filter(f => f.remediationStatus === 'fixed');
   const chronic = analysis.findings.filter(f => f.remediationStatus === 'chronic');
@@ -2321,10 +2329,10 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
   // Remediation summary
   const remediationSummary = remediations.length > 0 ? `
     <div style="background: #0f172a; border: 1px solid #1e3a5f; padding: 18px; margin-bottom: 20px; border-radius: 6px;">
-      <h2 style="color: #60a5fa; font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 1.5px;">ð§ Autonomous Remediation Report</h2>
+      <h2 style="color: #60a5fa; font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 1.5px;">🔧 Autonomous Remediation Report</h2>
       ${remediations.map(r => `
         <div style="padding: 8px 0; border-bottom: 1px solid #1e293b;">
-          <span style="color: ${r.success ? '#4ade80' : '#ef4444'}; font-size: 13px;">${r.success ? 'â' : 'â'} ${r.action}</span>
+          <span style="color: ${r.success ? '#4ade80' : '#ef4444'}; font-size: 13px;">${r.success ? '✅' : '❌'} ${r.action}</span>
           <p style="margin: 4px 0 0; color: #94a3b8; font-size: 12px;">${r.details}</p>
         </div>
       `).join('')}
@@ -2337,12 +2345,12 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
   // Self-improvement section
   const selfImprovementSection = (analysis.selfImprovementNotes && analysis.selfImprovementNotes.length > 0) ? `
     <div style="background: #1a0533; border: 1px solid #6d28d9; padding: 18px; margin-top: 20px; border-radius: 6px;">
-      <h2 style="color: #a78bfa; font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 1.5px;">ð§  Watchdog Self-Improvement Notes</h2>
+      <h2 style="color: #a78bfa; font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: 1.5px;">🧠 Watchdog Self-Improvement Notes</h2>
       ${analysis.selfImprovementNotes.map(note => `
-        <p style="margin: 0 0 8px; color: #c4b5fd; font-size: 13px; line-height: 1.5;">â¢ ${note}</p>
+        <p style="margin: 0 0 8px; color: #c4b5fd; font-size: 13px; line-height: 1.5;">• ${note}</p>
       `).join('')}
       <p style="margin: 12px 0 0; color: #7c3aed; font-size: 11px;">
-        Learning from ${learningHistory.recentFindings.length} past findings â¢ ${learningHistory.recurringIssues.length} chronic patterns tracked â¢ Platform signals: ${learningHistory.platformGrowth.signalsTrend}
+        Learning from ${learningHistory.recentFindings.length} past findings • ${learningHistory.recurringIssues.length} chronic patterns tracked • Platform signals: ${learningHistory.platformGrowth.signalsTrend}
       </p>
     </div>
   ` : '';
@@ -2350,16 +2358,16 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
   return `
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"></head>
+<head><meta charset="utf-8"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head>
 <body style="font-family: 'Segoe UI', Arial, sans-serif; background: #0a0a0a; color: #e0e0e0; padding: 24px; margin: 0;">
   <div style="max-width: 700px; margin: 0 auto; background: #111; border: 1px solid #222; border-radius: 8px; overflow: hidden;">
     
     <div style="background: ${severityColor[analysis.severity] || '#78350f'}; padding: 22px 28px;">
       <h1 style="margin: 0; font-size: 18px; color: #fff;">
-        ${severityIcon[analysis.severity] || 'â ï¸'} Fortress Watchdog Intelligence Report
+        ${severityIcon[analysis.severity] || '⚠️'} Fortress Watchdog Intelligence Report
       </h1>
       <p style="margin: 8px 0 0; font-size: 14px; color: #e0e0e0; line-height: 1.4;">${analysis.overallAssessment}</p>
-      <p style="margin: 6px 0 0; font-size: 12px; color: #aaa;">${now} MT â¢ Status: ${analysis.severity.toUpperCase()} ${resolved.length > 0 ? `â¢ ${resolved.length} auto-resolved` : ''} ${chronic.length > 0 ? `â¢ ${chronic.length} chronic` : ''}</p>
+      <p style="margin: 6px 0 0; font-size: 12px; color: #aaa;">${now} MT • Status: ${analysis.severity.toUpperCase()} ${resolved.length > 0 ? `• ${resolved.length} auto-resolved` : ''} ${chronic.length > 0 ? `• ${chronic.length} chronic` : ''}</p>
     </div>
     
     <div style="padding: 22px 28px;">
@@ -2389,12 +2397,12 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
       ${/* Auto-resolved findings omitted from email — they fixed themselves, no action needed */ ''}
 
       ${chronic.length > 0 ? `
-        <h2 style="color: #a78bfa; font-size: 13px; margin: 20px 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">ð Chronic Issues (Needs Strategic Fix)</h2>
+        <h2 style="color: #a78bfa; font-size: 13px; margin: 20px 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">🔁 Chronic Issues (Needs Strategic Fix)</h2>
         ${chronic.map(f => renderFinding(f, '#c4b5fd', '#7c3aed', '#1a0533')).join('')}
       ` : ''}
 
       ${unresolved.length > 0 ? `
-        <h2 style="color: #ef4444; font-size: 13px; margin: 20px 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">ð´ Requires Attention</h2>
+        <h2 style="color: #ef4444; font-size: 13px; margin: 20px 0 14px; text-transform: uppercase; letter-spacing: 1.5px;">🔴 Requires Attention</h2>
         ${unresolved.map(f => renderFinding(f, f.severity === 'critical' ? '#fca5a5' : '#fcd34d', f.severity === 'critical' ? '#ef4444' : '#f59e0b', f.severity === 'critical' ? '#1a0505' : '#1a1005')).join('')}
       ` : ''}
 
@@ -2402,7 +2410,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
 
       ${analysis.trendNote ? `
         <div style="background: #0f172a; border: 1px solid #1e3a5f; padding: 14px 18px; margin-top: 20px; border-radius: 4px;">
-          <strong style="color: #93c5fd; font-size: 12px; text-transform: uppercase;">ð Trend Analysis</strong>
+          <strong style="color: #93c5fd; font-size: 12px; text-transform: uppercase;">📊 Trend Analysis</strong>
           <p style="margin: 6px 0 0; color: #cbd5e1; font-size: 13px;">${analysis.trendNote}</p>
         </div>
       ` : ''}
@@ -2411,7 +2419,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
 
       ${analysis.suppressedChecks?.length > 0 ? `
         <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #222;">
-          <p style="color: #666; font-size: 12px; margin: 0;"><strong>Suppressed (normal):</strong> ${analysis.suppressedChecks.join(' â¢ ')}</p>
+          <p style="color: #666; font-size: 12px; margin: 0;"><strong>Suppressed (normal):</strong> ${analysis.suppressedChecks.join(' • ')}</p>
         </div>
       ` : ''}
     </div>
@@ -2819,7 +2827,15 @@ Deno.serve(async (req) => {
     // is actually broken, the hardcoded check still creates a fresh finding.
     const bugsHealthy = telemetry.bugReports.totalOpen <= telemetry.adaptiveThresholds.bugBacklogThreshold &&
                        telemetry.bugReports.staleCount === 0;
-    const briefingHealthy = telemetry.dailyBriefing.sentToday === true;
+    // A briefing that was correctly suppressed (no new intel that day) is
+    // healthy behaviour by design — send-daily-briefing skips on quiet
+    // days. Was previously firing as a chronic CRITICAL every quiet day
+    // until operators trained themselves to ignore the email, defeating
+    // the watchdog's purpose. Treat 'sentToday OR suppressionLikely'
+    // as healthy.
+    const briefingHealthy =
+      telemetry.dailyBriefing.sentToday === true
+      || telemetry.dailyBriefing.suppressionLikely === true;
     // Agent-learning health: the hardcoded "stalled" check (beliefAge > 48) is
     // earlier in this function. By the time we reach here, if it wasn't pushed
     // to `findings`, the belief stream is healthy. We can always suppress the
