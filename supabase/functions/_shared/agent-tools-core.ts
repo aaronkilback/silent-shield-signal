@@ -818,9 +818,15 @@ registerTool(fileFollowupTask);
 registerTool(scheduleEntityRescan);
 registerTool(proposeSeverityCorrection);
 registerTool(notifyOncallViaSlack);
-registerTool(arcgisListLayers);
-registerTool(arcgisCheckSignalProximity);
-registerTool(arcgisQueryLayer);
+// ── ArcGIS tools are NOT registered until a client_arcgis_connections row
+// exists. We attempted Petronas integration but no API key was provisioned,
+// so leaving these in the schema just burns prompt tokens (every chat /
+// signal investigation gets the schema, model sometimes tries them, gets
+// null-client errors back). Re-enable by uncommenting once any client has
+// a connection row — code is unchanged, just unregistered.
+// registerTool(arcgisListLayers);
+// registerTool(arcgisCheckSignalProximity);
+// registerTool(arcgisQueryLayer);
 
 // ── Domain bundles ─────────────────────────────────────────────────────────
 // Side-effect imports: each module calls registerTool() at load time.
