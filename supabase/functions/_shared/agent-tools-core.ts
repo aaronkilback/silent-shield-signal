@@ -571,7 +571,7 @@ const analyzeSignalImage: ToolHandler = {
 const fileFollowupTask: ToolHandler = {
   name: 'file_followup_task',
   description:
-    'Auto-tier action. File a follow-up task for an analyst to investigate something specific later. Lands in agent_actions ledger as executed. Use when you have a specific, time-bounded follow-up question that should not be lost.',
+    'Auto-tier action — files a tracked follow-up question for an analyst to revisit later. Lands in agent_actions ledger as executed.\n\nCALL WHEN:\n• you noticed a specific question that should be checked in N hours/days (e.g. "did this protest actually occur on the announced date", "did the named executive show up at the scheduled event", "did the IOC reappear in another signal")\n• you emitted a prediction with a finite time horizon and want a human cross-check at resolution\n• a tool returned partial data and a fuller view is worth pursuing on a delay\n• the operator implied a future check ("let me know if…", "watch for…")\n\nDO NOT CALL WHEN:\n• the question is something you can answer RIGHT NOW with another tool — call that tool first\n• the followup is vague ("monitor the situation") with no concrete trigger to look for\n• you have no specific time horizon in mind',
   parameters: {
     type: 'object',
     properties: {
@@ -602,7 +602,7 @@ const fileFollowupTask: ToolHandler = {
 const scheduleEntityRescan: ToolHandler = {
   name: 'schedule_entity_rescan',
   description:
-    'Auto-tier action. Schedule a rescan of a monitored entity for fresh OSINT. Use when historical data on this entity is stale or you noticed signals indicating something has changed for them. Recorded in agent_actions ledger.',
+    'Auto-tier action — queues a deep OSINT rescan of a monitored entity (people-search, news, social, dark-web). Recorded in agent_actions ledger.\n\nCALL WHEN:\n• an entity in the current signal has not been deep-scanned in >30 days (check via lookup_historical_signals — if no recent rows, escalate)\n• a signal suggests the entity\'s posture has changed (new affiliation, new threat actor mention, new role, new location, new contact info exposure)\n• a new entity name appeared in the signal that you cannot find in your historical lookups\n• you detected unusual velocity around the entity (combine with get_signal_velocity)\n\nDO NOT CALL WHEN:\n• the entity has fresh OSINT (<7 days) and nothing about the new signal contradicts it\n• you would be the third agent to schedule a rescan on the same entity in a single week\n• the entity name is generic/ambiguous (e.g. "John Smith" with no disambiguating context) — confirm the entity first',
   parameters: {
     type: 'object',
     properties: {
@@ -631,7 +631,7 @@ const scheduleEntityRescan: ToolHandler = {
 const proposeSeverityCorrection: ToolHandler = {
   name: 'propose_severity_correction',
   description:
-    'PROPOSE-tier action (analyst approval required). Suggest the current signal severity is wrong. Use when you have evidence the existing severity is materially off. Lands in agent_actions awaiting_approval status; analyst reviews via dashboard.',
+    'PROPOSE-tier action (analyst approval required). Recommends the current signal severity be raised or lowered. Lands in agent_actions with status awaiting_approval; analyst reviews via dashboard.\n\nCALL WHEN you have CONCRETE EVIDENCE the current severity is materially wrong:\n• signal tagged \'medium\' but you confirmed an active credible threat-of-violence to a named person/asset → propose \'high\' or \'critical\'\n• signal tagged \'high\'/\'critical\' but you established it describes events >90 days old, or the same story already actioned upstream, or the named entity is unrelated to the current client → propose \'low\'\n• signal tagged \'low\' but tool calls revealed pattern velocity, multi-source convergence, or a known TTP → propose \'medium\' or \'high\'\n• signal tagged \'critical\' but the operator already responded, no further action is warranted, and downgrading prevents future false-fan-out\n\nDO NOT CALL WHEN:\n• you only feel the severity is off but cannot point to specific evidence — emit a prediction or file_followup_task instead\n• the difference is purely subjective — needs a concrete fact (date, named entity, TTP, prior decision) anchored in your tool-call results\n• you have not actually queried lookup_historical_signals or query_entity_relationships to verify',
   parameters: {
     type: 'object',
     properties: {
