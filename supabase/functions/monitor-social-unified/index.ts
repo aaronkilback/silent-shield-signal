@@ -28,9 +28,16 @@ import {
 // are partially indexed — CSE returns fewer results but still catches public posts
 // from activist pages and accounts that have web presence.
 // Meta Graph API (when FACEBOOK_ACCESS_TOKEN is set) supplements CSE with real API access.
+// Facebook deliberately omitted from CSE: Google injects post COMMENTS
+// into the snippet field, so a CPP post by Department of Finance Canada
+// with a TC-Energy comment on it would surface as a TC-Energy signal
+// pointing at the CPP post URL — content/URL mismatch. We get clean
+// Facebook coverage via the Graph API path further down (when
+// FACEBOOK_ACCESS_TOKEN is set), and dedicated client-page scans
+// further still. Twitter/Instagram CSE remain because their snippets
+// are post text, not threaded comments.
 const PLATFORMS = [
   { name: 'twitter', sites: ['site:x.com', 'site:twitter.com'], label: 'Twitter/X' },
-  { name: 'facebook', sites: ['site:facebook.com'], label: 'Facebook' },
   { name: 'instagram', sites: ['site:instagram.com'], label: 'Instagram' },
 ] as const;
 
@@ -488,6 +495,39 @@ async function executeSearch(
       if (BLOCKED_DOMAINS.some(d => domain.includes(d))) {
         console.log(`[SocialUnified] Blocked domain: ${domain}`);
         continue;
+      }
+
+      // ═══ COMMENT-POLLUTION GATE ═══
+      // Google CSE often injects post comments / replies / quoted posts
+      // into `snippet`. If the term we searched for only shows up in the
+      // snippet — never in the title or the URL path — the "match" is
+      // almost always a comment on a post about something unrelated, and
+      // the resulting signal will have a title that doesn't match its
+      // source link. Require the source name's distinctive tokens to
+      // appear in the title or URL before trusting the snippet.
+      // Skip for entity scans: those target a specific profile URL where
+      // the entity name may live in the handle rather than the title.
+      const isEntityScanLocal = search.sourceType === 'entity';
+      if (!isEntityScanLocal && search.sourceName) {
+        const distinctiveTokens = search.sourceName
+          .toLowerCase()
+          .replace(/['"]/g, '')
+          .split(/[\s,]+/)
+          .filter((t) => t.length >= 4);
+        if (distinctiveTokens.length > 0) {
+          const titleLower = title.toLowerCase();
+          const urlLower = url.toLowerCase();
+          const groundedInTitleOrUrl = distinctiveTokens.some(
+            (t) => titleLower.includes(t) || urlLower.includes(t),
+          );
+          if (!groundedInTitleOrUrl) {
+            console.log(
+              `[SocialUnified] ✗ Comment-pollution gate: "${search.sourceName}" tokens absent from title/URL: "${title.substring(0, 60)}"`
+            );
+            rejected++;
+            continue;
+          }
+        }
       }
 
       // ═══ HARD TEMPORAL FILTER ═══
