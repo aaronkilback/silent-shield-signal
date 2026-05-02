@@ -865,57 +865,86 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
           });
 
           const sameStoryResult = sameStoryCheck as any;
-          
-          if (sameStoryResult?.same_story === true && sameStoryResult?.has_new_intel !== true) {
-            console.log(`[Same-Story] FILING as update on ${topMatch.id}: ${sameStoryResult.reason}`);
-            
+
+          // Any signal the AI flags as the SAME ongoing story files onto
+          // the parent's timeline, regardless of whether it carries new
+          // intel. The has_new_intel flag is preserved in metadata so
+          // the UI can render evolution updates differently from rehashes
+          // later, but architecturally there's only one place a new
+          // datum about an existing story should live: on that story's
+          // timeline, not as a duplicate signal in the feed.
+          //
+          // Was previously gated on `has_new_intel !== true`, which meant
+          // the timeline only ever caught rehashes — the genuinely useful
+          // case (new intel about an ongoing story) created a separate
+          // signal instead, so the Live Updates feed was almost always
+          // empty.
+          if (sameStoryResult?.same_story === true) {
+            const newIntel = sameStoryResult?.has_new_intel === true;
+            console.log(
+              `[Same-Story] FILING as update on ${topMatch.id} ` +
+              `(${newIntel ? 'NEW INTEL' : 'rehash'}): ${sameStoryResult.reason}`
+            );
+
             // Generate content hash for the update
             const updateHashData = new TextEncoder().encode(`same-story|${topMatch.id}|${contentHash}`);
             const updateHashBuffer = await crypto.subtle.digest('SHA-256', updateHashData);
             const updateHash = Array.from(new Uint8Array(updateHashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-            
-            // Check if this update already exists
+
+            // Check if this update already exists (re-ingestion of the same
+            // article) so we don't double-write the same row.
             const { data: existingUpdate } = await supabase
               .from('signal_updates')
               .select('id')
               .eq('content_hash', updateHash)
               .maybeSingle();
-            
+
             if (!existingUpdate) {
               await supabase.from('signal_updates').insert({
                 signal_id: topMatch.id,
                 content: (classification.normalized_text || signalText).substring(0, 2000),
-                source_name: 'same-story-filing',
+                source_name: signal.source_name || 'same-story-filing',
+                source_url: signal.source_url || null,
                 content_hash: updateHash,
                 metadata: {
                   filed_reason: sameStoryResult.reason,
                   similarity_score: similarity,
                   original_content_hash: contentHash,
+                  has_new_intel: newIntel,
                   same_story_check: true,
                 },
               });
             }
-            
-            // Block the content hash so it doesn't come back
+
+            // Block the content hash so this exact article doesn't come back.
+            // Future articles about the same story have different hashes and
+            // will go through this same path — their hash is unique even if
+            // they file onto the same parent.
             await supabase.from('rejected_content_hashes').upsert({
               content_hash: contentHash,
               client_id: clientId,
-              reason: 'same_story_filed',
+              reason: newIntel ? 'same_story_new_intel_filed' : 'same_story_filed',
               original_signal_title: newTitle.substring(0, 200),
             }, { onConflict: 'content_hash,client_id', ignoreDuplicates: true });
-            
+
             return new Response(
               JSON.stringify({
                 status: 'filed_as_update',
                 filed_on: topMatch.id,
                 similarity_score: similarity,
+                has_new_intel: newIntel,
                 reason: sameStoryResult.reason,
-                message: 'Signal filed as update on existing signal (same story, no new intelligence)',
+                message: newIntel
+                  ? 'Signal filed as new-intel update on existing story (no separate feed entry).'
+                  : 'Signal filed as rehash update on existing story.',
               }),
               { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
           } else {
-            console.log(`[Same-Story] NEW intelligence detected — creating as new signal. Reason: ${sameStoryResult?.reason || 'has new intel'}`);
+            console.log(
+              `[Same-Story] AI says different story — creating as new signal. ` +
+              `Reason: ${sameStoryResult?.reason || '(no reason given)'}`
+            );
           }
         } catch (sameStoryErr) {
           console.warn(`[Same-Story] AI check failed, proceeding with new signal:`, sameStoryErr);
