@@ -35,26 +35,26 @@ Deno.serve(async (req) => {
 
     const cutoff24h = new Date(Date.now() - 24 * 3600000).toISOString();
 
+    // doctrine_library + autonomous_scan_results queries removed — the
+    // doctrine line was replaced with a deterministic trajectory footer,
+    // and the risk score is now computed from real signal/incident data
+    // instead of an orthogonal scanner reading.
     const [
       { data: recentSignals },
       { data: openIncidents },
-      { data: recentScans },
       { data: recentActions },
-      { data: doctrineEntries },
     ] = await Promise.all([
       supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence')
         .gte('created_at', cutoff24h)
         .neq('status', 'false_positive')
         .neq('is_test', true)
         .order('created_at', { ascending: false }).limit(50),
-      supabase.from('incidents').select('id, priority, status, opened_at')
-        .eq('status', 'open').neq('is_test', true).limit(50),
-      supabase.from('autonomous_scan_results').select('risk_score, findings, created_at')
-        .order('created_at', { ascending: false }).limit(1),
+      supabase.from('incidents').select('id, priority, status, opened_at, title, signal_id')
+        .eq('status', 'open').neq('is_test', true)
+        .order('opened_at', { ascending: false }).limit(50),
       supabase.from('autonomous_actions_log').select('action_type, action_details, created_at')
-        .gte('created_at', cutoff24h).limit(20),
-      supabase.from('doctrine_library').select('title, content_text, content_type, tags')
-        .eq('is_active', true).order('created_at', { ascending: false }).limit(30),
+        .gte('created_at', cutoff24h)
+        .order('created_at', { ascending: false }).limit(20),
     ]);
 
     // Filter signals for briefing quality: exclude historical, low-quality, and low-relevance
@@ -74,14 +74,42 @@ Deno.serve(async (req) => {
       return true;
     });
 
+    // Risk score formula — was previously just `recentScans?.[0]?.risk_score`,
+    // which gave 100/100 with 0 critical signals because the autonomous
+    // scan tracked something orthogonal. Compute directly from today's
+    // signal + incident reality so the score matches the rest of the
+    // briefing:
+    //   - critical signals: +30 each, capped at 60 (a couple of true P1s
+    //     should already register as ELEVATED, but a hundred shouldn't
+    //     dwarf incident evidence)
+    //   - high signals: +5 each, capped at 30 (a flood of high alone
+    //     can't max the score — needs incidents or critical to confirm)
+    //   - open P1 incidents: +10 each, capped at 20 (named P1 evidence
+    //     is the strongest individual signal of an elevated posture)
+    // 70+ = ELEVATED, 40+ = MODERATE — both threshold cuts unchanged.
+    const criticalSignalsCount = briefingSignals.filter((s: any) => s.severity === 'critical').length;
+    const highSignalsCount = briefingSignals.filter((s: any) => s.severity === 'high').length;
+    const openIncidentsList = openIncidents || [];
+    const openP1Count = openIncidentsList.filter((i: any) => (i.priority || '').toLowerCase() === 'p1').length;
+    const openP2Count = openIncidentsList.filter((i: any) => (i.priority || '').toLowerCase() === 'p2').length;
+
+    const computedRiskScore = Math.min(
+      100,
+      Math.min(criticalSignalsCount * 30, 60)
+        + Math.min(highSignalsCount * 5, 30)
+        + Math.min(openP1Count * 10, 20)
+    );
+
     const metrics = {
       signals_24h: briefingSignals.length,
       total_ingested_24h: (recentSignals || []).length,
       filtered_out: (recentSignals || []).length - briefingSignals.length,
-      critical_signals: briefingSignals.filter((s: any) => s.severity === 'critical').length,
-      high_signals: briefingSignals.filter((s: any) => s.severity === 'high').length,
-      open_incidents: (openIncidents || []).length,
-      risk_score: recentScans?.[0]?.risk_score || 0,
+      critical_signals: criticalSignalsCount,
+      high_signals: highSignalsCount,
+      open_incidents: openIncidentsList.length,
+      open_p1_incidents: openP1Count,
+      open_p2_incidents: openP2Count,
+      risk_score: computedRiskScore,
       autonomous_actions: (recentActions || []).length,
     };
 
@@ -136,33 +164,16 @@ Deno.serve(async (req) => {
     const trajectoryDelta = currentTotalPriority - previousTotalPriority;
     const trajectoryReason = `${Math.abs(trajectoryDelta)} ${trajectoryDelta >= 0 ? 'more' : 'fewer'} priority signals vs previous 7-day period (${previousTotalPriority} → ${currentTotalPriority})`;
 
-    // Generate doctrine line
-    let doctrineLine = '';
-    try {
-      const coreEntries = (doctrineEntries || []).filter((d: any) => d.tags?.includes('core-10') && d.content_text);
-      const otherEntries = (doctrineEntries || []).filter((d: any) => !d.tags?.includes('core-10') && d.content_text);
-      const prioritized = coreEntries.length > 0 ? coreEntries : otherEntries;
-      const doctrineContext = prioritized.map((d: any) => `- ${d.title}: ${d.content_text}`).join('\n');
-
-      const doctrineResult = await callAiGateway({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: `You are the Silent Shield doctrine advisor. Pick ONE entry from the library and rephrase it as a sharp, memorable one-liner (max 20 words).\n\nSILENT SHIELD DOCTRINE LIBRARY:\n${doctrineContext}\n\nOUTPUT: JSON with one field "doctrine_line". Respond ONLY with valid JSON.` },
-          { role: 'user', content: 'Generate today\'s doctrine line.' },
-        ],
-        functionName: 'send-daily-briefing/doctrine',
-        extraBody: { temperature: 0.5 },
-      });
-
-      if (doctrineResult.content) {
-        let content = doctrineResult.content.trim();
-        if (content.startsWith('```')) content = content.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-        const parsed = JSON.parse(content);
-        doctrineLine = parsed.doctrine_line || '';
-      }
-    } catch (err) {
-      console.error('[DailyBriefing] Doctrine line generation failed:', err);
-    }
+    // Footer line — replaces the old "doctrine quote" boilerplate
+    // (operators tuned the inspirational quote out anyway). Now a
+    // domain-specific one-liner derived from already-computed metrics:
+    // trajectory direction + delta vs the prior 7-day baseline.
+    const arrow =
+      trajectoryDirection === 'ESCALATING' ? '↑' :
+      trajectoryDirection === 'DE-ESCALATING' ? '↓' : '→';
+    const footerLine =
+      `Trajectory ${arrow} ${trajectoryDirection.replace(/-/g, ' ').toLowerCase()} — ` +
+      `${trajectoryReason}.`;
 
     // Generate briefing content
     const briefingResult = await callAiGateway({
@@ -201,7 +212,32 @@ Tone: Calm, authoritative, measured. Like a senior intelligence officer deliveri
         },
         {
           role: 'user',
-          content: `Generate today's daily briefing.\n\nMETRICS:\n${JSON.stringify({ ...metrics, trajectory: trajectoryDirection, trajectoryReason }, null, 2)}\n\nACTIONABLE SIGNALS (filtered for quality and recency — ${briefingSignals.length} of ${(recentSignals || []).length} total):\n${JSON.stringify(briefingSignals.slice(0, 10).map((s: any) => ({ severity: s.severity, category: s.category, title: s.title, normalized_text: (s.normalized_text || '').substring(0, 200), confidence: s.confidence, quality_score: s.quality_score })), null, 2)}\n\nAUTONOMOUS ACTIONS:\n${JSON.stringify((recentActions || []).map((a: any) => a.action_type), null, 2)}`,
+          content: `Generate today's daily briefing.
+
+METRICS:
+${JSON.stringify({ ...metrics, trajectory: trajectoryDirection, trajectoryReason }, null, 2)}
+
+ACTIONABLE SIGNALS (filtered for quality and recency — ${briefingSignals.length} of ${(recentSignals || []).length} total):
+${JSON.stringify(briefingSignals.slice(0, 10).map((s: any) => ({ severity: s.severity, category: s.category, title: s.title, normalized_text: (s.normalized_text || '').substring(0, 200), confidence: s.confidence, quality_score: s.quality_score })), null, 2)}
+
+OPEN INCIDENTS (${openIncidentsList.length}):
+${JSON.stringify(openIncidentsList.slice(0, 10).map((i: any) => ({
+  id_short: String(i.id || '').slice(0, 8),
+  priority: i.priority,
+  title: i.title || '(untitled)',
+  opened_at: i.opened_at,
+})), null, 2)}
+
+AUTONOMOUS ACTIONS taken in the last 24h (${(recentActions || []).length}):
+${JSON.stringify((recentActions || []).slice(0, 12).map((a: any) => ({
+  action: a.action_type,
+  detail: typeof a.action_details === 'object'
+    ? Object.entries(a.action_details || {}).slice(0, 2).map(([k, v]) => `${k}=${typeof v === 'string' ? v.substring(0, 60) : v}`).join(' · ')
+    : String(a.action_details || '').substring(0, 100),
+  at: a.created_at,
+})), null, 2)}
+
+When you write the KEY METRICS section, NAME the open incidents (priority + title) and the autonomous actions (action + brief detail), don't summarize them as raw counts. If there are zero of either, say so explicitly.`,
         },
       ],
       functionName: 'send-daily-briefing',
@@ -219,7 +255,7 @@ Tone: Calm, authoritative, measured. Like a senior intelligence officer deliveri
     const appUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || 'https://fortress.silentshieldsecurity.com';
     const feedbackBaseUrl = `${appUrl}/briefing-feedback`;
 
-    const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, doctrineLine, feedbackBaseUrl);
+    const emailHtml = buildBriefingEmail(briefingText, metrics, dateContext, footerLine, feedbackBaseUrl);
 
     let sentCount = 0;
     const errors: string[] = [];
@@ -317,7 +353,7 @@ function formatBriefingLines(text: string): string {
 function buildBriefingEmail(
   briefingText: string, metrics: Record<string, number>,
   dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string; currentDateISO: string },
-  doctrineLine: string, feedbackBaseUrl: string
+  footerLine: string, feedbackBaseUrl: string
 ): string {
   const riskColor = metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
   const riskLabel = metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
@@ -325,9 +361,11 @@ function buildBriefingEmail(
   const thumbsUpUrl = `${feedbackBaseUrl}?f=positive&d=${dateContext.currentDateISO}`;
   const thumbsDownUrl = `${feedbackBaseUrl}?f=negative&d=${dateContext.currentDateISO}`;
 
-  const doctrineSection = doctrineLine ? `
+  // Footer is a domain-specific trajectory line (replaces the old
+  // inspirational doctrine quote — operators reported it was filler).
+  const doctrineSection = footerLine ? `
     <div style="padding:16px 30px; border-top:1px solid #334155; text-align:center;">
-      <p style="color:#94a3b8; font-size:13px; margin:0; line-height:1.6; font-style:italic;">"${doctrineLine}"</p>
+      <p style="color:#94a3b8; font-size:12px; margin:0; line-height:1.6;">${footerLine}</p>
     </div>` : '';
 
   return `
