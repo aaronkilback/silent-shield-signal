@@ -628,6 +628,90 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       console.warn('[AI-Decision] Failed to write composite_confidence:', compositeWriteResult.error);
     }
 
+    // ── Tier-1 reasoning row — ALWAYS written ─────────────────────────────
+    // Was previously gated inside `if (decision.should_create_incident)`,
+    // so most signals (which the AI declines for incident creation) had
+    // an empty Reasoning Trail in the UI. Tier-1 represents the initial
+    // AI verdict + investigation phase tool calls and is valuable for
+    // analysts regardless of whether the signal becomes an incident.
+    // (Tier-2 deeper review still lands separately via review-signal-agent.)
+    try {
+      const { embedText: embedAnalysis } = await import('../_shared/embed.ts');
+      const analysisText = (decision.reasoning || '').substring(0, 2000);
+      const analysisEmbedding = await embedAnalysis(analysisText);
+      const analysesResult = await supabase.from('signal_agent_analyses').insert({
+        signal_id: signal.id,
+        agent_call_sign: 'AI-DECISION-ENGINE',
+        analysis: analysisText,
+        embedding: analysisEmbedding,
+        confidence_score: Math.round(compositeScore * 1000) / 1000,
+        trigger_reason: 'composite_confidence_gate',
+        analysis_tier: 'tier1',
+        confidence_breakdown: {
+          ai_confidence: Math.round(aiConfidence * 1000) / 1000,
+          ai_weight: 0.50,
+          relevance_score: Math.round(relevanceScore * 1000) / 1000,
+          relevance_weight: 0.35,
+          source_credibility: Math.round(sourceCredibility * 1000) / 1000,
+          source_weight: 0.15,
+          composite: Math.round(compositeScore * 1000) / 1000,
+        },
+        pattern_matches: {
+          matched_rules: matchedRules,
+          threat_level: decision.threat_level,
+          category: signal.category,
+          entity_tags: signal.entity_tags || [],
+          is_historical: decision.is_historical_content || false,
+        },
+        reasoning_log: {
+          steps: [
+            {
+              step: 'rule_matching',
+              rules_matched: matchedRules,
+              tags_added: ruleTags,
+              rule_category: ruleCategory,
+            },
+            {
+              step: 'ai_assessment',
+              threat_level: decision.threat_level,
+              ai_confidence: Math.round(aiConfidence * 1000) / 1000,
+              is_historical: decision.is_historical_content || false,
+              strategic_context: (decision.strategic_context || '').substring(0, 300),
+              threat_correlation: (decision.threat_correlation || '').substring(0, 300),
+            },
+            {
+              step: 'composite_gate',
+              composite: Math.round(compositeScore * 1000) / 1000,
+              threshold: 0.65,
+              passed: compositeScore >= 0.65 || tier2_promotion,
+              breakdown: {
+                ai: `${Math.round(aiConfidence * 100)}% × 50% = ${Math.round(aiConfidence * 50)}%`,
+                relevance: `${Math.round(relevanceScore * 100)}% × 35% = ${Math.round(relevanceScore * 35)}%`,
+                source: `${Math.round(sourceCredibility * 100)}% × 15% = ${Math.round(sourceCredibility * 15)}%`,
+              },
+            },
+          ],
+          investigation: {
+            summary: investigationSummary,
+            iterations: investigationIterations,
+            tool_calls: investigationTrace.map((tc: any) => ({
+              iteration: tc.iteration,
+              tool: tc.toolName,
+              args: tc.args,
+              result_summary: summarizeToolResult(tc.toolName, tc.result),
+              duration_ms: tc.durationMs,
+              error: tc.errorMessage ?? null,
+            })),
+          },
+        },
+      });
+      if (analysesResult.error) {
+        console.warn('[AI-Decision] Failed to write signal_agent_analyses row:', analysesResult.error);
+      }
+    } catch (analysisErr: any) {
+      console.warn('[AI-Decision] Tier-1 analysis write threw:', analysisErr?.message || analysisErr);
+    }
+
     // Tier-2 review (composite ≥ 0.60). Awaited — fire-and-forget races with the
     // Edge runtime teardown after this function returns, so the fetch dies and
     // raw_json.agent_review never lands. Awaiting adds ~3-5s to total latency
@@ -828,100 +912,10 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
 
         console.log(`[AI-Decision] Composite score: ${compositeScore.toFixed(3)} (ai=${aiConfidence.toFixed(2)}, relevance=${relevanceScore.toFixed(2)}, source=${sourceCredibility.toFixed(2)})`);
 
-        // Phase 2B: Write composite score back to signal row for auditability.
-        // Stored regardless of whether the gate passes or fails — every signal
-        // gets a queryable score showing exactly why it did or didn't become an incident.
-        // Awaited (used to be fire-and-forget) — when called from cron via
-        // net.http_post the runtime tore down before the async update landed,
-        // leaving composite_confidence null on most signals. That blocked the
-        // downstream review-signal-agent trigger gate.
-        const compositeWriteResult = await supabase.from('signals').update({
-          composite_confidence: Math.round(compositeScore * 1000) / 1000
-        }).eq('id', signal.id);
-        if (compositeWriteResult.error) {
-          console.warn('[AI-Decision] Failed to write composite_confidence:', compositeWriteResult.error);
-        }
-
-        // Phase 2B-bis: Write full reasoning row to signal_agent_analyses so analysts
-        // can see exactly HOW the confidence score was constructed.
-        // Awaited (was fire-and-forget via .then) so the audit trail row lands
-        // before the runtime tears down.
-        // Embedding generated for future semantic recall via the
-        // retrieve_similar_past_decisions tool (vector cosine search).
-        const { embedText: embedAnalysis } = await import('../_shared/embed.ts');
-        const analysisText = (decision.reasoning || '').substring(0, 2000);
-        const analysisEmbedding = await embedAnalysis(analysisText);
-        const analysesResult = await supabase.from('signal_agent_analyses').insert({
-          signal_id: signal.id,
-          agent_call_sign: 'AI-DECISION-ENGINE',
-          analysis: analysisText,
-          embedding: analysisEmbedding,
-          confidence_score: Math.round(compositeScore * 1000) / 1000,
-          trigger_reason: 'composite_confidence_gate',
-          analysis_tier: 'tier1',
-          confidence_breakdown: {
-            ai_confidence: Math.round(aiConfidence * 1000) / 1000,
-            ai_weight: 0.50,
-            relevance_score: Math.round(relevanceScore * 1000) / 1000,
-            relevance_weight: 0.35,
-            source_credibility: Math.round(sourceCredibility * 1000) / 1000,
-            source_weight: 0.15,
-            composite: Math.round(compositeScore * 1000) / 1000,
-          },
-          pattern_matches: {
-            matched_rules: matchedRules,
-            threat_level: decision.threat_level,
-            category: signal.category,
-            entity_tags: signal.entity_tags || [],
-            is_historical: decision.is_historical_content || false,
-          },
-          reasoning_log: {
-            steps: [
-              {
-                step: 'rule_matching',
-                rules_matched: matchedRules,
-                tags_added: ruleTags,
-                rule_category: ruleCategory,
-              },
-              {
-                step: 'ai_assessment',
-                threat_level: decision.threat_level,
-                ai_confidence: Math.round(aiConfidence * 1000) / 1000,
-                is_historical: decision.is_historical_content || false,
-                strategic_context: (decision.strategic_context || '').substring(0, 300),
-                threat_correlation: (decision.threat_correlation || '').substring(0, 300),
-              },
-              {
-                step: 'composite_gate',
-                composite: Math.round(compositeScore * 1000) / 1000,
-                threshold: 0.65,
-                passed: compositeScore >= 0.65 || tier2_promotion,
-                breakdown: {
-                  ai: `${Math.round(aiConfidence * 100)}% × 50% = ${Math.round(aiConfidence * 50)}%`,
-                  relevance: `${Math.round(relevanceScore * 100)}% × 35% = ${Math.round(relevanceScore * 35)}%`,
-                  source: `${Math.round(sourceCredibility * 100)}% × 15% = ${Math.round(sourceCredibility * 15)}%`,
-                },
-              },
-            ],
-            // Investigation phase trace — what the agent looked up before the
-            // decision call. Surfaced to analysts in the UI Reasoning panel.
-            investigation: {
-              summary: investigationSummary,
-              iterations: investigationIterations,
-              tool_calls: investigationTrace.map((tc: any) => ({
-                iteration: tc.iteration,
-                tool: tc.toolName,
-                args: tc.args,
-                result_summary: summarizeToolResult(tc.toolName, tc.result),
-                duration_ms: tc.durationMs,
-                error: tc.errorMessage ?? null,
-              })),
-            },
-          },
-        });
-        if (analysesResult.error) {
-          console.warn('[AI-Decision] Failed to write signal_agent_analyses row:', analysesResult.error);
-        }
+        // composite_confidence + Tier-1 reasoning row are now written
+        // unconditionally upstream (right after the composite is
+        // computed). No-op here so the should_create_incident branch
+        // doesn't double-write.
 
         // Enqueue RED-TEAM adversarial review for high-stakes calls.
         // Composite >= 0.75 means the AI has high confidence — exactly when
