@@ -787,7 +787,58 @@ Deno.serve(async (req) => {
       .not('locations', 'is', null);
 
     if (clientsError) throw clientsError;
-    const client = (clients ?? [])[0];
+
+    // Filter to clients with operations in the wildfire detection zones.
+    // Previously this took clients[0] indiscriminately, so wildfire
+    // signals from Northeast BC were landing in BC Children's Hospital's
+    // feed (BCCH had no NE BC operations and no business with these
+    // signals). Match on location-string substrings — keep the keyword
+    // list specific so a "Calgary marketing office" doesn't match.
+    const ZONE_LOCATION_KEYWORDS = [
+      // Northeast BC (Peace / Montney)
+      'fort st. john', 'fort st john', 'fort nelson', 'dawson creek',
+      'chetwynd', 'tumbler ridge', "hudson's hope", 'taylor, bc',
+      'pouce coupe', 'charlie lake',
+      'montney', 'peace river', 'peace region',
+      'northeast bc', 'ne bc', 'north east bc',
+      // Skeena / Kitimat corridor
+      'kitimat', 'terrace', 'prince rupert', 'skeena',
+      'coastal gaslink', 'lng canada',
+      // Calgary region
+      'calgary',
+    ];
+
+    const clientHasZoneOverlap = (c: any): boolean => {
+      const raw = c?.locations;
+      const flat: string[] = Array.isArray(raw)
+        ? raw.map((l: any) => typeof l === 'string' ? l : (l?.name ?? l?.city ?? l?.address ?? JSON.stringify(l ?? '')))
+        : typeof raw === 'string'
+          ? [raw]
+          : raw && typeof raw === 'object'
+            ? Object.values(raw).flat().map(String)
+            : [];
+      const haystack = flat.join(' | ').toLowerCase();
+      return ZONE_LOCATION_KEYWORDS.some(kw => haystack.includes(kw));
+    };
+
+    const wildfireClients = (clients ?? []).filter(clientHasZoneOverlap);
+    if (wildfireClients.length === 0) {
+      console.log(
+        `[Wildfires] No clients with NE BC / Skeena / Calgary operations — ` +
+        `skipping signal creation. Reviewed ${(clients ?? []).length} clients.`
+      );
+    } else {
+      console.log(
+        `[Wildfires] ${wildfireClients.length} client(s) with zone overlap: ` +
+        wildfireClients.map((c: any) => c.name).join(', ')
+      );
+    }
+
+    // Kept for back-compat with downstream string formatters that used to
+    // reference `client.name`. When multiple clients match we use the
+    // first for display strings; per-client signals are still created via
+    // the wildfireClients loop below.
+    const client = wildfireClients[0];
 
     // Fetch CWFIS hotspots, perimeters, lightning, AND the NASA FIRMS static-source
     // overlay in parallel. FIRMS overlay is best-effort — if the API key is missing
@@ -825,17 +876,9 @@ Deno.serve(async (req) => {
       // 24h VIIRS/MODIS overlay, so operators can actually verify the detection.
       // (CWFIS firemaps ignored the lat/lon query params and always loaded the
       // default Canada-wide view.)
-      const stableUrl = `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${hs.lon.toFixed(3)},${hs.lat.toFixed(3)},12.0z`;
-      // Check signals table (not ingested_documents — ingest-signal never writes there)
-      const { data: existing } = await supabase
-        .from('signals')
-        .select('id')
-        .eq('source_url', stableUrl)
-        .gte('created_at', twelveHoursAgo)
-        .limit(1);
-      if (existing && existing.length > 0) { duplicatesSuppressed++; continue; }
+      if (wildfireClients.length === 0) continue;
 
-      if (!client) continue;
+      const stableUrl = `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${hs.lon.toFixed(3)},${hs.lat.toFixed(3)},12.0z`;
 
       const classification = classifyHotspot(hs, firmsStaticSources);
       const region = zone;
@@ -855,17 +898,6 @@ Deno.serve(async (req) => {
       const correlatedStrike = lightningStrikes.find(s =>
         distanceKm(hs.lat, hs.lon, s.lat, s.lon) <= 5
       );
-
-      let signalText = buildWildfireSignalText({ hs, region, clientName: client.name, perimeter, spread });
-
-      if (classification.type === 'ambiguous_near_facility' && classification.note) {
-        signalText += ` ⚠ FACILITY PROXIMITY: ${classification.note}`;
-        ambiguousDetected++;
-      }
-      if (correlatedStrike) {
-        const polarity = correlatedStrike.polarity === 'positive' ? 'positive (high ignition probability)' : correlatedStrike.polarity;
-        signalText += ` ⚡ LIGHTNING CORRELATION: ${polarity} cloud-to-ground strike detected within 5km — lightning ignition probable.`;
-      }
 
       const severity = hs.fwi >= 38 || hs.hfi >= 4000 ? 'critical'
         : hs.fwi >= 22 || hs.hfi >= 2000 ? 'high' : 'medium';
@@ -897,33 +929,61 @@ Deno.serve(async (req) => {
         } : {}),
       };
 
-      const { error } = await supabase.functions.invoke('ingest-signal', {
-        body: {
-          text: signalText,
-          source_url: stableUrl,
-          location: region,
-          clientId: client.id,
-          skip_relevance_gate: true,
-          severity,
-          raw_json: rawJson,
-        },
-      });
+      // One signal per matching client. Per-client dedup so a hotspot
+      // already filed for client A doesn't block creation for client B,
+      // but a re-run within the 12h window doesn't double-write either.
+      let createdForThisHotspot = false;
+      for (const targetClient of wildfireClients) {
+        const { data: existing } = await supabase
+          .from('signals')
+          .select('id')
+          .eq('source_url', stableUrl)
+          .eq('client_id', targetClient.id)
+          .gte('created_at', twelveHoursAgo)
+          .limit(1);
+        if (existing && existing.length > 0) { duplicatesSuppressed++; continue; }
 
-      if (!error) {
-        signalsCreated++;
-        const spreadNote = spread ? ` → ${spread.spreadDir} ${(spread.intervals[0].forwardM/1000).toFixed(1)}km/6h` : '';
-        console.log(
-          `[Wildfires] ${classification.type} (${classification.confidence}): ${region} — ` +
-          `fuel=${hs.fuel}, HFI=${hs.hfi.toFixed(0)}kW/m, ROS=${hs.ros.toFixed(1)}m/min, FWI=${hs.fwi.toFixed(1)}` +
-          `${correlatedStrike ? ' ⚡lightning' : ''}${spreadNote}`
-        );
+        let signalText = buildWildfireSignalText({ hs, region, clientName: targetClient.name, perimeter, spread });
+        if (classification.type === 'ambiguous_near_facility' && classification.note) {
+          signalText += ` ⚠ FACILITY PROXIMITY: ${classification.note}`;
+        }
+        if (correlatedStrike) {
+          const polarity = correlatedStrike.polarity === 'positive' ? 'positive (high ignition probability)' : correlatedStrike.polarity;
+          signalText += ` ⚡ LIGHTNING CORRELATION: ${polarity} cloud-to-ground strike detected within 5km — lightning ignition probable.`;
+        }
+
+        const { error } = await supabase.functions.invoke('ingest-signal', {
+          body: {
+            text: signalText,
+            source_url: stableUrl,
+            location: region,
+            clientId: targetClient.id,
+            skip_relevance_gate: true,
+            severity,
+            raw_json: rawJson,
+          },
+        });
+
+        if (!error) {
+          signalsCreated++;
+          createdForThisHotspot = true;
+          const spreadNote = spread ? ` → ${spread.spreadDir} ${(spread.intervals[0].forwardM/1000).toFixed(1)}km/6h` : '';
+          console.log(
+            `[Wildfires] ${classification.type} (${classification.confidence}) → ${targetClient.name}: ${region} — ` +
+            `fuel=${hs.fuel}, HFI=${hs.hfi.toFixed(0)}kW/m, ROS=${hs.ros.toFixed(1)}m/min, FWI=${hs.fwi.toFixed(1)}` +
+            `${correlatedStrike ? ' ⚡lightning' : ''}${spreadNote}`
+          );
+        }
+      }
+      if (createdForThisHotspot && classification.type === 'ambiguous_near_facility') {
+        ambiguousDetected++;
       }
 
       if (signalsCreated + flaringsDetected >= 10) break;
     }
 
     // ── Lightning processing (strikes with no nearby hotspot = latent risk) ──
-    if (client && lightningStrikes.length > 0) {
+    if (wildfireClients.length > 0 && lightningStrikes.length > 0) {
       const seenStrike = new Set<string>();
       for (const strike of lightningStrikes) {
         const zone = getOperationalZone(strike.lat, strike.lon);
@@ -945,42 +1005,47 @@ Deno.serve(async (req) => {
         if (!season.isFireSeason && !season.isShoulder) continue;
 
         const stableUrl = `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${strike.lon.toFixed(3)},${strike.lat.toFixed(3)},12.0z`;
-        const { data: existingStrike } = await supabase
-          .from('signals')
-          .select('id')
-          .eq('source_url', stableUrl)
-          .gte('created_at', twelveHoursAgo)
-          .limit(1);
-        if (existingStrike && existingStrike.length > 0) continue;
 
-        const signalText = buildLightningSignalText({
-          strike, region: zone, clientName: client.name,
-          nearHotspot: false,
-        });
+        // One signal per matching client, per-client dedup
+        for (const targetClient of wildfireClients) {
+          const { data: existingStrike } = await supabase
+            .from('signals')
+            .select('id')
+            .eq('source_url', stableUrl)
+            .eq('client_id', targetClient.id)
+            .gte('created_at', twelveHoursAgo)
+            .limit(1);
+          if (existingStrike && existingStrike.length > 0) continue;
 
-        const { error } = await supabase.functions.invoke('ingest-signal', {
-          body: {
-            text: signalText,
-            source_url: stableUrl,
-            location: zone,
-            clientId: client.id,
-            skip_relevance_gate: true,
-            category: 'lightning_strike',
-            severity: 'low',
-            entity_tags: ['lightning', 'latent-ignition-risk'],
-            raw_json: {
-              source_name: 'cwfis_lightning',
-              polarity: strike.polarity,
-              peak_current_ka: strike.peakCurrentKA,
-              stroke_time: strike.strokeTime,
-              has_nearby_hotspot: false,
+          const signalText = buildLightningSignalText({
+            strike, region: zone, clientName: targetClient.name,
+            nearHotspot: false,
+          });
+
+          const { error } = await supabase.functions.invoke('ingest-signal', {
+            body: {
+              text: signalText,
+              source_url: stableUrl,
+              location: zone,
+              clientId: targetClient.id,
+              skip_relevance_gate: true,
+              category: 'lightning_strike',
+              severity: 'low',
+              entity_tags: ['lightning', 'latent-ignition-risk'],
+              raw_json: {
+                source_name: 'cwfis_lightning',
+                polarity: strike.polarity,
+                peak_current_ka: strike.peakCurrentKA,
+                stroke_time: strike.strokeTime,
+                has_nearby_hotspot: false,
+              },
             },
-          },
-        });
+          });
 
-        if (!error) {
-          lightningSignals++;
-          console.log(`[Wildfires] Lightning (latent): ${zone} ${strike.lat.toFixed(3)}°N ${strike.polarity}`);
+          if (!error) {
+            lightningSignals++;
+            console.log(`[Wildfires] Lightning (latent) → ${targetClient.name}: ${zone} ${strike.lat.toFixed(3)}°N ${strike.polarity}`);
+          }
         }
 
         if (lightningSignals >= 5) break; // cap lightning signals per run
