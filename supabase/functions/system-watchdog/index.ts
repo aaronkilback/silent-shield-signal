@@ -2738,6 +2738,55 @@ Deno.serve(async (req) => {
         }
       }
 
+      // 2b. BCWS endpoint health — monitor-wildfires writes
+      // bcws_fires_fetch_ok and bcws_evacs_fetch_ok booleans to its
+      // heartbeat. If either fetch has been failing across the last
+      // few runs the section silently empties out (BCWS sometimes
+      // year-suffixes services like BCWS_ActiveFires_PublicView_2026,
+      // breaking our fixed URL). Catch that explicitly so the operator
+      // doesn't notice it weeks later via an empty report.
+      const { data: wildfireHeartbeats } = await supabase
+        .from('cron_heartbeat')
+        .select('result_summary, completed_at')
+        .eq('job_name', 'monitor-wildfires')
+        .gte('completed_at', new Date(Date.now() - 6 * 3600000).toISOString())
+        .order('completed_at', { ascending: false })
+        .limit(20);
+
+      if (wildfireHeartbeats && wildfireHeartbeats.length >= 3) {
+        const firesFails = wildfireHeartbeats.filter(
+          (h: any) => h.result_summary?.bcws_fires_fetch_ok === false,
+        );
+        const evacsFails = wildfireHeartbeats.filter(
+          (h: any) => h.result_summary?.bcws_evacs_fetch_ok === false,
+        );
+        const lastErr =
+          wildfireHeartbeats[0]?.result_summary?.bcws_fires_fetch_error
+          || wildfireHeartbeats[0]?.result_summary?.bcws_evacs_fetch_error
+          || '(no error message)';
+
+        if (firesFails.length >= 3) {
+          behavioralFindings.push({
+            category: 'behavioral_health',
+            severity: 'high',
+            title: `BCWS active-fires endpoint failing — ${firesFails.length}/${wildfireHeartbeats.length} runs in last 6h`,
+            analysis: `monitor-wildfires has been unable to fetch the BCWS_ActiveFires_PublicView FeatureServer for ${firesFails.length} consecutive runs. Last error: ${lastErr}. The "BCWS Official Active Fire Registry" section in the daily wildfire report will render empty until this is fixed.`,
+            plainEnglish: `The official BC Wildfire Service fire registry feed isn't reachable. Reports will show no active fires until the URL is updated or the service comes back online.`,
+            action: `Check if BCWS year-suffixed the service (e.g. BCWS_ActiveFires_PublicView_${new Date().getFullYear()}). Update the URL in supabase/functions/_shared/bcws.ts and redeploy monitor-wildfires + generate-wildfire-daily-report + the chat agents that import it.`,
+          });
+        }
+        if (evacsFails.length >= 3) {
+          behavioralFindings.push({
+            category: 'behavioral_health',
+            severity: 'high',
+            title: `BCWS evacuations endpoint failing — ${evacsFails.length}/${wildfireHeartbeats.length} runs in last 6h`,
+            analysis: `monitor-wildfires has been unable to fetch the Evacuation_Orders_and_Alerts FeatureServer for ${evacsFails.length} consecutive runs. Last error: ${lastErr}. Evacuation orders/alerts will not produce signals until this is fixed — operationally this is the most important BCWS feed.`,
+            plainEnglish: `Official BC evacuation orders and alerts aren't being ingested. If an evacuation order is issued near client assets while this is broken, it will not surface as a signal.`,
+            action: `Check if BCWS renamed the service. Update the URL in supabase/functions/_shared/bcws.ts and redeploy.`,
+          });
+        }
+      }
+
       // 3. Entity content freshness — entities with active monitoring should have recent content
       const { data: staleEntities } = await supabase
         .from('entities')
