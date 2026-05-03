@@ -3,6 +3,12 @@ project_id = "kpuqukppbmwebiptqmog"
 [functions.generate-wildfire-daily-report]
 verify_jwt = false
 
+[functions.wildfire-portal-chat]
+verify_jwt = false
+
+[functions.wildfire-portal-log]
+verify_jwt = false
+
 [functions.monitor-macro-indicators]
 verify_jwt = false
 

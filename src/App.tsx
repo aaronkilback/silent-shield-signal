@@ -61,6 +61,7 @@ const InviteRequired = lazyWithRetry(() => import("./pages/InviteRequired"));
 const AcceptInvite = lazyWithRetry(() => import("./pages/AcceptInvite"));
 const TenantAdmin = lazyWithRetry(() => import("./pages/TenantAdmin"));
 const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
+const WildfirePortal = lazyWithRetry(() => import("./pages/WildfirePortal"));
 const SuperAdminDashboard = lazyWithRetry(() => import("./pages/SuperAdminDashboard"));
 const VIPDeepScan = lazyWithRetry(() => import("./pages/VIPDeepScan"));
 const Consortia = lazyWithRetry(() => import("./pages/Consortia"));
@@ -128,6 +129,10 @@ const App = () => {
                       <Route path="/welcome" element={<Welcome />} />
                       <Route path="/invite/accept" element={<AcceptInvite />} />
                       <Route path="/invite-required" element={<InviteRequired />} />
+                      {/* Public Wildfire Portal — no auth, anonymous access by URL.
+                          Live BCWS daily report + WILDFIRE agent chat.
+                          Outside ProtectedRoute by design. */}
+                      <Route path="/wildfire" element={<WildfirePortal />} />
                       <Route path="/tenant-admin" element={<ProtectedRoute><TenantAdmin /></ProtectedRoute>} />
                       <Route path="/super-admin" element={<ProtectedRoute><SuperAdminDashboard /></ProtectedRoute>} />
                       <Route path="/clients" element={<ProtectedRoute><Clients /></ProtectedRoute>} />
