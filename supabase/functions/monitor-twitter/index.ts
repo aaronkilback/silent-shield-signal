@@ -20,6 +20,24 @@ const PERSON_THREAT_TERMS = [
   "\"find them\"", "protest", "\"at risk\""
 ];
 
+// Wildfire ops zone — same canonical list used by monitor-wildfires for
+// client filtering. Twitter Query C only fires for clients with at least
+// one location matching this list, which scopes early-warning fire
+// coverage to NE BC / Skeena / Calgary energy operations rather than
+// every client globally.
+const ZONE_LOCATION_KEYWORDS = [
+  'fort st. john', 'fort st john', 'fort nelson', 'dawson creek',
+  'chetwynd', 'tumbler ridge', 'montney', 'peace river',
+  'kitimat', 'terrace', 'prince rupert', 'calgary',
+];
+
+// Situational terms catch local-news wildfire / evacuation / smoke
+// coverage that lacks the activism vocabulary Query B requires.
+const SITUATIONAL_TERMS = [
+  'wildfire', 'fire', 'evacuation', 'smoke',
+  '"fire ban"', '"evacuation alert"', '"evacuation order"',
+];
+
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
@@ -115,6 +133,57 @@ Deno.serve(async (req) => {
       console.log(`[TwitterMonitor] Campaign query: ${campaignTweets.length} tweets, ${campaignSignals} signals`);
     }
 
+    // ═══ QUERY C: Situational early-warning (wildfire / evacuation / smoke) ═══
+    // CWFIS satellite detection lags news by 1-3 hours. Local outlets
+    // (e.g. Energetic City, BCWS, NWFS) often tweet a fire before VIIRS/
+    // MODIS picks up the hotspot. Scoped to clients whose locations
+    // overlap our wildfire ops zones — energy/critical-infra operators
+    // get early warning; healthcare/non-energy clients aren't spammed.
+    const wildfireClients = clientList.filter((c: any) => {
+      const raw = c?.locations;
+      const flat: string[] = Array.isArray(raw)
+        ? raw.map((l: any) => typeof l === 'string' ? l : (l?.name ?? l?.city ?? l?.address ?? JSON.stringify(l ?? '')))
+        : typeof raw === 'string' ? [raw] : [];
+      const haystack = flat.join(' | ').toLowerCase();
+      return ZONE_LOCATION_KEYWORDS.some(kw => haystack.includes(kw));
+    });
+
+    if (wildfireClients.length > 0) {
+      const locationTerms: string[] = [];
+      for (const c of wildfireClients) {
+        const raw = c.locations;
+        const flat = Array.isArray(raw) ? raw : (typeof raw === 'string' ? [raw] : []);
+        for (const loc of flat) {
+          const s = (typeof loc === 'string' ? loc : (loc?.name || loc?.city || '')).trim();
+          if (s.length >= 4) locationTerms.push(s);
+        }
+      }
+      const uniqueLocs = [...new Set(locationTerms.map(s => s.toLowerCase()))]
+        .filter(s => ZONE_LOCATION_KEYWORDS.some(kw => s.includes(kw)))
+        .slice(0, 8); // cap to keep query under Twitter's 1024-char limit
+
+      if (uniqueLocs.length > 0) {
+        const locOR = uniqueLocs.map(l => `"${l}"`).join(' OR ');
+        const sitOR = SITUATIONAL_TERMS.join(' OR ');
+        const sitQuery = `(${locOR}) (${sitOR}) -is:retweet lang:en`;
+
+        if (sitQuery.length < 1000) {
+          console.log(`[TwitterMonitor] Situational query (${sitQuery.length} chars): ${sitQuery.substring(0, 120)}...`);
+          await new Promise(r => setTimeout(r, 1000));
+          const sitTweets = await searchRecentTweets(bearerToken, sitQuery, 25);
+          let sitSignals = 0;
+          for (const tweet of sitTweets) {
+            const result = await ingestTweet(supabase, tweet, persons, wildfireClients, "situational");
+            if (result) { sitSignals++; signalsCreated++; }
+            tweetsProcessed++;
+          }
+          console.log(`[TwitterMonitor] Situational query: ${sitTweets.length} tweets, ${sitSignals} signals`);
+        } else {
+          console.warn(`[TwitterMonitor] Situational query too long (${sitQuery.length} chars), skipping`);
+        }
+      }
+    }
+
     console.log(`[TwitterMonitor] Done. Tweets processed: ${tweetsProcessed}, signals created: ${signalsCreated}`);
 
     return successResponse({
@@ -207,7 +276,7 @@ async function ingestTweet(
   tweet: Tweet,
   persons: any[],
   clients: any[] | null,
-  queryType: "person_threat" | "campaign"
+  queryType: "person_threat" | "campaign" | "situational"
 ): Promise<boolean> {
   const tweetUrl = `https://x.com/i/web/status/${tweet.id}`;
   const lowerText = tweet.text.toLowerCase();
@@ -231,12 +300,18 @@ async function ingestTweet(
   // Categorise
   let category = "social_media";
   const threatTerms = ["threat", "harass", "dox", "doxx", "home address", "personal information", "find them"];
+  const wildfireTerms = ["wildfire", "evacuation alert", "evacuation order", "fire ban"];
   if (threatTerms.some(t => lowerText.includes(t))) {
     category = "threat_indication";
   } else if (lowerText.includes("protest") || lowerText.includes("blockade")) {
     category = "protest_activity";
   } else if (lowerText.includes("boycott") || lowerText.includes("activist") || lowerText.includes("sabotage")) {
     category = "activism";
+  } else if (queryType === "situational" || wildfireTerms.some(t => lowerText.includes(t))) {
+    // Situational tweets from Query C — wildfire / evacuation / smoke /
+    // fire-ban early warning. Use 'wildfire' to match what
+    // monitor-wildfires writes so the feed groups them together.
+    category = "wildfire";
   }
 
   const authorHandle = tweet.author ? `@${tweet.author.username}` : null;
