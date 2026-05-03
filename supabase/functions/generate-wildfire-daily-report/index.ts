@@ -197,29 +197,69 @@ async function fetchFortStJohnAqhi(): Promise<AqhiData> {
     health_message: 'AQHI data temporarily unavailable. Check airnow.ca for current conditions.',
     forecast: [],
   };
+  // Environment Canada MSC API. Fort St. John's location_id changed from
+  // 'BC_FSJ' to a 5-letter alphabetic code (JAGPB). The old `sortby=` syntax
+  // was also dropped — current API rejects it as 'bad sort property' (HTTP
+  // 400). The MSC API now uses observation_datetime + a `latest=true`
+  // filter on the observations endpoint.
+  const FSJ_LOCATION_ID = 'JAGPB';
   try {
-    // Environment Canada MSC API — Fort St. John community code BC_FSJ
-    const obs = await fetch(
-      'https://api.weather.gc.ca/collections/aqhi-observations-realtime/items?f=json&sortby=-date_observed&limit=3&location_id=BC_FSJ',
-      { signal: AbortSignal.timeout(6000) }
-    );
-    if (!obs.ok) return fallback;
+    const obsUrl = `https://api.weather.gc.ca/collections/aqhi-observations-realtime/items`
+      + `?f=json&limit=24&location_id=${FSJ_LOCATION_ID}`;
+    const obs = await fetch(obsUrl, { signal: AbortSignal.timeout(6000) });
+    if (!obs.ok) {
+      console.warn(`[AQHI] obs HTTP ${obs.status} — falling back`);
+      return fallback;
+    }
     const obsJson = await obs.json();
-    const latestObs = obsJson?.features?.[0]?.properties;
+    // Pick the most recent observation by observation_datetime since the
+    // API doesn't honor sortby anymore.
+    const obsFeatures = (obsJson?.features ?? []).slice();
+    obsFeatures.sort((a: any, b: any) => {
+      const ta = new Date(a?.properties?.observation_datetime || 0).getTime();
+      const tb = new Date(b?.properties?.observation_datetime || 0).getTime();
+      return tb - ta;
+    });
+    const latestObs = obsFeatures[0]?.properties;
     const currentAqhi = latestObs?.aqhi ?? null;
     const aqhiNum = currentAqhi != null ? Math.round(currentAqhi) : null;
 
-    const fcRes = await fetch(
-      'https://api.weather.gc.ca/collections/aqhi-forecasts-realtime/items?f=json&sortby=-date_issued&limit=6&location_id=BC_FSJ',
-      { signal: AbortSignal.timeout(6000) }
-    );
+    const fcUrl = `https://api.weather.gc.ca/collections/aqhi-forecasts-realtime/items`
+      + `?f=json&limit=24&location_id=${FSJ_LOCATION_ID}`;
+    const fcRes = await fetch(fcUrl, { signal: AbortSignal.timeout(6000) });
     const fcJson = fcRes.ok ? await fcRes.json() : null;
-    const fcFeatures = fcJson?.features ?? [];
-    const forecast = fcFeatures.slice(0, 3).map((f: any) => {
-      const p = f.properties ?? {};
-      const v = p.aqhi != null ? Math.round(p.aqhi) : null;
-      return { period: p.forecast_period ?? '', aqhi: v, category: aqhiCategory(v) };
+    // forecast_period field is null in the new schema — derive a label
+    // from forecast_datetime (24h offset = "Tomorrow", same-day = "Today",
+    // night-hour = "Tonight"). Sort latest publication first, then take
+    // up to 3 distinct periods.
+    const now = new Date();
+    const fcFeatures = ((fcJson?.features ?? []) as any[]).slice();
+    fcFeatures.sort((a: any, b: any) => {
+      const ta = new Date(a?.properties?.forecast_datetime || 0).getTime();
+      const tb = new Date(b?.properties?.forecast_datetime || 0).getTime();
+      return ta - tb;
     });
+    const labelFor = (iso: string): string => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (!Number.isFinite(d.getTime())) return '';
+      const dayDelta = Math.round((d.getTime() - now.getTime()) / (24 * 3600000));
+      const hour = d.getUTCHours();
+      if (dayDelta <= 0) return hour >= 18 || hour < 6 ? 'Tonight' : 'Today';
+      if (dayDelta === 1) return hour >= 18 || hour < 6 ? 'Tomorrow Night' : 'Tomorrow';
+      return d.toLocaleDateString('en-CA', { weekday: 'short', timeZone: 'UTC' });
+    };
+    const seenPeriods = new Set<string>();
+    const forecast: { period: string; aqhi: number | null; category: string }[] = [];
+    for (const feat of fcFeatures) {
+      const p = feat?.properties ?? {};
+      const period = labelFor(p.forecast_datetime);
+      if (!period || seenPeriods.has(period)) continue;
+      seenPeriods.add(period);
+      const v = p.aqhi != null ? Math.round(p.aqhi) : null;
+      forecast.push({ period, aqhi: v, category: aqhiCategory(v) });
+      if (forecast.length >= 3) break;
+    }
 
     return {
       current: aqhiNum,
@@ -227,7 +267,8 @@ async function fetchFortStJohnAqhi(): Promise<AqhiData> {
       health_message: aqhiHealthMessage(aqhiNum),
       forecast,
     };
-  } catch {
+  } catch (err: any) {
+    console.warn(`[AQHI] fetch threw: ${err?.message || err}`);
     return fallback;
   }
 }
@@ -1236,27 +1277,12 @@ ${(() => {
   ` : `<p class="no-data">No lightning activity detected in operational zone during the last 24 hours. ${!season.isFireSeason ? '(Off-season — low lightning frequency is expected.)' : ''}</p>`}
 </section>
 
-<!-- ─── Section 5: Fire Signals & Spread Projections ──────────────────────── -->
-<section>
-  <h2>Platform Fire Intelligence Signals</h2>
-  ${dbSignals.length > 0 ? `
-  <p style="font-size:12px;color:#555;margin-bottom:12px">Wildfire signals processed by AEGIS WILDFIRE from CWFIS monitoring (last 24 hours). Includes FBP elliptical spread projections where data available.</p>
-  <table>
-    <thead>
-      <tr>
-        <th>Detected</th>
-        <th>Signal</th>
-        <th style="text-align:center">Severity</th>
-        <th style="text-align:center">6h Spread Projection</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${signalRows}
-    </tbody>
-  </table>
-  <p class="note" style="margin-top:8px">Spread projections use the Canadian FBP elliptical fire model (Alexander 1985). For full signal detail and 12h/24h projections, view in the AEGIS Platform.</p>
-  ` : `<p class="no-data">No wildfire signals in platform for the last 24 hours.</p>`}
-</section>
+<!-- Section 5 (Platform Fire Intelligence Signals) removed: duplicate
+     of the BCWS Official Active Fire Registry and Active Evacuations
+     sections above. The platform's own wildfire-category signals are
+     CWFIS-derived; with the dedicated CWFIS section already removed
+     this section was repeating the same data through a different lens.
+     Signals remain available in the AEGIS feed and via chat agents. -->
 
 <!-- ─── Section 6: AQHI — Fort St. John (Current + Tomorrow side-by-side) ── -->
 <section>

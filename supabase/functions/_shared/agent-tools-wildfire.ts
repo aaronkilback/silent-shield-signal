@@ -435,53 +435,116 @@ const getFireWeatherIndex: ToolHandler = {
   },
 };
 
+// Environment Canada MSC AQHI uses 5-letter alphabetic location IDs
+// (replaced the older 'BC_FSJ' style mid-2025). Map the common Canadian
+// community names operators ask for to the current MSC IDs so the
+// agent can take human-friendly input. Add to this map as new operator
+// asks come up.
+const AQHI_LOCATION_IDS: Record<string, string> = {
+  // British Columbia
+  'fort st. john': 'JAGPB',
+  'fort st john': 'JAGPB',
+  'fsj': 'JAGPB',
+  'bc_fsj': 'JAGPB',          // legacy alias
+  'vancouver': 'XADKE',
+  'prince george': 'BAACD',
+  'kitimat': 'TCBME',
+  'kelowna': 'YBOBR',
+  'victoria': 'WAFBA',
+  // Alberta
+  'calgary': 'BBCEZ',
+  'edmonton': 'BBAEX',
+  'fort mcmurray': 'BBBJL',
+};
+
 // ── 6. get_air_quality_index ────────────────────────────────────────
 const getAirQualityIndex: ToolHandler = {
   name: "get_air_quality_index",
   description:
-    "Returns Environment Canada AQHI (Air Quality Health Index) observations + forecast for a community. Useful when wildfire smoke might be impacting air quality. Defaults to BC_FSJ (Fort St. John). Other Canadian community codes work — try BC_VAN (Vancouver), BC_PRG (Prince George), AB_CAL (Calgary), etc.",
+    "Returns Environment Canada AQHI (Air Quality Health Index) observations + 3-period forecast. Defaults to Fort St. John. Accepts either a human community name ('Vancouver', 'Calgary', 'Prince George', 'Kitimat', etc.) or a 5-letter MSC location ID. Useful when wildfire smoke might be impacting air quality, or for situational awareness in any monitored community.",
   parameters: {
     type: "object",
     properties: {
-      community_code: {
+      community: {
         type: "string",
-        description: "Environment Canada community code, e.g. 'BC_FSJ'. Default 'BC_FSJ'.",
+        description: "Community name (e.g. 'Fort St. John', 'Vancouver', 'Calgary') OR 5-letter MSC location ID. Default 'Fort St. John'.",
       },
     },
   },
   execute: async (args: any) => {
-    const code = String(args?.community_code || "BC_FSJ");
+    // Accept either `community` (preferred) or legacy `community_code`.
+    const requested = String(args?.community ?? args?.community_code ?? "Fort St. John");
+    const lower = requested.toLowerCase().trim();
+    // Resolve to a 5-letter MSC ID. If the input is already 5 alpha
+    // chars, treat it as a literal ID; otherwise look it up in the map.
+    const looksLikeMscId = /^[A-Z]{5}$/.test(requested);
+    const locationId = looksLikeMscId ? requested : (AQHI_LOCATION_IDS[lower] || null);
+    if (!locationId) {
+      return {
+        error: `Unknown community "${requested}".`,
+        valid_communities: Object.keys(AQHI_LOCATION_IDS).filter(k => !k.startsWith('bc_')).map(k => k.replace(/\b\w/g, c => c.toUpperCase())),
+      };
+    }
     try {
-      const obs = await fetch(
-        `https://api.weather.gc.ca/collections/aqhi-observations-realtime/items?f=json&sortby=-date_observed&limit=3&location_id=${encodeURIComponent(code)}`,
-        { signal: AbortSignal.timeout(6000) }
-      );
-      if (!obs.ok) return { error: `MSC HTTP ${obs.status}`, community_code: code };
+      const obsUrl = `https://api.weather.gc.ca/collections/aqhi-observations-realtime/items`
+        + `?f=json&limit=24&location_id=${locationId}`;
+      const obs = await fetch(obsUrl, { signal: AbortSignal.timeout(6000) });
+      if (!obs.ok) return { error: `MSC HTTP ${obs.status}`, location_id: locationId };
       const obsJson = await obs.json();
-      const latestObs = obsJson?.features?.[0]?.properties;
+      const obsFeatures = (obsJson?.features ?? []).slice();
+      // API no longer honors sortby — pick the most recent client-side.
+      obsFeatures.sort((a: any, b: any) => {
+        const ta = new Date(a?.properties?.observation_datetime || 0).getTime();
+        const tb = new Date(b?.properties?.observation_datetime || 0).getTime();
+        return tb - ta;
+      });
+      const latestObs = obsFeatures[0]?.properties;
       const currentRaw = latestObs?.aqhi ?? null;
       const current = currentRaw != null ? Math.round(currentRaw) : null;
 
-      const fcRes = await fetch(
-        `https://api.weather.gc.ca/collections/aqhi-forecasts-realtime/items?f=json&sortby=-date_issued&limit=6&location_id=${encodeURIComponent(code)}`,
-        { signal: AbortSignal.timeout(6000) }
-      );
+      const fcUrl = `https://api.weather.gc.ca/collections/aqhi-forecasts-realtime/items`
+        + `?f=json&limit=24&location_id=${locationId}`;
+      const fcRes = await fetch(fcUrl, { signal: AbortSignal.timeout(6000) });
       const fcJson = fcRes.ok ? await fcRes.json() : null;
-      const fcFeatures = fcJson?.features ?? [];
-      const forecast = fcFeatures.slice(0, 3).map((f: any) => {
-        const p = f.properties ?? {};
-        const v = p.aqhi != null ? Math.round(p.aqhi) : null;
-        return { period: p.forecast_period ?? "", aqhi: v, category: aqhiCategory(v) };
+      const fcFeatures = ((fcJson?.features ?? []) as any[]).slice();
+      fcFeatures.sort((a: any, b: any) => {
+        const ta = new Date(a?.properties?.forecast_datetime || 0).getTime();
+        const tb = new Date(b?.properties?.forecast_datetime || 0).getTime();
+        return ta - tb;
       });
+      const now = new Date();
+      const labelFor = (iso: string): string => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (!Number.isFinite(d.getTime())) return '';
+        const dayDelta = Math.round((d.getTime() - now.getTime()) / (24 * 3600000));
+        const hour = d.getUTCHours();
+        if (dayDelta <= 0) return hour >= 18 || hour < 6 ? 'Tonight' : 'Today';
+        if (dayDelta === 1) return hour >= 18 || hour < 6 ? 'Tomorrow Night' : 'Tomorrow';
+        return d.toLocaleDateString('en-CA', { weekday: 'short', timeZone: 'UTC' });
+      };
+      const seenPeriods = new Set<string>();
+      const forecast: { period: string; aqhi: number | null; category: string }[] = [];
+      for (const feat of fcFeatures) {
+        const p = feat?.properties ?? {};
+        const period = labelFor(p.forecast_datetime);
+        if (!period || seenPeriods.has(period)) continue;
+        seenPeriods.add(period);
+        const v = p.aqhi != null ? Math.round(p.aqhi) : null;
+        forecast.push({ period, aqhi: v, category: aqhiCategory(v) });
+        if (forecast.length >= 3) break;
+      }
+
       return {
-        community_code: code,
+        location_id: locationId,
+        community: latestObs?.location_name_en ?? requested,
         current,
         category: aqhiCategory(current),
-        observed_at: latestObs?.date_observed ?? null,
+        observed_at: latestObs?.observation_datetime ?? null,
         forecast,
       };
     } catch (e: any) {
-      return { error: e?.message || "AQHI fetch failed", community_code: code };
+      return { error: e?.message || "AQHI fetch failed", location_id: locationId };
     }
   },
 };
