@@ -107,7 +107,7 @@ export default function WildfirePortal() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const reportContainerRef = useRef<HTMLDivElement>(null);
 
-  // ── Spread Simulator (Phase B: live forecast + DEM slope) ──────────
+  // ── Spread Simulator (Phase C: time-slider + click-to-pin + BCWS prefill) ──
   const [simLat, setSimLat] = useState("56.0");
   const [simLng, setSimLng] = useState("-121.0");
   const [simDuration, setSimDuration] = useState("48");
@@ -123,6 +123,93 @@ export default function WildfirePortal() {
   const simMapRef = useRef<HTMLDivElement>(null);
   const simMapInstanceRef = useRef<any>(null);
   const simLayersRef = useRef<Record<number, any>>({});
+  const simIgnitionMarkerRef = useRef<any>(null);
+  const simResultLayerGroupRef = useRef<any>(null);
+  // Track simLat/simLng in a ref so the map's click handler reads the
+  // latest value without needing to be re-bound on every state change.
+  const simIgnitionRef = useRef({ lat: 56.0, lng: -121.0 });
+  useEffect(() => {
+    const lat = Number(simLat);
+    const lng = Number(simLng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      simIgnitionRef.current = { lat, lng };
+      // If the map is already initialised, move the ignition marker.
+      const L = (window as any).L;
+      if (L && simIgnitionMarkerRef.current) {
+        simIgnitionMarkerRef.current.setLatLng([lat, lng]);
+      }
+    }
+  }, [simLat, simLng]);
+
+  // BCWS active fires for "Quick start" prefill dropdown.
+  interface BcwsPick {
+    fire_number: string;
+    name: string;
+    status: string;
+    size_ha: number | null;
+    lat: number;
+    lng: number;
+  }
+  const [bcwsFires, setBcwsFires] = useState<BcwsPick[]>([]);
+  const [bcwsPickValue, setBcwsPickValue] = useState<string>("");
+
+  // Pull BCWS active fires once on mount. Filter to a generous BC bbox
+  // so the dropdown isn't dominated by fires nowhere near our users.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = "https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/BCWS_ActiveFires_PublicView/FeatureServer/0/query"
+          + "?where=" + encodeURIComponent("FIRE_STATUS <> 'Out'")
+          + "&outFields=" + encodeURIComponent("FIRE_NUMBER,INCIDENT_NAME,FIRE_STATUS,CURRENT_SIZE,LATITUDE,LONGITUDE,GEOGRAPHIC_DESCRIPTION,FIRE_OF_NOTE_IND")
+          + "&outSR=4326&f=json&resultRecordCount=200";
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const j = await res.json();
+        if (cancelled) return;
+        const features = (j?.features as any[]) || [];
+        const picks: BcwsPick[] = features
+          .map((f: any) => {
+            const p = f.attributes || {};
+            const lat = Number(p.LATITUDE);
+            const lng = Number(p.LONGITUDE);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            return {
+              fire_number: String(p.FIRE_NUMBER || ""),
+              name: p.INCIDENT_NAME || p.GEOGRAPHIC_DESCRIPTION || p.FIRE_NUMBER || "Unnamed",
+              status: p.FIRE_STATUS || "Unknown",
+              size_ha: typeof p.CURRENT_SIZE === "number" ? p.CURRENT_SIZE : null,
+              lat,
+              lng,
+            };
+          })
+          .filter(Boolean) as BcwsPick[];
+        // Sort: out-of-control + fires-of-note first, then by size desc.
+        picks.sort((a, b) => {
+          const oa = a.status === "Out of Control" ? 0 : 1;
+          const ob = b.status === "Out of Control" ? 0 : 1;
+          if (oa !== ob) return oa - ob;
+          return (b.size_ha ?? 0) - (a.size_ha ?? 0);
+        });
+        setBcwsFires(picks.slice(0, 60));
+      } catch (_) { /* swallow — prefill is optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  function handleBcwsPick(value: string) {
+    setBcwsPickValue(value);
+    if (!value) return;
+    const pick = bcwsFires.find((f) => f.fire_number === value);
+    if (!pick) return;
+    setSimLat(pick.lat.toFixed(4));
+    setSimLng(pick.lng.toFixed(4));
+    // Recenter the map on the picked ignition.
+    const L = (window as any).L;
+    if (L && simMapInstanceRef.current) {
+      simMapInstanceRef.current.setView([pick.lat, pick.lng], 9);
+    }
+  }
 
   // Page view + report load on mount.
   useEffect(() => {
@@ -191,125 +278,128 @@ export default function WildfirePortal() {
     }
   }
 
-  // Render the simulator GeoJSON on a Leaflet map. One layer per
-  // checkpoint hour; the active hour is highlighted, others faded.
+  // Initialise the simulator map ONCE on mount so users can click-to-pin
+  // an ignition before they've ever run a simulation. Result perimeters
+  // get added/removed via a separate useEffect when simResult changes.
   useEffect(() => {
-    if (!simResult || !simMapRef.current) return;
+    if (!simMapRef.current) return;
     let cancelled = false;
     loadLeafletOnce()
       .then(() => {
         if (cancelled || !simMapRef.current) return;
         const L = (window as any).L;
-        if (!L) return;
-        // Tear down any previous map instance before re-rendering.
-        if (simMapInstanceRef.current) {
-          simMapInstanceRef.current.remove();
-          simMapInstanceRef.current = null;
-          simLayersRef.current = {};
-        }
-        const map = L.map(simMapRef.current, { zoomControl: true });
+        if (!L || simMapInstanceRef.current) return; // already initialised
 
-        // Multi-layer basemap. Topographic is the default because fire
-        // behaviour depends on terrain — slope direction and elevation
-        // are the operator's primary visual cues. Satellite is useful
-        // for matching a fire to ground features (roads, clearings,
-        // facilities). OSM Standard kept for road-network reference.
+        const ig = simIgnitionRef.current;
+        const map = L.map(simMapRef.current, { zoomControl: true }).setView([ig.lat, ig.lng], 8);
         const baseLayers = {
           "Topographic": L.tileLayer(
             "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
-            {
-              maxZoom: 18,
-              attribution:
-                'Topo: <a href="https://www.esri.com">Esri</a>, USGS, NOAA',
-            },
+            { maxZoom: 18, attribution: 'Topo: <a href="https://www.esri.com">Esri</a>, USGS, NOAA' },
           ),
           "Satellite": L.tileLayer(
             "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-            {
-              maxZoom: 18,
-              attribution:
-                'Imagery: <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
-            },
+            { maxZoom: 18, attribution: 'Imagery: <a href="https://www.esri.com">Esri</a>, Maxar' },
           ),
           "OpenTopoMap": L.tileLayer(
             "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-            {
-              maxZoom: 17,
-              attribution:
-                '© <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
-            },
+            { maxZoom: 17, attribution: '© <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)' },
           ),
           "OSM Standard": L.tileLayer(
             "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-            {
-              maxZoom: 19,
-              attribution:
-                '© <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-            },
+            { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a>' },
           ),
         };
-
-        // Add the default (Topographic) to the map; the others stand by
-        // until the user switches via the layers control.
         baseLayers["Topographic"].addTo(map);
         L.control.layers(baseLayers, undefined, { position: "topright" }).addTo(map);
         simMapInstanceRef.current = map;
 
-        // Ignition marker
-        const ig = simResult.metadata?.ignition;
-        if (ig) {
-          L.marker([ig.lat, ig.lng]).addTo(map).bindPopup(
-            `<strong>Ignition</strong><br>${ig.lat.toFixed(3)}°N ${Math.abs(ig.lng).toFixed(3)}°W`,
-          );
-        }
+        // Custom red-pin ignition marker. Draggable so users can either
+        // click-to-pin or click-and-drag to fine-tune.
+        const pinIcon = L.divIcon({
+          className: "",
+          html: '<div style="background:#dc2626;color:white;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.4);font-size:12px;font-weight:700">×</div>',
+          iconSize: [22, 22], iconAnchor: [11, 11],
+        });
+        const marker = L.marker([ig.lat, ig.lng], { icon: pinIcon, draggable: true })
+          .addTo(map)
+          .bindPopup("Drag to reposition ignition, or click anywhere on the map.");
+        marker.on("dragend", () => {
+          const ll = marker.getLatLng();
+          setSimLat(ll.lat.toFixed(4));
+          setSimLng(ll.lng.toFixed(4));
+        });
+        simIgnitionMarkerRef.current = marker;
 
-        const colorFor = (h: number): string => {
-          if (h <= 1) return "#fde047";
-          if (h <= 3) return "#fb923c";
-          if (h <= 6) return "#f97316";
-          if (h <= 12) return "#ef4444";
-          if (h <= 24) return "#dc2626";
-          return "#7f1d1d";
-        };
+        // Click anywhere on the map to drop the ignition pin there.
+        map.on("click", (e: any) => {
+          const lat = e.latlng.lat;
+          const lng = e.latlng.lng;
+          marker.setLatLng([lat, lng]);
+          setSimLat(lat.toFixed(4));
+          setSimLng(lng.toFixed(4));
+        });
 
-        // Render perimeters from largest to smallest so smaller (earlier)
-        // hours stack on top and remain visible.
-        const features = ((simResult.features || []) as any[])
-          .slice()
-          .sort((a, b) => (b.properties?.hour ?? 0) - (a.properties?.hour ?? 0));
-
-        const allBounds: any[] = [];
-        for (const feat of features) {
-          const hour = feat.properties?.hour as number;
-          const layer = L.geoJSON(feat, {
-            style: () => ({
-              color: colorFor(hour),
-              fillColor: colorFor(hour),
-              fillOpacity: 0.18,
-              weight: 2,
-            }),
-            onEachFeature: (f: any, lyr: any) => {
-              lyr.bindPopup(
-                `<strong>${hour}h checkpoint</strong><br>` +
-                `Area: ${f.properties.area_ha?.toLocaleString()} ha<br>` +
-                `Perimeter: ${f.properties.perimeter_km} km<br>` +
-                `Max intensity: ${f.properties.max_intensity_kw_per_m?.toLocaleString()} kW/m`,
-              );
-            },
-          }).addTo(map);
-          simLayersRef.current[hour] = layer;
-          allBounds.push(layer.getBounds());
-        }
-
-        if (allBounds.length > 0) {
-          const merged = allBounds.reduce((acc, b) => (acc ? acc.extend(b) : b), null);
-          if (merged) map.fitBounds(merged, { padding: [20, 20] });
-        }
+        // Layer group for result perimeters — separate from the marker
+        // so we can clear/redraw without disturbing the pin.
+        simResultLayerGroupRef.current = L.layerGroup().addTo(map);
       })
-      .catch((e) => console.warn("[WildfirePortal] sim map render failed:", e));
-    return () => {
-      cancelled = true;
+      .catch((e) => console.warn("[WildfirePortal] sim map init failed:", e));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When a sim result arrives, render its perimeters into the result
+  // layer group. Clears any previous run's layers first.
+  useEffect(() => {
+    if (!simResult) return;
+    const L = (window as any).L;
+    const group = simResultLayerGroupRef.current;
+    if (!L || !group) return;
+    group.clearLayers();
+    simLayersRef.current = {};
+
+    const colorFor = (h: number): string => {
+      if (h <= 1) return "#fde047";
+      if (h <= 3) return "#fb923c";
+      if (h <= 6) return "#f97316";
+      if (h <= 12) return "#ef4444";
+      if (h <= 24) return "#dc2626";
+      return "#7f1d1d";
     };
+
+    const features = ((simResult.features || []) as any[])
+      .slice()
+      .sort((a, b) => (b.properties?.hour ?? 0) - (a.properties?.hour ?? 0));
+
+    const allBounds: any[] = [];
+    for (const feat of features) {
+      const hour = feat.properties?.hour as number;
+      const layer = L.geoJSON(feat, {
+        style: () => ({
+          color: colorFor(hour),
+          fillColor: colorFor(hour),
+          fillOpacity: 0.18,
+          weight: 2,
+        }),
+        onEachFeature: (f: any, lyr: any) => {
+          lyr.bindPopup(
+            `<strong>${hour}h checkpoint</strong><br>` +
+            `Area: ${f.properties.area_ha?.toLocaleString()} ha<br>` +
+            `Perimeter: ${f.properties.perimeter_km} km<br>` +
+            `Max intensity: ${f.properties.max_intensity_kw_per_m?.toLocaleString()} kW/m`,
+          );
+        },
+      });
+      group.addLayer(layer);
+      simLayersRef.current[hour] = layer;
+      allBounds.push(layer.getBounds());
+    }
+
+    if (allBounds.length > 0 && simMapInstanceRef.current) {
+      const merged = allBounds.reduce((acc: any, b: any) => (acc ? acc.extend(b) : b), null);
+      if (merged) simMapInstanceRef.current.fitBounds(merged, { padding: [20, 20] });
+    }
   }, [simResult]);
 
   // Highlight the active checkpoint hour.
@@ -588,8 +678,27 @@ export default function WildfirePortal() {
           <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-0">
             {/* Inputs */}
             <div className="p-3 sm:p-4 lg:border-r border-b lg:border-b-0 border-slate-200 bg-slate-50 space-y-3 text-sm">
+              {bcwsFires.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">Quick start (BCWS active fires)</label>
+                  <select
+                    value={bcwsPickValue}
+                    onChange={(e) => handleBcwsPick(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white"
+                  >
+                    <option value="">— Custom ignition point —</option>
+                    {bcwsFires.map((f) => (
+                      <option key={f.fire_number} value={f.fire_number}>
+                        {f.fire_number} · {f.name.substring(0, 40)} · {f.status}{f.size_ha != null ? ` · ${Math.round(f.size_ha)}ha` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 mt-1">{bcwsFires.length} active BCWS fires loaded</p>
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Ignition</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Ignition (or click on map)</label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="number" step="0.001"
@@ -606,7 +715,7 @@ export default function WildfirePortal() {
                     className="border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
                   />
                 </div>
-                <p className="text-[10px] text-slate-500 mt-1">e.g. 56.0, -121.0 (NE BC)</p>
+                <p className="text-[10px] text-slate-500 mt-1">e.g. 56.0, -121.0 (NE BC) — or drop a pin on the map →</p>
               </div>
 
               <div>
@@ -742,37 +851,58 @@ export default function WildfirePortal() {
 
             {/* Map + checkpoint slider */}
             <div className="flex flex-col">
-              {simResult?.features?.length > 0 && (
-                <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs text-slate-500 mr-1">Checkpoint:</span>
-                  {(simResult.features as any[]).map((f: any) => {
-                    const h = f.properties?.hour;
-                    const active = h === simActiveHour;
-                    return (
-                      <button
-                        key={h}
-                        onClick={() => setSimActiveHour(h)}
-                        className={`text-xs font-medium rounded px-2.5 py-1 transition-colors ${
-                          active ? "bg-orange-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"
-                        }`}
-                      >
-                        {h}h · {Math.round(f.properties.area_ha).toLocaleString()} ha
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              {simResult?.features?.length > 0 && (() => {
+                const features = (simResult.features as any[]).slice().sort((a, b) => a.properties.hour - b.properties.hour);
+                const hours = features.map((f) => f.properties.hour);
+                const activeIdx = Math.max(0, hours.indexOf(simActiveHour ?? hours[hours.length - 1]));
+                const activeFeat = features[activeIdx];
+                return (
+                  <div className="px-3 sm:px-4 py-3 border-b border-slate-200 bg-white space-y-2">
+                    <div className="flex items-baseline justify-between flex-wrap gap-2">
+                      <div>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-500">Checkpoint</span>
+                        <span className="ml-2 text-lg font-bold text-orange-700">{activeFeat.properties.hour}h</span>
+                      </div>
+                      <div className="text-xs text-slate-700 space-x-3">
+                        <span><strong>{Math.round(activeFeat.properties.area_ha).toLocaleString()}</strong> ha</span>
+                        <span className="text-slate-400">·</span>
+                        <span>{activeFeat.properties.perimeter_km} km perimeter</span>
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={hours.length - 1}
+                      step={1}
+                      value={activeIdx}
+                      onChange={(e) => setSimActiveHour(hours[Number(e.target.value)])}
+                      className="w-full accent-orange-600"
+                      aria-label="Time slider"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-500 px-1 select-none">
+                      {hours.map((h) => (
+                        <button
+                          key={h}
+                          onClick={() => setSimActiveHour(h)}
+                          className={`hover:text-slate-900 transition-colors ${h === activeFeat.properties.hour ? "text-orange-700 font-bold" : ""}`}
+                        >
+                          {h}h
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
               <div
                 ref={simMapRef}
                 className="bg-slate-100"
                 style={{ height: "min(60vh, 600px)", minHeight: "320px" }}
-              >
-                {!simResult && (
-                  <div className="h-full flex items-center justify-center text-slate-500 text-sm p-6 text-center">
-                    Set ignition coordinates and weather, then run the simulation. Each hourly perimeter renders as a translucent polygon — click the checkpoint chips to highlight one.
-                  </div>
-                )}
-              </div>
+              />
+              {!simResult && (
+                <div className="px-4 py-2 border-t border-slate-200 bg-amber-50 text-amber-900 text-xs text-center">
+                  💡 Click anywhere on the map (or drag the red pin) to set the ignition. Then hit <strong>Run Simulation</strong>.
+                </div>
+              )}
               {simResult?.metadata?.limitations && (
                 <details className="px-4 py-2 border-t border-slate-200 bg-slate-50 text-xs text-slate-600">
                   <summary className="cursor-pointer font-medium hover:text-slate-900">Model limitations ({simResult.metadata.limitations.length})</summary>

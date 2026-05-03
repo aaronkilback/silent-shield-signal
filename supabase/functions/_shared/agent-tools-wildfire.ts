@@ -788,7 +788,79 @@ const getBcDangerRatingForStation: ToolHandler = {
   },
 };
 
+// ── 12. simulate_fire_spread ─────────────────────────────────────────
+// Calls the public simulate-fire-spread edge function with live
+// Open-Meteo forecast + DEM-derived slope (Phase B). Returns a
+// compact summary for the agent: head ROS, spread direction, area
+// at each checkpoint hour. The agent can recommend operators run a
+// full graphical sim on the portal (/wildfire) for visual review.
+const simulateFireSpread: ToolHandler = {
+  name: "simulate_fire_spread",
+  description:
+    "Models how a wildfire would spread from an ignition point over the next 24-72 hours using live Open-Meteo hourly forecast + Copernicus DEM slope + FBP fuel C2 (boreal spruce-lichen, single-fuel approximation). Returns area at each checkpoint hour, head rate-of-spread, and spread direction.\n\nThis is a STRATEGIC tool, not a tactical fire-control plan. Always tell the operator: (a) the model is single-fuel, no spotting/barriers/crown-fire, and (b) they can view the full graphical projection at fortress.silentshieldsecurity.com/wildfire.\n\nCALL WHEN:\n• operator asks 'how big could this fire get' or 'where will it spread'\n• reasoning about evacuation timing for an asset near a known fire\n• corroborating CWFIS hotspot growth potential\n• an operator names a BCWS active fire and wants forward projection\n\nDO NOT CALL WHEN:\n• the operator asks about fires that already have an evacuation order — defer to BCWS official guidance via get_bcws_evacuations_near\n• you don't have a specific lat/lng (use lookup_location_coords or get_bcws_active_fires_near first)",
+  parameters: {
+    type: "object",
+    properties: {
+      lat: { type: "number", description: "Ignition latitude." },
+      lng: { type: "number", description: "Ignition longitude." },
+      duration_hours: {
+        type: "number",
+        description: "How many hours forward to project. 24, 48, or 72. Default 48.",
+      },
+    },
+    required: ["lat", "lng"],
+  },
+  execute: async (args: any) => {
+    const lat = Number(args?.lat);
+    const lng = Number(args?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: "lat/lng required" };
+    const duration_hours = Math.max(1, Math.min(72, Number(args?.duration_hours || 48)));
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+      const r = await fetch(`${supabaseUrl}/functions/v1/simulate-fire-spread`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": anonKey,
+          "Authorization": `Bearer ${anonKey}`,
+        },
+        body: JSON.stringify({ lat, lng, duration_hours, weather_mode: "forecast" }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!r.ok) return { error: `simulate-fire-spread HTTP ${r.status}` };
+      const j = await r.json();
+      const m = j?.metadata || {};
+      const features = (j?.features as any[]) || [];
+      return {
+        ignition: { lat, lng },
+        weather_mode: m.weather_mode,
+        forecast_error: m.forecast_error ?? null,
+        head_ros_m_per_min: m.head_ros_m_per_min,
+        head_fire_intensity_kw_per_m: m.head_fire_intensity_kw_per_m,
+        spread_direction_deg: m.spread_direction_deg,
+        length_to_breadth: m.length_to_breadth,
+        slope_used: m.slope_used,
+        elevation_range_m: m.elevation_range_m,
+        weather_summary: m.weather_summary,
+        checkpoints: features.map((f: any) => ({
+          hour: f.properties?.hour,
+          area_ha: f.properties?.area_ha,
+          perimeter_km: f.properties?.perimeter_km,
+        })),
+        portal_url: "https://fortress.silentshieldsecurity.com/wildfire",
+        note:
+          "STRATEGIC ESTIMATE only. Single-fuel C2 approximation, no spotting/barriers/crown-fire model. " +
+          "Operator can view the full graphical projection (with hourly time-slider + clickable map) at the portal_url above.",
+      };
+    } catch (e: any) {
+      return { error: e?.message || "simulate-fire-spread failed" };
+    }
+  },
+};
+
 // ── Register all wildfire tools ──────────────────────────────────────
+registerTool(simulateFireSpread);
 registerTool(lookupLocationCoords);
 registerTool(getWildfireHotspotsNear);
 registerTool(getActiveFirePerimetersNear);
