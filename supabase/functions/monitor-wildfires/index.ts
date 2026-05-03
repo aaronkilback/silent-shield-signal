@@ -840,17 +840,29 @@ Deno.serve(async (req) => {
     // the wildfireClients loop below.
     const client = wildfireClients[0];
 
-    // Fetch CWFIS hotspots, perimeters, lightning, AND the NASA FIRMS static-source
-    // overlay in parallel. FIRMS overlay is best-effort — if the API key is missing
-    // or the call fails we proceed without it.
-    const [hotspots, perimeters, lightningStrikes, firmsStaticSources] = await Promise.all([
+    // Fetch CWFIS hotspots, perimeters, lightning, NASA FIRMS static-source
+    // overlay, BCWS active fires, and BCWS evacuations in parallel. FIRMS
+    // overlay is best-effort — if the API key is missing or the call
+    // fails we proceed without it. BCWS fetches are non-fatal: if the
+    // provincial endpoint is down we lose corroboration this run but
+    // CWFIS-only classification still works.
+    const { fetchBCWSActiveFires, fetchBCWSEvacuations } = await import("../_shared/bcws.ts");
+    const [hotspots, perimeters, lightningStrikes, firmsStaticSources, bcwsFires, bcwsEvacs] = await Promise.all([
       fetchCWFISHotspots(),
       fetchFirePerimeters(),
       fetchLightningStrikes(),
       fetchFirmsStaticSources(),
+      fetchBCWSActiveFires().catch((err: any) => {
+        console.warn(`[Wildfires] BCWS active fires fetch failed: ${err?.message || err}`);
+        return [] as Awaited<ReturnType<typeof fetchBCWSActiveFires>>;
+      }),
+      fetchBCWSEvacuations().catch((err: any) => {
+        console.warn(`[Wildfires] BCWS evacuations fetch failed: ${err?.message || err}`);
+        return [] as Awaited<ReturnType<typeof fetchBCWSEvacuations>>;
+      }),
     ]);
 
-    console.log(`[Wildfires] CWFIS: ${hotspots.length} hotspots, ${perimeters.length} perimeters, ${lightningStrikes.length} lightning strikes, ${firmsStaticSources.length} FIRMS static sources`);
+    console.log(`[Wildfires] CWFIS: ${hotspots.length} hotspots, ${perimeters.length} perimeters, ${lightningStrikes.length} lightning strikes, ${firmsStaticSources.length} FIRMS static sources. BCWS: ${bcwsFires.length} active fires, ${bcwsEvacs.length} evacuations.`);
 
     let signalsCreated = 0;
     let flaringsDetected = 0;
@@ -880,8 +892,40 @@ Deno.serve(async (req) => {
 
       const stableUrl = `https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${hs.lon.toFixed(3)},${hs.lat.toFixed(3)},12.0z`;
 
-      const classification = classifyHotspot(hs, firmsStaticSources);
+      let classification = classifyHotspot(hs, firmsStaticSources);
       const region = zone;
+
+      // ── BCWS CORROBORATION ─────────────────────────────────────────────
+      // The official provincial fire registry confirms or denies the
+      // CWFIS satellite signal. If BCWS has an active fire within 10km,
+      // this is unambiguously a real wildfire — override 'ambiguous_
+      // near_facility' to 'wildfire' and lock confidence to high. If the
+      // CWFIS read was 'industrial_flaring' but BCWS still shows a fire
+      // here, that's a contradiction worth flagging (could be a flaring
+      // event AT a known fire's footprint, or a misclassification).
+      const bcwsMatch = bcwsFires.find((bf: any) =>
+        distanceKm(hs.lat, hs.lon, bf.lat, bf.lng) <= 10
+      );
+      if (bcwsMatch) {
+        if (classification.type === 'industrial_flaring') {
+          // Real fire AND flare-like CWFIS signature near it — flag
+          // as ambiguous so the operator is aware of the contradiction
+          classification = {
+            type: 'ambiguous_near_facility',
+            confidence: 'medium',
+            facility: classification.facility,
+            note: `BCWS fire ${bcwsMatch.fire_number} (${bcwsMatch.status}, ${bcwsMatch.size_ha ?? '?'}ha) is within 10km but CWFIS signature suggests flaring — re-investigate`,
+          };
+        } else {
+          // Either already-wildfire or ambiguous → confirmed wildfire
+          classification = {
+            type: 'wildfire',
+            confidence: 'high',
+            facility: classification.facility,
+            note: classification.note,
+          };
+        }
+      }
 
       if (classification.type === 'industrial_flaring') {
         // Industrial flaring — log only, no signal created
@@ -908,6 +952,16 @@ Deno.serve(async (req) => {
         classification_confidence: classification.confidence,
         facility_proximity: classification.facility ?? null,
         lightning_correlated: !!correlatedStrike,
+        bcws_corroborated: !!bcwsMatch,
+        bcws_match: bcwsMatch ? {
+          fire_number: bcwsMatch.fire_number,
+          incident_name: bcwsMatch.incident_name,
+          status: bcwsMatch.status,
+          size_ha: bcwsMatch.size_ha,
+          is_fire_of_note: bcwsMatch.is_fire_of_note,
+          fire_url: bcwsMatch.fire_url,
+          distance_km: Math.round(distanceKm(hs.lat, hs.lon, bcwsMatch.lat, bcwsMatch.lng) * 10) / 10,
+        } : null,
         fwi: { ffmc: hs.ffmc, dmc: hs.dmc, dc: hs.dc, isi: hs.isi, bui: hs.bui, fwi: hs.fwi },
         fbp: { fuel: hs.fuel, ros: hs.ros, hfi: hs.hfi, cfb: hs.cfb, tfc: hs.tfc },
         ...(spread ? {
@@ -950,6 +1004,9 @@ Deno.serve(async (req) => {
         if (correlatedStrike) {
           const polarity = correlatedStrike.polarity === 'positive' ? 'positive (high ignition probability)' : correlatedStrike.polarity;
           signalText += ` ⚡ LIGHTNING CORRELATION: ${polarity} cloud-to-ground strike detected within 5km — lightning ignition probable.`;
+        }
+        if (bcwsMatch) {
+          signalText += ` ✓ BCWS CONFIRMED: official registry fire ${bcwsMatch.fire_number}${bcwsMatch.incident_name ? ` (${bcwsMatch.incident_name})` : ''} — ${bcwsMatch.status}${bcwsMatch.size_ha ? `, ${bcwsMatch.size_ha}ha` : ''}${bcwsMatch.is_fire_of_note ? ', FIRE OF NOTE' : ''}.`;
         }
 
         const { error } = await supabase.functions.invoke('ingest-signal', {
@@ -1052,9 +1109,84 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── BCWS evacuation order / alert ingestion ─────────────────────────
+    // Highest operational value of the BCWS feed. An evacuation order
+    // (mandatory leave-now) or alert (be ready to leave) anywhere near
+    // a wildfire-relevant client's locations is critical intel even
+    // when no satellite hotspot is yet visible. Filter polygons whose
+    // centroid is within any operational zone bbox; score severity by
+    // status (Order = critical, Alert = high).
+    let evacSignals = 0;
+    if (wildfireClients.length > 0 && bcwsEvacs.length > 0) {
+      for (const evac of bcwsEvacs) {
+        // Only inside our operational coverage zones (NE BC / Skeena /
+        // Calgary). Outside zones = irrelevant to current clients.
+        const inZone = getOperationalZone(evac.lat, evac.lng);
+        if (!inZone) continue;
+
+        const stableUrl = `https://wildfiresituation.nrs.gov.bc.ca/dashboard?evacId=${encodeURIComponent(evac.sys_id)}`;
+
+        for (const targetClient of wildfireClients) {
+          const { data: existingEvac } = await supabase
+            .from('signals')
+            .select('id')
+            .eq('source_url', stableUrl)
+            .eq('client_id', targetClient.id)
+            .gte('created_at', twelveHoursAgo)
+            .limit(1);
+          if (existingEvac && existingEvac.length > 0) { duplicatesSuppressed++; continue; }
+
+          const isOrder = evac.status === 'Order';
+          const severity = isOrder ? 'critical' : 'high';
+          const category = isOrder ? 'evacuation_order' : 'evacuation_alert';
+
+          const popPart = evac.population != null ? ` Affected population: ~${evac.population.toLocaleString()}.` : '';
+          const homesPart = evac.homes != null ? ` Homes: ${evac.homes.toLocaleString()}.` : '';
+          const startPart = evac.start_date ? ` Issued ${evac.start_date}.` : '';
+          const signalText =
+            `🚨 BCWS ${evac.status.toUpperCase()}: ${evac.event_name || evac.order_alert_name || 'Unnamed event'} ` +
+            `(${evac.event_type || 'wildfire'}) in ${inZone}.${popPart}${homesPart}${startPart} ` +
+            `Issuing agency: ${evac.issuing_agency || 'unknown'}.`;
+
+          const { error: evacErr } = await supabase.functions.invoke('ingest-signal', {
+            body: {
+              text: signalText,
+              source_url: stableUrl,
+              location: inZone,
+              clientId: targetClient.id,
+              skip_relevance_gate: true,
+              category,
+              severity,
+              entity_tags: ['evacuation', 'bcws', evac.event_type || 'wildfire'].filter(Boolean),
+              raw_json: {
+                source_name: 'bcws_evacuation',
+                bcws_sys_id: evac.sys_id,
+                event_name: evac.event_name,
+                order_alert_name: evac.order_alert_name,
+                status: evac.status,
+                event_type: evac.event_type,
+                issuing_agency: evac.issuing_agency,
+                population: evac.population,
+                homes: evac.homes,
+                start_date: evac.start_date,
+                date_modified: evac.date_modified,
+                centroid: { lat: evac.lat, lng: evac.lng },
+              },
+            },
+          });
+
+          if (!evacErr) {
+            evacSignals++;
+            console.log(`[Wildfires] BCWS ${evac.status} → ${targetClient.name}: ${evac.event_name || evac.order_alert_name}`);
+          }
+        }
+      }
+    }
+
     console.log(
       `[Wildfires] Done. Wildfires: ${signalsCreated}, flaring: ${flaringsDetected}, ` +
-      `ambiguous-near-facility: ${ambiguousDetected}, lightning-latent: ${lightningSignals}, duplicates: ${duplicatesSuppressed}`
+      `ambiguous-near-facility: ${ambiguousDetected}, lightning-latent: ${lightningSignals}, ` +
+      `bcws-evacs: ${evacSignals}, duplicates: ${duplicatesSuppressed}`
     );
 
     try {
@@ -1069,10 +1201,13 @@ Deno.serve(async (req) => {
           perimeters_fetched: perimeters.length,
           lightning_strikes_fetched: lightningStrikes.length,
           firms_static_sources: firmsStaticSources.length,
+          bcws_active_fires: bcwsFires.length,
+          bcws_evacuations: bcwsEvacs.length,
           signals_created: signalsCreated,
           industrial_flaring_events: flaringsDetected,
           ambiguous_near_facility: ambiguousDetected,
           lightning_latent_signals: lightningSignals,
+          bcws_evacuation_signals: evacSignals,
           duplicates_suppressed: duplicatesSuppressed,
         },
       });
