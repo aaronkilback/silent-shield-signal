@@ -494,8 +494,10 @@ function buildHtmlReport(params: {
   lightning: LightningStrike[];
   aqhi: AqhiData;
   dbSignals: any[];
+  bcwsFires: any[];
+  bcwsEvacs: any[];
 }): string {
-  const { reportDate, generatedAt, stationsData, activeFires, flares, lightning, aqhi, dbSignals } = params;
+  const { reportDate, generatedAt, stationsData, activeFires, flares, lightning, aqhi, dbSignals, bcwsFires, bcwsEvacs } = params;
   const season = getFireSeason();
   const isoDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD for NASA Worldview URLs
 
@@ -910,6 +912,151 @@ ${!season.isFireSeason ? `
   ` : `<p class="no-data">No fire detections in operational zone during the last 24 hours.${!season.isFireSeason ? ' This is normal for the current off-season period.' : ''}</p>`}
 </section>
 
+<!-- ─── Section 4a-bis: Active Evacuation Orders & Alerts (BCWS) ──────────── -->
+<!-- Operationally most urgent — surfaces here ahead of detection sections.
+     Order = mandatory leave-now; Alert = be ready to leave on short notice. -->
+${(() => {
+  const orders = bcwsEvacs.filter(e => e.status === 'Order');
+  const alerts = bcwsEvacs.filter(e => e.status === 'Alert');
+  if (orders.length === 0 && alerts.length === 0) {
+    return `<section>
+      <h2>Active Evacuation Orders &amp; Alerts (BCWS)</h2>
+      <p class="no-data">No active BCWS evacuation orders or alerts within the report's coverage area.</p>
+    </section>`;
+  }
+  const renderRow = (e: any, isOrder: boolean) => {
+    const colour = isOrder ? '#b71c1c' : '#e65100';
+    const label = isOrder ? '🚨 ORDER' : '⚠ ALERT';
+    const pop = e.population != null ? e.population.toLocaleString() : '—';
+    const homes = e.homes != null ? e.homes.toLocaleString() : '—';
+    const issued = e.start_date ? new Date(e.start_date).toLocaleString('en-CA', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+    const gMaps = `https://maps.google.com/?q=${e.lat.toFixed(4)},${e.lng.toFixed(4)}&t=k`;
+    return `<tr>
+      <td style="text-align:center;font-weight:700;color:${colour}">${label}</td>
+      <td>${(e.event_name || e.order_alert_name || '—')}</td>
+      <td style="font-size:12px">${e.event_type || 'wildfire'}</td>
+      <td style="text-align:right">${pop}</td>
+      <td style="text-align:right">${homes}</td>
+      <td style="font-size:12px">${e.issuing_agency || '—'}</td>
+      <td style="font-size:11px">${issued}</td>
+      <td style="font-family:monospace;font-size:11px">
+        ${e.lat.toFixed(3)}°N ${Math.abs(e.lng).toFixed(3)}°W<br>
+        <a href="${gMaps}" target="_blank" style="color:#1565c0;font-size:10px">Map</a>
+      </td>
+    </tr>`;
+  };
+  return `<section>
+    <h2>Active Evacuation Orders &amp; Alerts (BCWS)</h2>
+    <p style="font-size:12px;color:#555;margin-bottom:12px">
+      Official British Columbia evacuation directives. <strong>Orders</strong> mandate immediate departure; <strong>Alerts</strong> direct residents to be ready to leave on short notice. Population and homes counts are BCWS-published estimates.
+    </p>
+    <div class="info-row" style="display:flex;gap:12px;margin-bottom:12px">
+      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #b71c1c">
+        <div style="font-size:24px;font-weight:800;color:#b71c1c">${orders.length}</div>
+        <div style="font-size:12px;color:#555">Active Orders</div>
+      </div>
+      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #e65100">
+        <div style="font-size:24px;font-weight:800;color:#e65100">${alerts.length}</div>
+        <div style="font-size:12px;color:#555">Active Alerts</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Event</th>
+          <th>Type</th>
+          <th style="text-align:right">Population</th>
+          <th style="text-align:right">Homes</th>
+          <th>Agency</th>
+          <th>Issued</th>
+          <th>Centroid</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orders.slice(0, 15).map(e => renderRow(e, true)).join('')}
+        ${alerts.slice(0, 15).map(e => renderRow(e, false)).join('')}
+      </tbody>
+    </table>
+  </section>`;
+})()}
+
+<!-- ─── Section 4a-bis2: BCWS Official Active Fire Registry ───────────────── -->
+<!-- Distinct from CWFIS (satellite). BCWS = official provincial fire response.
+     Used for corroboration: a CWFIS hotspot WITH a nearby BCWS fire is a
+     confirmed wildfire, not flaring/false-positive. Sorted by size. -->
+${(() => {
+  if (bcwsFires.length === 0) {
+    return `<section>
+      <h2>BCWS Official Active Fire Registry</h2>
+      <p class="no-data">No active BCWS-registered fires within the report's coverage area.</p>
+    </section>`;
+  }
+  const sorted = [...bcwsFires].sort((a, b) => (b.size_ha ?? 0) - (a.size_ha ?? 0));
+  const ofNoteCount = sorted.filter(f => f.is_fire_of_note).length;
+  const oocCount = sorted.filter(f => f.status === 'Out of Control').length;
+  const statusColor = (s: string) =>
+    s === 'Out of Control' ? '#b71c1c' :
+    s === 'Being Held' ? '#e65100' :
+    s === 'Under Control' ? '#2e7d32' : '#555';
+  return `<section>
+    <h2>BCWS Official Active Fire Registry</h2>
+    <p style="font-size:12px;color:#555;margin-bottom:12px">
+      Official BC Wildfire Service registry — distinct from CWFIS satellite hotspots above.
+      A fire here means BCWS has formally identified, numbered, and is actively responding.
+      Use this section to <strong>corroborate</strong> CWFIS detections: a CWFIS hotspot with a BCWS match within ~10 km is a confirmed wildfire.
+    </p>
+    <div class="info-row" style="display:flex;gap:12px;margin-bottom:12px">
+      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #1565c0">
+        <div style="font-size:24px;font-weight:800;color:#1565c0">${sorted.length}</div>
+        <div style="font-size:12px;color:#555">Active in coverage area</div>
+      </div>
+      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #b71c1c">
+        <div style="font-size:24px;font-weight:800;color:#b71c1c">${oocCount}</div>
+        <div style="font-size:12px;color:#555">Out of Control</div>
+      </div>
+      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #6a1b9a">
+        <div style="font-size:24px;font-weight:800;color:#6a1b9a">${ofNoteCount}</div>
+        <div style="font-size:12px;color:#555">Wildfires of Note</div>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Fire #</th>
+          <th>Incident</th>
+          <th>Status</th>
+          <th style="text-align:right">Size (ha)</th>
+          <th>Cause</th>
+          <th>Centre / Zone</th>
+          <th>Coordinates</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sorted.slice(0, 20).map(f => {
+          const sc = statusColor(f.status);
+          const note = f.is_fire_of_note ? ' ⭐' : '';
+          const gMaps = `https://maps.google.com/?q=${f.lat.toFixed(4)},${f.lng.toFixed(4)}&t=k`;
+          const fireUrl = f.fire_url ? `<a href="${f.fire_url}" target="_blank" style="color:#1565c0;font-size:10px">Details</a>` : '';
+          return `<tr>
+            <td style="font-family:monospace;font-size:11px">${f.fire_number}${note}</td>
+            <td style="font-size:12px">${f.incident_name || f.geographic_description || '—'}</td>
+            <td style="color:${sc};font-weight:600;font-size:12px">${f.status}</td>
+            <td style="text-align:right">${f.size_ha != null ? f.size_ha.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—'}</td>
+            <td style="font-size:12px">${f.cause || '—'}</td>
+            <td style="font-size:11px">${f.fire_centre || '—'}${f.zone ? ` / ${f.zone}` : ''}</td>
+            <td style="font-family:monospace;font-size:11px">
+              ${f.lat.toFixed(3)}°N ${Math.abs(f.lng).toFixed(3)}°W<br>
+              <a href="${gMaps}" target="_blank" style="color:#1565c0;font-size:10px">Map</a>${fireUrl ? ' · ' + fireUrl : ''}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    <p class="note" style="margin-top:8px">⭐ = Wildfire of Note (BCWS priority public-attention fire). Status: Out of Control 🔴 · Being Held 🟠 · Under Control 🟢.</p>
+  </section>`;
+})()}
+
 <!-- ─── Section 4b: Industrial Thermal Events (Flares) ─────────────────────── -->
 <section>
   <h2>Industrial Thermal Events (Flares)</h2>
@@ -1230,11 +1377,25 @@ Deno.serve(async (req) => {
     // ── 3. Fetch active fires + flares from CWFIS ────────────────────────────
     const { fires: activeFires, flares } = await fetchActiveFires();
 
-    // ── 4. Fetch lightning + AQHI in parallel ────────────────────────────────
-    const [lightning, aqhi] = await Promise.all([
+    // ── 4. Fetch lightning + AQHI + BCWS in parallel ─────────────────────────
+    // BCWS is the official provincial fire response data — separate
+    // from CWFIS satellite hotspots. Used here for (1) corroboration of
+    // CWFIS detections in the active-fires section, (2) two new report
+    // sections: BCWS official fires + Evacuation Orders/Alerts.
+    const { fetchBCWSActiveFires, fetchBCWSEvacuations } = await import("../_shared/bcws.ts");
+    const [lightning, aqhi, bcwsFiresRaw, bcwsEvacsRaw] = await Promise.all([
       fetchLightningStrikes(activeFires),
       fetchFortStJohnAqhi(),
+      fetchBCWSActiveFires().catch((e: any) => { console.warn(`BCWS fires fetch failed: ${e?.message}`); return []; }),
+      fetchBCWSEvacuations().catch((e: any) => { console.warn(`BCWS evacs fetch failed: ${e?.message}`); return []; }),
     ]);
+
+    // Filter BCWS data to the report's BBOX (southern + NE BC + Calgary).
+    // BBOX is '-130,49,-113,60' = minLon,minLat,maxLon,maxLat.
+    const inReportArea = (lat: number, lng: number): boolean =>
+      lng >= -130 && lng <= -113 && lat >= 49 && lat <= 60;
+    const bcwsFires = bcwsFiresRaw.filter((f: any) => inReportArea(f.lat, f.lng));
+    const bcwsEvacs = bcwsEvacsRaw.filter((e: any) => inReportArea(e.lat, e.lng));
 
     // ── 5. Query recent wildfire signals from DB ──────────────────────────────
     const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
@@ -1256,6 +1417,8 @@ Deno.serve(async (req) => {
       lightning,
       aqhi,
       dbSignals: dbSignals ?? [],
+      bcwsFires,
+      bcwsEvacs,
     });
 
     return new Response(
@@ -1271,6 +1434,9 @@ Deno.serve(async (req) => {
           lightning_count: lightning.length,
           lightning_latent_count: lightning.filter(s => !s.hasNearbyFire).length,
           db_signal_count: (dbSignals ?? []).length,
+          bcws_active_fires: bcwsFires.length,
+          bcws_evacuation_orders: bcwsEvacs.filter((e: any) => e.status === 'Order').length,
+          bcws_evacuation_alerts: bcwsEvacs.filter((e: any) => e.status === 'Alert').length,
           highest_rating: stationsData.reduce((a, b) => {
             const order = { L: 0, M: 1, H: 2, VH: 3, E: 4 };
             return (order[a.dangerInfo.code as keyof typeof order] ?? 0) >=
