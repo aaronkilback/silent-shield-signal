@@ -412,22 +412,49 @@ export default function WildfirePortal() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Mobile + responsive tweaks for the embedded report HTML.
+          Without these the report's tables overflow viewport and force
+          horizontal page scroll on phones. Scoped to .wildfire-report-html
+          so the simulator + chat are unaffected. */}
+      <style>{`
+        .wildfire-report-html section { margin-bottom: 1.25rem; }
+        .wildfire-report-html h2 { font-size: 1.05rem; line-height: 1.3; }
+        .wildfire-report-html table {
+          display: block;
+          max-width: 100%;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          font-size: 12px;
+        }
+        .wildfire-report-html td, .wildfire-report-html th {
+          padding: 4px 6px !important;
+        }
+        .wildfire-report-html .info-row { flex-wrap: wrap; }
+        .wildfire-report-html .info-box { min-width: 100px !important; }
+        @media (max-width: 640px) {
+          .wildfire-report-html h2 { font-size: 0.95rem; }
+          .wildfire-report-html p, .wildfire-report-html li { font-size: 12px; line-height: 1.4; }
+          .wildfire-report-html table { font-size: 11px; }
+          .wildfire-report-html .note { font-size: 10px; }
+        }
+      `}</style>
+
       <header className="bg-slate-900 text-white border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center gap-3">
-          <Shield className="h-6 w-6 text-cyan-400" />
-          <div>
-            <h1 className="text-lg font-semibold">Wildfire Intelligence Portal</h1>
-            <p className="text-xs text-slate-400">
-              Live BC Wildfire Service data · Powered by Silent Shield Fortress
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center gap-2 sm:gap-3">
+          <Shield className="h-6 w-6 text-cyan-400 flex-shrink-0" />
+          <div className="min-w-0">
+            <h1 className="text-base sm:text-lg font-semibold leading-tight">Wildfire Intelligence Portal</h1>
+            <p className="text-[10px] sm:text-xs text-slate-400 leading-tight truncate">
+              Live BC Wildfire Service · Silent Shield Fortress
             </p>
           </div>
-          <div className="ml-auto text-xs text-slate-400">
+          <div className="ml-auto text-[10px] sm:text-xs text-slate-400 text-right whitespace-nowrap">
             {reportTs ? `Updated ${reportTs}` : "Loading…"}
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
+      <main className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 sm:gap-6">
         {/* Report */}
         <section className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3 flex items-center justify-between">
@@ -441,7 +468,7 @@ export default function WildfirePortal() {
               Refresh
             </button>
           </div>
-          <div className="p-4 bg-white max-h-[80vh] overflow-y-auto">
+          <div className="p-3 sm:p-4 bg-white max-h-[60vh] sm:max-h-[80vh] overflow-y-auto">
             {reportLoading && !reportHtml && (
               <div className="flex items-center gap-2 text-slate-500 py-12 justify-center">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -464,7 +491,7 @@ export default function WildfirePortal() {
         </section>
 
         {/* Chat with WILDFIRE */}
-        <aside className="bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col h-[80vh]">
+        <aside className="bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col h-[70vh] lg:h-[80vh]">
           <div className="border-b border-slate-200 px-4 py-3">
             <h2 className="font-medium">Ask WILDFIRE</h2>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -512,20 +539,20 @@ export default function WildfirePortal() {
               </div>
             )}
           </div>
-          <div className="border-t border-slate-200 p-3 flex gap-2">
+          <div className="border-t border-slate-200 p-2 sm:p-3 flex gap-2">
             <textarea
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={onKey}
               placeholder="Ask about fire danger, evacuations, AQHI…"
-              className="flex-1 resize-none border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500"
+              className="flex-1 resize-none border border-slate-300 rounded px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500 min-h-[44px]"
               rows={2}
               disabled={chatBusy}
             />
             <button
               onClick={sendChat}
               disabled={!chatInput.trim() || chatBusy}
-              className="bg-slate-900 text-white px-3 rounded hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+              className="bg-slate-900 text-white px-4 rounded hover:bg-slate-700 active:bg-slate-950 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center min-w-[44px] min-h-[44px]"
               aria-label="Send"
             >
               <Send className="h-4 w-4" />
@@ -535,7 +562,7 @@ export default function WildfirePortal() {
       </main>
 
       {/* Spread Simulator */}
-      <section className="max-w-7xl mx-auto px-6 pb-6">
+      <section className="max-w-7xl mx-auto px-3 sm:px-6 pb-6">
         <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -556,7 +583,7 @@ export default function WildfirePortal() {
 
           <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-0">
             {/* Inputs */}
-            <div className="p-4 border-r border-slate-200 bg-slate-50 space-y-3 text-sm">
+            <div className="p-3 sm:p-4 lg:border-r border-b lg:border-b-0 border-slate-200 bg-slate-50 space-y-3 text-sm">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Ignition</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -624,7 +651,7 @@ export default function WildfirePortal() {
               <button
                 onClick={runSimulation}
                 disabled={simBusy}
-                className="w-full mt-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded px-3 py-2 text-sm flex items-center justify-center gap-2 transition-colors"
+                className="w-full mt-2 bg-orange-600 hover:bg-orange-700 active:bg-orange-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-md px-4 py-3 text-sm flex items-center justify-center gap-2 transition-colors min-h-[44px]"
               >
                 {simBusy ? <><Loader2 className="h-4 w-4 animate-spin" /> Simulating…</> : <><Flame className="h-4 w-4" /> Run Simulation</>}
               </button>
@@ -670,8 +697,8 @@ export default function WildfirePortal() {
               )}
               <div
                 ref={simMapRef}
-                className="bg-slate-100 min-h-[480px]"
-                style={{ height: "min(60vh, 600px)" }}
+                className="bg-slate-100"
+                style={{ height: "min(60vh, 600px)", minHeight: "320px" }}
               >
                 {!simResult && (
                   <div className="h-full flex items-center justify-center text-slate-500 text-sm p-6 text-center">
@@ -694,7 +721,7 @@ export default function WildfirePortal() {
         </div>
       </section>
 
-      <footer className="max-w-7xl mx-auto px-6 py-6 text-xs text-slate-500 text-center">
+      <footer className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 text-[11px] sm:text-xs text-slate-500 text-center leading-relaxed">
         Data sources: BC Wildfire Service · CWFIS (NRCan) · Environment Canada · Open-Meteo. Operational restrictions reflect Petronas Canada published protocol — confirm with Site Supervisor before high-risk activity.
       </footer>
     </div>
