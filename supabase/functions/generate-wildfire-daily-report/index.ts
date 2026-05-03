@@ -1168,53 +1168,14 @@ ${(() => {
   </section>`;
 })()}
 
-<!-- ─── Section 4b: Industrial Thermal Events (Flares) ─────────────────────── -->
-<section>
-  <h2>Industrial Thermal Events (Flares)</h2>
-  <p style="font-size:12px;color:#555;margin-bottom:12px">
-    These detections are within 4km of known oil/gas facilities and exhibit FRP/FWI signatures consistent with industrial flaring rather than wildfire.
-    They are <strong>not classified as fires</strong> but are recorded for operational awareness (blowdowns, planned burns, equipment anomalies).
-  </p>
-  ${flares.length > 0 ? `
-    <table>
-      <thead>
-        <tr>
-          <th>Coordinates</th>
-          <th style="text-align:center">FRP</th>
-          <th style="text-align:center">HFI</th>
-          <th>Nearest Facility</th>
-          <th style="text-align:center">Dist to Facility</th>
-          <th>Nearest Asset</th>
-          <th style="text-align:center">Confidence</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${flares.slice(0, 15).map(f => {
-          const conf = f.isAmbiguous ? '⚠ Ambiguous' : '✓ Industrial';
-          const confColor = f.isAmbiguous ? '#e65100' : '#2e7d32';
-          const gMaps = `https://maps.google.com/?q=${f.lat.toFixed(4)},${f.lon.toFixed(4)}&t=k`;
-          const worldview = `https://worldview.earthdata.nasa.gov/?v=${(f.lon - 0.4).toFixed(3)},${(f.lat - 0.4).toFixed(3)},${(f.lon + 0.4).toFixed(3)},${(f.lat + 0.4).toFixed(3)}&t=${isoDate}&l=VIIRS_SNPP_Fires_375m_Day,VIIRS_SNPP_Fires_375m_Night,Coastlines_15m,OSM_Land_Water_Map`;
-          return `<tr>
-            <td style="font-family:monospace;font-size:11px">
-              ${f.lat.toFixed(4)}°N ${Math.abs(f.lon).toFixed(4)}°W<br>
-              <span style="font-size:10px">
-                <a href="${gMaps}" target="_blank" style="color:#1565c0">Satellite</a> ·
-                <a href="${worldview}" target="_blank" style="color:#1565c0">VIIRS</a>
-              </span>
-            </td>
-            <td style="text-align:center">${f.frp > 0 ? f.frp.toFixed(0) : '—'} MW</td>
-            <td style="text-align:center">${f.hfi > 0 ? f.hfi.toFixed(0) : '—'} kW/m</td>
-            <td style="font-size:12px">${f.nearestFacility ?? '—'}</td>
-            <td style="text-align:center">${f.facilityDistKm != null ? f.facilityDistKm.toFixed(1) + ' km' : '—'}</td>
-            <td style="font-size:11px">${f.nearestAsset}</td>
-            <td style="text-align:center;color:${confColor};font-weight:600;font-size:11px">${conf}</td>
-          </tr>`;
-        }).join('\n')}
-      </tbody>
-    </table>
-    <p class="note" style="margin-top:8px">⚠ Ambiguous = within proximity zone but FRP/FWI does not conclusively indicate industrial source. Verify with facility operations before dismissing.</p>
-  ` : `<p class="no-data">No industrial thermal events detected in the last 24 hours.</p>`}
-</section>
+<!-- Section 4b (Industrial Thermal Events / Flares) removed: operator
+     decision. Flares aren't actionable security events for clients —
+     blowdowns, planned burns, equipment anomalies — and
+     monitor-wildfires already classifies them as 'industrial_flaring'
+     so they don't enter the signal feed. Recording the per-flare
+     table in the daily report added noise without operational value.
+     The map still renders flare circles for situational awareness;
+     this just removes the table section. -->
 
 <!-- ─── Section 4c: Lightning Activity ─────────────────────────────────────── -->
 <section>
