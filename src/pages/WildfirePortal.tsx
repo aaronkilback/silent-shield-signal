@@ -206,10 +206,51 @@ export default function WildfirePortal() {
           simLayersRef.current = {};
         }
         const map = L.map(simMapRef.current, { zoomControl: true });
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          maxZoom: 13,
-          attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-        }).addTo(map);
+
+        // Multi-layer basemap. Topographic is the default because fire
+        // behaviour depends on terrain — slope direction and elevation
+        // are the operator's primary visual cues. Satellite is useful
+        // for matching a fire to ground features (roads, clearings,
+        // facilities). OSM Standard kept for road-network reference.
+        const baseLayers = {
+          "Topographic": L.tileLayer(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+            {
+              maxZoom: 18,
+              attribution:
+                'Topo: <a href="https://www.esri.com">Esri</a>, USGS, NOAA',
+            },
+          ),
+          "Satellite": L.tileLayer(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            {
+              maxZoom: 18,
+              attribution:
+                'Imagery: <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics',
+            },
+          ),
+          "OpenTopoMap": L.tileLayer(
+            "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+            {
+              maxZoom: 17,
+              attribution:
+                '© <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+            },
+          ),
+          "OSM Standard": L.tileLayer(
+            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            {
+              maxZoom: 19,
+              attribution:
+                '© <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+            },
+          ),
+        };
+
+        // Add the default (Topographic) to the map; the others stand by
+        // until the user switches via the layers control.
+        baseLayers["Topographic"].addTo(map);
+        L.control.layers(baseLayers, undefined, { position: "topright" }).addTo(map);
         simMapInstanceRef.current = map;
 
         // Ignition marker

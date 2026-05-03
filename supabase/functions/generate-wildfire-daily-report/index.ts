@@ -845,10 +845,29 @@ ${!season.isFireSeason ? `
   <script>
   (function() {
     var map = L.map('station-map', { zoomControl: true }).setView([57.0, -122.0], 6);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 13,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(map);
+    // Multi-layer basemap. Topographic is default because terrain context
+    // matters for fire — slope, elevation, valleys. Operators can switch
+    // to Satellite for visual confirmation of features near a station.
+    var baseLayers = {
+      'Topographic': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 18,
+        attribution: 'Topo: <a href="https://www.esri.com">Esri</a>, USGS, NOAA'
+      }),
+      'Satellite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 18,
+        attribution: 'Imagery: <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics'
+      }),
+      'OpenTopoMap': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        maxZoom: 17,
+        attribution: '© <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
+      }),
+      'OSM Standard': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      })
+    };
+    baseLayers['Topographic'].addTo(map);
+    L.control.layers(baseLayers, undefined, { position: 'topright' }).addTo(map);
 
     var buColors = { SBU: '#2e7d32', EBU: '#1565c0', WBU: '#6a1b9a' };
     var stations = ${JSON.stringify(STATIONS.map(s => ({ id: s.id, name: s.name, lat: s.lat, lon: s.lon, bu: s.bu, region: s.region })))};
