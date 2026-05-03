@@ -8,12 +8,15 @@ const corsHeaders = {
 // ─── Station Registry ────────────────────────────────────────────────────────
 // BC Wildfire Service automated weather stations used in Petronas daily report.
 // Coordinates are the registered AWS locations used by BCWS fire weather network.
+// Station list mirrors Petronas's published Daily Wildfire & Air Quality
+// Report exactly — BU label + geographic anchor (e.g. "SBU / South of
+// Altares") matches what their field ops use to scope restrictions.
 const STATIONS = [
-  { id: 'hudson_hope', name: 'Hudson Hope AWS', lat: 56.033, lon: -121.900, bu: 'SBU', region: 'South Peace River' },
-  { id: 'graham',      name: 'Graham AWS',       lat: 56.575, lon: -122.537, bu: 'EBU', region: 'North Peace' },
-  { id: 'wonowon',     name: 'Wonowon AWS',       lat: 57.017, lon: -122.491, bu: 'EBU', region: 'North Peace' },
-  { id: 'pink_mountain', name: 'Pink Mountain AWS', lat: 57.058, lon: -122.534, bu: 'EBU', region: 'North Peace' },
-  { id: 'muskwa',      name: 'Muskwa AWS',         lat: 58.772, lon: -122.656, bu: 'WBU', region: 'Fort Nelson' },
+  { id: 'hudson_hope',   name: 'Hudson Hope',   lat: 56.033, lon: -121.900, bu: 'SBU',       region: 'South of Altares' },
+  { id: 'graham',        name: 'Graham',        lat: 56.575, lon: -122.537, bu: 'SBU',       region: 'South of Halfway Rd.' },
+  { id: 'wonowon',       name: 'Wonowon',       lat: 57.017, lon: -122.491, bu: 'SBU',       region: 'South of Mile 132' },
+  { id: 'pink_mountain', name: 'Pink Mountain', lat: 57.058, lon: -122.534, bu: 'SBU & NBU', region: 'North of Mile 132' },
+  { id: 'muskwa',        name: 'Muskwa',        lat: 58.772, lon: -122.656, bu: 'NBU',       region: 'North of Mile 132' },
 ];
 
 // Key Petronas PECL assets for active fire proximity alerts
@@ -458,6 +461,61 @@ function buildRestrictionCell(text: string): string {
   return `<td ${cls}>${text}</td>`;
 }
 
+// Petronas-published high-risk-activity protocol matrix. Returns the
+// CURRENTLY-ACTIVE restrictions for a station given its rating and the
+// number of consecutive days at that rating. Mirrors the protocol table
+// on page 1 of the Petronas Daily Wildfire & Air Quality Report.
+//
+// Logic:
+//   LOW                       → no restrictions
+//   MODERATE  days <  3       → continue normal practices
+//   MODERATE  days >= 3       → fire watcher 1 hr after work
+//   HIGH      always          → fire watcher 2 hrs after work
+//   HIGH      days >= 3       → + cease activity 1 pm – sunset
+//   EXTREME / VERY HIGH       → cease activity 1 pm – sunset, fire watcher 2 hrs
+//   EXTREME   days >= 3       → + CEASE ALL ACTIVITY for the entire day
+function petronasProtocol(code: string, daysAtRating: number): string[] {
+  const lines: string[] = [];
+  switch (code) {
+    case 'L':
+      lines.push('No work restrictions. Continue normal daily work practices.');
+      break;
+    case 'M':
+      if (daysAtRating >= 3) {
+        lines.push('Maintain a fire watcher after work for ≥1 hour (3+ consecutive days at Moderate).');
+      } else {
+        lines.push('Continue normal practices. Watch for escalation.');
+      }
+      break;
+    case 'H':
+      lines.push('Maintain a fire watcher after work for ≥2 hours.');
+      if (daysAtRating >= 3) {
+        lines.push('Cease activity between 1 pm and sunset each day (3+ consecutive days at High).');
+      }
+      break;
+    case 'VH':
+    case 'E':
+      lines.push('Cease activity between 1 pm and sunset each day. Fire watcher ≥2 hours after work.');
+      if (daysAtRating >= 3) {
+        lines.push('⛔ CEASE ALL ACTIVITY for the entire day (3+ consecutive days at Extreme).');
+      }
+      break;
+    default:
+      lines.push('Refer to BC Wildfire Service current orders.');
+  }
+  return lines;
+}
+
+function petronasProtocolCell(code: string, daysAtRating: number, color: string): string {
+  const lines = petronasProtocol(code, daysAtRating);
+  // Highlight the strongest restriction (last line is always the most
+  // restrictive when multiple apply).
+  const isCeaseAll = lines.some((l) => l.includes('CEASE ALL'));
+  const bg = isCeaseAll ? '#fce4e4' : code === 'L' ? '#e8f5e9' : '#fff8e1';
+  const fg = isCeaseAll ? '#b71c1c' : '#333';
+  return `<td style="background:${bg};color:${fg};font-size:11px;line-height:1.4">${lines.map((l) => `<div style="margin:2px 0">• ${l}</div>`).join('')}</td>`;
+}
+
 function buildDangerBadge(rating: string, code: string, color: string): string {
   return `<span style="display:inline-block;padding:4px 12px;border-radius:4px;background:${color};color:${code === 'M' ? '#333' : '#fff'};font-weight:700;font-size:13px;letter-spacing:1px">${code} — ${rating}</span>`;
 }
@@ -572,15 +630,16 @@ function buildHtmlReport(params: {
 
     return `<tr>
       <td style="font-weight:600;white-space:nowrap">${sd.station.name}</td>
-      <td style="text-align:center">${sd.station.bu}</td>
+      <td style="text-align:center;font-size:12px">
+        <strong>${sd.station.bu}</strong>
+        <div style="font-size:10px;color:#777;margin-top:2px">(${sd.station.region})</div>
+      </td>
       <td style="text-align:center">
         <span style="display:inline-block;padding:4px 10px;border-radius:4px;background:${color};color:${textColor};font-weight:700;font-size:12px">${code} — ${sd.dangerInfo.rating}</span>
       </td>
-      <td style="text-align:center">${sd.daysAtRating}</td>
-      <td style="text-align:center;font-size:12px">${w ? `${w.tempMax}°C / ${w.rhMin}% RH / ${w.windMax} km/h ${windCardinal(w.windDir ?? 0)}` : '—'}</td>
-      ${buildRestrictionCell(r.campfire)}
-      ${buildRestrictionCell(r.openBurn)}
-      ${buildRestrictionCell(r.industrial)}
+      <td style="text-align:center;font-weight:700;font-size:14px">${sd.daysAtRating}</td>
+      ${petronasProtocolCell(code, sd.daysAtRating, color)}
+      <td style="text-align:center;font-size:11px">${w ? `${w.tempMax}°C / ${w.rhMin}% RH<br>${w.windMax} km/h ${windCardinal(w.windDir ?? 0)}` : '—'}</td>
       ${forecastCells}
     </tr>`;
   }).join('\n');
@@ -817,14 +876,12 @@ ${!season.isFireSeason ? `
   <table>
     <thead>
       <tr>
-        <th style="width:160px">Station</th>
-        <th style="width:50px;text-align:center">BU</th>
-        <th style="width:140px;text-align:center">Today's Rating</th>
-        <th style="width:60px;text-align:center">Days at Rating</th>
-        <th>Weather (Today)</th>
-        <th style="width:90px;text-align:center">Campfires</th>
-        <th style="width:90px;text-align:center">Open Burning</th>
-        <th style="width:95px;text-align:center">Industrial</th>
+        <th style="width:130px">Weather Station</th>
+        <th style="width:130px;text-align:center">Business Unit</th>
+        <th style="width:120px;text-align:center">Current Fire<br>Danger Rating</th>
+        <th style="width:60px;text-align:center"># Days at<br>Current Rating</th>
+        <th style="min-width:240px">Current Restrictions</th>
+        <th style="width:100px">Weather (Today)</th>
         <th style="text-align:center" colspan="3">3-Day FWI Forecast</th>
       </tr>
     </thead>
@@ -832,40 +889,86 @@ ${!season.isFireSeason ? `
       ${stationRows}
     </tbody>
   </table>
-  <p class="note" style="margin-top:8px">FWI = Fire Weather Index. Danger ratings follow CIFFC/BCWS classification thresholds (L &lt;8 · M 8–16 · H 17–29 · VH 30–49 · E ≥50). Restrictions are based on danger rating; confirm with current BC Wildfire Service orders at bcwildfire.ca.</p>
+  <p class="note" style="margin-top:8px">FWI = Fire Weather Index. Danger ratings follow CIFFC/BCWS classification thresholds (L &lt;8 · M 8–16 · H 17–29 · VH 30–49 · E ≥50). Current Restrictions reflect Petronas operational protocol — confirm with the Site Supervisor and current BC Wildfire Service orders at bcwildfire.ca before high-risk activity.</p>
 </section>
 
-<!-- ─── Section 3: Restriction Decision Matrix ─────────────────────────────── -->
+<!-- ─── Section 3: High Risk Activity Restrictions Matrix ──────────────────── -->
+<!-- Mirrors the Petronas-published protocol matrix exactly (page 1 of the
+     Daily Wildfire & Air Quality Report). The wording and triggers are
+     load-bearing — these are the rules field ops apply, not advisory text. -->
 <section>
-  <h2>Restriction Decision Matrix</h2>
+  <h2>High Risk Activity Restrictions</h2>
+  <p style="font-size:12px;color:#555;margin-bottom:8px">
+    Three-step decision: <strong>(1)</strong> determine whether the proposed activity is a high risk activity (see definitions below); <strong>(2)</strong> find the danger rating at the operational location; <strong>(3)</strong> apply the matching restriction below.
+  </p>
   <table>
     <thead>
       <tr>
-        <th>Danger Rating</th>
-        <th style="text-align:center">Campfires / Category 1</th>
-        <th style="text-align:center">Open Burning / Category 2</th>
-        <th style="text-align:center">Industrial Burning</th>
-        <th style="text-align:center">OHV / Hot Work</th>
-        <th style="text-align:center">Chainsaw Use</th>
+        <th style="width:140px">Fire Danger Rating</th>
+        <th>Restriction</th>
+        <th style="width:280px">Duration</th>
       </tr>
     </thead>
     <tbody>
-      ${[
-        { code: 'L', rating: 'Low',       color: '#2e7d32', items: ['✓ Permitted','✓ Permitted','✓ Permitted','✓ Permitted','✓ Permitted'] },
-        { code: 'M', rating: 'Moderate',  color: '#f9a825', items: ['✓ Permitted','✓ Permitted','✓ Permitted','✓ Permitted','✓ Permitted'] },
-        { code: 'H', rating: 'High',      color: '#e65100', items: ['⚠ Restricted','⚠ Restricted','✓ Permitted','⚠ Permit Required','✓ With precautions'] },
-        { code: 'VH', rating: 'Very High', color: '#c62828', items: ['✗ Prohibited','✗ Prohibited','⚠ Restricted','⚠ Restricted','⚠ Daylight hours only'] },
-        { code: 'E',  rating: 'Extreme',  color: '#6a1b9a', items: ['✗ Prohibited','✗ Prohibited','✗ Prohibited','✗ Prohibited','✗ Prohibited'] },
-      ].map(row => {
-        const tc = row.code === 'M' ? '#333' : '#fff';
-        return `<tr>
-          <td><span style="background:${row.color};color:${tc};padding:3px 10px;border-radius:4px;font-weight:700;font-size:12px">${row.code} — ${row.rating}</span></td>
-          ${row.items.map(item => buildRestrictionCell(item)).join('')}
-        </tr>`;
-      }).join('\n')}
+      <tr>
+        <td><span style="background:#2e7d32;color:#fff;padding:4px 12px;border-radius:4px;font-weight:700;font-size:12px">LOW</span></td>
+        <td>No work restrictions. Continue normal daily work practices.</td>
+        <td>Until Moderate danger rating is established.</td>
+      </tr>
+      <tr>
+        <td><span style="background:#f9a825;color:#333;padding:4px 12px;border-radius:4px;font-weight:700;font-size:12px">MODERATE</span></td>
+        <td>After 3 consecutive days, maintain a fire watcher after work for a minimum of 1 hour.</td>
+        <td>Until the danger rating falls down to Low.</td>
+      </tr>
+      <tr>
+        <td rowspan="2"><span style="background:#e65100;color:#fff;padding:4px 12px;border-radius:4px;font-weight:700;font-size:12px">HIGH</span></td>
+        <td>Maintain a fire watcher after work for a minimum of 2 hours.</td>
+        <td>Until the danger rating falls down to Moderate.</td>
+      </tr>
+      <tr>
+        <td>After 3 consecutive days, cease activity between 1 pm and sunset each day.</td>
+        <td>Until the danger rating falls down to Moderate for 2 consecutive days.</td>
+      </tr>
+      <tr>
+        <td rowspan="2"><span style="background:#c62828;color:#fff;padding:4px 12px;border-radius:4px;font-weight:700;font-size:12px">EXTREME</span></td>
+        <td>Cease activity between 1 pm and sunset each day and maintain a fire watcher after work for a minimum of 2 hours.</td>
+        <td>Until the danger rating falls down to High for 2 consecutive days.</td>
+      </tr>
+      <tr>
+        <td>After 3 consecutive days, cease all activity for the entire day.</td>
+        <td>Until the danger rating falls down to High for 3 or more consecutive days.</td>
+      </tr>
     </tbody>
   </table>
-  <p class="note" style="margin-top:8px">⚠ Restricted = conditional; verify with Site Supervisor and current BCWS orders. All Hot Work requires a permit regardless of rating. Confirm campfire regulations with local Fire Management Officer.</p>
+  <p class="note" style="margin-top:8px">Verify with Site Supervisor and current BC Wildfire Service orders at bcwildfire.ca before commencing high-risk activity. The "Current Restrictions" column in the station table above already pre-computes the active rule using each station's days-at-rating count.</p>
+</section>
+
+<!-- ─── Section 3b: High Risk Activity Definitions (statutory list) ──────── -->
+<section>
+  <h2>High Risk Activity Definitions</h2>
+  <p style="font-size:12px;color:#555;margin-bottom:8px">
+    Per BC Wildfire Act / Wildfire Regulation, the following are <strong>high risk activities</strong> subject to the restrictions table above when conducted in or within 300 metres of forest land or grass land:
+  </p>
+  <ol style="font-size:12px;color:#333;line-height:1.7;padding-left:20px;margin:0">
+    <li>mechanical brushing;</li>
+    <li>disk trenching;</li>
+    <li>preparation or use of explosives;</li>
+    <li>using fire- or spark-producing tools, including cutting tools;</li>
+    <li>using or preparing fireworks or pyrotechnics;</li>
+    <li>grinding, including rail grinding;</li>
+    <li>mechanical land clearing (heavy equipment clearing existing vegetation such as trees, grasses, or shrubbery);</li>
+    <li>clearing and maintaining rights of way, including grass mowing;</li>
+    <li>any of the following activities carried out in a cutblock excluding a road, landing, roadside work area or log sort area in the cutblock:
+      <ol style="list-style-type:lower-roman;padding-left:24px;margin-top:4px">
+        <li>operating a power saw;</li>
+        <li>mechanical tree felling, woody debris piling or tree processing, including de-limbing;</li>
+        <li>welding;</li>
+        <li>portable wood chipping, milling, processing or manufacturing;</li>
+        <li>skidding logs or log forwarding unless it is improbable that the skidding or forwarding will result in the equipment contacting rock;</li>
+        <li>yarding logs using cable systems.</li>
+      </ol>
+    </li>
+  </ol>
 </section>
 
 <!-- ─── Section 4: Active Fire Detections ──────────────────────────────────── -->
@@ -1188,44 +1291,68 @@ ${(() => {
   ` : `<p class="no-data">No wildfire signals in platform for the last 24 hours.</p>`}
 </section>
 
-<!-- ─── Section 6: AQHI — Fort St. John ────────────────────────────────────── -->
+<!-- ─── Section 6: AQHI — Fort St. John (Current + Tomorrow side-by-side) ── -->
 <section>
   <h2>Air Quality Health Index — Fort St. John</h2>
-  <div style="display:flex;gap:24px;align-items:flex-start">
-    <div class="aqhi-current info-box" style="min-width:160px;border-top:4px solid ${aqhiColor}">
-      <div class="aqhi-num" style="color:${aqhiColor}">${aqhi.current ?? '—'}</div>
-      <div class="aqhi-label" style="color:${aqhiColor}">${aqhi.category}</div>
-      <div class="note">Current AQHI</div>
-    </div>
-    <div style="flex:1">
-      <div class="info-box" style="margin-bottom:12px;border-left:4px solid ${aqhiColor}">
-        <strong style="font-size:12px">Health Message:</strong>
-        <p style="margin-top:4px;font-size:12px;color:#444">${aqhi.health_message}</p>
+  ${(() => {
+    // Tomorrow's AQHI is the first non-current forecast period.
+    const fcTomorrow = (aqhi.forecast || []).find((f: any) => f && f.aqhi != null) ?? null;
+    const tomColor = fcTomorrow
+      ? (fcTomorrow.aqhi >= 10 ? '#6a1b9a' : fcTomorrow.aqhi >= 7 ? '#c62828' : fcTomorrow.aqhi >= 4 ? '#f9a825' : '#2e7d32')
+      : '#888';
+    return `
+    <div style="display:flex;gap:24px;flex-wrap:wrap">
+      <div style="flex:1;min-width:240px;border:2px solid ${aqhiColor};border-radius:8px;padding:16px;text-align:center;background:#fafafa">
+        <div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.6px">Current AQHI (Fort St. John)</div>
+        <div style="font-size:48px;font-weight:800;color:${aqhiColor};margin:8px 0 4px">${aqhi.current ?? '—'}</div>
+        <div style="font-size:14px;font-weight:700;color:${aqhiColor}">${aqhi.category}</div>
       </div>
-      ${aqhi.forecast.length > 0 ? `
-      <h3>AQHI Forecast</h3>
-      <table style="width:auto">
-        <thead><tr><th colspan="${aqhi.forecast.length}" style="text-align:center">Forecast Periods</th></tr>
-          <tr>${aqhiFC}</tr>
-        </thead>
-      </table>
-      ` : ''}
+      <div style="flex:1;min-width:240px;border:2px solid ${tomColor};border-radius:8px;padding:16px;text-align:center;background:#fafafa">
+        <div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:0.6px">Forecast Tomorrow (Fort St. John)</div>
+        <div style="font-size:48px;font-weight:800;color:${tomColor};margin:8px 0 4px">${fcTomorrow?.aqhi ?? '—'}</div>
+        <div style="font-size:14px;font-weight:700;color:${tomColor}">${fcTomorrow?.category ?? '—'}</div>
+      </div>
     </div>
-  </div>
-  <div style="margin-top:12px">
+    <div class="info-box" style="margin-top:14px;border-left:4px solid ${aqhiColor}">
+      <strong style="font-size:12px">Health Message:</strong>
+      <p style="margin-top:4px;font-size:12px;color:#444">${aqhi.health_message}</p>
+    </div>`;
+  })()}
+  <div style="margin-top:14px">
     <table>
       <thead>
-        <tr><th>AQHI Range</th><th>Category</th><th>Health Risk</th><th>Recommended Action</th></tr>
+        <tr><th style="width:120px">Health Risk</th><th style="width:90px;text-align:center">AQHI Index</th><th>At Risk Population¹</th><th>General Population</th></tr>
       </thead>
       <tbody>
-        <tr><td>1–3</td><td style="color:#2e7d32;font-weight:600">Low</td><td>Minimal</td><td>Normal outdoor activity</td></tr>
-        <tr><td>4–6</td><td style="color:#f9a825;font-weight:600">Moderate</td><td>Low–Moderate</td><td>Consider reducing prolonged strenuous outdoor work if symptoms occur</td></tr>
-        <tr><td>7–10</td><td style="color:#c62828;font-weight:600">High</td><td>High</td><td>Reduce or reschedule strenuous outdoor activities; children and elderly most at risk</td></tr>
-        <tr><td>10+</td><td style="color:#6a1b9a;font-weight:600">Very High</td><td>Very High</td><td>Avoid all outdoor exertion. N95 respirator required if outdoor exposure unavoidable</td></tr>
+        <tr>
+          <td style="background:#2e7d32;color:#fff;font-weight:700;text-align:center">Low</td>
+          <td style="text-align:center">1 – 3</td>
+          <td>Enjoy your usual outdoor activities.</td>
+          <td>Ideal air quality for outdoor activities.</td>
+        </tr>
+        <tr>
+          <td style="background:#f9a825;color:#333;font-weight:700;text-align:center">Moderate</td>
+          <td style="text-align:center">4 – 6</td>
+          <td>Consider reducing or rescheduling strenuous activities outdoors if you are experiencing symptoms.</td>
+          <td>No need to modify your usual outdoor activities unless you experience symptoms such as coughing and throat irritation.</td>
+        </tr>
+        <tr>
+          <td style="background:#c62828;color:#fff;font-weight:700;text-align:center">High</td>
+          <td style="text-align:center">7 – 10</td>
+          <td>Reduce or reschedule strenuous activities outdoors. Children and the elderly should also take it easy.</td>
+          <td>Consider reducing or rescheduling strenuous activities outdoors if you experience symptoms such as coughing and throat irritation.</td>
+        </tr>
+        <tr>
+          <td style="background:#6a1b9a;color:#fff;font-weight:700;text-align:center">Very High</td>
+          <td style="text-align:center">Above 10</td>
+          <td>Avoid strenuous activities outdoors. Children and the elderly should also avoid outdoor physical exertion.</td>
+          <td>Reduce or reschedule strenuous activities outdoors, especially if you experience symptoms such as coughing and throat irritation.</td>
+        </tr>
       </tbody>
     </table>
+    <p class="note" style="margin-top:6px;font-size:11px">¹ People with heart or breathing problems are at greater risk. Follow your doctor's usual advice about exercising and managing your condition. If the AQHI index has increased to 7 (high health risk), it is usually because of high concentrations of smoke particles (PM2.5) in this community.</p>
+    <p class="note" style="margin-top:4px;font-size:11px">AQHI data from Environment Canada MSC (api.weather.gc.ca). During active wildfire smoke events, AQHI may change rapidly — monitor hourly updates.</p>
   </div>
-  <p class="note" style="margin-top:8px">AQHI data from Environment Canada (airnow.ca). During active wildfire smoke events, AQHI may change rapidly. Monitor hourly updates.</p>
 </section>
 
 <!-- ─── Section 7: 3-Day Fire Weather Forecast ──────────────────────────────── -->
