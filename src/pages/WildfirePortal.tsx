@@ -183,8 +183,19 @@ export default function WildfirePortal() {
   const [bcwsFires, setBcwsFires] = useState<BcwsPick[]>([]);
   const [bcwsPickValue, setBcwsPickValue] = useState<string>("");
 
-  // Pull BCWS active fires once on mount. Filter to a generous BC bbox
-  // so the dropdown isn't dominated by fires nowhere near our users.
+  // Pull BCWS active fires once on mount, filter to Petronas operational
+  // zones (NE BC / Skeena-Kitimat / Calgary). Same canonical bbox set
+  // monitor-wildfires uses, so the portal and the cron monitor agree on
+  // what counts as 'in scope'. Without this the dropdown surfaces every
+  // active fire in BC — overwhelming and mostly irrelevant to NE BC ops.
+  const PETRONAS_ZONES = [
+    { minLat: 55.0, maxLat: 60.0, minLon: -125.0, maxLon: -119.0 }, // NE BC (Peace/Montney)
+    { minLat: 53.0, maxLat: 56.0, minLon: -130.0, maxLon: -125.0 }, // Skeena / Kitimat corridor
+    { minLat: 50.5, maxLat: 51.5, minLon: -115.0, maxLon: -113.5 }, // Calgary region
+  ];
+  const inOperationalZone = (lat: number, lng: number) =>
+    PETRONAS_ZONES.some((z) => lat >= z.minLat && lat <= z.maxLat && lng >= z.minLon && lng <= z.maxLon);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -192,7 +203,7 @@ export default function WildfirePortal() {
         const url = "https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/BCWS_ActiveFires_PublicView/FeatureServer/0/query"
           + "?where=" + encodeURIComponent("FIRE_STATUS <> 'Out'")
           + "&outFields=" + encodeURIComponent("FIRE_NUMBER,INCIDENT_NAME,FIRE_STATUS,CURRENT_SIZE,LATITUDE,LONGITUDE,GEOGRAPHIC_DESCRIPTION,FIRE_OF_NOTE_IND")
-          + "&outSR=4326&f=json&resultRecordCount=200";
+          + "&outSR=4326&f=json&resultRecordCount=400";
         const res = await fetch(url);
         if (!res.ok) return;
         const j = await res.json();
@@ -204,6 +215,7 @@ export default function WildfirePortal() {
             const lat = Number(p.LATITUDE);
             const lng = Number(p.LONGITUDE);
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            if (!inOperationalZone(lat, lng)) return null; // Petronas-zone filter
             return {
               fire_number: String(p.FIRE_NUMBER || ""),
               name: p.INCIDENT_NAME || p.GEOGRAPHIC_DESCRIPTION || p.FIRE_NUMBER || "Unnamed",
@@ -214,17 +226,18 @@ export default function WildfirePortal() {
             };
           })
           .filter(Boolean) as BcwsPick[];
-        // Sort: out-of-control + fires-of-note first, then by size desc.
+        // Sort: out-of-control first, then by size desc.
         picks.sort((a, b) => {
           const oa = a.status === "Out of Control" ? 0 : 1;
           const ob = b.status === "Out of Control" ? 0 : 1;
           if (oa !== ob) return oa - ob;
           return (b.size_ha ?? 0) - (a.size_ha ?? 0);
         });
-        setBcwsFires(picks.slice(0, 60));
+        setBcwsFires(picks);
       } catch (_) { /* swallow — prefill is optional */ }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleBcwsPick(value: string) {
@@ -927,7 +940,7 @@ export default function WildfirePortal() {
                       </option>
                     ))}
                   </select>
-                  <p className="text-[10px] text-slate-500 mt-1">{bcwsFires.length} active BCWS fires loaded</p>
+                  <p className="text-[10px] text-slate-500 mt-1">{bcwsFires.length} active BCWS fires in Petronas operational zones (NE BC · Skeena/Kitimat · Calgary)</p>
                 </div>
               )}
 
