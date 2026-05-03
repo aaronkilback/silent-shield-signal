@@ -9,6 +9,9 @@ verify_jwt = false
 [functions.wildfire-portal-log]
 verify_jwt = false
 
+[functions.simulate-fire-spread]
+verify_jwt = false
+
 [functions.monitor-macro-indicators]
 verify_jwt = false
 
