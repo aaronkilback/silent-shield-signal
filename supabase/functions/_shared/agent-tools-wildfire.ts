@@ -486,6 +486,140 @@ const getAirQualityIndex: ToolHandler = {
   },
 };
 
+// ── 7. get_bcws_active_fires_near ────────────────────────────────────
+const getBcwsActiveFiresNear: ToolHandler = {
+  name: "get_bcws_active_fires_near",
+  description:
+    "Returns BC Wildfire Service (BCWS) ACTIVE fires from the official provincial registry within `radius_km` of (lat, lng). Each fire has FIRE_NUMBER, FIRE_STATUS ('Out of Control' / 'Being Held' / 'Under Control'), CURRENT_SIZE in hectares, FIRE_OF_NOTE_IND (priority public-attention flag), cause, and ignition date.\n\nThis is the OFFICIAL fire registry — distinct from CWFIS hotspots (which are satellite thermal anomalies). Use BCWS to confirm or deny a CWFIS thermal anomaly: if a CWFIS hotspot has a BCWS active fire within ~5-10km, that's a confirmed wildfire. If no BCWS match, it may be a flare or false positive.\n\nCALL WHEN:\n• operator asks about wildfires near a named location\n• you want to corroborate a CWFIS thermal anomaly with the official registry\n• the operator asks about an evacuation, fire of note, or fire of size N\n• reasoning over signals tagged 'wildfire' or 'ambiguous_near_facility'",
+  parameters: {
+    type: "object",
+    properties: {
+      lat: { type: "number" },
+      lng: { type: "number" },
+      radius_km: { type: "number", description: "Search radius in km. Default 50." },
+    },
+    required: ["lat", "lng"],
+  },
+  execute: async (args: any) => {
+    const lat = Number(args?.lat);
+    const lng = Number(args?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: "lat/lng required" };
+    const radiusKm = Number(args?.radius_km || 50);
+    try {
+      const { findBCWSActiveFiresNear } = await import("./bcws.ts");
+      const matches = await findBCWSActiveFiresNear(lat, lng, radiusKm);
+      return {
+        radius_km: radiusKm,
+        center: { lat, lng },
+        count: matches.length,
+        fires: matches.slice(0, 15).map((f) => ({
+          fire_number: f.fire_number,
+          incident_name: f.incident_name,
+          status: f.status,
+          size_ha: f.size_ha,
+          cause: f.cause,
+          fire_type: f.fire_type,
+          fire_of_note: f.is_fire_of_note,
+          ignition_date: f.ignition_date,
+          geographic_description: f.geographic_description,
+          fire_centre: f.fire_centre,
+          zone: f.zone,
+          distance_km: f.distance_km,
+          lat: f.lat,
+          lng: f.lng,
+          fire_url: f.fire_url,
+        })),
+      };
+    } catch (e: any) {
+      return { error: e?.message || "BCWS fetch failed" };
+    }
+  },
+};
+
+// ── 8. get_bcws_evacuations_near ─────────────────────────────────────
+const getBcwsEvacuationsNear: ToolHandler = {
+  name: "get_bcws_evacuations_near",
+  description:
+    "Returns active BCWS evacuation ORDERS and ALERTS within `radius_km` of (lat, lng). Each entry has ORDER_ALERT_STATUS ('Order' or 'Alert'), affected population + homes, issuing agency, event start date, and the centroid of the affected polygon.\n\nORDER = mandatory leave-now. ALERT = be ready to leave on short notice.\n\nThis is the most operationally-important BCWS feed: an evacuation order anywhere near a client asset is critical intel that should always be reported even if no other source has it yet.\n\nCALL WHEN:\n• operator asks if there are evacuations near a location, asset, or community\n• corroborating a wildfire signal — if BCWS has issued an order, the fire is serious\n• reasoning about safe staging areas, evac routes, or alternate accommodations",
+  parameters: {
+    type: "object",
+    properties: {
+      lat: { type: "number" },
+      lng: { type: "number" },
+      radius_km: { type: "number", description: "Search radius in km. Default 100." },
+    },
+    required: ["lat", "lng"],
+  },
+  execute: async (args: any) => {
+    const lat = Number(args?.lat);
+    const lng = Number(args?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: "lat/lng required" };
+    const radiusKm = Number(args?.radius_km || 100);
+    try {
+      const { findBCWSEvacuationsNear } = await import("./bcws.ts");
+      const matches = await findBCWSEvacuationsNear(lat, lng, radiusKm);
+      return {
+        radius_km: radiusKm,
+        center: { lat, lng },
+        count: matches.length,
+        orders: matches.filter((e) => e.status === "Order").length,
+        alerts: matches.filter((e) => e.status === "Alert").length,
+        events: matches.slice(0, 20).map((e) => ({
+          status: e.status,
+          event_name: e.event_name,
+          order_alert_name: e.order_alert_name,
+          event_type: e.event_type,
+          issuing_agency: e.issuing_agency,
+          population_affected: e.population,
+          homes_affected: e.homes,
+          start_date: e.start_date,
+          last_modified: e.date_modified,
+          centroid: { lat: e.lat, lng: e.lng },
+          distance_km: e.distance_km,
+        })),
+      };
+    } catch (e: any) {
+      return { error: e?.message || "BCWS evac fetch failed" };
+    }
+  },
+};
+
+// ── 9. get_bcws_wildfires_of_note ────────────────────────────────────
+const getBcwsWildfiresOfNote: ToolHandler = {
+  name: "get_bcws_wildfires_of_note",
+  description:
+    "Returns BCWS 'wildfires of note' — the priority public-attention fires the province is actively communicating about. These are typically the largest, most disruptive, or most-photographed fires of the season. No location filter; returns all province-wide.\n\nCALL WHEN:\n• operator asks 'what are the major fires right now in BC'\n• you need a province-wide situational awareness picture\n• drafting a daily briefing summary",
+  parameters: { type: "object", properties: {} },
+  execute: async () => {
+    try {
+      const { fetchBCWSActiveFires } = await import("./bcws.ts");
+      const all = await fetchBCWSActiveFires();
+      const ofNote = all
+        .filter((f) => f.is_fire_of_note)
+        .sort((a, b) => (b.size_ha ?? 0) - (a.size_ha ?? 0));
+      return {
+        count: ofNote.length,
+        as_of: new Date().toISOString(),
+        fires: ofNote.slice(0, 15).map((f) => ({
+          fire_number: f.fire_number,
+          incident_name: f.incident_name,
+          status: f.status,
+          size_ha: f.size_ha,
+          cause: f.cause,
+          fire_centre: f.fire_centre,
+          zone: f.zone,
+          ignition_date: f.ignition_date,
+          geographic_description: f.geographic_description,
+          location: { lat: f.lat, lng: f.lng },
+          fire_url: f.fire_url,
+        })),
+      };
+    } catch (e: any) {
+      return { error: e?.message || "BCWS wildfires-of-note fetch failed" };
+    }
+  },
+};
+
 // ── Register all wildfire tools ──────────────────────────────────────
 registerTool(lookupLocationCoords);
 registerTool(getWildfireHotspotsNear);
@@ -493,3 +627,6 @@ registerTool(getActiveFirePerimetersNear);
 registerTool(getLightningStrikesNear);
 registerTool(getFireWeatherIndex);
 registerTool(getAirQualityIndex);
+registerTool(getBcwsActiveFiresNear);
+registerTool(getBcwsEvacuationsNear);
+registerTool(getBcwsWildfiresOfNote);
