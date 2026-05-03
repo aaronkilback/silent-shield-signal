@@ -546,12 +546,30 @@ async function executeSearch(
         continue;
       }
 
-      // Skip generic profile pages (Facebook-specific) for campaign scans.
-      // For entity scans: allow profile pages — they contain bio info, linked websites, and
-      // contact details that are valuable permanent intelligence about the entity.
-      if (url.includes('facebook.com') && !isSpecificFacebookUrl(url) && !isEntityScan) {
-        console.log(`[SocialUnified] Skipping generic FB page (campaign scan): ${url}`);
-        continue;
+      // Skip generic profile pages for campaign scans across ALL three
+      // platforms. Profile URLs (e.g. x.com/EnergeticCity) point at a
+      // user's main page, not a specific post — so the resulting "signal"
+      // tells the operator "Energetic City exists" instead of "Energetic
+      // City posted X". Operator caught a case where the underlying
+      // wildfire tweet was the actual intel, but the signal source URL
+      // was the profile page. Only entity scans bypass this — those
+      // legitimately want bio/contact data from a profile page.
+      if (!isEntityScan) {
+        if (url.includes('facebook.com') && !isSpecificFacebookUrl(url)) {
+          console.log(`[SocialUnified] ✗ Generic FB profile (campaign scan): ${url}`);
+          rejected++;
+          continue;
+        }
+        if ((url.includes('x.com') || url.includes('twitter.com')) && !isSpecificXUrl(url)) {
+          console.log(`[SocialUnified] ✗ Generic X profile (campaign scan): ${url}`);
+          rejected++;
+          continue;
+        }
+        if (url.includes('instagram.com') && !isSpecificInstagramUrl(url)) {
+          console.log(`[SocialUnified] ✗ Generic IG profile (campaign scan): ${url}`);
+          rejected++;
+          continue;
+        }
       }
 
       // ═══ AI RELEVANCE GATE ═══
@@ -849,6 +867,29 @@ function isSpecificFacebookUrl(url: string): boolean {
     '/live/', '/story/', '/photo', 'video_id=', 'story_fbid=', 'permalink'
   ];
   return specificPatterns.some(p => lower.includes(p));
+}
+
+// X / Twitter individual-post URL test. Bare profile URLs like
+// x.com/<handle> with no /status/<id> after are not actionable — they
+// point at the user's main page, not a specific tweet.
+function isSpecificXUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return /\/status\/\d+/.test(lower)
+      || /\/i\/(?:web\/)?status\//.test(lower)
+      || /\/photo\//.test(lower)
+      || /\/video\//.test(lower)
+      || /\/spaces\//.test(lower);
+}
+
+// Instagram individual-post URL test. /p/<shortcode>, /reel/<shortcode>,
+// /tv/<shortcode>, /stories/<user>/<id> are all post-specific. Bare
+// profile URLs like instagram.com/<handle> are filtered.
+function isSpecificInstagramUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return /\/p\/[a-z0-9_-]+/i.test(lower)
+      || /\/reel\/[a-z0-9_-]+/i.test(lower)
+      || /\/tv\/[a-z0-9_-]+/i.test(lower)
+      || /\/stories\//.test(lower);
 }
 
 function detectPlatformFromUrl(url: string): string {
