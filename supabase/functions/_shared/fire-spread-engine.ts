@@ -21,21 +21,40 @@
 
 import { calculateISI, calculateROS, calculateLB, calculateHFI, rosAtAngle, type FuelParams } from "./fbp-fuel.ts";
 
+export interface HourlyWeatherSlice {
+  time?: string;
+  tempC: number;
+  rhPct: number;
+  windKph: number;
+  windDir: number;          // wind FROM (degrees, 0=N clockwise)
+  precipMm: number;
+}
+
 export interface SpreadInputs {
   ignitionLat: number;
   ignitionLng: number;
-  ignitionTime: string;       // ISO timestamp
-  durationHours: number;      // total simulated horizon
-  weather: {
-    tempC: number;
-    rhPct: number;
-    windKph: number;          // 10m wind speed
-    windDir: number;          // wind FROM (degrees, 0=N clockwise)
-    ffmc: number;             // Fine Fuel Moisture Code
-    bui: number;              // Build Up Index
-  };
+  ignitionTime: string;
+  durationHours: number;
+  /**
+   * Hourly weather over the simulation horizon. Length must be at
+   * least durationHours. In manual mode the same snapshot is repeated
+   * every hour so this still works.
+   */
+  hourlyWeather: HourlyWeatherSlice[];
+  /** Daily-constant FWI moisture indices. Held constant across the sim. */
+  ffmc: number;
+  bui: number;
   fuel: FuelParams;
-  // Phase B will add: hourlyWeather[], slopeAtPoint(lat, lng), fuelAtPoint(lat, lng)
+  /**
+   * Optional per-cell slope grid (percent rise/run). Length must be
+   * N_CELLS². When omitted, slope is treated as 0 (flat — Phase A).
+   */
+  slopeGrid?: Float32Array;
+  /**
+   * Optional metadata flag — caller can pass through 'forecast' or
+   * 'manual' so the output metadata reflects which mode was used.
+   */
+  weatherMode?: "forecast" | "manual";
 }
 
 export interface SpreadCheckpoint {
@@ -53,6 +72,7 @@ export interface SpreadOutput {
     ignition: { lat: number; lng: number; time: string };
     duration_hours: number;
     fuel: string;
+    /** ROS / direction at hour 0 (representative — actual values varied per cell visit). */
     head_ros_m_per_min: number;
     head_fire_intensity_kw_per_m: number;
     length_to_breadth: number;
@@ -60,7 +80,16 @@ export interface SpreadOutput {
     cell_size_m: number;
     grid_radius_m: number;
     cells_burned: number;
-    weather: SpreadInputs['weather'];
+    weather_mode: "forecast" | "manual";
+    weather_summary: {
+      hour_0:  { tempC: number; rhPct: number; windKph: number; windDir: number };
+      hour_24: { tempC: number; rhPct: number; windKph: number; windDir: number } | null;
+      hour_48: { tempC: number; rhPct: number; windKph: number; windDir: number } | null;
+    };
+    ffmc: number;
+    bui: number;
+    slope_used: boolean;
+    elevation_range_m?: { min: number; max: number };
     model: string;
     generated_at: string;
     limitations: string[];
@@ -193,13 +222,29 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
   const arrival = new Float64Array(total).fill(Infinity);
   arrival[center * N_CELLS + center] = 0;
 
-  // Precompute fire behaviour from current weather. Phase B will move
-  // these inside the loop and update per simulated hour.
-  const isi = calculateISI(input.weather.ffmc, input.weather.windKph);
-  const rosHead = calculateROS(input.fuel, isi, input.weather.bui, 0);
-  const lb = calculateLB(input.weather.windKph);
-  const hfi = calculateHFI(rosHead, input.fuel);
-  const headDirRad = ((input.weather.windDir + 180) % 360) * Math.PI / 180;
+  if (!input.hourlyWeather || input.hourlyWeather.length === 0) {
+    throw new Error("simulateSpread requires hourlyWeather (length >= 1)");
+  }
+  const slopeGrid = input.slopeGrid && input.slopeGrid.length === total ? input.slopeGrid : null;
+
+  // Hour-0 representative values for the metadata block.
+  const w0 = input.hourlyWeather[0];
+  const isi0 = calculateISI(input.ffmc, w0.windKph);
+  const rosHead0 = calculateROS(input.fuel, isi0, input.bui, slopeGrid ? slopeGrid[center * N_CELLS + center] : 0);
+  const hfi0 = calculateHFI(rosHead0, input.fuel);
+  const lb0 = calculateLB(w0.windKph);
+  const headDirDeg0 = (w0.windDir + 180) % 360;
+
+  // Cache per-hour LB + headDirRad + base-ROS-multiplier-from-wind to
+  // avoid recomputing in the hot inner loop. Slope is per-cell so it
+  // multiplies later.
+  const hourlyHeadDir = input.hourlyWeather.map((w) => ((w.windDir + 180) % 360) * Math.PI / 180);
+  const hourlyLB = input.hourlyWeather.map((w) => calculateLB(w.windKph));
+  // ROS without slope, per hour (slope is per-cell, applied later).
+  const hourlyRosBase = input.hourlyWeather.map((w) => {
+    const isi = calculateISI(input.ffmc, w.windKph);
+    return calculateROS(input.fuel, isi, input.bui, 0);
+  });
 
   // 8-neighbour offsets (ordered NE-clockwise so iteration is intuitive).
   const dx = [0, 1, 1, 1, 0, -1, -1, -1];
@@ -211,7 +256,6 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
   heap.push(0, center * N_CELLS + center);
 
   const horizonMin = input.durationHours * 60;
-  let popped = 0;
 
   while (heap.size > 0) {
     const item = heap.pop()!;
@@ -219,10 +263,22 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
     const cellIdx = item.value;
     if (t > arrival[cellIdx]) continue;     // stale entry
     if (t > horizonMin) break;              // past the horizon — heap is sorted
-    popped++;
 
     const x = cellIdx % N_CELLS;
     const y = (cellIdx / N_CELLS) | 0;
+
+    // Pick the weather hour for this cell's arrival time. Index clamped
+    // so a sim that overruns the forecast still uses the last hour.
+    const hourIdx = Math.min(input.hourlyWeather.length - 1, Math.floor(t / 60));
+    const headDirRad = hourlyHeadDir[hourIdx];
+    const lb = hourlyLB[hourIdx];
+    const rosBase = hourlyRosBase[hourIdx];
+    // Per-cell slope effect: SF amplifies ROS upslope. We apply it
+    // uniformly here (FBP doesn't model downhill differently — still
+    // applies the slope factor, slightly conservative for downslope).
+    const slopePct = slopeGrid ? slopeGrid[cellIdx] : 0;
+    const slopeFactor = slopePct > 0 ? Math.exp(3.533 * Math.pow(slopePct / 100, 1.2)) : 1;
+    const rosHead = rosBase * slopeFactor;
 
     for (let i = 0; i < 8; i++) {
       const nx = x + dx[i];
@@ -232,8 +288,8 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
       const dist = (i & 1) === 1 ? diagonalDist : cardinalDist;
       const bearingRad = bearingFromOffset(dx[i], dy[i]);
       const thetaFromHead = bearingRad - headDirRad;
-      const ros = rosAtAngle(rosHead, lb, thetaFromHead); // m/min, can dip near 0 toward back
-      if (ros <= 0.01) continue;            // back-spread effectively zero
+      const ros = rosAtAngle(rosHead, lb, thetaFromHead);
+      if (ros <= 0.01) continue;
       const dt = dist / ros;
       const newArrival = t + dt;
 
@@ -269,10 +325,22 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
       hour: hours,
       polygon: polyLngLat,
       area_ha: polygonAreaM2(hull) / 10000,
-      max_intensity_kw_per_m: hfi,
+      max_intensity_kw_per_m: hfi0,
       perimeter_km: polygonPerimeterM(hull) / 1000,
     });
   }
+
+  // Sample summary weather at hours 0/24/48 for the metadata block.
+  const sampleAt = (h: number) => {
+    if (h >= input.hourlyWeather.length) return null;
+    const w = input.hourlyWeather[h];
+    return { tempC: w.tempC, rhPct: w.rhPct, windKph: w.windKph, windDir: w.windDir };
+  };
+
+  // Elevation range, if slope grid was supplied. (Slope grid is in
+  // percent so we don't have raw elevation, but we keep the field
+  // so the caller can populate it from its own elevation grid.)
+  const slopeUsed = !!input.slopeGrid && input.slopeGrid.length === total;
 
   return {
     checkpoints,
@@ -284,24 +352,37 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
       },
       duration_hours: input.durationHours,
       fuel: `${input.fuel.code} (${input.fuel.description})`,
-      head_ros_m_per_min: Math.round(rosHead * 100) / 100,
-      head_fire_intensity_kw_per_m: Math.round(hfi),
-      length_to_breadth: Math.round(lb * 100) / 100,
-      spread_direction_deg: Math.round(((input.weather.windDir + 180) % 360) * 10) / 10,
+      head_ros_m_per_min: Math.round(rosHead0 * 100) / 100,
+      head_fire_intensity_kw_per_m: Math.round(hfi0),
+      length_to_breadth: Math.round(lb0 * 100) / 100,
+      spread_direction_deg: Math.round(headDirDeg0 * 10) / 10,
       cell_size_m: CELL_SIZE_M,
       grid_radius_m: GRID_RADIUS_M,
       cells_burned: cellsBurned,
-      weather: input.weather,
-      model: 'fortress-wildfire-mvp-v0',
+      weather_mode: input.weatherMode ?? "manual",
+      weather_summary: {
+        hour_0:  sampleAt(0)!,
+        hour_24: sampleAt(24),
+        hour_48: sampleAt(48),
+      },
+      ffmc: input.ffmc,
+      bui: input.bui,
+      slope_used: slopeUsed,
+      model: slopeUsed ? "fortress-wildfire-mvp-v1" : "fortress-wildfire-mvp-v0",
       generated_at: new Date().toISOString(),
       limitations: [
-        'Phase A: constant weather snapshot — no hourly time-stepping yet',
-        'Single fuel type assumption (default C2 boreal spruce-lichen)',
-        'Flat terrain — no slope or aspect effect on ROS',
-        'No spotting / ember transport',
-        'No barriers (fireguards, water bodies, roads) or suppression',
-        'No crown-fire vs surface-fire distinction',
-        'Convex-hull perimeter — over-estimates concave edges',
+        input.weatherMode === "forecast"
+          ? "Hourly weather time-stepping enabled (Open-Meteo forecast)"
+          : "Manual weather snapshot — no time-stepping",
+        slopeUsed
+          ? "Per-cell slope from Open-Meteo elevation (90m DEM, bilinearly interpolated)"
+          : "Flat terrain — slope = 0 (Phase A behavior)",
+        "Single fuel type assumption (default C2 boreal spruce-lichen)",
+        "FFMC and BUI held constant — no daily moisture-code drift modelled",
+        "No spotting / ember transport",
+        "No barriers (fireguards, water bodies, roads) or suppression",
+        "No crown-fire vs surface-fire distinction",
+        "Convex-hull perimeter — over-estimates concave edges",
         `Grid radius capped at ${GRID_RADIUS_M / 1000}km — fires spreading beyond will be clipped`,
       ],
     },

@@ -107,10 +107,11 @@ export default function WildfirePortal() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const reportContainerRef = useRef<HTMLDivElement>(null);
 
-  // ── Spread Simulator (Phase A: mock weather) ──────────────────────────
+  // ── Spread Simulator (Phase B: live forecast + DEM slope) ──────────
   const [simLat, setSimLat] = useState("56.0");
   const [simLng, setSimLng] = useState("-121.0");
   const [simDuration, setSimDuration] = useState("48");
+  const [simWeatherMode, setSimWeatherMode] = useState<"forecast" | "manual">("forecast");
   const [simWindKph, setSimWindKph] = useState("20");
   const [simWindDir, setSimWindDir] = useState("270");
   const [simFfmc, setSimFfmc] = useState("90");
@@ -165,6 +166,7 @@ export default function WildfirePortal() {
           lat: Number(simLat),
           lng: Number(simLng),
           duration_hours: Number(simDuration),
+          weather_mode: simWeatherMode,
           weather: {
             tempC: 22, rhPct: 35,
             windKph: Number(simWindKph),
@@ -577,7 +579,9 @@ export default function WildfirePortal() {
           <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-700 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-amber-900 leading-relaxed">
-              <strong>Strategic tool, not tactical.</strong> Phase A uses synthetic weather (you set the inputs), single fuel type (C2 boreal spruce-lichen), flat terrain, and convex-hull perimeters. Output is a strategic estimate only — do not divert real resources based on it. Phase B will swap in live Open-Meteo forecast and DEM elevation.
+              <strong>Strategic tool, not tactical.</strong> {simWeatherMode === "forecast"
+                ? "Live Open-Meteo hourly forecast + Copernicus DEM-derived slope. Single fuel type (C2 boreal spruce-lichen), no spotting/barriers/crown-fire model, convex-hull perimeters."
+                : "Manual weather snapshot (synthetic inputs you set), DEM-derived slope, single fuel type, no spotting/barriers."} Output is a strategic estimate only — do not divert real resources based on it.
             </p>
           </div>
 
@@ -618,35 +622,67 @@ export default function WildfirePortal() {
                 </select>
               </div>
 
+              {/* Weather mode toggle */}
               <div className="pt-2 border-t border-slate-200">
-                <p className="text-xs font-medium text-slate-700 mb-2">Weather (mock)</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] text-slate-600">Wind km/h</label>
-                    <input type="number" step="1" min="0" max="100"
-                      value={simWindKph} onChange={(e) => setSimWindKph(e.target.value)}
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-600">Wind from°</label>
-                    <input type="number" step="10" min="0" max="360"
-                      value={simWindDir} onChange={(e) => setSimWindDir(e.target.value)}
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-600">FFMC</label>
-                    <input type="number" step="1" min="0" max="100"
-                      value={simFfmc} onChange={(e) => setSimFfmc(e.target.value)}
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-600">BUI</label>
-                    <input type="number" step="1" min="0" max="200"
-                      value={simBui} onChange={(e) => setSimBui(e.target.value)}
-                      className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+                <label className="block text-xs font-medium text-slate-700 mb-1.5">Weather source</label>
+                <div className="grid grid-cols-2 gap-1 bg-slate-200 rounded p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSimWeatherMode("forecast")}
+                    className={`text-xs font-medium rounded py-1.5 transition-colors ${
+                      simWeatherMode === "forecast" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    🛰 Live forecast
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimWeatherMode("manual")}
+                    className={`text-xs font-medium rounded py-1.5 transition-colors ${
+                      simWeatherMode === "manual" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    ✎ Manual
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {simWeatherMode === "forecast"
+                    ? "Open-Meteo hourly forecast + Copernicus DEM. Wind direction shifts hour-by-hour."
+                    : "Set a synthetic weather snapshot. No time-stepping."}
+                </p>
+              </div>
+
+              {simWeatherMode === "manual" && (
+                <div className="pt-2 border-t border-slate-200">
+                  <p className="text-xs font-medium text-slate-700 mb-2">Manual weather</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-slate-600">Wind km/h</label>
+                      <input type="number" step="1" min="0" max="100"
+                        value={simWindKph} onChange={(e) => setSimWindKph(e.target.value)}
+                        className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-600">Wind from°</label>
+                      <input type="number" step="10" min="0" max="360"
+                        value={simWindDir} onChange={(e) => setSimWindDir(e.target.value)}
+                        className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-600">FFMC</label>
+                      <input type="number" step="1" min="0" max="100"
+                        value={simFfmc} onChange={(e) => setSimFfmc(e.target.value)}
+                        className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-600">BUI</label>
+                      <input type="number" step="1" min="0" max="200"
+                        value={simBui} onChange={(e) => setSimBui(e.target.value)}
+                        className="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               <button
                 onClick={runSimulation}
@@ -663,12 +699,43 @@ export default function WildfirePortal() {
               {simResult?.metadata && (
                 <div className="pt-3 border-t border-slate-200 text-xs space-y-1 text-slate-700">
                   <div className="font-semibold text-slate-900 mb-1">Model output</div>
+                  <div>Mode: <strong className={simResult.metadata.weather_mode === "forecast" ? "text-emerald-700" : "text-slate-700"}>
+                    {simResult.metadata.weather_mode === "forecast" ? "🛰 Live forecast" : "✎ Manual"}
+                  </strong></div>
+                  {simResult.metadata.forecast_error && (
+                    <div className="text-amber-700 text-[11px]">⚠ Forecast unavailable — used manual fallback ({simResult.metadata.forecast_error})</div>
+                  )}
                   <div>Head ROS: <strong>{simResult.metadata.head_ros_m_per_min} m/min</strong></div>
                   <div>HFI: <strong>{simResult.metadata.head_fire_intensity_kw_per_m?.toLocaleString()} kW/m</strong></div>
                   <div>L:B ratio: <strong>{simResult.metadata.length_to_breadth}</strong></div>
-                  <div>Spread direction: <strong>{simResult.metadata.spread_direction_deg}°</strong></div>
-                  <div>Cells burned: <strong>{simResult.metadata.cells_burned?.toLocaleString()}</strong></div>
-                  <div>Compute: <strong>{simResult.metadata.compute_ms} ms</strong></div>
+                  <div>Spread (hr 0): <strong>{simResult.metadata.spread_direction_deg}°</strong></div>
+                  {simResult.metadata.slope_used && simResult.metadata.elevation_range_m && (
+                    <div>Elevation: <strong>{simResult.metadata.elevation_range_m.min}–{simResult.metadata.elevation_range_m.max} m</strong></div>
+                  )}
+                  {simResult.metadata.weather_summary?.hour_0 && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer font-medium text-slate-900 hover:text-slate-700 text-[11px]">Hourly weather sample</summary>
+                      <div className="mt-1.5 space-y-0.5 text-[11px] pl-2">
+                        {(["hour_0", "hour_24", "hour_48"] as const).map((k) => {
+                          const w = simResult.metadata.weather_summary?.[k];
+                          if (!w) return null;
+                          const hr = k.replace("hour_", "");
+                          return (
+                            <div key={k}>
+                              <span className="text-slate-500">{hr}h:</span>{" "}
+                              <strong>{w.tempC}°C</strong> / {w.rhPct}% RH /{" "}
+                              <strong>{w.windKph} km/h</strong> from {w.windDir}°
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  )}
+                  <div className="text-slate-500 text-[10px] mt-1">
+                    Cells burned: {simResult.metadata.cells_burned?.toLocaleString()} ·
+                    Sim {simResult.metadata.compute_ms}ms
+                    {simResult.metadata.slope_fetch_ms != null && ` · Slope ${simResult.metadata.slope_fetch_ms}ms`}
+                  </div>
                 </div>
               )}
             </div>

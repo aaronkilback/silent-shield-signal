@@ -1,40 +1,31 @@
 /**
  * Public Wildfire Portal — fire spread simulation endpoint.
  *
- * Phase A (this commit): pure spread engine. Mock weather/topography
- * inputs unless caller supplies them. Returns GeoJSON FeatureCollection
- * with one polygon per checkpoint hour, plus a `metadata` object
- * documenting the model, parameters used, and known limitations.
+ * Phase B (current): live Open-Meteo hourly weather + DEM-driven
+ * per-cell slope. Falls back to manual weather snapshot when caller
+ * sets weather_mode='manual' or when Open-Meteo is unavailable.
  *
- * Phase B will swap mock weather for live Open-Meteo hourly forecast
- * + DEM elevation + per-cell hourly time-stepping.
- *
- * verify_jwt=false so the public Wildfire Portal can call it
- * directly. Request schema:
- *
- *   POST /functions/v1/simulate-fire-spread
+ * Request body:
  *   {
  *     "lat":             56.0,
  *     "lng":            -121.0,
  *     "ignition_time":   "2026-05-03T13:00:00Z",  // optional, default = now
- *     "duration_hours":  48,                      // optional, default 48, max 72
- *     "weather": {                                // optional — Phase A defaults
+ *     "duration_hours":  48,                      // optional, 1..72
+ *     "weather_mode":    "forecast" | "manual",   // optional, default 'forecast'
+ *     "weather": {                                // used in 'manual' mode
  *       "tempC":   22, "rhPct":  35,
  *       "windKph": 20, "windDir": 270,
  *       "ffmc":    90, "bui":    60
  *     }
  *   }
  *
- * Response:
- *   {
- *     "type": "FeatureCollection",
- *     "metadata": {...},
- *     "features": [{ "type": "Feature", "properties": {...}, "geometry": {...} }, ...]
- *   }
+ * Response: GeoJSON FeatureCollection (one polygon per checkpoint hour)
+ * + a `metadata` object documenting model parameters and limitations.
  */
 
-import { simulateSpread } from "../_shared/fire-spread-engine.ts";
+import { simulateSpread, type HourlyWeatherSlice } from "../_shared/fire-spread-engine.ts";
 import { DEFAULT_FUEL } from "../_shared/fbp-fuel.ts";
+import { fetchHourlyForecast, fetchElevations, bilinearInterp } from "../_shared/open-meteo-data.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,6 +38,7 @@ interface RequestBody {
   lng?: unknown;
   ignition_time?: unknown;
   duration_hours?: unknown;
+  weather_mode?: unknown;
   weather?: {
     tempC?: unknown;
     rhPct?: unknown;
@@ -58,18 +50,103 @@ interface RequestBody {
 }
 
 const DEFAULT_WEATHER = {
-  tempC:   22,   // °C  — mid-day fire-season air
-  rhPct:   35,   // %   — moderately dry
-  windKph: 20,   // 10m wind speed — driving fire spread
-  windDir: 270,  // wind FROM the west
-  ffmc:    90,   // Fine Fuel Moisture Code — high but not extreme
-  bui:     60,   // Build Up Index — average for active fire weather
+  tempC: 22, rhPct: 35,
+  windKph: 20, windDir: 270,
+  ffmc: 90, bui: 60,
 };
+
+const CELL_SIZE_M = 250;
+const GRID_RADIUS_M = 30000;
+const N_CELLS = Math.ceil(GRID_RADIUS_M * 2 / CELL_SIZE_M);
+// Coarse stride for elevation sampling — every 20th cell = 5 km between
+// sample points. Open-Meteo elevation API rate-limits after ~5 rapid
+// calls, so we cap total samples at ~169 (2 batches at 100 each).
+// At 250m cell scale, Copernicus DEM (~30m) already over-samples; the
+// interpolation loss between 5km samples is small for fire-spread use.
+const ELEV_STRIDE = 20;
 
 function num(v: unknown, def: number): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
   return def;
+}
+
+function repeatSnapshot(snap: HourlyWeatherSlice, hours: number): HourlyWeatherSlice[] {
+  const out: HourlyWeatherSlice[] = new Array(hours);
+  for (let i = 0; i < hours; i++) out[i] = { ...snap };
+  return out;
+}
+
+/**
+ * Build a slope-percent grid covering N_CELLS × N_CELLS cells. Sample
+ * elevations at every ELEV_STRIDE-th cell from Open-Meteo, bilinearly
+ * interpolate to fill the grid, then compute slope magnitude per cell
+ * via central-difference gradient. Returns null on any fetch failure
+ * — caller falls back to flat terrain.
+ */
+async function buildSlopeGrid(
+  centerLat: number,
+  centerLng: number,
+): Promise<{ slopeGrid: Float32Array; elevMin: number; elevMax: number } | null> {
+  try {
+    const center = N_CELLS >> 1;
+    const cosLat = Math.cos(centerLat * Math.PI / 180);
+
+    // Coarse sample grid: every ELEV_STRIDE cells, plus the boundary.
+    const coarseW = Math.ceil(N_CELLS / ELEV_STRIDE) + 1;
+    const coarseH = coarseW;
+    const coarseLats: number[] = [];
+    const coarseLngs: number[] = [];
+    for (let cy = 0; cy < coarseH; cy++) {
+      for (let cx = 0; cx < coarseW; cx++) {
+        const cellX = Math.min(N_CELLS - 1, cx * ELEV_STRIDE);
+        const cellY = Math.min(N_CELLS - 1, cy * ELEV_STRIDE);
+        const dxM = (cellX - center) * CELL_SIZE_M;
+        const dyM = (center - cellY) * CELL_SIZE_M;
+        coarseLats.push(centerLat + dyM / 111320);
+        coarseLngs.push(centerLng + dxM / (111320 * cosLat));
+      }
+    }
+
+    const elevations = await fetchElevations(coarseLats, coarseLngs);
+    if (elevations.length !== coarseLats.length) return null;
+
+    // Bilinearly interpolate elevation to every fine cell.
+    const fineElev = new Float32Array(N_CELLS * N_CELLS);
+    for (let y = 0; y < N_CELLS; y++) {
+      for (let x = 0; x < N_CELLS; x++) {
+        const cx = x / ELEV_STRIDE;
+        const cy = y / ELEV_STRIDE;
+        fineElev[y * N_CELLS + x] = bilinearInterp(elevations, coarseW, coarseH, cx, cy);
+      }
+    }
+
+    // Slope per cell via central-difference gradient. dE/dx and dE/dy
+    // in metres/cell — divide by cell size to get rise/run, then *100.
+    const slope = new Float32Array(N_CELLS * N_CELLS);
+    let elevMin = Infinity;
+    let elevMax = -Infinity;
+    for (let y = 0; y < N_CELLS; y++) {
+      for (let x = 0; x < N_CELLS; x++) {
+        const idx = y * N_CELLS + x;
+        const e = fineElev[idx];
+        if (e < elevMin) elevMin = e;
+        if (e > elevMax) elevMax = e;
+        const xPrev = x === 0 ? x : x - 1;
+        const xNext = x === N_CELLS - 1 ? x : x + 1;
+        const yPrev = y === 0 ? y : y - 1;
+        const yNext = y === N_CELLS - 1 ? y : y + 1;
+        const dEx = (fineElev[y * N_CELLS + xNext] - fineElev[y * N_CELLS + xPrev]) / ((xNext - xPrev) * CELL_SIZE_M);
+        const dEy = (fineElev[yNext * N_CELLS + x] - fineElev[yPrev * N_CELLS + x]) / ((yNext - yPrev) * CELL_SIZE_M);
+        const grad = Math.sqrt(dEx * dEx + dEy * dEy);
+        slope[idx] = grad * 100; // percent
+      }
+    }
+    return { slopeGrid: slope, elevMin, elevMax };
+  } catch (err: any) {
+    console.warn(`[simulate-fire-spread] slope grid fetch failed: ${err?.message || err}`);
+    return null;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -94,7 +171,8 @@ Deno.serve(async (req) => {
     let durationHours = num(body?.duration_hours, 48);
     durationHours = Math.max(1, Math.min(72, durationHours));
 
-    const weather = {
+    const requestedMode = body?.weather_mode === "manual" ? "manual" : "forecast";
+    const manualWeather = {
       tempC:   num(body?.weather?.tempC,   DEFAULT_WEATHER.tempC),
       rhPct:   num(body?.weather?.rhPct,   DEFAULT_WEATHER.rhPct),
       windKph: num(body?.weather?.windKph, DEFAULT_WEATHER.windKph),
@@ -103,20 +181,70 @@ Deno.serve(async (req) => {
       bui:     num(body?.weather?.bui,     DEFAULT_WEATHER.bui),
     };
 
-    const tStart = Date.now();
+    let hourlyWeather: HourlyWeatherSlice[];
+    let actualMode: "forecast" | "manual" = requestedMode;
+    let forecastError: string | null = null;
+    let ffmc = manualWeather.ffmc;
+    let bui = manualWeather.bui;
+
+    if (requestedMode === "forecast") {
+      try {
+        const tFetchStart = Date.now();
+        const forecast = await fetchHourlyForecast(lat, lng, durationHours);
+        if (forecast.length < 1) throw new Error("Empty forecast response");
+        hourlyWeather = forecast.map((w) => ({
+          time: w.time,
+          tempC: w.tempC, rhPct: w.rhPct,
+          windKph: w.windKph, windDir: w.windDir,
+          precipMm: w.precipMm,
+        }));
+        // Pad to durationHours if forecast came up short.
+        while (hourlyWeather.length < durationHours) {
+          hourlyWeather.push(hourlyWeather[hourlyWeather.length - 1]);
+        }
+        console.log(`[simulate-fire-spread] forecast fetched (${hourlyWeather.length}h) in ${Date.now() - tFetchStart}ms`);
+      } catch (err: any) {
+        forecastError = err?.message || String(err);
+        console.warn(`[simulate-fire-spread] forecast failed, degrading to manual: ${forecastError}`);
+        actualMode = "manual";
+        hourlyWeather = repeatSnapshot({
+          tempC: manualWeather.tempC, rhPct: manualWeather.rhPct,
+          windKph: manualWeather.windKph, windDir: manualWeather.windDir,
+          precipMm: 0,
+        }, durationHours);
+      }
+    } else {
+      hourlyWeather = repeatSnapshot({
+        tempC: manualWeather.tempC, rhPct: manualWeather.rhPct,
+        windKph: manualWeather.windKph, windDir: manualWeather.windDir,
+        precipMm: 0,
+      }, durationHours);
+    }
+
+    // Slope grid is best-effort. Always attempt it (worth ~1-3s of
+    // fetch latency for the meaningful improvement in spread fidelity).
+    const tSlopeStart = Date.now();
+    const slope = await buildSlopeGrid(lat, lng);
+    const slopeMs = Date.now() - tSlopeStart;
+    if (slope) {
+      console.log(`[simulate-fire-spread] slope grid built (elev ${slope.elevMin.toFixed(0)}-${slope.elevMax.toFixed(0)}m) in ${slopeMs}ms`);
+    }
+
+    const tSimStart = Date.now();
     const result = simulateSpread({
       ignitionLat: lat,
       ignitionLng: lng,
       ignitionTime,
       durationHours,
-      weather,
+      hourlyWeather,
+      ffmc,
+      bui,
       fuel: DEFAULT_FUEL,
+      slopeGrid: slope?.slopeGrid,
+      weatherMode: actualMode,
     });
-    const compute_ms = Date.now() - tStart;
+    const simMs = Date.now() - tSimStart;
 
-    // Wrap as a GeoJSON FeatureCollection so the client renders directly
-    // on Leaflet without re-shaping. The metadata block stays at the
-    // top level (not GeoJSON-spec but commonly tolerated).
     const features = result.checkpoints.map((c) => ({
       type: "Feature" as const,
       properties: {
@@ -134,7 +262,14 @@ Deno.serve(async (req) => {
 
     const response = {
       type: "FeatureCollection",
-      metadata: { ...result.metadata, compute_ms },
+      metadata: {
+        ...result.metadata,
+        compute_ms: simMs,
+        slope_fetch_ms: slope ? slopeMs : null,
+        elevation_range_m: slope ? { min: Math.round(slope.elevMin), max: Math.round(slope.elevMax) } : null,
+        forecast_error: forecastError,
+        requested_mode: requestedMode,
+      },
       features,
     };
 
