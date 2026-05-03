@@ -971,49 +971,16 @@ ${!season.isFireSeason ? `
   </ol>
 </section>
 
-<!-- ─── Section 4: Active Fire Detections ──────────────────────────────────── -->
-<section>
-  <h2>Active Fire Detections — CWFIS (Last 24 Hours)</h2>
-  ${activeFires.length > 0 ? `
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px">
-      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #c62828">
-        <div style="font-size:24px;font-weight:800;color:#c62828">${activeFires.length}</div>
-        <div style="font-size:12px;color:#555">Fire detections in zone</div>
-      </div>
-      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #e65100">
-        <div style="font-size:24px;font-weight:800;color:#e65100">${nearFires.length}</div>
-        <div style="font-size:12px;color:#555">Within 100km of assets</div>
-      </div>
-      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #6a1b9a">
-        <div style="font-size:24px;font-weight:800;color:#6a1b9a">${significantFires.length}</div>
-        <div style="font-size:12px;color:#555">Significant (FRP&gt;50 or HFI&gt;4000)</div>
-      </div>
-      ${ambiguousFires.length > 0 ? `
-      <div class="info-box" style="flex:1;min-width:120px;border-left:4px solid #f9a825">
-        <div style="font-size:24px;font-weight:800;color:#f9a825">${ambiguousFires.length}</div>
-        <div style="font-size:12px;color:#555">⚠ Near industrial facility</div>
-      </div>` : ''}
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>Coordinates</th>
-          <th style="text-align:center">FRP</th>
-          <th style="text-align:center">HFI</th>
-          <th style="text-align:center">ROS</th>
-          <th style="text-align:center">Fuel</th>
-          <th>Nearest Asset</th>
-          <th style="text-align:center">Distance</th>
-          <th style="text-align:center">Threat</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${fireRows}
-      </tbody>
-    </table>
-    <p class="note" style="margin-top:8px">FRP = Fire Radiative Power (MW) · HFI = Head Fire Intensity (kW/m) · ROS = Rate of Spread (m/min). Threat: 🔴 &lt;25km · 🟠 25–50km · 🟡 50–100km · ⚪ &gt;100km. ⚠ = within 4km of industrial facility — verify source before escalating.</p>
-  ` : `<p class="no-data">No fire detections in operational zone during the last 24 hours.${!season.isFireSeason ? ' This is normal for the current off-season period.' : ''}</p>`}
-</section>
+<!-- Section 4 (CWFIS Active Fire Detections) removed: low operational
+     value vs the BCWS Official Active Fire Registry below. CWFIS
+     hotspots that ALSO appear in the BCWS registry are duplicate work;
+     hotspots that DON'T appear are mostly false positives or industrial
+     flares (which have their own section). The BCWS registry is the
+     authoritative source for what's an actual managed fire — that's
+     what made the cut. CWFIS is still pulled by monitor-wildfires for
+     real-time signal generation and is available to chat agents via
+     get_wildfire_hotspots_near; we just don't surface it as a report
+     section anymore. -->
 
 <!-- ─── Section 4a-bis: Active Evacuation Orders & Alerts (BCWS) ──────────── -->
 <!-- Operationally most urgent — surfaces here ahead of detection sections.
