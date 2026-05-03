@@ -10,47 +10,74 @@
  */
 export const FORTRESS_PLATFORM_OVERVIEW = `
 ═══ PLATFORM OVERVIEW ═══
-Fortress is a security intelligence and threat monitoring platform built on React/TypeScript frontend with Supabase (PostgreSQL + Edge Functions) backend. The platform automates OSINT collection, threat detection, incident management, entity tracking, travel security, and investigation management through 50+ edge functions and AI-powered automation.
+Fortress is a security intelligence and threat monitoring platform built on React/TypeScript frontend with Supabase (PostgreSQL + Edge Functions) backend. ~90+ edge functions, ~50 specialist AI agents, multi-tenant per-client scoping, with mobile (AEGIS Mobile PWA) and dashboard surfaces sharing the same intelligence backend.
+
+POSITIONING: Fortress is positioned as the AI intelligence-platform layer Critical Risk Team (CRT) and similar boutique security firms use under the hood. Fortress is NOT the prime contractor — CRT carries the 24/7 watch desk, client procurement, and ops. Fortress provides per-client scoping, the reasoning trail, and the agent stack.
 
 SYSTEM ARCHITECTURE:
-- Frontend: React + TypeScript + Tailwind CSS + Shadcn UI + React Query
-- Backend: Supabase PostgreSQL with Row Level Security + 50+ Deno edge functions
-- Automation: Auto-orchestrator coordinates monitoring, AI decision engine, escalation, alerts
-- AI: Lovable AI (Gemini models) for decision-making, assistance, analysis
-- Real-time: Supabase Realtime for live updates on tables
-- Storage: Supabase Storage with RLS for files/photos/documents
+- Frontend: React + TypeScript + Tailwind CSS + Shadcn UI + React Query (webapp); React + Vite + shadcn (AEGIS Mobile PWA on Cloudflare Pages)
+- Backend: Supabase PostgreSQL with Row Level Security + 90+ Deno edge functions
+- AI gateway: _shared/ai-gateway.ts routes by model prefix:
+    openai/* or gpt-* → OpenAI (gpt-4o, gpt-4o-mini) via OPENAI_API_KEY
+    google/* or gemini-* → Google Generative AI via GEMINI_API_KEY
+    sonar* → Perplexity (currently disabled, falls back to OpenAI)
+- Embeddings: OpenAI text-embedding-3-small (1536-d), HNSW vector indexes on hot tables
+- Automation: Auto-orchestrator + auto-triggered ai-decision-engine on every non-historical signal
+- Real-time: Supabase Realtime for live updates on signals + messages
+- Storage: Supabase Storage with RLS, signed URLs (BUCKETS in _shared/storage.ts)
 
 KEY FEATURES & IMPLEMENTATION:
-1. **Signals**: Raw OSINT intelligence → correlation → entity detection → AI incident creation
-   - Tables: signals, signal_correlation_groups, entity_mentions
-   - Functions: ingest-signal, correlate-signals, correlate-entities, ai-decision-engine
+1. **Signals**: Raw OSINT → relevance-gate → correlation → entity detection → ai-decision-engine
+   - Tables: signals, signal_correlation_groups, entity_mentions, signal_updates (live timeline)
+   - Functions: ingest-signal, correlate-signals, correlate-entities, ai-decision-engine, review-signal-agent
+   - "Live Updates" timeline on a signal collects same-story new-intel articles as updates instead of separate signals
 
 2. **Incidents**: Security events with escalation rules, SLA tracking, multi-channel alerts
    - Tables: incidents, incident_signals, incident_entities, alerts, escalation_rules
    - Functions: ai-decision-engine, check-incident-escalation, alert-delivery
+   - AI-based incident creation is currently DISABLED — only rules-based P1 keyword matches create incidents automatically
 
 3. **Entities**: Tracked people/orgs/locations with automated OSINT enrichment
    - Tables: entities, entity_mentions, entity_relationships, entity_content, entity_photos
-   - Functions: osint-entity-scan, scan-entity-content, scan-entity-photos, enrich-entity
+   - Functions: investigate-poi, entity-deep-scan, generate-poi-report, enrich-entity
 
-4. **Travel**: Risk assessment and monitoring for personnel in risky locations
-   - Tables: travelers, itineraries
-   - Functions: parse-travel-itinerary, monitor-travel-risks
+4. **Travel** — TWO domains:
+   - Operational (Fortress webapp, analyst-tracking client travel):
+     Tables: travelers, itineraries, travel_alerts (note: itineraries, NOT travel_itineraries)
+     Functions: parse-travel-itinerary, monitor-travel-risks
+   - Personal (AEGIS Mobile PWA, operator's own trips):
+     Tables: personal_trips, personal_trip_flights, personal_trip_alerts (RLS scoped to auth.uid)
+     Functions: parse-itinerary (vision OCR), flight-auto-scan
 
 5. **Investigations**: Case file management with AI writing assistance
    - Tables: investigations, investigation_entries, investigation_persons, investigation_attachments
    - Functions: investigation-ai-assist, generate-report
 
-6. **Monitoring**: Automated scanning of 20+ OSINT sources (news, social, threat intel, dark web)
-   - Tables: sources, monitoring_history, ingested_documents
-   - Functions: monitor-news, monitor-social, monitor-threat-intel, monitor-darkweb, etc.
+6. **Monitoring**: 20+ OSINT sources, staggered cron schedules to avoid thundering-herd
+   - Tables: sources, monitoring_history, ingested_documents, cron_heartbeat
+   - Functions: monitor-news-google, monitor-social-unified (Twitter/Instagram CSE + Facebook Graph API), monitor-twitter (Twitter API v2), monitor-rss-sources, monitor-threat-intel, monitor-csis-6h, monitor-court-registry-4h, monitor-pastebin-6h, monitor-darkweb-6h, monitor-naad-alerts-15min, monitor-wildfires (CWFIS-enriched), etc.
+   - Note: monitor-darkweb is currently HIBP breach-database lookup only — it does NOT scan onion sites, breach forums, or paste sites beyond what HIBP indexes. "Dark web coverage" is on the build list, not shipped.
 
-7. **Archival Documents**: Intelligence document upload, storage, and entity extraction
+7. **Reasoning trail (per-signal audit)** — every signal that goes through ai-decision-engine writes a Tier-1 row to signal_agent_analyses with the AI verdict, confidence breakdown, investigation tool calls, and predictions. severity='high' or 'critical' signals additionally trigger review-signal-agent for a Tier-2 review (writes raw_json.agent_review). Surfaced in the Signal Detail UI as the "Reasoning Trail" panel.
+
+8. **Agent chat (mobile)**:
+   - 1:1 chat: aegis-chat (or /agent/<call_sign> for any specialist)
+   - Team conversation @-mention: respond-as-agent (sticky agent dialogue persisted in localStorage so the chip survives navigation)
+   - Both run runAgentLoop with the full registered tool stack and persist exchanges to agent_conversation_memory + agent_chat_beliefs (semantic distillation)
+
+9. **Daily briefings**: send-daily-briefing produces per-client emails with risk score derived from real signal+incident data (critical*30 + high*5 + p1_incidents*10, capped 100), enumerated open incidents and autonomous actions, trajectory delta vs prior 7 days
+
+10. **Watchdog (system-watchdog-daily)**: behavioral health checks (agent enrichment coverage, social monitor signal yield, entity content freshness, feedback loop health). Auto-remediations: stale_sources_rescan, close_stale_bugs, reset_circuit_breakers, etc.
+
+11. **Archival Documents**: intelligence document upload + entity extraction
    - Tables: archival_documents, document_entity_mentions, document_hashes
-   - Functions: create-archival-record, process-stored-document, process-documents-batch
 
 DATABASE SCHEMA:
-40+ PostgreSQL tables with RLS policies. Core tables: signals, incidents, entities, clients, investigations, travelers, sources, monitoring_history, automation_metrics. All relationships mapped through foreign keys and junction tables (entity_mentions, incident_signals, etc.).`;
+~80 PostgreSQL tables with RLS policies. Core tables: signals, incidents, entities, clients, investigations, signal_agent_analyses (reasoning trail), agent_world_predictions, agent_conversation_memory + agent_chat_beliefs (chat memory), personal_trips/flights/alerts (mobile travel), travelers/itineraries (operational travel), sources, monitoring_history, cron_heartbeat, circuit_breaker_state, autonomous_actions_log, bug_reports.
+
+ACTIVE CLIENTS (current state):
+- Petronas Canada (PECL) — energy/LNG, NE BC + Coastal GasLink + Wet'suwet'en exposure
+- BC Children's Hospital Gender Clinic (BCCH) — pediatric medical, Vancouver-area`;
 
 /**
  * AEGIS capabilities as implemented in the dashboard context.
@@ -80,7 +107,7 @@ INCIDENTS & SIGNALS:
 
 THREAT INTELLIGENCE:
 • analyze_threat_radar — Threat landscape with predictions
-• check_dark_web_exposure — HIBP/paste breach checks
+• check_dark_web_exposure — HIBP breach-database lookup ONLY (NOT real dark-web scanning — no onion crawling, no breach-forum monitoring; if a user asks "what's on the dark web about X", say so honestly and offer the HIBP scope you do have)
 • get_threat_intel_feeds — CISA KEV vulnerability feeds
 • run_what_if_scenario — Travel/scenario risk assessment
 • analyze_sentiment_drift — Entity reputation tracking
