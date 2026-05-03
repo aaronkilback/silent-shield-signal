@@ -661,7 +661,7 @@ export default function WildfirePortal() {
               <Flame className="h-5 w-5 text-orange-600" />
               <h2 className="font-medium">Wildfire Spread Simulator</h2>
               <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 font-semibold">
-                Phase B · Beta
+                Phase C · Beta
               </span>
             </div>
           </div>
