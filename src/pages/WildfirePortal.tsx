@@ -51,6 +51,31 @@ async function logUsage(eventType: string, payload: Record<string, unknown> = {}
   } catch { /* swallow */ }
 }
 
+// MapLibre GL — loaded on demand (only when the operator switches to
+// 3D view). Keeps the bundle small for the common case.
+let maplibreLoadPromise: Promise<void> | null = null;
+function loadMapLibreOnce(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if ((window as any).maplibregl) return Promise.resolve();
+  if (maplibreLoadPromise) return maplibreLoadPromise;
+  maplibreLoadPromise = new Promise((resolve, reject) => {
+    if (!document.querySelector('link[data-wildfire-maplibre]')) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
+      link.setAttribute("data-wildfire-maplibre", "1");
+      document.head.appendChild(link);
+    }
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("MapLibre GL failed to load"));
+    document.head.appendChild(script);
+  });
+  return maplibreLoadPromise;
+}
+
 // React's dangerouslySetInnerHTML inserts <script> tags as INERT — the
 // browser parses them but doesn't execute. The wildfire report embeds
 // Leaflet for the station map via inline scripts, which then never run.
@@ -125,6 +150,11 @@ export default function WildfirePortal() {
   const simLayersRef = useRef<Record<number, any>>({});
   const simIgnitionMarkerRef = useRef<any>(null);
   const simResultLayerGroupRef = useRef<any>(null);
+
+  // ── Phase D: 3D terrain view (MapLibre GL + AWS Terrain Tiles) ──────
+  const [simViewMode, setSimViewMode] = useState<"2d" | "3d">("2d");
+  const sim3dMapRef = useRef<HTMLDivElement>(null);
+  const sim3dMapInstanceRef = useRef<any>(null);
   // Track simLat/simLng in a ref so the map's click handler reads the
   // latest value without needing to be re-bound on every state change.
   const simIgnitionRef = useRef({ lat: 56.0, lng: -121.0 });
@@ -402,6 +432,210 @@ export default function WildfirePortal() {
     }
   }, [simResult]);
 
+  // ── 3D map (MapLibre GL): init when user switches to 3D, render
+  //    perimeters draped on terrain. Re-runs when simResult or
+  //    simActiveHour change (so the active hour gets emphasis).
+  useEffect(() => {
+    if (simViewMode !== "3d" || !sim3dMapRef.current) return;
+    let cancelled = false;
+    loadMapLibreOnce()
+      .then(() => {
+        if (cancelled || !sim3dMapRef.current) return;
+        const maplibregl = (window as any).maplibregl;
+        if (!maplibregl) return;
+
+        const ig = simIgnitionRef.current;
+
+        // Build (or reuse) the map instance.
+        let map = sim3dMapInstanceRef.current;
+        if (!map) {
+          map = new maplibregl.Map({
+            container: sim3dMapRef.current,
+            // Inline style — Esri World Topo as the surface, AWS
+            // Terrain Tiles as the elevation source. AWS terrain
+            // tiles use the Terrarium encoding (free, no key).
+            style: {
+              version: 8,
+              sources: {
+                "esri-topo": {
+                  type: "raster",
+                  tiles: [
+                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+                  ],
+                  tileSize: 256,
+                  maxzoom: 18,
+                  attribution: 'Topo: Esri, USGS, NOAA',
+                },
+                "esri-imagery": {
+                  type: "raster",
+                  tiles: [
+                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                  ],
+                  tileSize: 256,
+                  maxzoom: 18,
+                  attribution: 'Imagery: Esri, Maxar',
+                },
+                "terrain-dem": {
+                  type: "raster-dem",
+                  tiles: [
+                    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+                  ],
+                  encoding: "terrarium",
+                  tileSize: 256,
+                  maxzoom: 15,
+                  attribution: 'DEM: AWS Terrain Tiles',
+                },
+              },
+              layers: [
+                { id: "topo-base", type: "raster", source: "esri-topo" },
+              ],
+              terrain: { source: "terrain-dem", exaggeration: 1.5 },
+              sky: {
+                "sky-color": "#a4cfe8",
+                "horizon-color": "#dbe9f4",
+                "sky-horizon-blend": 0.5,
+              } as any,
+            } as any,
+            center: [ig.lng, ig.lat],
+            zoom: 9,
+            pitch: 55,
+            bearing: 0,
+          });
+          map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+          sim3dMapInstanceRef.current = map;
+        }
+
+        const renderResult = () => {
+          // Clear previous perimeter source/layers if any.
+          for (const id of ["sim-perim-line", "sim-perim-fill", "sim-perim-active"]) {
+            if (map.getLayer(id)) map.removeLayer(id);
+          }
+          if (map.getSource("sim-perimeters")) map.removeSource("sim-perimeters");
+
+          // Ignition marker — drop or update.
+          if (sim3dMapInstanceRef.current.__ignitionMarker) {
+            sim3dMapInstanceRef.current.__ignitionMarker.setLngLat([ig.lng, ig.lat]);
+          } else {
+            const el = document.createElement("div");
+            el.style.cssText =
+              "background:#dc2626;color:white;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.4);font-size:12px;font-weight:700";
+            el.textContent = "×";
+            sim3dMapInstanceRef.current.__ignitionMarker = new maplibregl.Marker({ element: el })
+              .setLngLat([ig.lng, ig.lat])
+              .addTo(map);
+          }
+
+          if (!simResult || !simResult.features || simResult.features.length === 0) return;
+
+          // Add the GeoJSON FeatureCollection as a single source.
+          // Each feature already has 'hour' and 'area_ha' properties.
+          map.addSource("sim-perimeters", {
+            type: "geojson",
+            data: simResult as any,
+          });
+
+          // Filled fill matching the 2D color palette.
+          map.addLayer({
+            id: "sim-perim-fill",
+            type: "fill",
+            source: "sim-perimeters",
+            paint: {
+              "fill-color": [
+                "step",
+                ["get", "hour"],
+                "#fde047", 1,
+                "#fb923c", 4,
+                "#f97316", 7,
+                "#ef4444", 13,
+                "#dc2626", 25,
+                "#7f1d1d",
+              ],
+              "fill-opacity": 0.18,
+            },
+          });
+          map.addLayer({
+            id: "sim-perim-line",
+            type: "line",
+            source: "sim-perimeters",
+            paint: {
+              "line-color": [
+                "step",
+                ["get", "hour"],
+                "#fde047", 1,
+                "#fb923c", 4,
+                "#f97316", 7,
+                "#ef4444", 13,
+                "#dc2626", 25,
+                "#7f1d1d",
+              ],
+              "line-width": 2,
+              "line-opacity": 0.7,
+            },
+          });
+          // Active hour — drawn on top with stronger fill.
+          map.addLayer({
+            id: "sim-perim-active",
+            type: "fill",
+            source: "sim-perimeters",
+            filter: ["==", ["get", "hour"], simActiveHour ?? -1],
+            paint: {
+              "fill-color": [
+                "step",
+                ["get", "hour"],
+                "#fde047", 1,
+                "#fb923c", 4,
+                "#f97316", 7,
+                "#ef4444", 13,
+                "#dc2626", 25,
+                "#7f1d1d",
+              ],
+              "fill-opacity": 0.45,
+            },
+          });
+
+          // Fit camera to the largest perimeter so the whole picture
+          // lands in view, with a comfortable pitch.
+          const allCoords: number[][] = [];
+          for (const f of simResult.features as any[]) {
+            const ring = f.geometry?.coordinates?.[0];
+            if (Array.isArray(ring)) allCoords.push(...ring);
+          }
+          if (allCoords.length > 0) {
+            const bbox = allCoords.reduce(
+              (acc, [lng, lat]) => [
+                Math.min(acc[0], lng),
+                Math.min(acc[1], lat),
+                Math.max(acc[2], lng),
+                Math.max(acc[3], lat),
+              ],
+              [Infinity, Infinity, -Infinity, -Infinity],
+            );
+            map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], {
+              padding: 60,
+              pitch: 55,
+              duration: 800,
+            });
+          }
+        };
+
+        if (map.isStyleLoaded()) renderResult();
+        else map.once("load", renderResult);
+      })
+      .catch((e) => console.warn("[WildfirePortal] 3D map render failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [simViewMode, simResult, simActiveHour]);
+
+  // Tear down the 3D map when the user switches away from 3D, freeing
+  // GPU resources. Re-init happens on next 3D switch.
+  useEffect(() => {
+    if (simViewMode === "2d" && sim3dMapInstanceRef.current) {
+      try { sim3dMapInstanceRef.current.remove(); } catch (_) {}
+      sim3dMapInstanceRef.current = null;
+    }
+  }, [simViewMode]);
+
   // Highlight the active checkpoint hour.
   useEffect(() => {
     if (!simResult || simActiveHour === null) return;
@@ -661,7 +895,7 @@ export default function WildfirePortal() {
               <Flame className="h-5 w-5 text-orange-600" />
               <h2 className="font-medium">Wildfire Spread Simulator</h2>
               <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 font-semibold">
-                Phase C · Beta
+                Phase D · Beta
               </span>
             </div>
           </div>
@@ -893,14 +1127,65 @@ export default function WildfirePortal() {
                   </div>
                 );
               })()}
-              <div
-                ref={simMapRef}
-                className="bg-slate-100"
-                style={{ height: "min(60vh, 600px)", minHeight: "320px" }}
-              />
-              {!simResult && (
-                <div className="px-4 py-2 border-t border-slate-200 bg-amber-50 text-amber-900 text-xs text-center">
-                  💡 Click anywhere on the map (or drag the red pin) to set the ignition. Then hit <strong>Run Simulation</strong>.
+              {/* 2D / 3D view-mode toggle */}
+              <div className="px-3 sm:px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1 bg-slate-200 rounded p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSimViewMode("2d")}
+                    className={`text-xs font-medium rounded px-3 py-1 transition-colors ${
+                      simViewMode === "2d" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    2D Map
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimViewMode("3d")}
+                    className={`text-xs font-medium rounded px-3 py-1 transition-colors ${
+                      simViewMode === "3d" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    🏔 3D Terrain
+                  </button>
+                </div>
+                {simViewMode === "3d" && (
+                  <span className="text-[10px] text-slate-500">
+                    Drag to pan · Right-drag to rotate · Scroll to zoom
+                  </span>
+                )}
+              </div>
+
+              {/* 2D Leaflet map — kept mounted but hidden when 3D is
+                  active so its state (pin position, layers) survives a
+                  view-mode switch. */}
+              <div style={{ display: simViewMode === "2d" ? "block" : "none" }}>
+                <div
+                  ref={simMapRef}
+                  className="bg-slate-100"
+                  style={{ height: "min(60vh, 600px)", minHeight: "320px" }}
+                />
+                {!simResult && (
+                  <div className="px-4 py-2 border-t border-slate-200 bg-amber-50 text-amber-900 text-xs text-center">
+                    💡 Click anywhere on the map (or drag the red pin) to set the ignition. Then hit <strong>Run Simulation</strong>.
+                  </div>
+                )}
+              </div>
+
+              {/* 3D MapLibre map — only mounted when active. Tear-down
+                  effect releases the GPU on switch back to 2D. */}
+              {simViewMode === "3d" && (
+                <div className="relative">
+                  <div
+                    ref={sim3dMapRef}
+                    className="bg-slate-900"
+                    style={{ height: "min(65vh, 640px)", minHeight: "360px" }}
+                  />
+                  {!simResult && (
+                    <div className="px-4 py-2 border-t border-slate-200 bg-amber-50 text-amber-900 text-xs text-center">
+                      💡 Set ignition coordinates in the sidebar, then hit <strong>Run Simulation</strong> to project the perimeter onto 3D terrain.
+                    </div>
+                  )}
                 </div>
               )}
               {simResult?.metadata?.limitations && (
