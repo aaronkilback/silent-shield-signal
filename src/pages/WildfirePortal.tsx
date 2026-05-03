@@ -51,6 +51,50 @@ async function logUsage(eventType: string, payload: Record<string, unknown> = {}
   } catch { /* swallow */ }
 }
 
+// React's dangerouslySetInnerHTML inserts <script> tags as INERT — the
+// browser parses them but doesn't execute. The wildfire report embeds
+// Leaflet for the station map via inline scripts, which then never run.
+// Workaround: load Leaflet once via the document head (so the global L
+// is defined), then iterate the injected scripts in the report HTML and
+// recreate them as real script elements so the browser executes them.
+let leafletLoadPromise: Promise<void> | null = null;
+function loadLeafletOnce(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if ((window as any).L) return Promise.resolve();
+  if (leafletLoadPromise) return leafletLoadPromise;
+  leafletLoadPromise = new Promise((resolve, reject) => {
+    if (!document.querySelector('link[data-wildfire-leaflet]')) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      link.setAttribute("data-wildfire-leaflet", "1");
+      document.head.appendChild(link);
+    }
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Leaflet failed to load"));
+    document.head.appendChild(script);
+  });
+  return leafletLoadPromise;
+}
+
+function executeInjectedScripts(container: HTMLElement) {
+  const scripts = Array.from(container.querySelectorAll("script"));
+  for (const old of scripts) {
+    // Skip the leaflet external script — we already loaded it once at
+    // the document level, and re-loading it would clobber the global.
+    if (old.src && old.src.includes("leaflet")) continue;
+    const replacement = document.createElement("script");
+    for (const attr of Array.from(old.attributes)) {
+      replacement.setAttribute(attr.name, attr.value);
+    }
+    replacement.text = old.textContent || "";
+    old.parentNode?.replaceChild(replacement, old);
+  }
+}
+
 export default function WildfirePortal() {
   const [reportHtml, setReportHtml] = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(true);
@@ -61,12 +105,30 @@ export default function WildfirePortal() {
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const reportContainerRef = useRef<HTMLDivElement>(null);
 
   // Page view + report load on mount.
   useEffect(() => {
     logUsage("page_view");
     void loadReport();
   }, []);
+
+  // After the report HTML mounts, load Leaflet (once) and re-execute
+  // the inline <script> tags so the station map renders.
+  useEffect(() => {
+    if (!reportHtml || !reportContainerRef.current) return;
+    const container = reportContainerRef.current;
+    let cancelled = false;
+    loadLeafletOnce()
+      .then(() => {
+        if (cancelled) return;
+        executeInjectedScripts(container);
+      })
+      .catch((e) => console.warn("[WildfirePortal] map init failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [reportHtml]);
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -204,6 +266,7 @@ export default function WildfirePortal() {
             )}
             {reportHtml && (
               <div
+                ref={reportContainerRef}
                 className="wildfire-report-html"
                 dangerouslySetInnerHTML={{ __html: reportHtml }}
               />
