@@ -620,6 +620,111 @@ const getBcwsWildfiresOfNote: ToolHandler = {
   },
 };
 
+// ── 10. get_bc_danger_rating_at_point ────────────────────────────────
+const getBcDangerRatingAtPoint: ToolHandler = {
+  name: "get_bc_danger_rating_at_point",
+  description:
+    "Returns the OFFICIAL BC Wildfire Service fire danger rating (Low/Moderate/High/Very High/Extreme) at a specific lat/lng. Same source the published Petronas Daily Wildfire Report and BCWS public dashboard use — daily-updated provincial polygon layer.\n\nUse this for STATION-level or LOCATION-level danger ratings. Distinct from get_fire_weather_index, which returns a locally-computed Open-Meteo proxy. The BCWS rating drives operational restrictions (high-risk activity rules, fire-watch durations, work cessation triggers) — always prefer this when answering 'what's the fire danger at X right now'.\n\nCALL WHEN:\n• operator asks the current fire danger rating at a named place or station\n• you need to confirm work-restriction protocol that applies right now\n• cross-checking a get_fire_weather_index estimate against the official source\n• building a situational awareness picture for a specific location",
+  parameters: {
+    type: "object",
+    properties: {
+      lat: { type: "number" },
+      lng: { type: "number" },
+    },
+    required: ["lat", "lng"],
+  },
+  execute: async (args: any) => {
+    const lat = Number(args?.lat);
+    const lng = Number(args?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: "lat/lng required" };
+    try {
+      const { fetchBCWSDangerRatingAtPoint } = await import("./bcws.ts");
+      const r = await fetchBCWSDangerRatingAtPoint(lat, lng);
+      if (!r) {
+        return {
+          location: { lat, lng },
+          found: false,
+          note: "Point falls outside BCWS responsibility area or polygons not yet refreshed for today.",
+        };
+      }
+      return {
+        location: { lat, lng },
+        found: true,
+        rating: r.rating,
+        code: r.code,
+        rating_int: r.rating_int,
+        when_published: r.when_created,
+        thresholds_explanation: "BCWS uses the standard CIFFC five-level scale: Low / Moderate / High / Very High / Extreme. Restrictions on high-risk activities are tied to this rating — see Petronas protocol matrix.",
+      };
+    } catch (e: any) {
+      return { error: e?.message || "BCWS danger rating fetch failed" };
+    }
+  },
+};
+
+// ── 11. get_bc_danger_rating_for_station ─────────────────────────────
+// Convenience wrapper that hardcodes the 5 Petronas-monitored AWS stations
+// so operators can ask "what's the rating at Hudson Hope" without
+// remembering coordinates.
+const PETRONAS_STATIONS: Record<string, { lat: number; lng: number; bu: string }> = {
+  'hudson hope':   { lat: 56.033, lng: -121.900, bu: 'SBU (South of Altares)' },
+  'graham':        { lat: 56.575, lng: -122.537, bu: 'SBU (South of Halfway Rd.)' },
+  'wonowon':       { lat: 57.017, lng: -122.491, bu: 'SBU (South of Mile 132)' },
+  'pink mountain': { lat: 57.058, lng: -122.534, bu: 'SBU & NBU (North of Mile 132)' },
+  'muskwa':        { lat: 58.772, lng: -122.656, bu: 'NBU (North of Mile 132)' },
+};
+
+const getBcDangerRatingForStation: ToolHandler = {
+  name: "get_bc_danger_rating_for_station",
+  description:
+    "Returns the OFFICIAL BCWS fire danger rating for one of Petronas Canada's five monitored AWS stations: Hudson Hope, Graham, Wonowon, Pink Mountain, Muskwa. Identical data to get_bc_danger_rating_at_point but accepts a station name for convenience.\n\nCALL WHEN: operator names one of the five stations (or its BU/region anchor like 'South of Mile 132').",
+  parameters: {
+    type: "object",
+    properties: {
+      station: {
+        type: "string",
+        description: "Station name. One of: Hudson Hope, Graham, Wonowon, Pink Mountain, Muskwa.",
+      },
+    },
+    required: ["station"],
+  },
+  execute: async (args: any) => {
+    const requested = String(args?.station || "").toLowerCase().trim();
+    const key = Object.keys(PETRONAS_STATIONS).find((k) => k === requested || requested.includes(k));
+    if (!key) {
+      return {
+        error: `Unknown station "${args?.station}".`,
+        valid_stations: Object.keys(PETRONAS_STATIONS).map((k) => k.replace(/\b\w/g, (c) => c.toUpperCase())),
+      };
+    }
+    const { lat, lng, bu } = PETRONAS_STATIONS[key];
+    try {
+      const { fetchBCWSDangerRatingAtPoint } = await import("./bcws.ts");
+      const r = await fetchBCWSDangerRatingAtPoint(lat, lng);
+      if (!r) {
+        return {
+          station: key.replace(/\b\w/g, (c) => c.toUpperCase()),
+          business_unit: bu,
+          location: { lat, lng },
+          found: false,
+          note: "Station coordinates fall outside current BCWS polygon coverage.",
+        };
+      }
+      return {
+        station: key.replace(/\b\w/g, (c) => c.toUpperCase()),
+        business_unit: bu,
+        location: { lat, lng },
+        rating: r.rating,
+        code: r.code,
+        rating_int: r.rating_int,
+        when_published: r.when_created,
+      };
+    } catch (e: any) {
+      return { error: e?.message || "BCWS danger rating fetch failed" };
+    }
+  },
+};
+
 // ── Register all wildfire tools ──────────────────────────────────────
 registerTool(lookupLocationCoords);
 registerTool(getWildfireHotspotsNear);
@@ -630,3 +735,5 @@ registerTool(getAirQualityIndex);
 registerTool(getBcwsActiveFiresNear);
 registerTool(getBcwsEvacuationsNear);
 registerTool(getBcwsWildfiresOfNote);
+registerTool(getBcDangerRatingAtPoint);
+registerTool(getBcDangerRatingForStation);

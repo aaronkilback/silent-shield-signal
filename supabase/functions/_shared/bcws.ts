@@ -17,6 +17,7 @@ const BCWS_BASE = 'https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/ser
 const ACTIVE_FIRES_URL = `${BCWS_BASE}/BCWS_ActiveFires_PublicView/FeatureServer/0/query`;
 const EVAC_ORDERS_URL = `${BCWS_BASE}/Evacuation_Orders_and_Alerts/FeatureServer/0/query`;
 const FIRE_PERIMETERS_URL = `${BCWS_BASE}/BCWS_FirePerimeters_PublicView/FeatureServer/0/query`;
+const DANGER_RATING_URL = `${BCWS_BASE}/British_Columbia_Danger_Rating_-_View/FeatureServer/7/query`;
 
 export interface BCWSActiveFire {
   fire_number: string;
@@ -49,6 +50,17 @@ export interface BCWSEvacuation {
   /** centroid of the affected polygon */
   lat: number;
   lng: number;
+}
+
+export interface BCWSDangerRating {
+  /** BCWS-published category. Same five-level CIFFC scale Petronas uses. */
+  rating: 'Low' | 'Moderate' | 'High' | 'Very High' | 'Extreme' | string;
+  /** Code for table rendering: L / M / H / VH / E */
+  code: 'L' | 'M' | 'H' | 'VH' | 'E';
+  /** Numeric (1=Low ... 5=Extreme) */
+  rating_int: number | null;
+  /** Last polygon refresh timestamp, ISO. */
+  when_created: string | null;
 }
 
 export interface BCWSFirePerimeter {
@@ -206,6 +218,51 @@ export async function findBCWSActiveFiresNear(
     .map((f) => ({ ...f, distance_km: Math.round(haversineKm({ lat, lng }, { lat: f.lat, lng: f.lng }) * 10) / 10 }))
     .filter((f) => f.distance_km <= radius_km)
     .sort((a, b) => a.distance_km - b.distance_km);
+}
+
+/**
+ * Returns the OFFICIAL BCWS danger rating at a point (lat, lng) by spatially
+ * querying the daily-updated provincial danger-rating polygon layer. This is
+ * the SAME source Petronas's published Daily Wildfire Report reads from —
+ * use this rather than the locally-estimated FWI when computing per-station
+ * fire danger ratings. Returns null if the point falls outside any polygon
+ * (rare — BCWS polygons cover all of BC's responsible-area).
+ */
+export async function fetchBCWSDangerRatingAtPoint(
+  lat: number,
+  lng: number,
+): Promise<BCWSDangerRating | null> {
+  const ratingToCode = (label: string): BCWSDangerRating['code'] => {
+    const l = (label || '').toLowerCase();
+    if (l === 'extreme') return 'E';
+    if (l === 'very high') return 'VH';
+    if (l === 'high') return 'H';
+    if (l === 'moderate') return 'M';
+    return 'L';
+  };
+  const params = new URLSearchParams({
+    where: '1=1',
+    outFields: 'DANGER_RATING,DANGER_RATING_DESC,WHEN_CREATED',
+    geometry: JSON.stringify({ x: lng, y: lat, spatialReference: { wkid: 4326 } }),
+    geometryType: 'esriGeometryPoint',
+    inSR: '4326',
+    outSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    returnGeometry: 'false',
+    f: 'json',
+    resultRecordCount: '1',
+  });
+  const r = await fetch(`${DANGER_RATING_URL}?${params.toString()}`, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`BCWS danger rating HTTP ${r.status}`);
+  const j = await r.json();
+  const a = j?.features?.[0]?.attributes;
+  if (!a) return null;
+  return {
+    rating: a.DANGER_RATING_DESC || 'Unknown',
+    code: ratingToCode(a.DANGER_RATING_DESC || ''),
+    rating_int: typeof a.DANGER_RATING === 'number' ? a.DANGER_RATING : null,
+    when_created: a.WHEN_CREATED ? new Date(Number(a.WHEN_CREATED)).toISOString() : null,
+  };
 }
 
 export async function findBCWSEvacuationsNear(

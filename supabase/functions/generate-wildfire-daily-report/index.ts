@@ -1458,13 +1458,48 @@ Deno.serve(async (req) => {
     const today = now.toISOString().split('T')[0];
     const stationsData: StationData[] = [];
 
+    // Fetch the OFFICIAL BCWS danger rating for each station's coordinates
+    // in parallel. This is the same source Petronas's published Daily
+    // Wildfire Report reads from — replaces our local estimateFwi proxy
+    // for the rating column. We still keep the Open-Meteo FWI as a
+    // fallback (used only when the BCWS spatial query returns null) and
+    // for the 3-day forecast cells (BCWS doesn't publish forecast
+    // ratings, only today's).
+    const { fetchBCWSDangerRatingAtPoint } = await import("../_shared/bcws.ts");
+    const officialRatings = await Promise.all(
+      STATIONS.map((s) =>
+        fetchBCWSDangerRatingAtPoint(s.lat, s.lon).catch((e: any) => {
+          console.warn(`[wildfire-report] BCWS rating fetch failed for ${s.name}: ${e?.message || e}`);
+          return null;
+        })
+      )
+    );
+
     for (let i = 0; i < STATIONS.length; i++) {
       const station = STATIONS[i];
       const weather = weatherResults[i];
       const fwi = weather?.fwi ?? 0;
-      const dangerInfo = fwiToDangerRating(fwi);
+      const officialRating = officialRatings[i];
 
-      // Upsert today's rating
+      // Prefer the BCWS official rating; fall back to our FWI estimate
+      // only when the spatial query came back empty.
+      const dangerInfo = officialRating
+        ? {
+            rating: officialRating.rating,
+            code: officialRating.code,
+            color:
+              officialRating.code === 'E'  ? '#6a1b9a'
+            : officialRating.code === 'VH' ? '#c62828'
+            : officialRating.code === 'H'  ? '#e65100'
+            : officialRating.code === 'M'  ? '#f9a825'
+                                           : '#2e7d32',
+          }
+        : fwiToDangerRating(fwi);
+      const ratingSource = officialRating ? 'bcws_official' : 'estimated_fwi';
+
+      // Upsert today's rating — store the OFFICIAL rating when available
+      // so getConsecutiveDays counts the right transitions.
+      console.log(`[wildfire-report] ${station.name}: ${dangerInfo.code} (${dangerInfo.rating}) — source=${ratingSource}`);
       await supabase
         .from('wildfire_station_ratings')
         .upsert({
