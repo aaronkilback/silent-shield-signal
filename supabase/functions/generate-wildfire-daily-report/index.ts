@@ -1552,12 +1552,35 @@ Deno.serve(async (req) => {
       fetchBCWSEvacuations().catch((e: any) => { console.warn(`BCWS evacs fetch failed: ${e?.message}`); return []; }),
     ]);
 
-    // Filter BCWS data to the report's BBOX (southern + NE BC + Calgary).
-    // BBOX is '-130,49,-113,60' = minLon,minLat,maxLon,maxLat.
-    const inReportArea = (lat: number, lng: number): boolean =>
-      lng >= -130 && lng <= -113 && lat >= 49 && lat <= 60;
-    const bcwsFires = bcwsFiresRaw.filter((f: any) => inReportArea(f.lat, f.lng));
-    const bcwsEvacs = bcwsEvacsRaw.filter((e: any) => inReportArea(e.lat, e.lng));
+    // Filter BCWS data to PETRONAS OPERATIONAL ZONES, not the whole
+    // province. Earlier the filter was a southern-BC BBOX that pulled
+    // in Sumas, Lytton, Lions Bay, Cariboo events that have nothing
+    // to do with Petronas. Tighter zones below mirror monitor-wildfires
+    // OPERATIONAL_ZONES exactly so the report and the cron monitor
+    // agree on what 'in scope' means.
+    const PETRONAS_ZONES = [
+      // Northeast BC (Peace / Montney) — the bulk of Petronas operations
+      { minLat: 55.0, maxLat: 60.0, minLon: -125.0, maxLon: -119.0 },
+      // Skeena / Kitimat corridor — LNG Canada terminal
+      { minLat: 53.0, maxLat: 56.0, minLon: -130.0, maxLon: -125.0 },
+      // Calgary region — corporate / staging
+      { minLat: 50.5, maxLat: 51.5, minLon: -115.0, maxLon: -113.5 },
+    ];
+    const inOperationalZone = (lat: number, lng: number): boolean =>
+      PETRONAS_ZONES.some((z) => lat >= z.minLat && lat <= z.maxLat && lng >= z.minLon && lng <= z.maxLon);
+
+    // Drop evacuations issued >12 months ago. BCWS sometimes leaves
+    // legacy entries in the registry without rescinding them properly
+    // (e.g. a 2021 Shackan flood order surfacing as 'active' in 2026).
+    const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+    const isRecent = (iso: string | null): boolean => {
+      if (!iso) return true; // null start_date = keep, can't tell
+      const t = new Date(iso).getTime();
+      return Number.isFinite(t) && t >= oneYearAgo;
+    };
+
+    const bcwsFires = bcwsFiresRaw.filter((f: any) => inOperationalZone(f.lat, f.lng));
+    const bcwsEvacs = bcwsEvacsRaw.filter((e: any) => inOperationalZone(e.lat, e.lng) && isRecent(e.start_date));
 
     // ── 5. Query recent wildfire signals from DB ──────────────────────────────
     const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
