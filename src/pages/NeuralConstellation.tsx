@@ -586,6 +586,14 @@ const NeuralConstellation = () => {
             stack used calc(100vh - 80px) which let it cover the entire
             right column and clip activity-feed content behind it. */}
         <div className="absolute top-4 right-4 z-20 w-[340px] space-y-2 pointer-events-auto max-h-[calc(42vh)] overflow-y-auto bg-[#020408]/85 backdrop-blur-xl rounded-lg p-2 border border-border/40">
+          {/* Benchmark health — moved to top of stack 2026-05-08:
+              the prior placement (between vitals and FortressHUD) was
+              below the 42vh scroll-fold so operators couldn't see it
+              without scrolling within the panel column. Promoted here
+              so the regression-score chip is always one of the first
+              things visible. Stays collapsed by default — one-line
+              chip; expands on click for 4 metrics + class breakdown. */}
+          <BenchmarkHealthPanel />
           <MonitorHealthPanel />
           <WatchdogFindingsPanel platformWide={platformWideFindings} agentScopedCount={agentFindings.size} />
           {/* Phase 4 vitals — platform-wide diagnostics that don't pin
@@ -593,11 +601,6 @@ const NeuralConstellation = () => {
               gauge. Lives below the issue panels but above the FORTIFY
               loop-health card. */}
           <PlatformVitalsBar />
-          {/* Benchmark health — labeled-corpus regression scores. Stays
-              collapsed by default; expands to show 4 metrics + class
-              breakdown + trend. Source of truth: benchmark_runs +
-              benchmark_results, populated by run-benchmark function. */}
-          <BenchmarkHealthPanel />
           {/* FORTIFY loop-health (was an absolute-positioned floater that
               overlapped AUDITOR PULSE and GATE DIST). Now stacks here so
               the right rail has a single coherent column. */}
