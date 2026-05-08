@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText, ThumbsUp, ThumbsDown, ShieldAlert, Brain, ChevronDown, ChevronUp, ListChecks } from "lucide-react";
 import { AskAegisButton } from "@/components/AskAegisButton";
 import { SignalManualOverride } from "./SignalManualOverride";
+import { formatSignalRef } from "@/lib/signal-ref";
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
@@ -22,6 +23,10 @@ interface SignalDetailSheetProps {
   onOpenChange: (open: boolean) => void;
   signal: {
     id: string;
+    /** Human-readable signal ID (SIG-YYYY-NNNNNN). May be null for
+     * legacy rows pre-migration; UI falls back to a UUID-prefix
+     * pseudo-ID via formatSignalRef(). */
+    signal_number?: string | null;
     primary_signal_id: string;
     category: string | null;
     severity: string | null;
@@ -191,13 +196,26 @@ export function SignalDetailSheet({
         <SheetHeader className="p-6 pb-0 shrink-0">
           <div className="flex items-center justify-between">
             <div>
-              <SheetTitle>Signal Details</SheetTitle>
+              <SheetTitle className="flex items-center gap-2">
+                <span>Signal Details</span>
+                <button
+                  type="button"
+                  className="text-[11px] font-mono px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition-colors"
+                  title="Click to copy — quote this in chat with AEGIS"
+                  onClick={() => {
+                    const ref = formatSignalRef(signal);
+                    navigator.clipboard?.writeText(ref);
+                  }}
+                >
+                  {formatSignalRef(signal)}
+                </button>
+              </SheetTitle>
               <SheetDescription>
                 Review the signal details and decide how to handle it
               </SheetDescription>
             </div>
             <AskAegisButton
-              context={`Signal: ${signal.severity || 'Unknown'} severity ${signal.category || 'signal'} — ${signal.normalized_text?.slice(0, 100) || 'No description'}`}
+              context={`Signal ${formatSignalRef(signal)} — ${signal.severity || 'unknown'} severity ${signal.category || 'signal'} — ${signal.normalized_text?.slice(0, 100) || 'No description'}`}
               variant="outline"
               size="sm"
             />
@@ -710,6 +728,37 @@ export function SignalDetailSheet({
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Decision Engine Reasoning — fallback when no specialist agents fired */}
+            {agentAnalyses.length === 0 && signal?.raw_json?.ai_decision?.reasoning && (
+              <>
+                <Separator />
+                <div>
+                  <h4 className="text-sm font-medium mb-3 flex items-center gap-1.5">
+                    <Brain className="h-4 w-4 text-primary" />
+                    Decision Engine Reasoning
+                  </h4>
+                  <div className="rounded-md border bg-muted/20 p-3 text-sm space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline" className="font-mono text-xs text-blue-500 border-blue-500/30">AI-DECISION-ENGINE</Badge>
+                      {signal.raw_json.ai_decision.threat_level && (
+                        <Badge variant="outline" className="text-xs capitalize">{signal.raw_json.ai_decision.threat_level} threat</Badge>
+                      )}
+                      {signal.raw_json.ai_decision.confidence != null && (
+                        <span className="text-xs font-medium">{Math.round(signal.raw_json.ai_decision.confidence * 100)}% confidence</span>
+                      )}
+                    </div>
+                    <p className="text-sm whitespace-pre-wrap">{signal.raw_json.ai_decision.reasoning}</p>
+                    {signal.raw_json.ai_decision.strategic_context && (
+                      <div className="text-xs text-muted-foreground mt-2 pt-2 border-t">
+                        <span className="font-medium">Strategic context: </span>
+                        {signal.raw_json.ai_decision.strategic_context}
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
