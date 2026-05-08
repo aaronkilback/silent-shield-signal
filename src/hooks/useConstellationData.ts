@@ -408,7 +408,310 @@ export function useAgentActivityMetrics(enabled: boolean) {
   });
 }
 
+/** Recent meaningful exchanges for a single agent — backs the
+ * click-to-inspect "Persona Audit" panel on the constellation.
+ * Surfaces the receipts so an operator can verify claims about
+ * "real exchange" by reading them.
+ *
+ * Sources:
+ *   1. `ai_agents.system_prompt` — stated lane (what the agent
+ *      claims to be)
+ *   2. `agent_debate_records` — debates this agent participated in
+ *      (topic, participants, consensus, judge, incident link)
+ *   3. `structured_debate_arguments` — the agent's specific claims
+ *      (claim text, evidence, confidence, strength)
+ *
+ * Returns the persona excerpt, summary stats, and up to 10 recent
+ * debates with the agent's arguments folded in. The panel exposes
+ * everything the operator needs to judge "is the agent staying
+ * on-persona" themselves — *without* auto-flagging cross-domain
+ * consultation as drift (those are different conditions; see the
+ * `feedback_drift_vs_applied_expertise` memory).
+ */
+export interface AgentExchange {
+  debateId: string;
+  debateType: string;
+  createdAt: string;
+  participants: string[];
+  consensusScore: number | null;
+  finalAssessment: string | null;
+  incidentId: string | null;
+  /** Agent that adjudicated the debate. If equals the audited agent's
+   * call_sign, they were the judge — implies they were specifically
+   * positioned, not drifting in. */
+  judgeAgent: string | null;
+  /** Whether the audited agent was a participant or the judge. Helps
+   * the operator tell "invited to apply expertise" from "drifted in." */
+  invitedRole: "judge" | "participant";
+  /** This agent's specific arguments in this debate — the receipts. */
+  ownArguments: Array<{
+    argumentType: string;
+    claim: string;
+    confidence: number | null;
+    strength: string | null;
+    evidenceSummary: string | null;
+  }>;
+}
 
+export interface AgentPersonaAudit {
+  callSign: string;
+  /** First ~280 chars of the agent's system_prompt — the stated lane.
+   * Operator compares this against the recent exchanges below. */
+  statedLane: string;
+  /** Total debates in last 7 days where this agent appeared. */
+  totalDebates: number;
+  /** Average consensus score across those debates (0-1). null if no
+   * debates had a consensus score. */
+  avgConsensus: number | null;
+  /** Times this agent was the named judge_agent — strongest signal of
+   * being specifically invited rather than drifting in. */
+  timesAsJudge: number;
+  /** Recent exchanges with the agent's actual claims. */
+  exchanges: AgentExchange[];
+}
+
+export function useAgentExchanges(callSign: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["agent-persona-audit", callSign],
+    enabled: enabled && !!callSign,
+    refetchInterval: 60_000,
+    queryFn: async (): Promise<AgentPersonaAudit | null> => {
+      if (!callSign) return null;
+      const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+
+      const [agentRes, debatesRes] = await Promise.all([
+        supabase
+          .from("ai_agents")
+          .select("system_prompt")
+          .eq("call_sign", callSign)
+          .maybeSingle(),
+        supabase
+          .from("agent_debate_records")
+          .select("id, debate_type, created_at, participating_agents, consensus_score, final_assessment, incident_id, judge_agent")
+          .contains("participating_agents", [callSign])
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(10),
+      ]);
+
+      const debates = debatesRes.data || [];
+      const debateIds = debates.map((d) => d.id);
+      const argsRes = debateIds.length > 0
+        ? await supabase
+            .from("structured_debate_arguments")
+            .select("debate_id, argument_type, claim, confidence, strength, evidence_summary")
+            .eq("agent_call_sign", callSign)
+            .in("debate_id", debateIds)
+        : { data: [] };
+
+      const argsByDebate = new Map<string, AgentExchange["ownArguments"]>();
+      for (const a of argsRes.data || []) {
+        const arr = argsByDebate.get(a.debate_id) || [];
+        arr.push({
+          argumentType: a.argument_type,
+          claim: a.claim,
+          confidence: a.confidence,
+          strength: a.strength,
+          evidenceSummary: a.evidence_summary,
+        });
+        argsByDebate.set(a.debate_id, arr);
+      }
+
+      const exchanges: AgentExchange[] = debates.map((d) => ({
+        debateId: d.id,
+        debateType: d.debate_type,
+        createdAt: d.created_at,
+        participants: d.participating_agents || [],
+        consensusScore: d.consensus_score,
+        finalAssessment: d.final_assessment,
+        incidentId: d.incident_id,
+        judgeAgent: d.judge_agent,
+        invitedRole: d.judge_agent === callSign ? "judge" : "participant",
+        ownArguments: argsByDebate.get(d.id) || [],
+      }));
+
+      const consensusValues = debates
+        .map((d) => d.consensus_score)
+        .filter((v): v is number => typeof v === "number");
+      const avgConsensus = consensusValues.length > 0
+        ? consensusValues.reduce((a, b) => a + b, 0) / consensusValues.length
+        : null;
+      const timesAsJudge = debates.filter((d) => d.judge_agent === callSign).length;
+
+      const rawPrompt = agentRes.data?.system_prompt || "";
+      // Take first paragraph or 280 chars — the agent's identity statement.
+      const firstPara = rawPrompt.split(/\n\n/)[0] || rawPrompt;
+      const statedLane = firstPara.length > 280
+        ? firstPara.substring(0, 280).trim() + "…"
+        : firstPara;
+
+      return {
+        callSign,
+        statedLane,
+        totalDebates: debates.length,
+        avgConsensus,
+        timesAsJudge,
+        exchanges,
+      };
+    },
+  });
+}
+
+/** Fleet-wide persona audit — pulls one batch of data covering every
+ * active agent, so the operator can spot fidelity outliers across the
+ * whole roster in one view rather than clicking through agents one
+ * at a time.
+ *
+ * One query per source table (vs. N hooks per agent), aggregated in
+ * memory. Same data sources as `useAgentExchanges` so the per-agent
+ * panel and the fleet panel stay consistent.
+ */
+export interface FleetAuditRow {
+  callSign: string;
+  /** First ~200 chars of the agent's system_prompt — the stated lane. */
+  statedLane: string;
+  debates7d: number;
+  avgConsensus: number | null;
+  timesAsJudge: number;
+  tiedToIncidents: number;
+  /** First non-empty claim from this agent in the last 7d, truncated. */
+  sampleClaim: string | null;
+}
+
+export function useFleetPersonaAudit(enabled: boolean) {
+  return useQuery({
+    queryKey: ["fleet-persona-audit-v1"],
+    enabled,
+    refetchInterval: 90_000,
+    queryFn: async (): Promise<FleetAuditRow[]> => {
+      const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+      const [agentsRes, debatesRes, argsRes] = await Promise.all([
+        supabase
+          .from("ai_agents")
+          .select("call_sign, system_prompt")
+          .eq("is_active", true),
+        supabase
+          .from("agent_debate_records")
+          .select("id, participating_agents, consensus_score, judge_agent, incident_id, created_at")
+          .gte("created_at", since)
+          .limit(500),
+        supabase
+          .from("structured_debate_arguments")
+          .select("agent_call_sign, claim, created_at")
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(2000),
+      ]);
+
+      const agents = agentsRes.data || [];
+      const debates = debatesRes.data || [];
+      const args = argsRes.data || [];
+
+      // Aggregate per agent.
+      const stats = new Map<string, {
+        debates: number;
+        consensus: number[];
+        asJudge: number;
+        withIncident: number;
+        firstClaim: string | null;
+      }>();
+
+      const ensure = (cs: string) => {
+        let s = stats.get(cs);
+        if (!s) {
+          s = { debates: 0, consensus: [], asJudge: 0, withIncident: 0, firstClaim: null };
+          stats.set(cs, s);
+        }
+        return s;
+      };
+
+      for (const d of debates) {
+        const participants = (d.participating_agents as string[]) || [];
+        for (const cs of participants) {
+          const s = ensure(cs);
+          s.debates += 1;
+          if (typeof d.consensus_score === "number") s.consensus.push(d.consensus_score);
+          if (d.judge_agent === cs) s.asJudge += 1;
+          if (d.incident_id) s.withIncident += 1;
+        }
+      }
+
+      // Args are ordered desc; first hit per agent is the most recent.
+      for (const a of args) {
+        if (!a.agent_call_sign || !a.claim) continue;
+        const s = ensure(a.agent_call_sign);
+        if (!s.firstClaim) s.firstClaim = a.claim;
+      }
+
+      return agents.map((a) => {
+        const s = stats.get(a.call_sign);
+        const rawPrompt = a.system_prompt || "";
+        const firstPara = rawPrompt.split(/\n\n/)[0] || rawPrompt;
+        const statedLane = firstPara.length > 200
+          ? firstPara.substring(0, 200).trim() + "…"
+          : firstPara;
+        return {
+          callSign: a.call_sign,
+          statedLane,
+          debates7d: s?.debates || 0,
+          avgConsensus: s && s.consensus.length > 0
+            ? s.consensus.reduce((x, y) => x + y, 0) / s.consensus.length
+            : null,
+          timesAsJudge: s?.asJudge || 0,
+          tiedToIncidents: s?.withIncident || 0,
+          sampleClaim: s?.firstClaim ?? null,
+        };
+      });
+    },
+  });
+}
+
+/** Recent real escalations — drives the red `alert` particles flowing
+ * to AEGIS-CMD on the constellation. Distinct from
+ * `useAgentActivityMetrics().totalAlertsGenerated`, which counts
+ * "items considered" per scan and pins on every routine sweep —
+ * not actual escalations. The visual was reading those routine
+ * outputs as escalations and showing constant red traffic.
+ *
+ * An escalation here is a signal in the last hour where ANY of:
+ *   - severity = 'critical'
+ *   - composite_confidence >= 0.85 (operational-priority gate)
+ *   - incident_id IS NOT NULL (already opened an incident)
+ * Test signals (is_test=true) are excluded.
+ *
+ * Returns Map<callSign, count>. Routed-agent extraction prefers
+ * `raw_json.investigation.agent_call_sign`, falls back to
+ * `raw_json.classification.routed_agent`, defaults to AEGIS-CMD.
+ */
+export function useRecentEscalations(enabled: boolean) {
+  return useQuery({
+    queryKey: ["recent-escalations-v1"],
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: async (): Promise<Map<string, number>> => {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data, error } = await supabase
+        .from("signals")
+        .select("severity, composite_confidence, incident_id, raw_json")
+        .gte("created_at", oneHourAgo)
+        .eq("is_test", false)
+        .or("severity.eq.critical,composite_confidence.gte.0.85,incident_id.not.is.null")
+        .limit(200);
+      if (error || !data) return new Map();
+
+      const counts = new Map<string, number>();
+      for (const s of data) {
+        const rj = (s as any).raw_json || {};
+        const cs: string =
+          rj?.investigation?.agent_call_sign ||
+          rj?.classification?.routed_agent ||
+          "AEGIS-CMD";
+        counts.set(cs, (counts.get(cs) || 0) + 1);
+      }
+      return counts;
+    },
+  });
+}
 
 /** Fetch knowledge graph edges for overlay visualization */
 export function useKnowledgeGraphEdges(enabled: boolean) {
@@ -760,5 +1063,664 @@ export function useKnowledgeGrowthData(enabled: boolean) {
     },
     enabled,
     refetchInterval: 30000,
+  });
+}
+
+// ─── Cron health (Phase 1 of the diagnostic-overlay rebuild) ─────────────
+// Reads cron_heartbeat (most-recent per job) joined with
+// cron_job_registry (expected interval). Computes per-job staleness
+// so the constellation can mark agents red when their backing cron
+// has silently stopped — the canonical failure mode this page
+// exists to catch (cyber-pipeline-zero-yield being the textbook
+// example).
+//
+// Critical thresholds:
+//   - healthy   : last run within 2× expected interval
+//   - stale     : last run 2-4× expected interval (warning)
+//   - critical  : last run > 4× expected interval, OR no heartbeat ever
+//   - unknown   : registered but no expected_interval_minutes (e.g.
+//                 manually-triggered jobs that don't expire)
+
+export type CronHealthStatus = 'healthy' | 'stale' | 'critical' | 'unknown';
+
+export interface CronHealth {
+  jobName: string;
+  status: CronHealthStatus;
+  expectedIntervalMinutes: number | null;
+  lastRunAt: string | null;
+  minutesSinceLastRun: number | null;
+  isCritical: boolean;
+  description: string | null;
+  lastRunStatus: string | null;
+  lastErrorMessage: string | null;
+}
+
+export function useCronHealth() {
+  return useQuery({
+    // v2 — cache-busts after the May 4 RPC migration (PostgREST
+    // schema cache + browser bundle had stale code paths returning
+    // empty heartbeat lists for daily / 8h / 12h jobs)
+    queryKey: ["cron-health-v2"],
+    queryFn: async (): Promise<CronHealth[]> => {
+      const { data: registry } = await supabase
+        .from("cron_job_registry")
+        .select("job_name, expected_interval_minutes, is_critical, description")
+        .order("job_name");
+
+      if (!registry) return [];
+
+      // RPC instead of a top-N sort because job-worker runs every
+      // minute and saturates any LIMIT-based query before lower-
+      // frequency heartbeats (daily / hourly) get a chance to
+      // surface. The RPC does DISTINCT ON (job_name) ORDER BY
+      // started_at DESC server-side so we get exactly one row per
+      // job in a single round-trip regardless of total volume.
+      const { data: heartbeats } = await supabase.rpc("latest_heartbeat_per_job");
+
+      const latestByJob = new Map<string, { started_at: string; status: string; error_message: string | null }>();
+      for (const h of (heartbeats as any[]) || []) {
+        if (!latestByJob.has(h.job_name)) latestByJob.set(h.job_name, h);
+      }
+
+      // 525600 = minutes in a year — the convention this codebase
+      // uses to mark a registry entry as deprecated (the column is
+      // NOT NULL so we can't just blank it). Treat anything at or
+      // above this sentinel as "deprecated", display as 'unknown'
+      // status, and short-circuit staleness math so retired entries
+      // don't show up as alerts.
+      const DEPRECATED_INTERVAL_SENTINEL = 525600;
+      const now = Date.now();
+      return registry.map((r): CronHealth => {
+        const expected = r.expected_interval_minutes;
+        const isDeprecated = expected != null && expected >= DEPRECATED_INTERVAL_SENTINEL;
+        const last = latestByJob.get(r.job_name);
+        if (!last) {
+          return {
+            jobName: r.job_name,
+            status: isDeprecated || expected == null || expected <= 0
+              ? 'unknown'
+              : 'critical',
+            expectedIntervalMinutes: expected,
+            lastRunAt: null,
+            minutesSinceLastRun: null,
+            isCritical: !!r.is_critical,
+            description: r.description ?? null,
+            lastRunStatus: null,
+            lastErrorMessage: null,
+          };
+        }
+        const minutesSince = (now - new Date(last.started_at).getTime()) / 60000;
+        let status: CronHealthStatus = 'unknown';
+        if (!isDeprecated && expected != null && expected > 0) {
+          if (minutesSince > expected * 4) status = 'critical';
+          else if (minutesSince > expected * 2) status = 'stale';
+          else status = 'healthy';
+        }
+        return {
+          jobName: r.job_name,
+          status,
+          expectedIntervalMinutes: expected,
+          lastRunAt: last.started_at,
+          minutesSinceLastRun: Math.round(minutesSince),
+          isCritical: !!r.is_critical,
+          description: r.description ?? null,
+          lastRunStatus: last.status,
+          lastErrorMessage: last.error_message,
+        };
+      });
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+}
+
+// Conservative cron-job → agent mapping. Only includes jobs where a
+// single agent is the obvious operational owner. Jobs not listed here
+// surface in the MonitorHealthPanel (broader catch-net) instead of
+// turning a constellation node red.
+export const CRON_TO_AGENT: Record<string, string> = {
+  'monitor-wildfires':              'WILDFIRE',
+  'monitor-social-unified':         'ECHO-WATCH',
+  'monitor-social-hourly':          'ECHO-WATCH',
+  'monitor-twitter':                'ECHO-WATCH',
+  'monitor-twitter-30min':          'ECHO-WATCH',
+  'snapshot-bcws-ratings-daily':    'WILDFIRE',
+  'monitor-cisa-kev-12h':           'NEO',
+  'monitor-darkweb-6h':             'NEO',
+  'monitor-github-6h':              'NEO',
+  'monitor-csis-6h':                'NEO',
+};
+
+// ─── Platform findings (Phase 2 diagnostic overlay) ─────────────────────
+// Reads system-watchdog's behavioral_health findings from
+// platform_findings (active = resolved_at IS NULL). Surfaces them as
+// hover tooltips + warning halos pinned to specific agents on the
+// constellation. Findings without an affected_agent surface in a
+// global findings panel.
+
+export interface PlatformFinding {
+  id: string;
+  category: string;
+  severity: string;
+  title: string;
+  analysis: string | null;
+  plainEnglish: string | null;
+  action: string | null;
+  affectedAgent: string | null;
+  affectedJob: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  occurrenceCount: number;
+}
+
+export function useActiveFindings() {
+  return useQuery({
+    queryKey: ["active-findings-v1"],
+    queryFn: async (): Promise<PlatformFinding[]> => {
+      const { data } = await supabase
+        .from("platform_findings")
+        .select("id, category, severity, title, analysis, plain_english, action, affected_agent, affected_job, first_seen_at, last_seen_at, occurrence_count")
+        .is("resolved_at", null)
+        .order("severity", { ascending: false })
+        .order("last_seen_at", { ascending: false })
+        .limit(100);
+
+      return (data ?? []).map((row: any) => ({
+        id: row.id,
+        category: row.category,
+        severity: row.severity,
+        title: row.title,
+        analysis: row.analysis,
+        plainEnglish: row.plain_english,
+        action: row.action,
+        affectedAgent: row.affected_agent,
+        affectedJob: row.affected_job,
+        firstSeenAt: row.first_seen_at,
+        lastSeenAt: row.last_seen_at,
+        occurrenceCount: row.occurrence_count,
+      }));
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+}
+
+// ─── Phase 3 — Open-loop & silent-agent diagnostics ─────────────────────
+//
+// Open loops: signals that crossed the review-signal-agent trigger
+// (composite_confidence ≥ 0.60) more than 1 hour ago but still have
+// no closing verdict in raw_json.agent_review. These are reasoning
+// loops the platform started and didn't finish — operationally the
+// signal sits in limbo without enrichment.
+//
+// Silent agents: agents that haven't produced a scan or message in
+// the last N hours despite being marked is_active=true. Distinct
+// from "low activity" — those are healthy, just quiet. Silent means
+// "we expected output and got none."
+
+export interface OpenLoopSummary {
+  /** Count of stuck reasoning loops per agent that owns the trigger. */
+  byAgent: Map<string, number>;
+  /** Total stuck-loop count platform-wide. */
+  total: number;
+  /** Oldest stuck loop's age in minutes — useful for header severity. */
+  oldestMinutes: number | null;
+}
+
+export function useOpenLoops(enabled: boolean) {
+  return useQuery({
+    queryKey: ["open-loops-v1"],
+    enabled,
+    refetchInterval: 90_000,
+    queryFn: async (): Promise<OpenLoopSummary> => {
+      // Signals where composite eligible (≥ 0.60), older than 1h, no verdict.
+      // Limit to last 7 days so we don't drag in archival.
+      const cutoff = new Date(Date.now() - 7 * 86400_000).toISOString();
+      const stuckThreshold = new Date(Date.now() - 60 * 60_000).toISOString();
+      const { data } = await supabase
+        .from("signals")
+        .select("id, composite_confidence, created_at, raw_json")
+        .gte("composite_confidence", 0.60)
+        .gte("created_at", cutoff)
+        .lt("created_at", stuckThreshold)
+        .is("deleted_at", null)
+        .neq("is_test", true)
+        .limit(500);
+
+      const byAgent = new Map<string, number>();
+      let oldestMinutes: number | null = null;
+      const now = Date.now();
+      for (const s of data || []) {
+        const verdict = (s.raw_json as any)?.agent_review?.verdict;
+        if (verdict) continue;        // closed
+        // Identify the responsible agent. ai_decision dispatches via
+        // AEGIS-CMD, so by default the open loop sits there. If the
+        // raw_json includes a triggering agent or specialist consult,
+        // attribute to that one instead.
+        const owner = (s.raw_json as any)?.investigation?.agent_call_sign
+                   ?? (s.raw_json as any)?.classification?.routed_agent
+                   ?? "AEGIS-CMD";
+        byAgent.set(owner, (byAgent.get(owner) || 0) + 1);
+        const ageMin = (now - new Date(s.created_at).getTime()) / 60_000;
+        if (oldestMinutes == null || ageMin > oldestMinutes) oldestMinutes = ageMin;
+      }
+      return {
+        byAgent,
+        total: Array.from(byAgent.values()).reduce((a, b) => a + b, 0),
+        oldestMinutes: oldestMinutes != null ? Math.round(oldestMinutes) : null,
+      };
+    },
+  });
+}
+
+export interface SilentAgentInfo {
+  callSign: string;
+  /** Minutes since last observed activity (scan or message). */
+  silentMinutes: number;
+}
+
+export function useSilentAgents(enabled: boolean) {
+  return useQuery({
+    queryKey: ["silent-agents-v3"],
+    enabled,
+    refetchInterval: 90_000,
+    queryFn: async (): Promise<SilentAgentInfo[]> => {
+      // Per-agent silence threshold derived from cron_job_registry
+      // (Phase 6 — replaces the earlier flat 6h threshold). Each agent
+      // has different real cadences:
+      //   • PATTERN-SEEKER scans every 15min → silent at 30min
+      //   • WILDFIRE every 15min → 30min
+      //   • NEO darkweb/github crons every 6h → 12h
+      //   • Daily-cadence specialists → 48h
+      //   • Invocation-only agents (no cron mapping) → 12h generous
+      // The flat 6h threshold flagged 33 of 48 agents constantly even
+      // when nothing was actually broken, because most agents naturally
+      // run on intervals longer than 6h.
+      const DEFAULT_NO_CRON_MIN = 12 * 60;     // 12h for invocation-only
+      const FALLBACK_FLOOR_MIN = 30;           // never call something silent under 30min
+      const FALLBACK_CEILING_MIN = 48 * 60;    // never wait > 48h before flagging
+      const SLACK_MULTIPLIER = 2;              // 2× expected interval = silent
+
+
+      const { data: agents } = await supabase
+        .from("ai_agents")
+        .select("call_sign")
+        .eq("is_active", true);
+      if (!agents) return [];
+
+      // Last activity per agent across every source the agent might
+      // write to. Earlier this hook queried `agent_scan_pulses` (no
+      // such table) and joined `agent_messages` to a `agent_id` column
+      // (no such column) — both queries silently returned empty, so
+      // every active agent appeared silent.
+      //
+      // The three real sources of per-agent timestamped activity:
+      //   1. autonomous_scan_results — agents that run scheduled sweeps
+      //      (PATTERN-SEEKER, AUTO-SENTINEL, LOCUS-INTEL, GLOBE-SAGE,
+      //      VICODIN, etc.)
+      //   2. signal_agent_analyses — agents that consult on individual
+      //      signals via the tier-2 review path (ORACLE, GUARDIAN,
+      //      INSIDE-EYE — these don't appear in scan_results)
+      //   3. structured_debate_arguments — agents that argue in
+      //      multi-agent debates (FORTRESS-GUARD, etc.)
+      //
+      // Pick the most-recent timestamp across all three as the agent's
+      // last activity. If none in 6h → silent.
+      const callSigns = agents.map((a) => a.call_sign);
+      const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+      const mappedCronJobs = Object.keys(CRON_TO_AGENT);
+      const [scanRes, analysisRes, debateRes, cronRes, cronHbRes] = await Promise.all([
+        supabase
+          .from("autonomous_scan_results")
+          .select("agent_call_sign, created_at")
+          .in("agent_call_sign", callSigns)
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(callSigns.length * 5),
+        supabase
+          .from("signal_agent_analyses")
+          .select("agent_call_sign, created_at")
+          .in("agent_call_sign", callSigns)
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(callSigns.length * 5),
+        supabase
+          .from("structured_debate_arguments")
+          .select("agent_call_sign, created_at")
+          .in("agent_call_sign", callSigns)
+          .gte("created_at", since)
+          .order("created_at", { ascending: false })
+          .limit(callSigns.length * 5),
+        // Cron registry → derive per-agent expected cadence.
+        supabase
+          .from("cron_job_registry")
+          .select("job_name, expected_interval_minutes"),
+        // Cron heartbeats for the agents' mapped monitors. Counts as
+        // pipeline activity for the agent — `agent-activity-scanner`
+        // round-robins one agent per tick, so without this an agent
+        // whose monitors fire every 15min still goes "silent" for
+        // hours between scanner visits even when its data pipeline is
+        // healthy. ECHO-WATCH was the canonical case — monitor-social-
+        // unified producing signals every 15min while the agent badge
+        // showed silent for 17h.
+        supabase
+          .from("cron_heartbeat")
+          .select("job_name, started_at")
+          .in("job_name", mappedCronJobs)
+          .gte("started_at", new Date(Date.now() - 24 * 86400_000 / 24).toISOString())
+          .order("started_at", { ascending: false })
+          .limit(mappedCronJobs.length * 4),
+      ]);
+
+      // Build per-agent silence threshold from CRON_TO_AGENT mapping.
+      // For each agent we may map to multiple crons (ECHO-WATCH owns
+      // monitor-twitter + monitor-social-unified). Use the SHORTEST
+      // interval as the agent's expected cadence — if any of its
+      // monitors should fire every 15min, the agent should too.
+      const cronByJob = new Map<string, number>();
+      for (const row of (cronRes.data as Array<{ job_name: string; expected_interval_minutes: number }> | null) || []) {
+        if (row?.expected_interval_minutes && row.expected_interval_minutes > 0) {
+          // 525600 (year sentinel) = deprecated registry entry, skip.
+          if (row.expected_interval_minutes >= 525600) continue;
+          cronByJob.set(row.job_name, row.expected_interval_minutes);
+        }
+      }
+      const thresholdByAgent = new Map<string, number>();
+      for (const [job, agentCS] of Object.entries(CRON_TO_AGENT)) {
+        const interval = cronByJob.get(job);
+        if (!interval) continue;
+        const slack = interval * SLACK_MULTIPLIER;
+        const prev = thresholdByAgent.get(agentCS);
+        // Tightest cadence among the agent's mapped crons wins.
+        if (!prev || slack < prev) thresholdByAgent.set(agentCS, slack);
+      }
+      const thresholdFor = (cs: string): number => {
+        const t = thresholdByAgent.get(cs) ?? DEFAULT_NO_CRON_MIN;
+        return Math.min(FALLBACK_CEILING_MIN, Math.max(FALLBACK_FLOOR_MIN, t));
+      };
+
+      const lastByAgent = new Map<string, number>();
+      const ingest = (rows: Array<{ agent_call_sign: string; created_at: string }> | null) => {
+        for (const r of rows || []) {
+          if (!r?.agent_call_sign) continue;
+          const t = new Date(r.created_at).getTime();
+          const prev = lastByAgent.get(r.agent_call_sign) || 0;
+          if (t > prev) lastByAgent.set(r.agent_call_sign, t);
+        }
+      };
+      ingest(scanRes.data as any);
+      ingest(analysisRes.data as any);
+      ingest(debateRes.data as any);
+
+      // 4th source: each agent's mapped cron heartbeats. If a monitor
+      // owned by this agent fired recently, the agent's data pipeline
+      // is alive even if the round-robin agent-activity-scanner hasn't
+      // visited it yet.
+      for (const r of (cronHbRes.data as Array<{ job_name: string; started_at: string }> | null) || []) {
+        const agentCS = CRON_TO_AGENT[r.job_name];
+        if (!agentCS) continue;
+        const t = new Date(r.started_at).getTime();
+        const prev = lastByAgent.get(agentCS) || 0;
+        if (t > prev) lastByAgent.set(agentCS, t);
+      }
+
+      const now = Date.now();
+      const silent: SilentAgentInfo[] = [];
+      for (const cs of callSigns) {
+        const threshold = thresholdFor(cs);
+        const last = lastByAgent.get(cs);
+        if (!last) {
+          // No activity in the 7-day fetch window — silent regardless
+          // of threshold (worst case, capped to 7 days for display).
+          silent.push({ callSign: cs, silentMinutes: 7 * 24 * 60 });
+          continue;
+        }
+        const silentMin = (now - last) / 60_000;
+        if (silentMin > threshold) {
+          silent.push({ callSign: cs, silentMinutes: Math.round(silentMin) });
+        }
+      }
+      return silent.sort((a, b) => b.silentMinutes - a.silentMinutes);
+    },
+  });
+}
+
+// ─── Phase 4 — Watchdog self-pulse + gate health ────────────────────────
+
+export interface WatchdogPulse {
+  lastRunAt: string | null;
+  minutesSinceLastRun: number | null;
+  status: 'healthy' | 'stale' | 'critical' | 'unknown';
+}
+
+export function useWatchdogPulse() {
+  return useQuery({
+    queryKey: ["watchdog-pulse-v1"],
+    refetchInterval: 60_000,
+    queryFn: async (): Promise<WatchdogPulse> => {
+      const { data } = await supabase
+        .from("cron_heartbeat")
+        .select("started_at")
+        .like("job_name", "system-watchdog%")
+        .order("started_at", { ascending: false })
+        .limit(1);
+      const last = data?.[0];
+      if (!last) return { lastRunAt: null, minutesSinceLastRun: null, status: 'critical' };
+      const min = (Date.now() - new Date(last.started_at).getTime()) / 60_000;
+      // Watchdog cron is `0 13 * * *` (daily at 13:00 UTC). Healthy =
+      // ran in the last 26h (one cycle + 2h buffer for clock skew /
+      // long runs). Stale = 26-30h (one missed cycle pending). Critical
+      // = >30h (two consecutive misses — auditor is broken). Earlier
+      // thresholds were 2h/4h, written for an hourly cadence the cron
+      // never actually used; they put the panel in 'critical' 23h out
+      // of every 24 even when the auditor was running fine.
+      const status: WatchdogPulse['status'] =
+        min > 1800 ? 'critical' : min > 1560 ? 'stale' : 'healthy';
+      return {
+        lastRunAt: last.started_at,
+        minutesSinceLastRun: Math.round(min),
+        status,
+      };
+    },
+  });
+}
+
+export interface GateHealth {
+  /** Distribution of composite_confidence over recent signals,
+   * bucketed into 5 bins (0-0.2, 0.2-0.4, ..., 0.8-1.0). */
+  buckets: number[];
+  /** Total signal count contributing to the histogram. */
+  total: number;
+  /** Mean composite_confidence. Healthy gate is roughly 0.4–0.6. */
+  mean: number | null;
+  /** Computed status: 'healthy' / 'too-permissive' / 'too-strict' /
+   * 'low-volume' / 'unknown'. */
+  status: 'healthy' | 'too-permissive' | 'too-strict' | 'low-volume' | 'unknown';
+  reason: string;
+}
+
+export function useGateHealth() {
+  return useQuery({
+    queryKey: ["gate-health-v1"],
+    refetchInterval: 5 * 60_000,
+    queryFn: async (): Promise<GateHealth> => {
+      const since = new Date(Date.now() - 24 * 86400_000 / 24).toISOString();
+      const { data } = await supabase
+        .from("signals")
+        .select("composite_confidence")
+        .gte("created_at", since)
+        .not("composite_confidence", "is", null)
+        .neq("is_test", true)
+        .is("deleted_at", null)
+        .limit(2000);
+
+      const values = (data || [])
+        .map((r: any) => Number(r.composite_confidence))
+        .filter((n) => Number.isFinite(n) && n >= 0 && n <= 1);
+
+      const buckets = [0, 0, 0, 0, 0];
+      for (const v of values) {
+        const idx = Math.min(4, Math.floor(v * 5));
+        buckets[idx]++;
+      }
+      const total = values.length;
+      const mean = total > 0
+        ? values.reduce((a, b) => a + b, 0) / total
+        : null;
+
+      let status: GateHealth['status'] = 'unknown';
+      let reason = '';
+      if (total < 10) {
+        status = 'low-volume';
+        reason = `Only ${total} scored signals in 24h — not enough data for distribution check.`;
+      } else if (mean != null && mean > 0.85) {
+        status = 'too-permissive';
+        reason = `Mean composite ${mean.toFixed(2)} — gate is letting almost everything through. Inspect the relevance scorer.`;
+      } else if (mean != null && mean < 0.15) {
+        status = 'too-strict';
+        reason = `Mean composite ${mean.toFixed(2)} — gate is rejecting almost everything. Inspect the relevance scorer.`;
+      } else if (mean != null) {
+        status = 'healthy';
+        reason = `Mean composite ${mean.toFixed(2)} across ${total} signals — distribution looks normal.`;
+      }
+      return { buckets, total, mean, status, reason };
+    },
+  });
+}
+
+/** Group active findings by affected agent so the constellation
+ * can pin them to specific nodes. Findings without an affectedAgent
+ * are dropped from this map (the global panel surfaces them
+ * separately). */
+export function groupFindingsByAgent(findings: PlatformFinding[] | undefined): Map<string, PlatformFinding[]> {
+  const out = new Map<string, PlatformFinding[]>();
+  if (!findings) return out;
+  for (const f of findings) {
+    if (!f.affectedAgent) continue;
+    const list = out.get(f.affectedAgent) || [];
+    list.push(f);
+    out.set(f.affectedAgent, list);
+  }
+  return out;
+}
+
+/** Worst-status wins (critical > stale > healthy > unknown). Returns
+ * empty Map for agents with no mapped jobs — those agents don't
+ * change appearance from cron health alone. */
+export function computeAgentHealthFromCrons(
+  crons: CronHealth[] | undefined,
+): Map<string, { status: CronHealthStatus; reason: string }> {
+  const out = new Map<string, { status: CronHealthStatus; reason: string }>();
+  if (!crons) return out;
+  const rank: Record<CronHealthStatus, number> = { critical: 3, stale: 2, healthy: 1, unknown: 0 };
+  for (const cron of crons) {
+    const agent = CRON_TO_AGENT[cron.jobName];
+    if (!agent) continue;
+    const reason = cron.minutesSinceLastRun != null
+      ? `${cron.jobName} last ran ${cron.minutesSinceLastRun}m ago (expected every ${cron.expectedIntervalMinutes ?? '?'}m)`
+      : `${cron.jobName} has no recorded heartbeat`;
+    const existing = out.get(agent);
+    if (!existing || rank[cron.status] > rank[existing.status]) {
+      out.set(agent, { status: cron.status, reason });
+    }
+  }
+  return out;
+}
+
+// ─── Benchmark health ─────────────────────────────────────────────────
+// Pulls the latest completed benchmark run + last-N trend so the
+// constellation can show "platform quality" alongside cron staleness
+// and watchdog findings. Source of truth is `benchmark_runs` and
+// `benchmark_results` populated by the run-benchmark edge function.
+
+export interface BenchmarkRunSummary {
+  id: string;
+  triggeredAt: string;
+  triggeredBy: string | null;
+  completedAt: string | null;
+  examplesRun: number;
+  examplesPassed: number;
+  signalCreationAccuracy: number | null;
+  categoryAccuracy: number | null;
+  severityCalibration: number | null;
+  noiseSuppressionRate: number | null;
+  pipelineVersion: string | null;
+}
+
+export interface BenchmarkHealth {
+  latest: BenchmarkRunSummary | null;
+  history: BenchmarkRunSummary[];      // up to 10 most recent completed runs (for sparkline)
+  byClass: Array<{ exampleClass: string; total: number; decisionCorrect: number }>;
+  freshnessHours: number | null;        // hours since latest completed run
+  freshnessStatus: 'fresh' | 'stale' | 'never';
+}
+
+export function useBenchmarkHealth() {
+  return useQuery({
+    queryKey: ["benchmark-health"],
+    refetchInterval: 5 * 60_000,
+    queryFn: async (): Promise<BenchmarkHealth> => {
+      // Latest completed run
+      const { data: history } = await supabase
+        .from("benchmark_runs")
+        .select("id, triggered_at, triggered_by, completed_at, examples_run, examples_passed, signal_creation_accuracy, category_accuracy, severity_calibration, noise_suppression_rate, pipeline_version")
+        .not("completed_at", "is", null)
+        .order("triggered_at", { ascending: false })
+        .limit(10);
+
+      const mapped: BenchmarkRunSummary[] = (history || []).map((r: any) => ({
+        id: r.id,
+        triggeredAt: r.triggered_at,
+        triggeredBy: r.triggered_by,
+        completedAt: r.completed_at,
+        examplesRun: r.examples_run,
+        examplesPassed: r.examples_passed,
+        signalCreationAccuracy: r.signal_creation_accuracy,
+        categoryAccuracy: r.category_accuracy,
+        severityCalibration: r.severity_calibration,
+        noiseSuppressionRate: r.noise_suppression_rate,
+        pipelineVersion: r.pipeline_version,
+      }));
+
+      const latest = mapped[0] ?? null;
+
+      // Per-class breakdown for the latest run.
+      let byClass: BenchmarkHealth['byClass'] = [];
+      if (latest) {
+        const { data: results } = await supabase
+          .from("benchmark_results")
+          .select("example_id, signal_creation_correct")
+          .eq("run_id", latest.id);
+        const ids = Array.from(new Set((results || []).map((r: any) => r.example_id)));
+        const { data: examples } = ids.length > 0
+          ? await supabase.from("benchmark_examples").select("id, example_class").in("id", ids)
+          : { data: [] };
+        const exClassMap = new Map<string, string>((examples || []).map((e: any) => [e.id, e.example_class]));
+        const buckets = new Map<string, { total: number; correct: number }>();
+        for (const r of results || []) {
+          const cls = exClassMap.get((r as any).example_id) || 'unknown';
+          const b = buckets.get(cls) || { total: 0, correct: 0 };
+          b.total++;
+          if ((r as any).signal_creation_correct) b.correct++;
+          buckets.set(cls, b);
+        }
+        byClass = Array.from(buckets.entries())
+          .map(([cls, b]) => ({ exampleClass: cls, total: b.total, decisionCorrect: b.correct }))
+          .sort((a, b) => a.exampleClass.localeCompare(b.exampleClass));
+      }
+
+      // Freshness: hours since latest completed run.
+      let freshnessHours: number | null = null;
+      let freshnessStatus: BenchmarkHealth['freshnessStatus'] = 'never';
+      if (latest?.completedAt) {
+        const ageMs = Date.now() - new Date(latest.completedAt).getTime();
+        freshnessHours = ageMs / 3_600_000;
+        // Benchmark should run on every deploy. Stale = > 7 days
+        // without a run (likely deploy hook broken or runner timing out).
+        freshnessStatus = freshnessHours <= 24 * 7 ? 'fresh' : 'stale';
+      }
+
+      return { latest, history: mapped, byClass, freshnessHours, freshnessStatus };
+    },
   });
 }

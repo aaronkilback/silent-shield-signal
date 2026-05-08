@@ -20,14 +20,109 @@ import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  useAgentCommLinks, useActiveDebates, useScanPulses, useScanCount, useDebateCount, useAgentActivityMetrics,
+  useAgentCommLinks, useActiveDebates, useScanPulses, useScanCount, useDebateCount, useAgentActivityMetrics, useRecentEscalations,
   useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData,
   useConstellationEntities, useSignalRealtime, useMessageRealtime,
+  useCronHealth, computeAgentHealthFromCrons,
+  useActiveFindings, groupFindingsByAgent,
+  useOpenLoops, useSilentAgents,
+  type PlatformFinding,
   type SignalBurstEvent, type MessageBurstEvent,
 } from "@/hooks/useConstellationData";
+import { MonitorHealthPanel } from "@/components/neural-constellation/MonitorHealthPanel";
+import { WatchdogFindingsPanel } from "@/components/neural-constellation/WatchdogFindingsPanel";
+import { PlatformVitalsBar } from "@/components/neural-constellation/PlatformVitalsBar";
+import { BenchmarkHealthPanel } from "@/components/neural-constellation/BenchmarkHealthPanel";
+import type { AgentFindingSummary, AgentOpenLoops, AgentSilenceInfo } from "@/components/neural-constellation/ConstellationScene";
 import { useFortressHealth } from "@/hooks/useFortressHealth";
 import { useSystemHealth } from "@/hooks/useSystemHealth";
 import { useGodsEyeData, type GlobeDataType, type GodsEyePin } from "@/hooks/useGodsEyeData";
+
+// Map agent specialty/call-sign → semantic color cluster.
+//
+// Pre-May-2026 every node took its `avatar_color` verbatim from the
+// ai_agents row, which gave us an arbitrary rainbow with no
+// communicable structure. The constellation looked decorative
+// because the colors meant nothing — two cyan nodes had no shared
+// trait beyond "someone picked cyan when seeding the agent."
+//
+// New mapping is by intelligence DOMAIN. Two agents in the same
+// color cluster work the same kind of problem, so the operator
+// can see the tribal grouping at a glance:
+//
+//   amber    AEGIS-CMD            command / doctrine / orchestration
+//   red      counterterrorism     IMVE / radicalization / kinetic threat
+//   cyan     cyber                APT / malware / cyber threat intel
+//   purple   geopolitical         regional risk / sanctions / forecast
+//   emerald  financial            FININT / fraud / financial crime
+//   magenta  insider threat       insider risk / behavioral / personnel
+//   orange   influence            disinformation / social engineering
+//   teal     supply chain         third-party / vendor / logistics
+//   indigo   physical security    asset protection / executive protection
+//   lime     wildfire / environment   wildfire / natural disaster / HSE
+//   yellow   strategic / HUMINT   collection / source mgmt / strategy
+//   slate    default              uncategorized / new agents
+//
+// Resolution order: explicit call_sign override → specialty
+// keyword match → slate fallback. New agents fall to slate until
+// they're either explicitly mapped here or carry a recognizable
+// specialty keyword.
+const DOMAIN_COLOR = {
+  command:        "#f59e0b",
+  counterterror:  "#dc2626",
+  cyber:          "#06b6d4",
+  geopolitical:   "#a855f7",
+  financial:      "#10b981",
+  insider:        "#db2777",
+  influence:      "#f97316",
+  supply_chain:   "#14b8a6",
+  physical:       "#6366f1",
+  environmental:  "#84cc16",
+  strategic:      "#eab308",
+  default:        "#64748b",
+} as const;
+type DomainKey = keyof typeof DOMAIN_COLOR;
+
+const CALL_SIGN_DOMAIN: Record<string, DomainKey> = {
+  "AEGIS-CMD":      "command",
+  "VERIDIAN-TANGO": "counterterror",
+  "ECHO-WATCH":     "influence",
+  "NEO":            "cyber",
+  "MERIDIAN":       "geopolitical",
+  "GLOBE-SAGE":     "strategic",
+  "FININT":         "financial",
+  "INSIDE-EYE":     "insider",
+  "CHAIN-WATCH":    "supply_chain",
+  "WILDFIRE":       "environmental",
+  "ARGUS":          "physical",
+  "CERBERUS":       "financial",
+  "OUROBOROS":      "supply_chain",
+  "SPECTER":        "insider",
+  "BRAVO-1":        "command",
+  "WARDEN":         "influence",
+};
+
+function specialtyToDomain(specialty: string): DomainKey {
+  const s = (specialty || "").toLowerCase();
+  if (/counterterror|terrorism|extremism|radicalization|imve/.test(s)) return "counterterror";
+  if (/cyber|apt|malware|ransomware|phishing|threat intelligence|threat intel/.test(s)) return "cyber";
+  if (/geopolitical|political violence|regional|sanctions|country risk/.test(s)) return "geopolitical";
+  if (/financial|fraud|fincrime|money laundering|aml|fintec/.test(s)) return "financial";
+  if (/insider|behavioral|personnel risk|workplace violence/.test(s)) return "insider";
+  if (/influence|disinformation|social engineering|coordinated inauthentic|narrative/.test(s)) return "influence";
+  if (/supply chain|third.party|vendor|logistics/.test(s)) return "supply_chain";
+  if (/physical|executive protection|asset protection|venue|carver/.test(s)) return "physical";
+  if (/wildfire|natural disaster|environmental|hse|fire weather|fbp/.test(s)) return "environmental";
+  if (/strategic|humint|collection|geopolitical analy|intelligence collection/.test(s)) return "strategic";
+  if (/incident response|coop|continuity|orchestration|command|protocol/.test(s)) return "command";
+  return "default";
+}
+
+function colorForAgent(callSign: string, specialty: string): string {
+  const fromCallSign = CALL_SIGN_DOMAIN[callSign];
+  if (fromCallSign) return DOMAIN_COLOR[fromCallSign];
+  return DOMAIN_COLOR[specialtyToDomain(specialty)];
+}
 
 // Map agents to 3D positions in a constellation layout
 function assignPositions(agents: any[]): AgentNode[] {
@@ -48,7 +143,7 @@ function assignPositions(agents: any[]): AgentNode[] {
   if (aegisAgent) {
     nodes.push({
       id: aegisAgent.id, callSign: aegisAgent.call_sign, codename: aegisAgent.codename,
-      specialty: aegisAgent.specialty, color: "#f59e0b",
+      specialty: aegisAgent.specialty, color: colorForAgent(aegisAgent.call_sign, aegisAgent.specialty),
       position: [0, 0, 0],
       tier: "primary",
     });
@@ -60,7 +155,7 @@ function assignPositions(agents: any[]): AgentNode[] {
     const radius = 5;
     nodes.push({
       id: agent.id, callSign: agent.call_sign, codename: agent.codename,
-      specialty: agent.specialty, color: agent.avatar_color || "#3B82F6",
+      specialty: agent.specialty, color: colorForAgent(agent.call_sign, agent.specialty),
       position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.6, Math.sin(angle) * 1.5],
       tier: "primary",
     });
@@ -71,7 +166,7 @@ function assignPositions(agents: any[]): AgentNode[] {
     const radius = 9;
     nodes.push({
       id: agent.id, callSign: agent.call_sign, codename: agent.codename,
-      specialty: agent.specialty, color: agent.avatar_color || "#6366F1",
+      specialty: agent.specialty, color: colorForAgent(agent.call_sign, agent.specialty),
       position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.5, Math.cos(angle) * 2 - 1],
       tier: "secondary",
     });
@@ -82,7 +177,7 @@ function assignPositions(agents: any[]): AgentNode[] {
     const radius = 13;
     nodes.push({
       id: agent.id, callSign: agent.call_sign, codename: agent.codename,
-      specialty: agent.specialty, color: agent.avatar_color || "#64748B",
+      specialty: agent.specialty, color: colorForAgent(agent.call_sign, agent.specialty),
       position: [Math.cos(angle) * radius, Math.sin(angle) * radius * 0.4 + (Math.random() - 0.5) * 2, Math.sin(angle * 2) * 3],
       tier: "support",
     });
@@ -214,12 +309,67 @@ const NeuralConstellation = () => {
     [scanPulses]
   );
   const { data: activityMetrics = [] } = useAgentActivityMetrics(deferredEnabled);
+  const { data: recentEscalations } = useRecentEscalations(deferredEnabled);
   const { data: knowledgeGraphEdges = [] } = useKnowledgeGraphEdges(deferredEnabled);
   const { data: operatorDevices = [] } = useOperatorDevices(deferredEnabled);
   const { data: operatorMessageActivity } = useOperatorMessageActivity(deferredEnabled);
   const { data: knowledgeGrowth } = useKnowledgeGrowthData(!!user);
   const { data: fortressHealth, isLoading: fortressLoading } = useFortressHealth(!!user);
   const { data: systemHealth } = useSystemHealth(!!user);
+  // Phase 1 diagnostic overlay — cron heartbeat health.
+  const { data: cronHealth } = useCronHealth();
+  const agentHealth = useMemo(
+    () => computeAgentHealthFromCrons(cronHealth),
+    [cronHealth],
+  );
+
+  // Phase 2 diagnostic overlay — active behavioral-health findings
+  // from system-watchdog, grouped per agent so the constellation can
+  // pin warnings to specific nodes.
+  const { data: activeFindings } = useActiveFindings();
+  const agentFindings = useMemo<Map<string, AgentFindingSummary>>(() => {
+    const grouped = groupFindingsByAgent(activeFindings);
+    const summary = new Map<string, AgentFindingSummary>();
+    const sevRank: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+    for (const [agent, findings] of grouped) {
+      const sorted = [...findings].sort(
+        (a, b) => (sevRank[b.severity] || 0) - (sevRank[a.severity] || 0),
+      );
+      const worst = sorted[0]?.severity || 'info';
+      const allowed = ['info','low','medium','high','critical'] as const;
+      summary.set(agent, {
+        count: sorted.length,
+        worstSeverity: (allowed.includes(worst as any) ? worst : 'info') as AgentFindingSummary['worstSeverity'],
+        titles: sorted.slice(0, 3).map((f) => f.title.substring(0, 80)),
+      });
+    }
+    return summary;
+  }, [activeFindings]);
+
+  // Findings without an affected agent surface in the global panel.
+  const platformWideFindings = useMemo<PlatformFinding[]>(
+    () => (activeFindings || []).filter((f) => !f.affectedAgent),
+    [activeFindings],
+  );
+
+  // Phase 3 — open Tier-2 review loops & silent agents.
+  const { data: openLoops } = useOpenLoops(!!user);
+  const { data: silentAgents } = useSilentAgents(!!user);
+  const agentOpenLoops = useMemo<Map<string, AgentOpenLoops>>(() => {
+    const out = new Map<string, AgentOpenLoops>();
+    if (!openLoops) return out;
+    for (const [agent, count] of openLoops.byAgent) {
+      out.set(agent, { count, oldestMinutes: openLoops.oldestMinutes });
+    }
+    return out;
+  }, [openLoops]);
+  const agentSilence = useMemo<Map<string, AgentSilenceInfo>>(() => {
+    const out = new Map<string, AgentSilenceInfo>();
+    for (const s of silentAgents || []) {
+      out.set(s.callSign, { silentMinutes: s.silentMinutes });
+    }
+    return out;
+  }, [silentAgents]);
 
   // God's Eye data — unified intelligence layers for the globe
   const { data: godsEyeData } = useGodsEyeData(!!user);
@@ -351,6 +501,11 @@ const NeuralConstellation = () => {
             entityRelationships={entityData?.relationships || []}
             signalBurst={signalBurst}
             aegisPulse={aegisPulse}
+            agentHealth={agentHealth}
+            agentFindings={agentFindings}
+            agentOpenLoops={agentOpenLoops}
+            agentSilence={agentSilence}
+            recentEscalations={recentEscalations}
           />
           </Suspense>
         </div>
@@ -366,35 +521,39 @@ const NeuralConstellation = () => {
           visible={cameraView === 'earth'}
         />
 
-        {/* Bottom status bar (draggable) */}
-        <DraggablePanel className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10" style={{ pointerEvents: "auto" }}>
-          <div data-drag-handle className="flex items-center gap-6 bg-card/70 backdrop-blur-xl border border-border rounded px-5 py-2">
-            <div className="text-[10px] tracking-widest uppercase" title="Active communication links between agents">
-              <span className="text-muted-foreground">Live Comms: </span>
+        {/* Bottom status bar (draggable). Earlier this used gap-6 + px-5
+            which spilled off both edges on narrower viewports, clipping
+            "Threats" → "hreats" and "Knowledge" → "Kno". Tighter spacing
+            + max-width constraint + horizontal scroll fallback keep the
+            full content reachable on any width without overflow. */}
+        <DraggablePanel className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 max-w-[calc(100vw-2rem)]" style={{ pointerEvents: "auto" }}>
+          <div data-drag-handle className="flex items-center gap-3 bg-card/70 backdrop-blur-xl border border-border rounded px-3 py-2 overflow-x-auto whitespace-nowrap">
+            <div className="text-[10px] tracking-widest uppercase shrink-0" title="Active communication links between agents">
+              <span className="text-muted-foreground">Comms: </span>
               <span className="text-cyan-400 font-bold">{commLinks.length}</span>
             </div>
-            <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase" title="Total agent debate records">
-              <span className="text-muted-foreground">Active Debates: </span>
+            <div className="w-px h-4 bg-border shrink-0" />
+            <div className="text-[10px] tracking-widest uppercase shrink-0" title="Total agent debate records">
+              <span className="text-muted-foreground">Debates: </span>
               <span className="text-amber-400 font-bold">{debateCount}</span>
             </div>
-            <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase" title="Threats Resolved (Signals)">
-              <span className="text-muted-foreground">Threats Neutralized: </span>
+            <div className="w-px h-4 bg-border shrink-0" />
+            <div className="text-[10px] tracking-widest uppercase shrink-0" title="Threats Resolved (Signals)">
+              <span className="text-muted-foreground">Neutralized: </span>
               <span className="text-emerald-400 font-bold">{neutralizedCount}</span>
             </div>
-            <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase" title="Autonomous scans in the last 24 hours">
+            <div className="w-px h-4 bg-border shrink-0" />
+            <div className="text-[10px] tracking-widest uppercase shrink-0" title="Autonomous scans in the last 24 hours">
               <span className="text-muted-foreground">Scans: </span>
               <span className="text-primary font-bold">{scanCount}</span>
             </div>
-            <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase">
+            <div className="w-px h-4 bg-border shrink-0" />
+            <div className="text-[10px] tracking-widest uppercase shrink-0">
               <span className="text-muted-foreground">Entities: </span>
               <span className="font-bold" style={{ color: "#f59e0b" }}>{entityPositionedNodes.length}</span>
             </div>
-            <div className="w-px h-4 bg-border" />
-            <div className="text-[10px] tracking-widest uppercase">
+            <div className="w-px h-4 bg-border shrink-0" />
+            <div className="text-[10px] tracking-widest uppercase shrink-0">
               <span className="text-muted-foreground">Knowledge: </span>
               <span className="font-bold" style={{ color: "#a855f7" }}>{knowledgeGrowth?.totalEntries || 0}</span>
               {(knowledgeGrowth?.todayEntries || 0) > 0 && (
@@ -413,6 +572,37 @@ const NeuralConstellation = () => {
             if (node) setSelectedAgent(node);
           }}
         />
+
+        {/* Diagnostic overlay panels (Phase 1 + 2).
+            Stacked top-right so platform issues are the first thing
+            an operator sees on page load. Both collapsed when there
+            are no issues; expand inline when something needs
+            attention. Order: monitor heartbeat first (Phase 1),
+            then watchdog behavioral findings (Phase 2). */}
+        {/* Diagnostic stack — Phases 1, 2, 4 + FORTIFY loop-health. The
+            stack is height-bounded so it never grows past 55vh, leaving
+            the bottom of the right column for the activity feed (which
+            now sits at top:calc(55vh + 24px) — see below). Earlier the
+            stack used calc(100vh - 80px) which let it cover the entire
+            right column and clip activity-feed content behind it. */}
+        <div className="absolute top-4 right-4 z-20 w-[340px] space-y-2 pointer-events-auto max-h-[calc(42vh)] overflow-y-auto bg-[#020408]/85 backdrop-blur-xl rounded-lg p-2 border border-border/40">
+          <MonitorHealthPanel />
+          <WatchdogFindingsPanel platformWide={platformWideFindings} agentScopedCount={agentFindings.size} />
+          {/* Phase 4 vitals — platform-wide diagnostics that don't pin
+              to a single agent: watchdog self-pulse + gate-distribution
+              gauge. Lives below the issue panels but above the FORTIFY
+              loop-health card. */}
+          <PlatformVitalsBar />
+          {/* Benchmark health — labeled-corpus regression scores. Stays
+              collapsed by default; expands to show 4 metrics + class
+              breakdown + trend. Source of truth: benchmark_runs +
+              benchmark_results, populated by run-benchmark function. */}
+          <BenchmarkHealthPanel />
+          {/* FORTIFY loop-health (was an absolute-positioned floater that
+              overlapped AUDITOR PULSE and GATE DIST). Now stacks here so
+              the right rail has a single coherent column. */}
+          <FortressHUD health={fortressHealth} isLoading={fortressLoading} />
+        </div>
 
         {/* Right Panel — activity feed when no node selected; node detail when agent clicked */}
         {selectedAgent ? (
@@ -435,8 +625,6 @@ const NeuralConstellation = () => {
           />
         )}
 
-        {/* Fortress HUD — loop health drilldown, top right */}
-        <FortressHUD health={fortressHealth} isLoading={fortressLoading} />
       </main>
 
       <SignalDetailSheet
