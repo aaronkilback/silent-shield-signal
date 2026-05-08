@@ -60,6 +60,12 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
         .select("*")
         .in("client_id", activeIds)
         .neq("is_test", true)
+        // 2026-05-08: hide synthetic [PATTERN] frequency-spike signals
+        // from the operator-facing feed. They're aggregates produced by
+        // fortress-detect-patterns-6h, useful for analytics but visually
+        // noisy ("3 signals this week (1 prior week)") next to real
+        // OSINT items. Still exist in the table for downstream analysis.
+        .not("title", "ilike", "%[PATTERN]%")
         .order("created_at", { ascending: false })
         .limit(30);
       if (error) throw error;
