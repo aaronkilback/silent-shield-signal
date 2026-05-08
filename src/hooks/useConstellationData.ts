@@ -1655,10 +1655,15 @@ export interface BenchmarkHealth {
   freshnessStatus: 'fresh' | 'stale' | 'never';
 }
 
-export function useBenchmarkHealth() {
+export function useBenchmarkHealth(enabled: boolean = true) {
   return useQuery({
     queryKey: ["benchmark-health"],
-    refetchInterval: 5 * 60_000,
+    enabled,
+    // Refetch infrequently — benchmark runs only fire on deploys (or
+    // manual). 30 min cadence is plenty; minimizes load on the
+    // already-busy constellation page.
+    refetchInterval: 30 * 60_000,
+    staleTime: 10 * 60_000,
     queryFn: async (): Promise<BenchmarkHealth> => {
       // Latest completed run
       const { data: history } = await supabase

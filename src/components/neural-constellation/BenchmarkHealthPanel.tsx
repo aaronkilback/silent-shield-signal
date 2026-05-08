@@ -10,16 +10,15 @@ import { useBenchmarkHealth } from "@/hooks/useConstellationData";
  * benchmark_results. Populated by the run-benchmark edge function
  * (manually or via the qa-on-deploy GitHub Action).
  *
- * Layout: collapsible card. Collapsed shows the headline decision
- * accuracy + freshness chip. Expanded shows all four metrics, the
- * trend across last 10 runs, and per-class breakdown for the latest
- * run (so an operator can see exactly which class regressed).
+ * Lazy-loading: the underlying hook is `enabled: expanded`, so the
+ * page does NOT fire benchmark queries on mount. The constellation
+ * already has many parallel queries; benchmark data is rarely
+ * accessed (operators glance at it, not stare at it) so it pays to
+ * only fetch when the operator opens the panel.
  */
 export function BenchmarkHealthPanel() {
-  const { data, isLoading } = useBenchmarkHealth();
   const [expanded, setExpanded] = useState(false);
-
-  if (isLoading) return null;
+  const { data, isFetching } = useBenchmarkHealth(expanded);
 
   const latest = data?.latest ?? null;
   const history = data?.history ?? [];
@@ -73,7 +72,9 @@ export function BenchmarkHealthPanel() {
 
       {expanded && (
         <div className="mt-3 space-y-3">
-          {!latest ? (
+          {isFetching && !latest ? (
+            <div className="text-xs text-muted-foreground">Loading benchmark data…</div>
+          ) : !latest ? (
             <div className="text-xs text-muted-foreground">
               No completed benchmark runs yet. Fire one with:
               <pre className="mt-1 rounded bg-muted/40 p-1.5 font-mono text-[11px]">
