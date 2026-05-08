@@ -42,13 +42,24 @@ function formatAgo(ts: string) {
 }
 
 export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [], visible = true, onSignalClick }: ActivityFeedPanelProps) {
-  // Self-contained signal query — doesn't depend on parent timing
+  // Self-contained signal query — doesn't depend on parent timing.
+  // 2026-05-08: filter to active clients only + exclude is_test signals
+  // so benchmark sandbox traffic (_benchmark_petronas / _benchmark_bcch)
+  // doesn't leak into the operator-facing feed.
   const { data: signals = [] } = useQuery({
     queryKey: ["activity-feed-signals"],
     queryFn: async () => {
+      const { data: activeClientRows } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("status", "active");
+      const activeIds = (activeClientRows || []).map((r: any) => r.id);
+      if (activeIds.length === 0) return [];
       const { data, error } = await supabase
         .from("signals")
         .select("*")
+        .in("client_id", activeIds)
+        .neq("is_test", true)
         .order("created_at", { ascending: false })
         .limit(30);
       if (error) throw error;
@@ -142,7 +153,7 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
   return (
     <DraggablePanel
       className="absolute right-4 z-10 pointer-events-auto animate-slide-in-right"
-      style={{ top: "52px", bottom: "60px" }}
+      style={{ top: "calc(42vh + 24px)", bottom: "60px" }}
     >
       <div
         className="h-full backdrop-blur-xl border rounded-lg bg-card/90 border-border overflow-hidden flex flex-col"
