@@ -48,7 +48,16 @@ interface SignalRow {
   raw_json: Record<string, any> | null;
   created_at: string;
   entity_tags: string[] | null;
+  composite_confidence: number | null;
 }
+
+// Min composite_confidence required to admit a signal into sequence
+// matching. Below this, the signal is too unscored/uncertain to be
+// reliably stitched into a multi-stage pattern; admitting it produces
+// false-positive sequences (Coastal GasLink reputational_attack on
+// May 8 2026: a sig with conf=null was matched on a "statement"
+// keyword and inflated a false sequence to escalated status).
+const MIN_CONFIDENCE_FOR_SEQUENCE = 0.55;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -89,15 +98,28 @@ Deno.serve(async (req) => {
     for (const client of clients) {
       const sinceISO = new Date(Date.now() - maxWindowSec * 1000).toISOString();
 
-      const { data: signals } = await supabase
+      const { data: rawSignals } = await supabase
         .from('signals')
-        .select('id, title, category, signal_type, severity, raw_json, created_at, entity_tags')
+        .select('id, title, category, signal_type, severity, raw_json, created_at, entity_tags, composite_confidence')
         .eq('client_id', client.id)
         .gt('created_at', sinceISO)
         .is('deleted_at', null)
         .limit(3000);
 
-      if (!signals || signals.length === 0) continue;
+      // Two-filter pre-pass:
+      //  - Drop signals below MIN_CONFIDENCE_FOR_SEQUENCE (or null). The
+      //    relevance gate has already vetted these; admitting unscored
+      //    ones produces false escalations.
+      //  - Drop signals that read as historical references ("the 2022
+      //    attack") so they can't satisfy stages that imply current
+      //    activity. Cheap regex; semantic check is a future upgrade.
+      const signals = (rawSignals ?? []).filter(s =>
+        s.composite_confidence != null
+        && s.composite_confidence >= MIN_CONFIDENCE_FOR_SEQUENCE
+        && !looksHistorical(s)
+      );
+
+      if (signals.length === 0) continue;
 
       // Build per-client anchor candidates from high_value_assets +
       // monitoring_keywords. These replace the hardcoded KNOWN_ASSETS
@@ -274,6 +296,20 @@ function pickAnchor(sig: SignalRow, clientAnchors: string[]): string | null {
     }
   }
   return best;
+}
+
+// Detects signals that read as historical references rather than current
+// activity. Looks for `(in|on|since|during|back in) <year>` where the
+// referenced year is >12 months old. Crude — misses "five years ago"
+// without a literal year — but catches the common Wikipedia-style
+// retrospective pattern that was inflating false sequences.
+function looksHistorical(signal: SignalRow): boolean {
+  const text = `${signal.title ?? ''} ${signal.raw_json?.snippet ?? ''}`;
+  const yearMatch = text.match(/\b(?:in|on|since|during|back\s+in|the)\s+(20[0-2]\d)\b/i);
+  if (!yearMatch) return false;
+  const refYear = Number(yearMatch[1]);
+  const currentYear = new Date().getFullYear();
+  return refYear < currentYear - 1;
 }
 
 function stageMatches(signal: SignalRow, m: StageMatch): boolean {
