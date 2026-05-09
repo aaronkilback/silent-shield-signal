@@ -52,11 +52,19 @@ jobs:
           TARGET_INPUT='${{ github.event.inputs.target }}'
 
           list_all_functions() {
-            # Every directory under supabase/functions/ except those starting
-            # with `_` (the convention for shared modules).
+            # Every directory under supabase/functions/ that contains an
+            # index.ts (the deployable entrypoint), except those starting
+            # with `_` (shared modules) — the CLI deploy fails on dirs that
+            # only contain test files (e.g. anti-hallucination-test/ which
+            # only has index.test.ts).
             find supabase/functions -mindepth 1 -maxdepth 1 -type d \
               | awk -F/ '{print $NF}' \
               | grep -v '^_' \
+              | while read -r dir; do
+                  if [[ -f "supabase/functions/$dir/index.ts" ]]; then
+                    echo "$dir"
+                  fi
+                done \
               | sort
           }
 
