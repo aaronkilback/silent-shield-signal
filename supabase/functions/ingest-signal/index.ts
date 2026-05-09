@@ -1321,13 +1321,32 @@ Score this signal's relevance and classify the connection.`
         // Previous behaviour was non-blocking (let the signal through), but in practice
         // gate timeouts/errors meant junk signals slipped past during AI gateway hiccups.
         // qa_test signals still pass through so smoke tests remain reliable.
-        console.error('[AI Relevance Gate] Error (failing closed):', gateError);
+        const gateErrMsg = gateError instanceof Error ? gateError.message : String(gateError);
+        console.error('[AI Relevance Gate] Error (failing closed):', gateErrMsg);
         const isQaTestForGate = validationResult.data.sourceType === 'qa_test' || rawBody?.sourceType === 'qa_test' || is_test === true;
         if (!isQaTestForGate) {
+          // Audit trail — write to filtered_signals so the rejection is
+          // visible in dashboards/queries. Without this, gate-failure
+          // rejections silently drop on the floor (May 9 2026 incident:
+          // OpenAI 429s caused gate failures; monitor-news-google scanned
+          // 49 items and created 0 signals, with filtered_signals empty —
+          // operators saw symptoms but no diagnostic trail).
+          supabase.from('filtered_signals').insert({
+            raw_text: signalText.substring(0, 2000),
+            source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
+            source_name: source_key || signalRaw?.source_name || null,
+            client_id: clientId,
+            filter_reason: 'ai_relevance_gate_error',
+            relevance_score: null,
+            relevance_reason: gateErrMsg.substring(0, 500),
+            primary_connection: null,
+          }).then(() => {}).catch(() => {});
+
           return new Response(
             JSON.stringify({
               status: 'rejected',
               reason: 'ai_relevance_gate_error',
+              detail: gateErrMsg.substring(0, 200),
               message: 'Signal rejected because the AI relevance gate could not be evaluated'
             }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
