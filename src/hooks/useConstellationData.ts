@@ -1178,12 +1178,20 @@ export function useCronHealth() {
 // single agent is the obvious operational owner. Jobs not listed here
 // surface in the MonitorHealthPanel (broader catch-net) instead of
 // turning a constellation node red.
+// 2026-05-09: re-attributed monitor-social-* + monitor-twitter from
+// ECHO-WATCH to RYAN-INTEL. ECHO-WATCH's specialty is social
+// ENGINEERING (phishing, CIB, influence ops, narrative manipulation)
+// — it consumes signals across many sources for behavioral pattern
+// detection. RYAN-INTEL ("OSINT Analysis, Behavioral Signal Mapping,
+// Source Reliability Evaluation") is the right owner when a
+// social-media-firehose monitor goes silent. Mapping must stay in
+// sync with the duplicate in supabase/functions/system-watchdog.
 export const CRON_TO_AGENT: Record<string, string> = {
   'monitor-wildfires':              'WILDFIRE',
-  'monitor-social-unified':         'ECHO-WATCH',
-  'monitor-social-hourly':          'ECHO-WATCH',
-  'monitor-twitter':                'ECHO-WATCH',
-  'monitor-twitter-30min':          'ECHO-WATCH',
+  'monitor-social-unified':         'RYAN-INTEL',
+  'monitor-social-hourly':          'RYAN-INTEL',
+  'monitor-twitter':                'RYAN-INTEL',
+  'monitor-twitter-30min':          'RYAN-INTEL',
   'snapshot-bcws-ratings-daily':    'WILDFIRE',
   'monitor-cisa-kev-12h':           'NEO',
   'monitor-darkweb-6h':             'NEO',
