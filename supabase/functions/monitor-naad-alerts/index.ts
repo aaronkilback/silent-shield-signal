@@ -566,22 +566,56 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // 7. Match to client
+        // 7. Match to client — geographic-first, word-boundary aware.
+        //
+        // Old logic: substring-includes against (title + summary + areaDesc)
+        // for any client location OR keyword. Caused May 5 2026 misattribution
+        // where 3 Gaetz Brook NS Civil Emergency NAAD alerts got tagged as
+        // Petronas (Petronas keyword "Petronas Canada" → "canada" substring →
+        // matched the word "Canada" appearing somewhere in NAAD's generic
+        // boilerplate, even though the alert was about a machete in Nova
+        // Scotia, 5,000 km from any Petronas asset).
+        //
+        // New logic:
+        //   1. Geography first: cap.areaDesc is the canonical "where" of the
+        //      alert. Match client.locations against areaDesc with word-
+        //      boundary regex. If areaDesc contains any client location as
+        //      a whole word/phrase → match.
+        //   2. Keyword fallback: only if geography is silent (no areaDesc),
+        //      check client.monitoring_keywords against title+summary,
+        //      AND require the keyword to be ≥6 chars (drops "BC" / "PECL"
+        //      / "Canada" generic-token false positives).
         let matchedClientId: string | null = null;
         if (clients) {
-          // Pull CAP areaDesc into the match text — NAAD's title/summary
-          // often omit geography (e.g., "yellow warning - snowfall"),
-          // but CAP areaDesc names the affected regions. Without this,
-          // a real BC alert with a generic title fails the keyword
-          // match and gets dropped or miscategorized.
-          const alertText = `${alert.title} ${alert.summary} ${cap?.areaDesc ?? ''}`.toLowerCase();
+          const areaDescLower = (cap?.areaDesc ?? '').toLowerCase();
+          const titleSummaryLower = `${alert.title} ${alert.summary}`.toLowerCase();
+
+          const wholeWordIncludes = (haystack: string, needle: string): boolean => {
+            if (!haystack || !needle) return false;
+            // Escape regex metachars in needle, anchor with word boundaries.
+            const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const re = new RegExp(`\\b${esc}\\b`, 'i');
+            return re.test(haystack);
+          };
+
           for (const client of clients) {
-            const locs = (client.locations || []).map((l: string) => l.toLowerCase());
-            const kws = (client.monitoring_keywords || []).map((k: string) => k.toLowerCase());
-            if (locs.some((loc: string) => alertText.includes(loc)) ||
-                kws.some((kw: string) => alertText.includes(kw))) {
+            const locs = (client.locations || []).map((l: string) => l.toLowerCase().trim()).filter(Boolean);
+            const kws = (client.monitoring_keywords || []).map((k: string) => k.toLowerCase().trim()).filter(Boolean);
+
+            // Geography-first match
+            if (areaDescLower && locs.some((loc: string) => wholeWordIncludes(areaDescLower, loc))) {
               matchedClientId = client.id;
               break;
+            }
+            // Keyword fallback — only proper-noun-y keywords (≥6 chars), only
+            // if title/summary has them. Skip if areaDesc was non-empty
+            // because we trust geography over keyword in NAAD context.
+            if (!areaDescLower) {
+              const properKws = kws.filter((k: string) => k.length >= 6);
+              if (properKws.some((kw: string) => wholeWordIncludes(titleSummaryLower, kw))) {
+                matchedClientId = client.id;
+                break;
+              }
             }
           }
         }

@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
 
     // Apply staleness filter: signals older than 14 days only if critical AND directly PECL-relevant
     const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
-    const freshSignals = signals?.filter(s => {
+    let freshSignals = signals?.filter(s => {
       const signalDate = new Date(s.created_at || s.event_date || 0);
       const isRecent = signalDate >= new Date(fourteenDaysAgo);
       if (isRecent) return true;
@@ -123,6 +123,30 @@ Deno.serve(async (req) => {
         text.includes('coastal gaslink');
       return s.severity === 'critical' && isPECLRelevant;
     }) ?? [];
+
+    // 2026-05-09 quality fixes from Petronas executive brief audit:
+    // (1) Drop cancelled/resolved alerts — "Alert for X cancelled"
+    //     shouldn't drive an EXECUTIVE FLASH. (2) Dedup multi-update
+    //     NAAD events on cap.identifier or event+area so three updates
+    //     of the same machete incident aren't counted as three critical
+    //     signals (which today inflated trajectory to ESCALATING).
+    const cancelledRe = /\b(cancel(?:led|ed)?|lifted|all\s*clear|stand\s*down|rescinded)\b/i;
+    freshSignals = freshSignals.filter((s: any) => !cancelledRe.test(s.title ?? ''));
+
+    const seenEvents = new Map<string, any>();
+    for (const s of freshSignals) {
+      const cap = (s.raw_json && typeof s.raw_json === 'object') ? s.raw_json.cap : null;
+      const dedupKey = cap?.identifier
+        ? `cap:${cap.identifier}`
+        : cap
+          ? `evt:${cap.event}|${cap.area_desc ?? cap.areaDesc ?? ''}`
+          : `id:${s.id}`;
+      const existing = seenEvents.get(dedupKey);
+      if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
+        seenEvents.set(dedupKey, s);
+      }
+    }
+    freshSignals = Array.from(seenEvents.values());
 
     // Fetch incidents with classification rationale (excluding deleted + test)
     const { data: incidents, error: incidentsError } = await supabase
