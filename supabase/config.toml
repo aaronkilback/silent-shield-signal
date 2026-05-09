@@ -621,3 +621,78 @@ verify_jwt = false
 
 [functions.generate-security-bulletin]
 verify_jwt = false
+
+# ----------------------------------------------------------------
+# verify_jwt=false migration (May 9 2026) — required so cron jobs
+# can authenticate with the new sb_secret_* key system. Without
+# this, the function gateway parses the bearer as a JWT and rejects
+# sb_secret_* with UNAUTHORIZED_INVALID_JWT_FORMAT, breaking every
+# cron job. See memory: project_verify_jwt_migration_scope.md.
+#
+# TODO: add bearer-checks inside each function so they're not
+# anonymously triggerable. For now they're idempotent monitor writes
+# (low blast radius) — safer than leaving the leaked legacy JWT live.
+# ----------------------------------------------------------------
+
+[functions.agent-activity-scanner]
+verify_jwt = false
+
+[functions.aggregate-implicit-feedback]
+verify_jwt = false
+
+[functions.audit-knowledge-freshness]
+verify_jwt = false
+
+[functions.auto-trigger-debates]
+verify_jwt = false
+
+[functions.autonomous-source-discovery]
+verify_jwt = false
+
+[functions.compute-signal-baselines]
+verify_jwt = false
+
+[functions.fortress-chaos-monkey]
+verify_jwt = false
+
+[functions.generate-embeddings]
+verify_jwt = false
+
+[functions.monitor-social-unified]
+verify_jwt = false
+
+[functions.prediction-tracker]
+verify_jwt = false
+
+[functions.proactive-intelligence-push]
+verify_jwt = false
+
+[functions.propagate-knowledge-edges]
+verify_jwt = false
+
+[functions.semantic-embed-knowledge]
+verify_jwt = false
+
+[functions.send-daily-briefing]
+verify_jwt = false
+
+[functions.snapshot-bcws-ratings]
+verify_jwt = false
+
+[functions.source-credibility-updater]
+verify_jwt = false
+
+[functions.sweep-expert-knowledge]
+verify_jwt = false
+
+[functions.sync-buzzsprout]
+verify_jwt = false
+
+[functions.system-ops]
+verify_jwt = false
+
+[functions.thread-weaver]
+verify_jwt = false
+
+[functions.wraith-snapshot-codebase]
+verify_jwt = false
