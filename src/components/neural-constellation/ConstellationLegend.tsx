@@ -66,20 +66,24 @@ export function ConstellationLegend({
           </span>
         </div>
 
+        {/* Domain color legend.
+            Source of truth for these hex values is the DOMAIN_COLOR
+            map in src/pages/NeuralConstellation.tsx. Kept inline
+            here rather than imported because the legend renders 11
+            entries and a separate import isn't worth the module
+            churn. If the palette changes, update both. */}
         <div className="space-y-1.5">
-          {isExecutiveMode ? (
-            <>
-              <LegendItem color="hsl(38, 92%, 50%)" label="Command Hub" desc="AEGIS core" />
-              <LegendItem color="hsl(189, 95%, 52%)" label="Core Agents" desc="Primary ops" />
-              <LegendItem color="hsl(30, 90%, 60%)" label="Specialists" desc="Domain leads" />
-            </>
-          ) : (
-            <>
-              <LegendItem color="hsl(189, 95%, 52%)" label="Core Node" desc="Primary reasoning" />
-              <LegendItem color="hsl(30, 90%, 60%)" label="Specialist" desc="Domain expert" />
-              <LegendItem color="hsl(215, 20%, 45%)" label="Support" desc="Auxiliary analysis" />
-            </>
-          )}
+          <LegendItem color="#f59e0b" label="Command"        desc="Doctrine · IR · COOP" />
+          <LegendItem color="#dc2626" label="Counterterror"  desc="IMVE · radicalization" />
+          <LegendItem color="#06b6d4" label="Cyber"          desc="APT · malware · CTI" />
+          <LegendItem color="#a855f7" label="Geopolitical"   desc="Regional risk · sanctions" />
+          <LegendItem color="#10b981" label="Financial"      desc="FININT · fraud" />
+          <LegendItem color="#db2777" label="Insider Threat" desc="Personnel · behavioral" />
+          <LegendItem color="#f97316" label="Influence"      desc="Disinfo · social eng." />
+          <LegendItem color="#14b8a6" label="Supply Chain"   desc="Vendor · third party" />
+          <LegendItem color="#6366f1" label="Physical Sec."  desc="Asset · executive prot." />
+          <LegendItem color="#84cc16" label="Environmental"  desc="Wildfire · HSE" />
+          <LegendItem color="#eab308" label="Strategic"      desc="HUMINT · collection" />
         </div>
 
         {/* Mode-specific legend items */}

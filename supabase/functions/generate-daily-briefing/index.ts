@@ -56,6 +56,7 @@ Deno.serve(async (req) => {
       { data: clientBeliefs },
       { data: entityNarratives },
       { data: recentDispatches },
+      { data: recentDebates },
     ] = await Promise.all([
       supabase.from("clients").select("id, name, industry, locations").eq("id", clientId).single(),
       supabase
@@ -97,6 +98,29 @@ Deno.serve(async (req) => {
         .gte("created_at", cutoff24h)
         .order("created_at", { ascending: false })
         .limit(8),
+      // Multi-agent debate syntheses for this client's incidents.
+      // These are AEGIS-CMD's command syntheses + specialist
+      // contributions — primary analytical content for the briefing.
+      // The reports must USE these (not regenerate analysis) so the
+      // operator-facing brief reflects the actual reasoning trail
+      // produced by the platform, not LLM paraphrase.
+      supabase
+        .from("agent_debate_records")
+        .select(`
+          id,
+          debate_type,
+          judge_agent,
+          participating_agents,
+          consensus_score,
+          final_assessment,
+          created_at,
+          incident_id,
+          incidents!inner(id, title, priority, client_id)
+        `)
+        .eq("incidents.client_id", clientId)
+        .gte("created_at", cutoff24h)
+        .order("created_at", { ascending: false })
+        .limit(8),
     ]);
 
     if (!client) {
@@ -123,6 +147,35 @@ Deno.serve(async (req) => {
       .map((d: any) => `• ${d.agent_call_sign} on ${d.trigger_reason.replace('entity_mention:', '')}: ${String(d.analysis).slice(0, 220)}…`)
       .join("\n");
 
+    // Multi-agent debate syntheses — primary analytical content for
+    // the briefing. The LLM is instructed below to USE these as
+    // source material rather than regenerate analysis from raw signals.
+    // Each entry surfaces: incident title, judge, consensus, the actual
+    // synthesis text. This is the authored reasoning trail; the
+    // briefing should quote/paraphrase rather than re-imagine.
+    // Dedup per incident — keep only the most recent debate per
+    // incident_id. Same reasoning as in generate-executive-report:
+    // multiple chat-triggered debates on the same incident produce
+    // near-duplicate synthesis content; the newest one also tends
+    // to have the best specialty-routed participants.
+    const seenDailyIncidents = new Set<string>();
+    const dedupedDebates = (recentDebates ?? []).filter((d: any) => {
+      if (!d?.incident_id) return false;
+      if (seenDailyIncidents.has(d.incident_id)) return false;
+      seenDailyIncidents.add(d.incident_id);
+      return true;
+    });
+    const debatesSummary = dedupedDebates
+      .map((d: any) => {
+        const incTitle = d.incidents?.title || `Incident ${String(d.incident_id).slice(0, 8)}`;
+        const participants = Array.isArray(d.participating_agents) ? d.participating_agents.join(', ') : 'unknown';
+        const consensus = typeof d.consensus_score === 'number' ? `${Math.round(d.consensus_score * 100)}%` : 'n/a';
+        const assessment = String(d.final_assessment || '').slice(0, 800);
+        return `── DEBATE on "${incTitle}" (judge: ${d.judge_agent || 'AEGIS-CMD'} · participants: ${participants} · consensus: ${consensus}) ──
+${assessment}`;
+      })
+      .join("\n\n");
+
     const locationStr = Array.isArray(client.locations) && client.locations.length > 0
       ? client.locations.slice(0, 3).join(', ')
       : 'Canada';
@@ -145,24 +198,32 @@ ${narrativesSummary || "No entity narratives in the last 7 days."}
 ══ ENTITY-MENTION ANALYSES (per-entity context from last 24h, ${(recentDispatches ?? []).length}) ══
 ${dispatchSummary || "No entity-mention dispatches in the last 24 hours."}
 
+══ MULTI-AGENT DEBATE SYNTHESES (last 24h, ${(recentDebates ?? []).length}) ══
+${debatesSummary || "No multi-agent debates in the last 24 hours."}
+
 Write the memo as AEGIS-CMD addressing the operator directly. Structure:
 
 ## Bottom line up front (BLUF)
-Two sentences: what's the most important thing to know today, and why it matters.
+Two sentences: what's the most important thing to know today, and why it matters. **If multi-agent debate syntheses exist above, use the most operationally consequential one to anchor the BLUF — don't paraphrase the synthesis, distill its judgment.**
 
 ## What changed in the last 24 hours
 Concrete events with [SIGNAL: title] citations. Tie new signals to ongoing entity narratives where applicable.
+
+## Multi-agent assessments completed
+For each debate synthesis above, write a 2-3 sentence summary that PRESERVES the synthesis's actual judgment. Cite the judge (e.g. "AEGIS-CMD synthesis with FININT/CHAIN-WATCH/MERIDIAN, 86% consensus") so the operator can audit the reasoning trail. **Do NOT regenerate analysis the agents already produced — quote or paraphrase the synthesis text directly.** If no debates ran, write "No multi-agent assessments in this period."
 
 ## Recurring patterns we're tracking
 Reference the entity-pattern narratives above. Note any patterns gaining or losing momentum.
 
 ## Open incidents requiring action
-Per-incident: status, what's blocking resolution, recommended next move.
+Per-incident: status, what's blocking resolution, recommended next move. Where a debate synthesis exists for the incident, use its recommended actions; don't invent new ones.
 
 ## Watch list for the coming week
-3-5 specific things to watch for, derived from beliefs and narratives. Be predictive without being speculative — say what evidence would confirm or refute each watch item.
+3-5 specific things to watch for, derived from beliefs, narratives, and debate findings. Be predictive without being speculative — say what evidence would confirm or refute each watch item.
 
-Be factual. Only reference information provided above. If a section has no material content, write "Nothing material to report" — do not pad.`;
+Be factual. Only reference information provided above. If a section has no material content, write "Nothing material to report" — do not pad.
+
+CRITICAL: Multi-agent debate syntheses are AUTHORED REASONING produced by the platform's specialist agents under AEGIS-CMD adjudication. They are the platform's primary analytical output. When they exist, the briefing must use them as source material rather than generating independent analysis from raw signals. Re-imagining analysis the agents already produced breaks the audit trail and undermines the platform's reasoning-trail value proposition.`;
 
     const gatewayResult = await callAiGateway({
       model: "gpt-4o-mini",

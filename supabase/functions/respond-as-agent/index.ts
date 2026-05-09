@@ -27,11 +27,52 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { recallChatContext, learnFromChatExchange } from "../_shared/agent-chat-memory.ts";
 import { runAgentLoop } from "../_shared/agent-tools.ts";
+import { callAiGateway } from "../_shared/ai-gateway.ts";
 // Side-effect import — registers every tool defined in agent-tools-core.ts.
 // Adding a new tool there (or in any other file that calls registerTool)
 // makes it automatically available to chat agents on next deploy. No
 // per-function plumbing required.
 import "../_shared/agent-tools-core.ts";
+
+// Cap how many images we send to vision in one mention. Mostly a cost
+// + latency guardrail; mobile only lets you attach a few at a time
+// anyway.
+const MAX_VISION_IMAGES = 4;
+
+// Wildfire-specific vision prompt — same one the public portal uses.
+// Tailored to NE BC oil-and-gas field-worker context.
+const VISION_PROMPT_WILDFIRE = `You are a wildfire visual-analysis specialist. The operator (a field worker or analyst, often in NE BC oil-and-gas country) attached one or more photos. Analyze them for wildfire-relevant content. Be concrete and operationally honest about what you can and cannot tell from a still image.
+
+For each image, report (use markdown sections, no preamble):
+- **Subject** — fire, smoke column, both, aftermath, or non-wildfire content. State it.
+- **Smoke** — color (white = water-heavy / early, gray = mature, dark = active/high-carbon, brown = vegetation/crown, black = synthetic/structures); shape (vertical / bent / pyrocumulus); apparent drift direction.
+- **Flame** (if visible) — height vs. surrounding vegetation; intensity cues.
+- **Distance estimate** — cite the scale reference (foreground tree, vehicle, road, structure, terrain feature) AND give an uncertainty range (e.g. "~3–8 km based on tree-line scale"). If unable, say so plainly.
+- **Fuel / terrain** — visible fuel and terrain (drainage / ridge / flat).
+- **Wildfire vs. industrial flare** — call out if it reads more like a flare (hot point source, no advancing front, near visible facility).
+
+If an image is clearly NOT wildfire-relevant (selfie, screenshot, document), say so in one line and stop for that image. <250 words per image.`;
+
+// Generic fallback prompt for non-WILDFIRE agents — describe the
+// image with operationally relevant detail without trying to act as
+// a domain specialist.
+const VISION_PROMPT_GENERIC = `You are a visual-analysis assistant supporting a Silent Shield specialist agent. The operator attached one or more images. Describe each one factually with detail an intelligence / security analyst would care about.
+
+For each image (markdown sections, no preamble):
+- **Subject** — what's the main thing in frame.
+- **Notable details** — anything that matters operationally (people, vehicles, weapons, license plates if legible, signs, text on documents, distinctive clothing, location/terrain cues, time-of-day evidence).
+- **What you can't tell** — be honest about limits (no GPS, can't read blurred plate, etc.).
+
+If an image is clearly mundane (selfie with no operational content, decorative screenshot), say so in one line. <200 words per image. No speculation.`;
+
+const IMAGE_TYPE_PREFIX = "image/";
+function isImageAttachment(a: { url?: string; type?: string; name?: string }): boolean {
+  if (!a.url) return false;
+  if (a.type && a.type.startsWith(IMAGE_TYPE_PREFIX)) return true;
+  // Fallback on extension when type is missing/wrong.
+  const u = a.url.toLowerCase().split("?")[0];
+  return /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(u);
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -170,15 +211,62 @@ Deno.serve(async (req) => {
       })
       .join("\n");
 
-    // Attachments on the trigger message — pass URLs so the model can
-    // reference them. (For images, OpenAI Vision via gpt-4o-mini works
-    // with image_url content parts; we keep this implementation simple
-    // and just append URLs as text. Upgrade path noted in comments.)
+    // Attachments on the trigger message. Image attachments get a
+    // dedicated vision pass below; non-image attachments (PDFs, video)
+    // are still listed by URL for the agent to reference.
     const triggerAttachments = (trigger.attachments ?? []) as Array<{ url?: string; name?: string; type?: string }>;
-    const attachmentLines = triggerAttachments
-      .filter((a) => a.url)
+    const imageAttachments = triggerAttachments.filter(isImageAttachment).slice(0, MAX_VISION_IMAGES);
+    const nonImageAttachments = triggerAttachments.filter((a) => a.url && !isImageAttachment(a));
+    const attachmentLines = nonImageAttachments
       .map((a) => `- ${a.name || "attachment"} (${a.type || "unknown"}): ${a.url}`)
       .join("\n");
+
+    // ── VISION PASS (when images are attached) ──────────────────────
+    // message-attachments bucket is public (see migration
+    // 20260501000001_aegis_mobile_messaging.sql), so we hand the URLs
+    // straight to gpt-4o vision instead of downloading + base64-ing.
+    // Wildfire-specific prompt when responding as WILDFIRE; generic
+    // prompt otherwise so other agents (APEX, FERAL, AEGIS-CMD)
+    // still get useful descriptions if an operator pastes a photo
+    // into a thread.
+    let visionAnalysis: string | null = null;
+    let visionError: string | null = null;
+    if (imageAttachments.length > 0) {
+      const visionPrompt = agent.call_sign === "WILDFIRE"
+        ? VISION_PROMPT_WILDFIRE
+        : VISION_PROMPT_GENERIC;
+      const imageParts = imageAttachments.map((a) => ({
+        type: "image_url" as const,
+        image_url: { url: a.url as string },
+      }));
+      const captionText = trigger.content?.trim()
+        ? `Operator caption accompanying the photo${imageAttachments.length > 1 ? "s" : ""}: "${trigger.content}"`
+        : `(No accompanying caption — analyze the photo${imageAttachments.length > 1 ? "s" : ""} on its own.)`;
+      const tVisionStart = Date.now();
+      const visionResult = await callAiGateway({
+        functionName: "respond-as-agent:vision",
+        model: "openai/gpt-4o",
+        skipGuardrails: true,
+        messages: [
+          { role: "system", content: visionPrompt },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: captionText },
+              ...imageParts,
+            ],
+          },
+        ] as any,
+      });
+      const visionMs = Date.now() - tVisionStart;
+      if (visionResult.error || !visionResult.content) {
+        visionError = visionResult.error || "Vision pass returned no content.";
+        console.warn(`[respond-as-agent] vision pass failed (${visionMs}ms, ${imageAttachments.length} image${imageAttachments.length > 1 ? "s" : ""}): ${visionError}`);
+      } else {
+        visionAnalysis = visionResult.content.trim();
+        console.log(`[respond-as-agent] vision pass ok in ${visionMs}ms (${imageAttachments.length} image${imageAttachments.length > 1 ? "s" : ""}, ${visionAnalysis.length} chars)`);
+      }
+    }
 
     // ── MEMORY + BELIEFS RETRIEVAL ──────────────────────────────────
     // Embed the operator's question and pull the most relevant prior
@@ -224,7 +312,7 @@ CHAT-MODE GUARDRAILS:
 
 USING YOUR TOOLS — HARD RULE:
 - Before stating ANY specific fact (numbers, locations, "no active fires", "X signals in the last 24h", entity relationships, current status, recent events, danger levels), you MUST call a tool to verify.
-- Acceptable to answer from training only if the operator asked a CONCEPTUAL question ("what is FWI?", "explain CARVER"). Anything operational requires a tool call.
+- Acceptable to answer from training only if the operator asked a CONCEPTUAL question ("what is FWI?", "what does CARVER measure?"). Anything operational requires a tool call. NOTE: CARVER scores for client assets are now real platform data — when asked for a specific asset's score or priority, call query_carver_scores; do not answer from training.
 - If you're tempted to say "based on current data..." or "as of today..." or "no [thing] reported within X km" — STOP, call lookup_historical_signals or get_signal_velocity or query_entity_relationships first. Don't make claims you didn't verify.
 - If tools return nothing, say so honestly: "I queried lookup_historical_signals for Fort St. John in the last 7 days — no wildfire signals matched. I cannot confirm fire status from chat tools alone; check the Wildfire Daily Report for FIRMS-derived data."
 - Tool calls are cheap. Use 1-3 per turn when they help.
@@ -236,15 +324,26 @@ USING YOUR MEMORY + BELIEFS:
 
     // Build user message — chat history + the trigger
     const triggerSpeaker = profileMap[trigger.sender_id ?? ""] || "OPERATOR";
+
+    // Compose attachment context. Image attachments are summarized via
+    // the vision analysis (the agent can't see the image directly, but
+    // it can reason over the analysis). Non-image attachments are still
+    // listed as URLs.
+    let attachmentSection = "";
+    if (visionAnalysis) {
+      attachmentSection = `\n\nThe operator attached ${imageAttachments.length} image${imageAttachments.length > 1 ? "s" : ""}. A vision specialist analyzed ${imageAttachments.length > 1 ? "them" : "it"}; their findings are below verbatim. Treat these as ground truth about the image${imageAttachments.length > 1 ? "s" : ""} (you cannot see them yourself).\n\n--- VISION ANALYSIS ---\n${visionAnalysis}\n--- END VISION ANALYSIS ---\n\nWhen you reply, begin with a short bolded "**Photo read:**" line that paraphrases the vision findings in 1-3 sentences so the operator sees what you saw. Then call any tools needed to ground operational guidance against current data, and end with a one-line "**What to do now:**".`;
+    } else if (visionError && imageAttachments.length > 0) {
+      attachmentSection = `\n\nThe operator attached ${imageAttachments.length} image${imageAttachments.length > 1 ? "s" : ""}, but the vision analysis failed (${visionError}). Acknowledge that the photo${imageAttachments.length > 1 ? "s" : ""} couldn't be analyzed and respond based on their text message and any attachment URLs below.`;
+    }
+    if (attachmentLines) {
+      attachmentSection += `\n\nNon-image attachments referenced by the operator:\n${attachmentLines}`;
+    }
+
     const userPrompt = `Team conversation transcript (oldest → newest):
 ${transcript || "(no prior messages)"}
 
 The operator just mentioned you with this message:
-${triggerSpeaker}: ${trigger.content}${
-      attachmentLines
-        ? `\n\nAttachments referenced by the operator:\n${attachmentLines}`
-        : ""
-    }
+${triggerSpeaker}: ${trigger.content}${attachmentSection}
 
 Respond as ${agent.call_sign}.`;
 

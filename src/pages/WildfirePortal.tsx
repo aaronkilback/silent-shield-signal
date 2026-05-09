@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, RefreshCw, Shield, Flame, AlertTriangle } from "lucide-react";
+import { Loader2, Send, RefreshCw, Shield, Flame, AlertTriangle, Paperclip, X as XIcon, Camera, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -20,6 +20,49 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   ts: number;
+  // Optional inline photo attached to a user message (data URL).
+  // Held in browser memory only; cleared on page refresh.
+  imageDataUrl?: string;
+}
+
+// Resize a chosen image file to a JPEG data URL with a max edge length.
+// Keeps payload bounded for the chat endpoint (vision API is happy with
+// 1024px and a single still photo carries plenty of detail at that size).
+async function resizeImageToDataUrl(
+  file: File,
+  maxEdge = 1024,
+  quality = 0.85,
+): Promise<{ dataUrl: string; bytes: number }> {
+  const reader = new FileReader();
+  const sourceDataUrl: string = await new Promise((resolve, reject) => {
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+  const img = new Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("Failed to decode image"));
+    img.src = sourceDataUrl;
+  });
+  let w = img.naturalWidth;
+  let h = img.naturalHeight;
+  if (w > maxEdge || h > maxEdge) {
+    const scale = maxEdge / Math.max(w, h);
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context unavailable");
+  ctx.drawImage(img, 0, 0, w, h);
+  const dataUrl = canvas.toDataURL("image/jpeg", quality);
+  // Approximate byte count from base64 length.
+  const base64Part = dataUrl.split(",")[1] ?? "";
+  const bytes = Math.floor((base64Part.length * 3) / 4);
+  return { dataUrl, bytes };
 }
 
 // Stable per-browser session id stored in localStorage so usage telemetry
@@ -132,6 +175,29 @@ export default function WildfirePortal() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const reportContainerRef = useRef<HTMLDivElement>(null);
 
+  // Inline photo attached to the next outgoing chat message. Held only
+  // until send (or cleared by the user). Backend caps at 8MB; we resize
+  // to 1024px / JPEG 0.85 client-side which lands well under that.
+  const [pendingImage, setPendingImage] = useState<{ dataUrl: string; bytes: number } | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleImagePick(file: File | null | undefined) {
+    setImageError(null);
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setImageError("Please pick an image file.");
+      return;
+    }
+    try {
+      const out = await resizeImageToDataUrl(file, 1024, 0.85);
+      setPendingImage(out);
+    } catch (e: any) {
+      setImageError(e?.message || "Couldn't load that image.");
+    }
+  }
+
   // ── Spread Simulator (Phase C: time-slider + click-to-pin + BCWS prefill) ──
   const [simLat, setSimLat] = useState("56.0");
   const [simLng, setSimLng] = useState("-121.0");
@@ -182,6 +248,26 @@ export default function WildfirePortal() {
   }
   const [bcwsFires, setBcwsFires] = useState<BcwsPick[]>([]);
   const [bcwsPickValue, setBcwsPickValue] = useState<string>("");
+
+  // Optional starting perimeter for the simulator. Populated when the
+  // operator picks a BCWS fire that has a published perimeter polygon.
+  // When set, the simulation seeds every cell inside this ring as
+  // already-burning at t=0 and projects forward — much more realistic
+  // than treating an existing 5,000 ha fire as a single ignition cell.
+  // Null = point ignition (default behavior).
+  interface SimPerimeter {
+    /** GeoJSON-style outer ring as [lng, lat] pairs. */
+    ring: Array<[number, number]>;
+    /** Display label e.g. "G70123 — 5,432 ha · 312 vertices". */
+    label: string;
+    /** Source fire number for clarity in the UI. */
+    fire_number: string;
+    /** Reported size from BCWS (ha) when available. */
+    size_ha: number | null;
+  }
+  const [simPerimeter, setSimPerimeter] = useState<SimPerimeter | null>(null);
+  const [simPerimeterLoading, setSimPerimeterLoading] = useState(false);
+  const [simPerimeterError, setSimPerimeterError] = useState<string | null>(null);
 
   // Pull BCWS active fires once on mount, filter to Petronas operational
   // zones (NE BC / Skeena-Kitimat / Calgary). Same canonical bbox set
@@ -240,8 +326,10 @@ export default function WildfirePortal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function handleBcwsPick(value: string) {
+  async function handleBcwsPick(value: string) {
     setBcwsPickValue(value);
+    setSimPerimeterError(null);
+    setSimPerimeter(null);
     if (!value) return;
     const pick = bcwsFires.find((f) => f.fire_number === value);
     if (!pick) return;
@@ -252,6 +340,68 @@ export default function WildfirePortal() {
     if (L && simMapInstanceRef.current) {
       simMapInstanceRef.current.setView([pick.lat, pick.lng], 9);
     }
+
+    // Try to fetch this fire's published perimeter polygon. BCWS only
+    // publishes perimeters for fires large enough to map (typically
+    // >10 ha or fires-of-note); smaller fires return no geometry, in
+    // which case we fall back to point ignition silently. Network or
+    // schema errors are non-fatal — the operator can still run with
+    // the centroid as a point.
+    setSimPerimeterLoading(true);
+    try {
+      const url = "https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/BCWS_FirePerimeters_PublicView/FeatureServer/0/query"
+        + "?where=" + encodeURIComponent(`FIRE_NUMBER='${pick.fire_number.replace(/'/g, "''")}'`)
+        + "&returnGeometry=true&outSR=4326&outFields=FIRE_NUMBER,FEATURE_AREA_SQM&f=json";
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const features = (json?.features as any[]) || [];
+      // Pick the largest ring across all returned features (BCWS
+      // sometimes returns multiple polygons for a single fire — outer
+      // perimeter + island unburned-pockets — and we want the outer
+      // one for "current footprint" purposes).
+      let bestRing: Array<[number, number]> | null = null;
+      let bestArea = 0;
+      for (const f of features) {
+        const rings = f?.geometry?.rings;
+        if (!Array.isArray(rings)) continue;
+        for (const ring of rings) {
+          if (!Array.isArray(ring) || ring.length < 3) continue;
+          // Crude shoelace area in deg² to pick the dominant ring.
+          let s = 0;
+          for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            s += (ring[j][0] - ring[i][0]) * (ring[j][1] + ring[i][1]);
+          }
+          const a = Math.abs(s);
+          if (a > bestArea) {
+            bestArea = a;
+            bestRing = ring.map((pt: any) => [Number(pt[0]), Number(pt[1])] as [number, number]);
+          }
+        }
+      }
+      if (bestRing) {
+        setSimPerimeter({
+          ring: bestRing,
+          label: `${pick.fire_number} — ${pick.size_ha != null ? pick.size_ha.toLocaleString() + " ha · " : ""}${bestRing.length} vertices`,
+          fire_number: pick.fire_number,
+          size_ha: pick.size_ha,
+        });
+      } else {
+        // No published perimeter — silent fallback to point ignition.
+        // Common for fires < 10 ha or fires that BCWS hasn't yet mapped.
+        console.log(`[WildfirePortal] No BCWS perimeter for ${pick.fire_number} — using point ignition`);
+      }
+    } catch (e: any) {
+      setSimPerimeterError(e?.message || "Perimeter fetch failed");
+      console.warn(`[WildfirePortal] perimeter fetch failed for ${pick.fire_number}:`, e);
+    } finally {
+      setSimPerimeterLoading(false);
+    }
+  }
+
+  function clearSimPerimeter() {
+    setSimPerimeter(null);
+    setSimPerimeterError(null);
   }
 
   // Page view + report load on mount.
@@ -277,6 +427,45 @@ export default function WildfirePortal() {
     };
   }, [reportHtml]);
 
+  // Print-to-PDF handler. The browser's "Save as PDF" destination is
+  // the cleanest path for the wildfire report — preserves the live
+  // Leaflet station map, handles pagination natively, and operators
+  // already know the dialog. We tag the body with a class while
+  // printing so the @media print CSS in the page <style> block can
+  // hide everything except the report card. Cleanup runs on the
+  // afterprint event so the class is removed whether the user prints
+  // or cancels the dialog.
+  //
+  // Filename: browsers default the print dialog's "Save As" filename
+  // to document.title. Temporarily swap the title to a dated, sortable
+  // string ("Daily Wildfire Report — 2026-05-04 15-30") so the saved
+  // PDF lands with a meaningful name instead of "fortress.silentshieldsecurity.com.pdf".
+  // Avoid `:` and `/` in the filename — Windows + macOS Finder treat
+  // them as path separators and either reject or rewrite them.
+  function handlePrintReport() {
+    if (!reportHtml) return;
+    const originalTitle = document.title;
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mi = String(now.getMinutes()).padStart(2, "0");
+    const printTitle = `Daily Wildfire Report — ${yyyy}-${mm}-${dd} ${hh}-${mi}`;
+
+    document.title = printTitle;
+    document.body.classList.add("printing-report");
+    const cleanup = () => {
+      document.body.classList.remove("printing-report");
+      document.title = originalTitle;
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    // requestAnimationFrame so the class application paints before
+    // the print dialog snapshots the page layout.
+    requestAnimationFrame(() => window.print());
+  }
+
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -292,18 +481,41 @@ export default function WildfirePortal() {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/simulate-fire-spread`, {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+        // In forecast mode, omit FFMC/BUI so the backend back-derives
+        // them from the BCWS official danger rating + recent precip
+        // for this point (see _shared/fwi-estimator.ts). Sending the
+        // form values would override the live derivation. In manual
+        // mode the operator deliberately wants their own snapshot, so
+        // pass everything through.
         body: JSON.stringify({
           lat: Number(simLat),
           lng: Number(simLng),
           duration_hours: Number(simDuration),
           weather_mode: simWeatherMode,
-          weather: {
-            tempC: 22, rhPct: 35,
-            windKph: Number(simWindKph),
-            windDir: Number(simWindDir),
-            ffmc: Number(simFfmc),
-            bui: Number(simBui),
-          },
+          weather: simWeatherMode === "manual"
+            ? {
+                tempC: 22, rhPct: 35,
+                windKph: Number(simWindKph),
+                windDir: Number(simWindDir),
+                ffmc: Number(simFfmc),
+                bui: Number(simBui),
+              }
+            : {
+                // Wind in forecast mode comes from the hourly forecast,
+                // not these inputs — but we still pass tempC/rhPct as
+                // harmless placeholders the backend ignores.
+                tempC: 22, rhPct: 35,
+                windKph: Number(simWindKph),
+                windDir: Number(simWindDir),
+              },
+          // Perimeter ignition — only sent when the operator picked a
+          // BCWS fire that has a published perimeter. Backend seeds
+          // every cell inside the polygon as already-burning and
+          // propagates outward. When omitted the backend defaults to
+          // single-cell point ignition (existing behavior).
+          ignition_perimeter: simPerimeter
+            ? { type: "Polygon", coordinates: [simPerimeter.ring] }
+            : undefined,
         }),
       });
       const json = await res.json();
@@ -689,9 +901,19 @@ export default function WildfirePortal() {
 
   async function sendChat() {
     const text = chatInput.trim();
-    if (!text || chatBusy) return;
+    // Allow sending with no text if a photo is attached — operator may
+    // just want WILDFIRE to read the photo with no caption.
+    if ((!text && !pendingImage) || chatBusy) return;
+    const outgoingImage = pendingImage;
     setChatInput("");
-    const newUserMsg: ChatMessage = { role: "user", content: text, ts: Date.now() };
+    setPendingImage(null);
+    setImageError(null);
+    const newUserMsg: ChatMessage = {
+      role: "user",
+      content: text || "(photo attached)",
+      ts: Date.now(),
+      imageDataUrl: outgoingImage?.dataUrl,
+    };
     const next = [...messages, newUserMsg];
     setMessages(next);
     setChatBusy(true);
@@ -701,8 +923,14 @@ export default function WildfirePortal() {
         method: "POST",
         headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
         body: JSON.stringify({
+          // Don't echo prior images back to the server — only the
+          // current send carries one. The transcript text stays as
+          // "(photo attached)" placeholder for context continuity.
           messages: next.map((m) => ({ role: m.role, content: m.content })),
           sessionId: getSessionId(),
+          image: outgoingImage
+            ? { data: outgoingImage.dataUrl, mime: "image/jpeg" }
+            : undefined,
         }),
       });
 
@@ -776,6 +1004,86 @@ export default function WildfirePortal() {
           .wildfire-report-html table { font-size: 11px; }
           .wildfire-report-html .note { font-size: 10px; }
         }
+
+        /* ─── Print-to-PDF (triggered by handlePrintReport) ─────────
+           When body.printing-report is set, hide the entire page
+           tree and reveal only the report card. Approach: blanket
+           visibility:hidden on every descendant, then visibility:
+           visible on the printable subtree — works regardless of
+           how deep React nests the report element. */
+        @media print {
+          body.printing-report {
+            background: #fff !important;
+          }
+          body.printing-report * {
+            visibility: hidden !important;
+          }
+          body.printing-report .wildfire-report-printable,
+          body.printing-report .wildfire-report-printable * {
+            visibility: visible !important;
+          }
+          /* The visible region escapes flow constraints so it fills
+             the printable page width. Also drop the scroll cap so
+             the entire report — not just the visible viewport
+             slice — gets paginated into the PDF. */
+          body.printing-report .wildfire-report-printable {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            right: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            border: none !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          body.printing-report .wildfire-report-scroll {
+            max-height: none !important;
+            overflow: visible !important;
+            padding: 0 !important;
+          }
+          body.printing-report .wildfire-report-html {
+            max-height: none !important;
+            overflow: visible !important;
+          }
+          /* Preserve color-coded badges and status banners — without
+             this, Chrome strips background colors from print output
+             by default and the rating badges become unreadable. */
+          body.printing-report .wildfire-report-html *,
+          body.printing-report .wildfire-report-html section {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          /* Anything tagged no-print (Refresh / Download PDF buttons
+             in the report header) drops out of the printed copy. */
+          body.printing-report .no-print,
+          body.printing-report .no-print * {
+            display: none !important;
+          }
+          /* Pagination hints — keep sections together where possible
+             and never break right after a heading. */
+          body.printing-report .wildfire-report-html section {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          body.printing-report .wildfire-report-html h2,
+          body.printing-report .wildfire-report-html h3 {
+            break-after: avoid;
+            page-break-after: avoid;
+          }
+          /* Tables that overflow a page should still render; allow
+             tbody/tr to break. */
+          body.printing-report .wildfire-report-html tr {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          /* Reasonable page margins for letter / A4 paper. */
+          @page {
+            margin: 0.5in;
+          }
+        }
       `}</style>
 
       <header className="bg-slate-900 text-white border-b border-slate-800">
@@ -795,19 +1103,30 @@ export default function WildfirePortal() {
 
       <main className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 sm:gap-6">
         {/* Report */}
-        <section className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-          <div className="border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+        <section className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden wildfire-report-printable">
+          <div className="border-b border-slate-200 px-4 py-3 flex items-center justify-between no-print">
             <h2 className="font-medium">Daily Wildfire & Air Quality Report</h2>
-            <button
-              onClick={loadReport}
-              className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 transition-colors"
-              disabled={reportLoading}
-            >
-              <RefreshCw className={`h-4 w-4 ${reportLoading ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handlePrintReport}
+                className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={reportLoading || !reportHtml}
+                title="Open the browser print dialog. Choose 'Save as PDF' as the destination."
+              >
+                <Download className="h-4 w-4" />
+                Download PDF
+              </button>
+              <button
+                onClick={loadReport}
+                className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900 transition-colors"
+                disabled={reportLoading}
+              >
+                <RefreshCw className={`h-4 w-4 ${reportLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
-          <div className="p-3 sm:p-4 bg-white max-h-[60vh] sm:max-h-[80vh] overflow-y-auto">
+          <div className="p-3 sm:p-4 bg-white max-h-[60vh] sm:max-h-[80vh] overflow-y-auto wildfire-report-scroll">
             {reportLoading && !reportHtml && (
               <div className="flex items-center gap-2 text-slate-500 py-12 justify-center">
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -866,7 +1185,25 @@ export default function WildfirePortal() {
                       <ReactMarkdown>{m.content}</ReactMarkdown>
                     </div>
                   ) : (
-                    <div className="whitespace-pre-wrap">{m.content}</div>
+                    <div className="space-y-2">
+                      {m.imageDataUrl && (
+                        <a
+                          href={m.imageDataUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block"
+                        >
+                          <img
+                            src={m.imageDataUrl}
+                            alt="Operator photo"
+                            className="max-h-48 rounded border border-slate-700 object-cover"
+                          />
+                        </a>
+                      )}
+                      {m.content && m.content !== "(photo attached)" && (
+                        <div className="whitespace-pre-wrap">{m.content}</div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -878,24 +1215,125 @@ export default function WildfirePortal() {
               </div>
             )}
           </div>
-          <div className="border-t border-slate-200 p-2 sm:p-3 flex gap-2">
-            <textarea
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={onKey}
-              placeholder="Ask about fire danger, evacuations, AQHI…"
-              className="flex-1 resize-none border border-slate-300 rounded px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500 min-h-[44px]"
-              rows={2}
-              disabled={chatBusy}
+          <div className="border-t border-slate-200 p-2 sm:p-3 space-y-2">
+            {/* Hidden file inputs — gallery picker + dedicated camera capture
+                so mobile users get a one-tap "take photo" affordance. */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                handleImagePick(f);
+                if (e.target) e.target.value = "";
+              }}
             />
-            <button
-              onClick={sendChat}
-              disabled={!chatInput.trim() || chatBusy}
-              className="bg-slate-900 text-white px-4 rounded hover:bg-slate-700 active:bg-slate-950 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center min-w-[44px] min-h-[44px]"
-              aria-label="Send"
-            >
-              <Send className="h-4 w-4" />
-            </button>
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                handleImagePick(f);
+                if (e.target) e.target.value = "";
+              }}
+            />
+
+            {pendingImage && (
+              <div className="flex items-center gap-2 bg-slate-100 border border-slate-200 rounded p-2">
+                <img
+                  src={pendingImage.dataUrl}
+                  alt="Pending upload"
+                  className="h-12 w-12 object-cover rounded border border-slate-300"
+                />
+                <div className="flex-1 text-xs text-slate-600">
+                  Photo attached
+                  <span className="text-slate-400">
+                    {" "}· {(pendingImage.bytes / 1024).toFixed(0)} KB
+                  </span>
+                  <div className="text-[11px] text-slate-500">
+                    WILDFIRE will analyze for fire / smoke / distance.
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setPendingImage(null);
+                    setImageError(null);
+                  }}
+                  className="p-1 text-slate-500 hover:text-slate-900"
+                  aria-label="Remove photo"
+                >
+                  <XIcon className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+            {imageError && (
+              <div className="text-xs text-red-600">{imageError}</div>
+            )}
+
+            <div className="flex gap-2">
+              <textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={onKey}
+                placeholder={
+                  pendingImage
+                    ? "Add a note (optional) and send…"
+                    : "Ask about fire danger, evacuations, AQHI… or attach a photo of fire / smoke."
+                }
+                className="flex-1 resize-none border border-slate-300 rounded px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500 min-h-[44px]"
+                rows={2}
+                disabled={chatBusy}
+              />
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() => cameraInputRef.current?.click()}
+                  disabled={chatBusy || !!pendingImage}
+                  className="border border-slate-300 bg-white text-slate-700 px-2 rounded hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center min-w-[44px] h-[44px]"
+                  aria-label="Take photo"
+                  title="Take photo"
+                >
+                  <Camera className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={chatBusy || !!pendingImage}
+                  className="border border-slate-300 bg-white text-slate-700 px-2 rounded hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center min-w-[44px] h-[44px]"
+                  aria-label="Attach photo"
+                  title="Attach photo from gallery"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
+              </div>
+              <button
+                onClick={sendChat}
+                disabled={(!chatInput.trim() && !pendingImage) || chatBusy}
+                className="bg-slate-900 text-white px-4 rounded hover:bg-slate-700 active:bg-slate-950 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center min-w-[44px] min-h-[44px]"
+                aria-label="Send"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
+            {/* AI disclaimer — sits where the AI-generated content
+                lives. Industry-standard placement (mirrors ChatGPT,
+                Claude, Gemini). The report and simulator have their
+                own context-specific qualifiers and don't need a
+                generic AI warning here. */}
+            <p className="text-[11px] text-slate-500 text-center mt-1 leading-tight">
+              WILDFIRE is AI and can make mistakes. Verify safety-critical claims against{" "}
+              <a
+                href="https://www2.gov.bc.ca/gov/content/safety/wildfire-status"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-slate-700"
+              >
+                BC Wildfire Service
+              </a>{" "}
+              before acting.
+            </p>
           </div>
         </aside>
       </main>
@@ -908,7 +1346,7 @@ export default function WildfirePortal() {
               <Flame className="h-5 w-5 text-orange-600" />
               <h2 className="font-medium">Wildfire Spread Simulator</h2>
               <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 font-semibold">
-                Phase D · Beta
+                Phase E · Beta
               </span>
             </div>
           </div>
@@ -941,6 +1379,47 @@ export default function WildfirePortal() {
                     ))}
                   </select>
                   <p className="text-[10px] text-slate-500 mt-1">{bcwsFires.length} active BCWS fires in Petronas operational zones (NE BC · Skeena/Kitimat · Calgary)</p>
+
+                  {/* Perimeter status badge — surfaces what the simulator
+                      will actually start from. Three states:
+                        loading: BCWS perimeter fetch in progress
+                        loaded:  perimeter polygon obtained — sim will
+                                 seed every cell inside it as t=0 burning
+                        none:    no published perimeter (small/new fire)
+                                 — sim falls back to point ignition. */}
+                  {simPerimeterLoading && (
+                    <div className="mt-2 text-[11px] text-slate-600 flex items-center gap-1.5">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Fetching perimeter…
+                    </div>
+                  )}
+                  {simPerimeter && !simPerimeterLoading && (
+                    <div className="mt-2 bg-orange-50 border border-orange-200 rounded p-2 text-[11px] text-orange-900 flex items-start gap-2">
+                      <Flame className="h-3.5 w-3.5 text-orange-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium">Using actual BCWS perimeter</div>
+                        <div className="text-[10px] text-orange-800 mt-0.5 truncate">{simPerimeter.label}</div>
+                        <div className="text-[10px] text-orange-700 mt-0.5">Simulation will project FROM this perimeter forward, not from a single point.</div>
+                      </div>
+                      <button
+                        onClick={clearSimPerimeter}
+                        className="text-orange-700 hover:text-orange-900 p-0.5"
+                        aria-label="Use point ignition instead"
+                        title="Discard perimeter, use centroid as point ignition"
+                      >
+                        <XIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  {bcwsPickValue && !simPerimeter && !simPerimeterLoading && !simPerimeterError && (
+                    <p className="text-[10px] text-slate-500 mt-2 italic">
+                      No published perimeter for this fire — using centroid as point ignition.
+                    </p>
+                  )}
+                  {simPerimeterError && (
+                    <p className="text-[10px] text-amber-700 mt-2">
+                      Perimeter fetch failed ({simPerimeterError}). Falling back to point ignition.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1003,8 +1482,8 @@ export default function WildfirePortal() {
                 </div>
                 <p className="text-[10px] text-slate-500 mt-1">
                   {simWeatherMode === "forecast"
-                    ? "Open-Meteo hourly forecast + Copernicus DEM. Wind direction shifts hour-by-hour."
-                    : "Set a synthetic weather snapshot. No time-stepping."}
+                    ? "Hourly weather from Open-Meteo + slope from Copernicus DEM. FFMC/BUI auto-derived from today's BCWS danger rating + recent precipitation at the ignition point."
+                    : "Set a synthetic weather snapshot. No time-stepping. Use this to model worst-case scenarios."}
                 </p>
               </div>
 
@@ -1067,6 +1546,30 @@ export default function WildfirePortal() {
                   <div>Spread (hr 0): <strong>{simResult.metadata.spread_direction_deg}°</strong></div>
                   {simResult.metadata.slope_used && simResult.metadata.elevation_range_m && (
                     <div>Elevation: <strong>{simResult.metadata.elevation_range_m.min}–{simResult.metadata.elevation_range_m.max} m</strong></div>
+                  )}
+                  {(simResult.metadata.ffmc_used !== undefined || simResult.metadata.bui_used !== undefined) && (
+                    <div className="pt-1 mt-1 border-t border-slate-100">
+                      <div>
+                        FFMC: <strong>{simResult.metadata.ffmc_used}</strong>
+                        {" · "}BUI: <strong>{simResult.metadata.bui_used}</strong>
+                        {simResult.metadata.fwi_source && !simResult.metadata.ffmc_user_supplied && (
+                          <span className="text-emerald-700 text-[10px] ml-1">(auto)</span>
+                        )}
+                        {simResult.metadata.ffmc_user_supplied && (
+                          <span className="text-slate-500 text-[10px] ml-1">(manual)</span>
+                        )}
+                      </div>
+                      {simResult.metadata.fwi_source?.note && !simResult.metadata.ffmc_user_supplied && (
+                        <div className="text-[10px] text-slate-500 mt-0.5 italic">
+                          {simResult.metadata.fwi_source.note}
+                        </div>
+                      )}
+                      {simResult.metadata.fwi_estimate_error && (
+                        <div className="text-amber-700 text-[10px] mt-0.5">
+                          ⚠ FWI estimate failed — using defaults ({simResult.metadata.fwi_estimate_error})
+                        </div>
+                      )}
+                    </div>
                   )}
                   {simResult.metadata.weather_summary?.hour_0 && (
                     <details className="mt-2">

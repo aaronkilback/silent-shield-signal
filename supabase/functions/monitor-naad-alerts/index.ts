@@ -21,6 +21,196 @@ interface NAADAlert {
   link: string;
   category: string;
   language: string;
+  /** Full CAP XML payload (fetched lazily — only when link is to a .cap file). */
+  cap?: CapAlert | null;
+}
+
+/**
+ * Structured CAP v1.2 fields. The Atom feed only carries title +
+ * summary; the actual operational data — event type, severity tier,
+ * response type ("Prepare" vs "Evacuate" vs "Shelter"), affected
+ * polygon, specific instructions — lives in the linked .cap XML.
+ * Until May 2026 the monitor was only consuming the Atom wrapper
+ * and discarding all of this. Operator caught a Parkland County
+ * wildfire alert that arrived as "[NAAD Emergency Alert] This is an
+ * Alberta emergency alert." with no event/severity/response metadata
+ * preserved — just the boilerplate header.
+ */
+interface CapAlert {
+  identifier: string | null;
+  sender: string | null;
+  sent: string | null;
+  status: string | null;
+  msgType: string | null;
+  /** First info block. CAP allows multiple; we use the English-language one. */
+  event: string | null;
+  category: string | null;
+  responseType: string | null;
+  urgency: string | null;
+  severity: string | null;
+  certainty: string | null;
+  effective: string | null;
+  expires: string | null;
+  senderName: string | null;
+  headline: string | null;
+  description: string | null;
+  instruction: string | null;
+  /** First area block. */
+  areaDesc: string | null;
+  /** Polygon ring as [lat, lng] pairs (CAP convention is "lat,lng lat,lng ..."). */
+  polygon: Array<[number, number]> | null;
+  /** Circle as { center: [lat, lng], radiusKm }. CAP uses "lat,lng radiusKm". */
+  circle: { center: [number, number]; radiusKm: number } | null;
+}
+
+function captureTag(xml: string, tag: string): string | null {
+  // Regex tag-extractor — tolerates attributes on the open tag and
+  // doesn't recurse, but CAP XML is flat enough that this works for
+  // every field we care about.
+  const m = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
+  return m ? stripXml(m[1]).trim() || null : null;
+}
+
+function parseCapXml(xml: string): CapAlert | null {
+  if (!xml || !xml.includes('<alert')) return null;
+
+  // Pick the English info block when multiple are present (NAAD
+  // alerts are bilingual; we already filter French at the Atom layer
+  // but the CAP can still carry both).
+  const infoBlocks = [...xml.matchAll(/<info>([\s\S]*?)<\/info>/g)].map((m) => m[1]);
+  const englishInfo = infoBlocks.find((b) => /<language>en[-_]?[A-Z]{0,2}<\/language>/i.test(b))
+    ?? infoBlocks[0]
+    ?? '';
+
+  // Pick the first area block from the English info.
+  const areaMatch = englishInfo.match(/<area>([\s\S]*?)<\/area>/);
+  const areaXml = areaMatch ? areaMatch[1] : '';
+
+  // CAP polygon format: "lat,lng lat,lng lat,lng ..." (note: lat first,
+  // unlike GeoJSON). Convert to [[lat, lng], ...] pairs.
+  let polygon: Array<[number, number]> | null = null;
+  const polygonRaw = areaXml.match(/<polygon>([\s\S]*?)<\/polygon>/)?.[1]?.trim();
+  if (polygonRaw) {
+    const pts: Array<[number, number]> = [];
+    for (const pair of polygonRaw.split(/\s+/)) {
+      const [latStr, lngStr] = pair.split(',');
+      const lat = Number(latStr);
+      const lng = Number(lngStr);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
+    }
+    if (pts.length >= 3) polygon = pts;
+  }
+
+  // CAP circle format: "lat,lng radiusKm".
+  let circle: CapAlert['circle'] = null;
+  const circleRaw = areaXml.match(/<circle>([\s\S]*?)<\/circle>/)?.[1]?.trim();
+  if (circleRaw) {
+    const parts = circleRaw.split(/\s+/);
+    const [latStr, lngStr] = (parts[0] || '').split(',');
+    const radiusKm = Number(parts[1]);
+    const lat = Number(latStr);
+    const lng = Number(lngStr);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Number.isFinite(radiusKm)) {
+      circle = { center: [lat, lng], radiusKm };
+    }
+  }
+
+  return {
+    identifier:   captureTag(xml, 'identifier'),
+    sender:       captureTag(xml, 'sender'),
+    sent:         captureTag(xml, 'sent'),
+    status:       captureTag(xml, 'status'),
+    msgType:      captureTag(xml, 'msgType'),
+    event:        captureTag(englishInfo, 'event'),
+    category:     captureTag(englishInfo, 'category'),
+    responseType: captureTag(englishInfo, 'responseType'),
+    urgency:      captureTag(englishInfo, 'urgency'),
+    severity:     captureTag(englishInfo, 'severity'),
+    certainty:    captureTag(englishInfo, 'certainty'),
+    effective:    captureTag(englishInfo, 'effective'),
+    expires:      captureTag(englishInfo, 'expires'),
+    senderName:   captureTag(englishInfo, 'senderName'),
+    headline:     captureTag(englishInfo, 'headline'),
+    description:  captureTag(englishInfo, 'description'),
+    instruction:  captureTag(englishInfo, 'instruction'),
+    areaDesc:     captureTag(areaXml, 'areaDesc'),
+    polygon,
+    circle,
+  };
+}
+
+async function fetchCapXml(link: string): Promise<CapAlert | null> {
+  // Atom-level <link> usually points to the .cap or .xml file. Pelmorex
+  // also serves capcp2.naad-adna.pelmorex.com URLs (XML CAP files) —
+  // those use the .xml extension, not .cap. Accept both.
+  if (!link || !/\.(cap|xml)(\?|$)/i.test(link)) return null;
+  // Pelmorex's CAP host issues a 301 from http→https. Deno fetch follows
+  // redirects by default, but if the upstream cert chain is anything
+  // unusual the redirect may silently abort. Upgrade the scheme proactively.
+  const httpsLink = link.replace(/^http:\/\//i, 'https://');
+  try {
+    const r = await fetch(httpsLink, {
+      headers: { 'User-Agent': 'Fortress-OSINT-Monitor/1.0' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return null;
+    const xml = await r.text();
+    return parseCapXml(xml);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Map CAP <event> + <severity> + <responseType> to the Fortress
+ * signal taxonomy. Replaces the old regex-on-title classifier
+ * which mis-tagged a Wildfire CAP alert as 'environmental' instead
+ * of 'wildfire' and inverted CAP severity tiers.
+ *
+ * CAP severity scale (highest → lowest):
+ *   Extreme | Severe | Moderate | Minor | Unknown
+ * Fortress severity scale:
+ *   critical | high   | medium   | low   | low
+ */
+function classifyFromCap(cap: CapAlert): { category: string; severity: string; priority: string } {
+  const event = (cap.event || '').toLowerCase();
+  const responseType = (cap.responseType || '').toLowerCase();
+  const capSev = (cap.severity || '').toLowerCase();
+
+  // Severity from CAP tier — direct mapping.
+  let severity: string;
+  if (capSev === 'extreme') severity = 'critical';
+  else if (capSev === 'severe') severity = 'high';
+  else if (capSev === 'moderate') severity = 'medium';
+  else severity = 'low';
+
+  // Response type bumps severity when an evacuation or shelter order
+  // is in effect (those are operational regardless of CAP severity tier).
+  if (responseType === 'evacuate' || responseType === 'shelter') {
+    if (severity === 'low' || severity === 'medium') severity = 'high';
+  }
+
+  // Category from CAP event — direct mapping.
+  let category: string;
+  if (/wildfire|forest fire/.test(event)) category = 'wildfire';
+  else if (/active shooter|terrorism|bomb|hostage/.test(event)) category = 'active_threat';
+  else if (/amber alert|child abduction/.test(event)) category = 'amber_alert';
+  else if (/tornado|tsunami|earthquake|hurricane|cyclone/.test(event)) category = 'natural_disaster';
+  else if (/flood|landslide|avalanche/.test(event)) category = 'natural_disaster';
+  else if (/hazmat|hazardous|spill|release/.test(event)) category = 'environmental';
+  else if (/storm|blizzard|winter storm|extreme cold|extreme heat|wind warning|fog/.test(event)) category = 'weather';
+  else if (/civil emergency|public safety|911/.test(event)) category = 'civil_emergency';
+  else category = 'civil_emergency'; // CAP alerts are by definition civil-emergency-class
+
+  // Priority from severity.
+  const priority =
+    severity === 'critical' ? 'p1'
+    : severity === 'high'   ? 'p2'
+    : severity === 'medium' ? 'p3'
+    : 'p4';
+
+  return { category, severity, priority };
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -274,8 +464,20 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // 3. Filter low-priority (P4) weather noise
-        const classification = classifyAlert(alert);
+        // 3. Fetch the CAP XML for this alert. The Atom-level <link>
+        //    points to the .cap file when one's available. Empty/null
+        //    when the link surfaces the HTML page instead — we fall
+        //    back to the old regex classifier in that case.
+        const cap = await fetchCapXml(alert.link);
+        if (cap) alert.cap = cap;
+
+        // 4. Classify — prefer CAP-derived structure when available.
+        //    The CAP path correctly maps Wildfire→wildfire, Tornado→
+        //    natural_disaster, etc., AND honors the CAP severity tier
+        //    (Moderate / Severe / Extreme) instead of regex-matching
+        //    title text. Falls back to the legacy text classifier
+        //    for non-CAP alerts.
+        const classification = cap ? classifyFromCap(cap) : classifyAlert(alert);
         if (classification.priority === 'p4') {
           filteredLowPriority++;
           continue;
@@ -367,16 +569,41 @@ Deno.serve(async (req) => {
         // 7. Match to client
         let matchedClientId: string | null = null;
         if (clients) {
-          const alertText = `${alert.title} ${alert.summary}`.toLowerCase();
+          // Pull CAP areaDesc into the match text — NAAD's title/summary
+          // often omit geography (e.g., "yellow warning - snowfall"),
+          // but CAP areaDesc names the affected regions. Without this,
+          // a real BC alert with a generic title fails the keyword
+          // match and gets dropped or miscategorized.
+          const alertText = `${alert.title} ${alert.summary} ${cap?.areaDesc ?? ''}`.toLowerCase();
           for (const client of clients) {
             const locs = (client.locations || []).map((l: string) => l.toLowerCase());
             const kws = (client.monitoring_keywords || []).map((k: string) => k.toLowerCase());
-            if (locs.some((loc: string) => alertText.includes(loc)) || 
+            if (locs.some((loc: string) => alertText.includes(loc)) ||
                 kws.some((kw: string) => alertText.includes(kw))) {
               matchedClientId = client.id;
               break;
             }
           }
+        }
+
+        // 7.5 Geographic / relevance gate — skip out-of-area NAAD
+        // alerts that don't touch any client zone. NAAD broadcasts
+        // every Canadian emergency alert; without this gate the feed
+        // floods with Yukon flood watches, Nova Scotia missing-child
+        // alerts, Manitoba weather, Quebec wind, etc. — operationally
+        // irrelevant to BC-based clients (Petronas Canada, BCCH).
+        //
+        // Override: CAP severity = "Extreme" alerts pass through with
+        // client_id=null as platform-level life-safety notices. We
+        // never silently drop genuine life-or-death alerts even if
+        // they're outside client zones — operators may want to know
+        // about a major event nearby that their clients haven't
+        // explicitly subscribed to.
+        const isLifeSafetyExtreme = (cap?.severity || '').toLowerCase() === 'extreme';
+        if (!matchedClientId && !isLifeSafetyExtreme) {
+          filteredLowPriority++;
+          console.log(`[NAAD] Skipping out-of-area alert: "${alert.title.substring(0, 70)}" (severity=${cap?.severity ?? '?'}, areaDesc=${cap?.areaDesc?.substring(0, 60) ?? '?'})`);
+          continue;
         }
 
         // 8. Create clean signal
@@ -385,16 +612,43 @@ Deno.serve(async (req) => {
         // signal still gets composite_confidence + agent_review enrichment that
         // ingest-signal would normally trigger. Without this, NAAD signals
         // entered the feed without AI context (caught by watchdog 2026-04-30).
+        // Build the normalized_text from the most specific source
+        // available. CAP-derived alerts get the senderName + headline +
+        // description + instruction concatenated, which is roughly an
+        // order of magnitude more useful than the Atom title +
+        // summary (which often reads just "This is an Alberta
+        // emergency alert."). Atom-only alerts keep the old format
+        // as fallback.
+        const normalizedText = cap
+          ? [
+              `[NAAD ${cap.msgType ?? 'Alert'}] ${cap.senderName ?? cap.sender ?? 'Unknown sender'}`,
+              cap.headline ? `Headline: ${cap.headline}` : null,
+              cap.event ? `Event: ${cap.event}` : null,
+              cap.severity || cap.urgency || cap.responseType
+                ? `CAP: severity=${cap.severity ?? '—'}, urgency=${cap.urgency ?? '—'}, responseType=${cap.responseType ?? '—'}`
+                : null,
+              cap.areaDesc ? `Area: ${cap.areaDesc}` : null,
+              cap.description ? `Description: ${cap.description}` : null,
+              cap.instruction ? `Instruction: ${cap.instruction}` : null,
+              cap.effective ? `Effective: ${cap.effective}` : null,
+              cap.expires ? `Expires: ${cap.expires}` : null,
+            ].filter(Boolean).join('\n')
+          : `[NAAD Emergency Alert] ${alert.title}. ${alert.summary}`;
+
         const { data: insertedSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
             client_id: matchedClientId,
-            normalized_text: `[NAAD Emergency Alert] ${alert.title}. ${alert.summary}`,
+            // 2026-05-08: source_id populated for watchdog source-coverage
+            // tracking. Maps to public.sources WHERE name='NAAD Alerts'.
+            source_id: '8b708b40-36d6-497e-bef1-4a50e86ac719',
+            normalized_text: normalizedText,
             category: classification.category,
             severity: classification.severity,
-            location: 'Canada',
+            location: cap?.areaDesc ?? 'Canada',
             content_hash: contentHash,
             source_url: alert.link || 'https://alerts.pelmorex.com/',
+            event_date: cap?.effective ?? null,
             raw_json: {
               source: 'naad_emergency_alerts',
               alert_id: alert.id,
@@ -403,6 +657,34 @@ Deno.serve(async (req) => {
               classification,
               url: alert.link || `https://alerts.pelmorex.com/`,
               updated: alert.updated,
+              // Structured CAP fields — preserved verbatim so
+              // downstream consumers (agents, briefing builder, the
+              // wildfire portal) can use them without re-parsing the
+              // Atom title.
+              cap: cap
+                ? {
+                    identifier:    cap.identifier,
+                    sender:        cap.sender,
+                    sender_name:   cap.senderName,
+                    sent:          cap.sent,
+                    status:        cap.status,
+                    msg_type:      cap.msgType,
+                    event:         cap.event,
+                    cap_category:  cap.category,
+                    response_type: cap.responseType,
+                    urgency:       cap.urgency,
+                    severity:      cap.severity,
+                    certainty:     cap.certainty,
+                    effective:     cap.effective,
+                    expires:       cap.expires,
+                    headline:      cap.headline,
+                    description:   cap.description,
+                    instruction:   cap.instruction,
+                    area_desc:     cap.areaDesc,
+                    polygon:       cap.polygon,
+                    circle:        cap.circle,
+                  }
+                : null,
             },
             status: 'new',
             confidence: 0.95,

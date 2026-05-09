@@ -20,12 +20,14 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { AssignClientDialog } from "@/components/signals/AssignClientDialog";
 import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
+import { formatSignalRef } from "@/lib/signal-ref";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Search, CheckCircle, XCircle, UserPlus, Loader2, FileSearch, VolumeX, Trash2 } from "lucide-react";
 
 interface UnmatchedSignal {
   id: string;
+  signal_number?: string | null;
   primary_signal_id: string;
   category: string | null;
   severity: string | null;
@@ -401,7 +403,17 @@ const Signals = () => {
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-2">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <span
+                                className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 cursor-pointer hover:bg-cyan-500/25"
+                                title="Click to copy this signal's reference ID"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard?.writeText(formatSignalRef(signal));
+                                }}
+                              >
+                                {formatSignalRef(signal)}
+                              </span>
                               <Badge className={getSeverityColor(signal.severity)}>
                                 {signal.severity || "Unknown"}
                               </Badge>

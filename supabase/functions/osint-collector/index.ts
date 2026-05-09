@@ -37,7 +37,8 @@
  *   discover-sources         — AI-powered autonomous source discovery
  */
 
-import { corsHeaders, handleCors, errorResponse } from "../_shared/supabase-client.ts";
+import { corsHeaders, handleCors, errorResponse, createServiceClient } from "../_shared/supabase-client.ts";
+import { resolveServiceRoleKey } from "../_shared/current-service-key.ts";
 
 const ACTION_TO_FUNCTION: Record<string, string> = {
   'monitor-news': 'monitor-news',
@@ -106,7 +107,12 @@ Deno.serve(async (req) => {
 
 async function delegateToFunction(functionName: string, body: Record<string, unknown>): Promise<Response> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  // Resolve the current service-role key from vault. Env var holds
+  // the legacy JWT (no `sub` claim) which gets rejected by the new
+  // auth layer with 401 — symptom: 77 "Monitor X failed: Unauthorized"
+  // errors over 6h with no signals reaching the platform.
+  const supabaseClient = createServiceClient();
+  const serviceKey = await resolveServiceRoleKey(supabaseClient);
 
   try {
     const controller = new AbortController();

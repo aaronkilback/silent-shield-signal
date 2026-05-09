@@ -18,6 +18,12 @@ const ACTIVE_FIRES_URL = `${BCWS_BASE}/BCWS_ActiveFires_PublicView/FeatureServer
 const EVAC_ORDERS_URL = `${BCWS_BASE}/Evacuation_Orders_and_Alerts/FeatureServer/0/query`;
 const FIRE_PERIMETERS_URL = `${BCWS_BASE}/BCWS_FirePerimeters_PublicView/FeatureServer/0/query`;
 const DANGER_RATING_URL = `${BCWS_BASE}/British_Columbia_Danger_Rating_-_View/FeatureServer/7/query`;
+// Fire bans / prohibitions — BCWS legal orders. Distinct from danger
+// ratings (rating = fuel condition; ban = legal restriction). The
+// report previously inferred bans from rating, which was wrong both
+// directions (false bans on VH days, missed real bans on lower-rating
+// days). Source of truth lives here.
+const FIRE_BANS_URL = `${BCWS_BASE}/British_Columbia_Bans_and_Prohibition_Areas_-_View/FeatureServer/14/query`;
 
 export interface BCWSActiveFire {
   fire_number: string;
@@ -275,4 +281,187 @@ export async function findBCWSEvacuationsNear(
     .map((e) => ({ ...e, distance_km: Math.round(haversineKm({ lat, lng }, { lat: e.lat, lng: e.lng }) * 10) / 10 }))
     .filter((e) => e.distance_km <= radius_km)
     .sort((a, b) => a.distance_km - b.distance_km);
+}
+
+// ─── Fire Bans / Prohibitions ────────────────────────────────────────────────
+// BCWS legal prohibition orders. NOT to be confused with danger rating —
+// danger rating describes fuel conditions; prohibitions are issued
+// regionally as legal restrictions on Category 1 (campfires), Category 2
+// (open burning of small piles / grass / waste), and Category 3 (industrial
+// burning, large piles). A "High" danger rating does NOT automatically
+// imply a fire ban — that requires an actual BCWS prohibition order.
+
+export interface BCWSFireBan {
+  /** "Total Fire Ban" / "Partial Prohibition" / etc. */
+  type: string;
+  /** Human-readable e.g. "Category 2, Category 3" */
+  description: string;
+  /** Comma-joined category numbers, e.g. "Category 2,3" */
+  category: string;
+  /** Categories included as numbers (1, 2, 3) — for matrix logic. */
+  categories: number[];
+  /** "Cariboo" / "Coastal" / "Northwest" / "Prince George" / "Kamloops" / "Southeast" */
+  fire_centre: string | null;
+  /** Optional zone within fire centre. */
+  fire_zone: string | null;
+  /** Effective-date as ISO string. */
+  effective_date: string | null;
+  /** Bulletin URL on gov.bc.ca with the legal text. */
+  bulletin_url: string | null;
+}
+
+export interface BCWSFireBanWithGeometry extends BCWSFireBan {
+  /** Outer ring of the prohibition polygon (lat/lng pairs) for point-in-polygon. */
+  polygon: Array<[number, number]> | null;
+}
+
+function parseCategories(raw: string | null | undefined): number[] {
+  if (!raw) return [];
+  // e.g. "Category 2,3" or "Category 1, 2, 3" → [2,3] / [1,2,3]
+  const matches = raw.match(/\d+/g) ?? [];
+  return [...new Set(matches.map((m) => Number(m)).filter((n) => n >= 1 && n <= 3))].sort();
+}
+
+/**
+ * Pull every currently-active fire prohibition. ~3-30 polygons during
+ * fire season, 0 off-season.
+ */
+export async function fetchBCWSFireBans(): Promise<BCWSFireBan[]> {
+  const params = new URLSearchParams({
+    where: '1=1',
+    outFields: 'TYPE,ACCESS_PROHIBITION_DESCRIPTION,CATEGORY,FIRE_CENTRE_NAME,FIRE_ZONE_NAME,ACCESS_STATUS_EFFECTIVE_DATE,BULLETIN_URL',
+    returnGeometry: 'false',
+    f: 'json',
+    resultRecordCount: '500',
+  });
+  const r = await fetch(`${FIRE_BANS_URL}?${params.toString()}`, {
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error(`BCWS fire bans HTTP ${r.status}`);
+  const j = await r.json();
+  const features: any[] = j?.features ?? [];
+  return features
+    .map((f) => {
+      const a = f.attributes || {};
+      const description = String(a.ACCESS_PROHIBITION_DESCRIPTION ?? '');
+      return {
+        type: String(a.TYPE ?? 'Prohibition'),
+        description,
+        category: String(a.CATEGORY ?? ''),
+        categories: parseCategories(a.CATEGORY ?? description),
+        fire_centre: a.FIRE_CENTRE_NAME ?? null,
+        fire_zone: a.FIRE_ZONE_NAME ?? null,
+        effective_date: a.ACCESS_STATUS_EFFECTIVE_DATE
+          ? new Date(Number(a.ACCESS_STATUS_EFFECTIVE_DATE)).toISOString()
+          : null,
+        bulletin_url: a.BULLETIN_URL ?? null,
+      } as BCWSFireBan;
+    });
+}
+
+/**
+ * Pull active prohibitions WITH geometry so callers can test
+ * point-in-polygon. Geometry payloads are bigger (typically 50-200KB
+ * total during peak fire season) so this is a separate fetch from
+ * the metadata-only `fetchBCWSFireBans`.
+ */
+export async function fetchBCWSFireBansWithGeometry(): Promise<BCWSFireBanWithGeometry[]> {
+  const params = new URLSearchParams({
+    where: '1=1',
+    outFields: 'TYPE,ACCESS_PROHIBITION_DESCRIPTION,CATEGORY,FIRE_CENTRE_NAME,FIRE_ZONE_NAME,ACCESS_STATUS_EFFECTIVE_DATE,BULLETIN_URL',
+    returnGeometry: 'true',
+    outSR: '4326',
+    f: 'json',
+    resultRecordCount: '500',
+  });
+  const r = await fetch(`${FIRE_BANS_URL}?${params.toString()}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!r.ok) throw new Error(`BCWS fire bans (geom) HTTP ${r.status}`);
+  const j = await r.json();
+  const features: any[] = j?.features ?? [];
+  return features.map((f) => {
+    const a = f.attributes || {};
+    const description = String(a.ACCESS_PROHIBITION_DESCRIPTION ?? '');
+    // ArcGIS returns rings as [[[x,y], ...]]; flatten the outer ring
+    // to lat/lng pairs (lng=x, lat=y per esriGeometryPolygon).
+    let polygon: Array<[number, number]> | null = null;
+    const rings = f.geometry?.rings;
+    if (Array.isArray(rings) && rings.length > 0 && Array.isArray(rings[0])) {
+      polygon = rings[0].map((pt: any) => [Number(pt[1]), Number(pt[0])] as [number, number]);
+    }
+    return {
+      type: String(a.TYPE ?? 'Prohibition'),
+      description,
+      category: String(a.CATEGORY ?? ''),
+      categories: parseCategories(a.CATEGORY ?? description),
+      fire_centre: a.FIRE_CENTRE_NAME ?? null,
+      fire_zone: a.FIRE_ZONE_NAME ?? null,
+      effective_date: a.ACCESS_STATUS_EFFECTIVE_DATE
+        ? new Date(Number(a.ACCESS_STATUS_EFFECTIVE_DATE)).toISOString()
+        : null,
+      bulletin_url: a.BULLETIN_URL ?? null,
+      polygon,
+    };
+  });
+}
+
+/**
+ * Ray-casting point-in-polygon. Polygon vertices as [lat, lng] pairs.
+ */
+function pointInPolygon(lat: number, lng: number, polygon: Array<[number, number]>): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [latI, lngI] = polygon[i];
+    const [latJ, lngJ] = polygon[j];
+    const intersect =
+      lngI > lng !== lngJ > lng &&
+      lat < ((latJ - latI) * (lng - lngI)) / (lngJ - lngI + 1e-12) + latI;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Find the active fire prohibitions covering a specific (lat, lng).
+ * Use this for per-station / per-asset ban determination — much more
+ * accurate than the danger-rating-based inference the report did
+ * before May 2026.
+ *
+ * Returns the prohibitions in effect at that point. Empty array means
+ * no active prohibitions cover the location (campfires permitted under
+ * normal rules; industrial activity follows BCWS Forest Burning
+ * Regulation).
+ */
+export async function findFireBansAtPoint(
+  lat: number,
+  lng: number,
+): Promise<BCWSFireBan[]> {
+  const all = await fetchBCWSFireBansWithGeometry();
+  return filterBansAtPoint(all, lat, lng);
+}
+
+/**
+ * Filter a pre-fetched ban list down to those covering (lat, lng).
+ * Use this when checking many points (e.g. all Petronas stations)
+ * against the same ban set — avoids re-fetching the full provincial
+ * polygon list per point.
+ */
+export function filterBansAtPoint(
+  bans: BCWSFireBanWithGeometry[],
+  lat: number,
+  lng: number,
+): BCWSFireBan[] {
+  return bans
+    .filter((b) => b.polygon && pointInPolygon(lat, lng, b.polygon))
+    .map((b) => ({
+      type: b.type,
+      description: b.description,
+      category: b.category,
+      categories: b.categories,
+      fire_centre: b.fire_centre,
+      fire_zone: b.fire_zone,
+      effective_date: b.effective_date,
+      bulletin_url: b.bulletin_url,
+    }));
 }

@@ -997,54 +997,143 @@ Deno.serve(async (req) => {
         } : {}),
       };
 
-      // One signal per matching client. Per-client dedup so a hotspot
-      // already filed for client A doesn't block creation for client B,
-      // but a re-run within the 12h window doesn't double-write either.
+      // Two stable per-fire identifiers:
+      //   1. BCWS fire_number — official authority's tracking ID (best,
+      //      when matched). Same fire across days, satellites, agencies.
+      //   2. Cluster key — fallback for new ignitions before BCWS picks
+      //      them up. ~0.1° grid (~11km × ~6km at 56°N). NO DATE in the
+      //      key so the same fire across multiple days collapses into
+      //      one canonical signal — fires burn for days, sometimes weeks.
+      //
+      // Earlier the cluster_key included the day, so the same fire
+      // burning across midnight UTC produced two separate signals. The
+      // 12h dedup window also missed fires older than half a day. The
+      // user pasted a feed with 6+ "Active wildfire near Northeast BC
+      // (Peace/Montney)" rows across 3 days — the literal symptom of
+      // both bugs. New behavior:
+      //   - 7-day dedup window (fires burn for days)
+      //   - Date-less cluster key (matches across UTC midnights)
+      //   - BCWS fire_number takes precedence when available
+      //   - Re-detections nest as signal_updates rows on the canonical
+      //     signal, NOT new signals — operator sees one row per fire
+      //     that grows over time.
+      const clusterLat = Math.round(hs.lat * 10) / 10;
+      const clusterLng = Math.round(hs.lon * 10) / 10;
+      const clusterKey = `wildfire-${clusterLat.toFixed(1)}-${clusterLng.toFixed(1)}`;
+      const bcwsFireNumber = bcwsMatch?.fire_number || null;
+      (rawJson as any).cluster_key = clusterKey;
+      if (bcwsFireNumber) (rawJson as any).bcws_fire_number = bcwsFireNumber;
+
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
+
       let createdForThisHotspot = false;
       for (const targetClient of wildfireClients) {
-        const { data: existing } = await supabase
+        // Prefer BCWS fire_number match (most authoritative). Fall
+        // back to cluster_key match. Either match → nest as update.
+        let existing: { id: string } | null = null;
+        if (bcwsFireNumber) {
+          const { data } = await supabase
+            .from('signals')
+            .select('id')
+            .eq('client_id', targetClient.id)
+            .eq('raw_json->>bcws_fire_number', bcwsFireNumber)
+            .gte('created_at', sevenDaysAgo)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+          if (data) existing = data;
+        }
+        if (!existing) {
+          const { data } = await supabase
+            .from('signals')
+            .select('id')
+            .eq('client_id', targetClient.id)
+            .eq('raw_json->>cluster_key', clusterKey)
+            .gte('created_at', sevenDaysAgo)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+          if (data) existing = data;
+        }
+
+        if (existing) {
+          // Same fire, new detection. Nest as signal_updates row
+          // showing the fire's evolution. Dedupe updates by content
+          // hash so reruns within 15 min don't flood the timeline.
+          const updateContent =
+            `Re-detection ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC: ` +
+            `lat=${hs.lat.toFixed(3)}, lon=${hs.lon.toFixed(3)}, FRP=${hs.frp.toFixed(1)} MW, ` +
+            `HFI=${hs.hfi.toFixed(0)} kW/m, ROS=${hs.ros.toFixed(1)} m/min` +
+            (bcwsMatch ? `, BCWS ${bcwsMatch.fire_number} (${bcwsMatch.status}${bcwsMatch.size_ha ? `, ${bcwsMatch.size_ha}ha` : ''})` : '') +
+            (correlatedStrike ? `, ⚡ lightning correlated` : '');
+
+          const encoder = new TextEncoder();
+          const updHashData = encoder.encode(`wildfire_update|${existing.id}|${updateContent}`);
+          const updHashBuffer = await crypto.subtle.digest('SHA-256', updHashData);
+          const updHashHex = Array.from(new Uint8Array(updHashBuffer))
+            .map((b) => b.toString(16).padStart(2, '0')).join('');
+
+          const { data: existingUpd } = await supabase
+            .from('signal_updates')
+            .select('id')
+            .eq('content_hash', updHashHex)
+            .maybeSingle();
+          if (!existingUpd) {
+            await supabase.from('signal_updates').insert({
+              signal_id: existing.id,
+              content: updateContent,
+              source_name: 'cwfis_hotspot',
+              source_url: stableUrl,
+              content_hash: updHashHex,
+              metadata: {
+                cluster_key: clusterKey,
+                bcws_fire_number: bcwsFireNumber,
+                acq_date: hs.rep_date,
+                lat: hs.lat,
+                lon: hs.lon,
+                frp: hs.frp,
+                hfi: hs.hfi,
+              },
+            });
+            console.log(`[Wildfires] Nested re-detection on existing signal ${existing.id} (${bcwsFireNumber || clusterKey}) for ${targetClient.name}`);
+          }
+          duplicatesSuppressed++;
+          continue;
+        }
+        // Belt-and-suspenders: legacy URL-based path for signals
+        // created before the cluster_key was added.
+        const { data: existingByUrl } = await supabase
           .from('signals')
           .select('id')
           .eq('source_url', stableUrl)
           .eq('client_id', targetClient.id)
-          .gte('created_at', twelveHoursAgo)
+          .gte('created_at', sevenDaysAgo)
           .limit(1);
-        if (existing && existing.length > 0) { duplicatesSuppressed++; continue; }
-
-        let signalText = buildWildfireSignalText({ hs, region, clientName: targetClient.name, perimeter, spread });
-        if (classification.type === 'ambiguous_near_facility' && classification.note) {
-          signalText += ` ⚠ FACILITY PROXIMITY: ${classification.note}`;
-        }
-        if (correlatedStrike) {
-          const polarity = correlatedStrike.polarity === 'positive' ? 'positive (high ignition probability)' : correlatedStrike.polarity;
-          signalText += ` ⚡ LIGHTNING CORRELATION: ${polarity} cloud-to-ground strike detected within 5km — lightning ignition probable.`;
-        }
-        if (bcwsMatch) {
-          signalText += ` ✓ BCWS CONFIRMED: official registry fire ${bcwsMatch.fire_number}${bcwsMatch.incident_name ? ` (${bcwsMatch.incident_name})` : ''} — ${bcwsMatch.status}${bcwsMatch.size_ha ? `, ${bcwsMatch.size_ha}ha` : ''}${bcwsMatch.is_fire_of_note ? ', FIRE OF NOTE' : ''}.`;
+        if (existingByUrl && existingByUrl.length > 0) {
+          duplicatesSuppressed++;
+          continue;
         }
 
-        const { error } = await supabase.functions.invoke('ingest-signal', {
-          body: {
-            text: signalText,
-            source_url: stableUrl,
-            location: region,
-            clientId: targetClient.id,
-            skip_relevance_gate: true,
-            severity,
-            raw_json: rawJson,
-          },
-        });
-
-        if (!error) {
-          signalsCreated++;
-          createdForThisHotspot = true;
-          const spreadNote = spread ? ` → ${spread.spreadDir} ${(spread.intervals[0].forwardM/1000).toFixed(1)}km/6h` : '';
-          console.log(
-            `[Wildfires] ${classification.type} (${classification.confidence}) → ${targetClient.name}: ${region} — ` +
-            `fuel=${hs.fuel}, HFI=${hs.hfi.toFixed(0)}kW/m, ROS=${hs.ros.toFixed(1)}m/min, FWI=${hs.fwi.toFixed(1)}` +
-            `${correlatedStrike ? ' ⚡lightning' : ''}${spreadNote}`
-          );
-        }
+        // 2026-05-08: VIIRS hotspot signals deferred. The same NE BC
+        // Peace/Montney hotspot was creating 5+ daily signals because
+        // satellite passes re-detect the same thermal anomaly across
+        // VIIRS-S/VIIRS-N + MODIS Terra/Aqua + day/night cycles.
+        // Operators were drowning in repetitive "active wildfire near
+        // NE BC" signals on the same fire.
+        //
+        // BCWS active-fires path (further down) is now the primary
+        // signal source: ONE signal per registered fire, dedup'd by
+        // fire_number, with all the VIIRS context (fuel/HFI/ROS/FWI/
+        // lightning-correlation) available for enrichment if needed.
+        // VIIRS analysis still runs in this loop because it informs
+        // BCWS confidence and feeds the daily wildfire report.
+        const spreadNote = spread ? ` → ${spread.spreadDir} ${(spread.intervals[0].forwardM/1000).toFixed(1)}km/6h` : '';
+        console.log(
+          `[Wildfires] VIIRS context (no signal) → ${targetClient.name}: ${region} — ` +
+          `fuel=${hs.fuel}, HFI=${hs.hfi.toFixed(0)}kW/m, ROS=${hs.ros.toFixed(1)}m/min, FWI=${hs.fwi.toFixed(1)}` +
+          `${correlatedStrike ? ' ⚡lightning' : ''}${spreadNote}` +
+          `${bcwsMatch ? ` (BCWS ${bcwsMatch.fire_number})` : ''}`
+        );
       }
       if (createdForThisHotspot && classification.type === 'ambiguous_near_facility') {
         ambiguousDetected++;
@@ -1099,8 +1188,13 @@ Deno.serve(async (req) => {
               source_url: stableUrl,
               location: zone,
               clientId: targetClient.id,
+              source_key: 'CWFIS VIIRS',
               skip_relevance_gate: true,
-              category: 'lightning_strike',
+              // 'lightning_strike' isn't in the AI classifier's category
+              // taxonomy — the closest match is natural_disaster. Use the
+              // fallback path so AI can override if it picks something else.
+              fallback_category: 'natural_disaster',
+              fallback_severity: 'low',
               severity: 'low',
               entity_tags: ['lightning', 'latent-ignition-risk'],
               raw_json: {
@@ -1120,6 +1214,102 @@ Deno.serve(async (req) => {
         }
 
         if (lightningSignals >= 5) break; // cap lightning signals per run
+      }
+    }
+
+    // ── BCWS active fire ingestion (NEW fires only) ────────────────────
+    // 2026-05-08: replaces VIIRS hotspot signals as the primary fire
+    // source. BCWS publishes a curated list of registered fires with
+    // a stable fire_number per incident — perfect dedup key. We signal
+    // ONCE per fire when we first see it; status changes (Out of
+    // Control → Being Held → Under Control → Out) don't create new
+    // signals, but operators can re-pull the BCWS dashboard URL for
+    // current status. This eliminates the 5+ duplicate signals/day
+    // that VIIRS was producing on the same Peace/Montney hotspot.
+    let newFireSignals = 0;
+    if (wildfireClients.length > 0 && bcwsFires.length > 0) {
+      for (const fire of bcwsFires) {
+        // Only inside operational zones.
+        const inZone = getOperationalZone(fire.lat, fire.lng);
+        if (!inZone) continue;
+
+        // Skip Out / Under Control fires — operationally resolved.
+        // Out of Control / Being Held are the actionable states.
+        if (fire.status === 'Out') continue;
+
+        // Stable URL keyed on fire_number — dedup forever per fire.
+        const fireUrl = fire.fire_url
+          || `https://wildfiresituation.nrs.gov.bc.ca/dashboard?fireId=${encodeURIComponent(fire.fire_number)}`;
+
+        // Severity: Out of Control = critical, Being Held = high,
+        // Under Control = medium. is_fire_of_note overrides to high
+        // minimum (BCWS designates these for public attention).
+        let severity: 'critical' | 'high' | 'medium' | 'low';
+        if (fire.status === 'Out of Control') severity = 'critical';
+        else if (fire.status === 'Being Held' || fire.is_fire_of_note) severity = 'high';
+        else severity = 'medium';
+
+        for (const targetClient of wildfireClients) {
+          // Forever dedup on fire_number per client. A fire registered
+          // last week shouldn't re-signal today even if status changed.
+          const { data: existingFire } = await supabase
+            .from('signals')
+            .select('id')
+            .eq('client_id', targetClient.id)
+            .eq('source_url', fireUrl)
+            .limit(1);
+          if (existingFire && existingFire.length > 0) {
+            duplicatesSuppressed++;
+            continue;
+          }
+
+          const sizePart = fire.size_ha != null ? ` Size: ${fire.size_ha.toLocaleString()} ha.` : '';
+          const ignitionPart = fire.ignition_date ? ` Ignition: ${fire.ignition_date}.` : '';
+          const causePart = fire.cause ? ` Cause: ${fire.cause}.` : '';
+          const noteFlag = fire.is_fire_of_note ? ' ⚠ FIRE OF NOTE.' : '';
+          const description = fire.geographic_description ? ` ${fire.geographic_description}.` : '';
+
+          const signalText =
+            `🔥 BCWS Fire ${fire.fire_number}${fire.incident_name ? ` — ${fire.incident_name}` : ''}: ` +
+            `${fire.status} in ${inZone} (${fire.fire_centre || 'unknown centre'}, ${fire.zone || 'unknown zone'}).${sizePart}${ignitionPart}${causePart}${noteFlag}${description}`;
+
+          const { error: fireErr } = await supabase.functions.invoke('ingest-signal', {
+            body: {
+              text: signalText,
+              source_url: fireUrl,
+              location: inZone,
+              clientId: targetClient.id,
+              source_key: 'CWFIS VIIRS',
+              skip_relevance_gate: true,
+              fallback_category: 'wildfire',
+              fallback_severity: severity,
+              severity,
+              entity_tags: ['bcws', 'wildfire', fire.fire_centre, fire.zone].filter(Boolean) as string[],
+              raw_json: {
+                source: 'bcws_active_fire',
+                source_name: 'bcws_active_fire',
+                bcws_fire_number: fire.fire_number,
+                fire_url: fireUrl,
+                incident_name: fire.incident_name,
+                fire_centre: fire.fire_centre,
+                zone: fire.zone,
+                status: fire.status,
+                size_ha: fire.size_ha,
+                cause: fire.cause,
+                fire_type: fire.fire_type,
+                ignition_date: fire.ignition_date,
+                is_fire_of_note: fire.is_fire_of_note,
+                geographic_description: fire.geographic_description,
+                centroid: { lat: fire.lat, lng: fire.lng },
+              },
+            },
+          });
+
+          if (!fireErr) {
+            newFireSignals++;
+            console.log(`[Wildfires] BCWS NEW FIRE → ${targetClient.name}: ${fire.fire_number} (${fire.status}) in ${inZone}${fire.is_fire_of_note ? ' [Fire of Note]' : ''}`);
+          }
+        }
       }
     }
 
@@ -1168,8 +1358,14 @@ Deno.serve(async (req) => {
               source_url: stableUrl,
               location: inZone,
               clientId: targetClient.id,
+              source_key: 'CWFIS VIIRS',
               skip_relevance_gate: true,
-              category,
+              // BCWS evacuations: AI taxonomy doesn't have evacuation_*
+              // categories — closest match for an Order is active_threat
+              // (immediate life safety), Alert maps to natural_disaster.
+              // Pass through severity directly (it's already set above).
+              fallback_category: isOrder ? 'active_threat' : 'natural_disaster',
+              fallback_severity: severity,
               severity,
               entity_tags: ['evacuation', 'bcws', evac.event_type || 'wildfire'].filter(Boolean),
               raw_json: {

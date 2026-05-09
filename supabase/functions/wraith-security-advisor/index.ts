@@ -34,9 +34,17 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    // Accept both service-role formats. SUPABASE_SERVICE_ROLE_KEY is
+    // the new sb_secret_* API key; SERVICE_ROLE_JWT is the legacy
+    // JWT used by job-worker (pre-existing dual-format setup, see
+    // supabase/functions/job-worker/index.ts comment). Comparing
+    // against only one of them was rejecting every queued
+    // wraith-security-advisor job with 401.
     const authHeader = req.headers.get('Authorization') || '';
     const token = authHeader.replace('Bearer ', '');
-    const isServiceRole = token === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const newKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const legacyKey = Deno.env.get('SERVICE_ROLE_JWT');
+    const isServiceRole = !!token && (token === newKey || token === legacyKey);
     const { userId } = isServiceRole ? { userId: 'service_role' } : await getUserFromRequest(req);
     if (!userId) return errorResponse('Authentication required', 401);
 

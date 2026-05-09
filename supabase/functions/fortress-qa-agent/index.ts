@@ -14,15 +14,18 @@ Deno.serve(async (req) => {
     const supabase = createServiceClient();
     const runStartedAt = new Date().toISOString();
 
-    // Get Petronas Canada client_id
-    const { data: petronasData } = await supabase
+    // Use the dedicated _qa_test_client row (status='inactive'). Until
+    // 2026-05-07 the QA agent targeted Petronas Canada and synthetic
+    // fixtures leaked into client-facing reports/incidents — see
+    // migration 20260507000001_qa_test_client.sql.
+    const { data: qaClient } = await supabase
       .from('clients')
       .select('id')
-      .ilike('name', '%petronas%')
-      .single();
+      .eq('name', '_qa_test_client')
+      .maybeSingle();
 
-    const PETRONAS_CLIENT_ID = petronasData?.id;
-    console.log(`[QA Agent] Petronas client ID: ${PETRONAS_CLIENT_ID || 'NOT FOUND — tests requiring client will skip'}`);
+    const QA_TEST_CLIENT_ID = qaClient?.id;
+    console.log(`[QA Agent] QA test client ID: ${QA_TEST_CLIENT_ID || 'NOT FOUND — apply migration 20260507000001 — tests requiring client will skip'}`);
 
     const tests: {
       suite: string;
@@ -43,7 +46,7 @@ Deno.serve(async (req) => {
               sourceType: 'qa_test',
               is_test: true,
               sourceData: { source_name: 'QA Test', url: `https://qa.test/relevant-${Date.now()}` },
-              clientId: PETRONAS_CLIENT_ID
+              clientId: QA_TEST_CLIENT_ID
             }
           });
           return {
@@ -67,7 +70,7 @@ Deno.serve(async (req) => {
               sourceType: 'qa_test',
               is_test: true,
               sourceData: { source_name: 'QA Test', url: `https://qa.test/irrelevant-${start}` },
-              clientId: PETRONAS_CLIENT_ID
+              clientId: QA_TEST_CLIENT_ID
             }
           });
           let filteredCount = 0;
@@ -133,7 +136,7 @@ Deno.serve(async (req) => {
                 is_test: true,
                 skip_relevance_gate: true,
                 sourceData: { source_name: 'QA Enrich Test', url: `https://qa.test/enrich-${start}` },
-                clientId: PETRONAS_CLIENT_ID,
+                clientId: QA_TEST_CLIENT_ID,
               }),
               signal: AbortSignal.timeout(30000),
             });
@@ -286,7 +289,7 @@ Deno.serve(async (req) => {
         run: async () => {
           const start = Date.now();
           const resp = await supabase.functions.invoke('generate-executive-report', {
-            body: { clientId: PETRONAS_CLIENT_ID }
+            body: { clientId: QA_TEST_CLIENT_ID }
           });
           const ms = Date.now() - start;
           const html = resp.data?.html || '';
@@ -307,7 +310,7 @@ Deno.serve(async (req) => {
         run: async () => {
           const start = Date.now();
           const resp = await supabase.functions.invoke('generate-report-visuals', {
-            body: { clientId: PETRONAS_CLIENT_ID }
+            body: { clientId: QA_TEST_CLIENT_ID }
           });
           return {
             passed: !resp.error && resp.data?.success,
@@ -333,7 +336,7 @@ Deno.serve(async (req) => {
           let lastErr: string | null = null;
           for (let attempt = 1; attempt <= 2; attempt++) {
             const resp = await supabase.functions.invoke('agent-chat', {
-              body: { agentId: aegis.id, messages: [{ role: 'user', content: 'QA health check. Respond with OK.' }], clientId: PETRONAS_CLIENT_ID, stream: false }
+              body: { agentId: aegis.id, messages: [{ role: 'user', content: 'QA health check. Respond with OK.' }], clientId: QA_TEST_CLIENT_ID, stream: false }
             });
             if (!resp.error && resp.data?.response) {
               const ms = Date.now() - start;
@@ -406,7 +409,7 @@ Deno.serve(async (req) => {
         run: async () => {
           const start = Date.now();
           const resp = await supabase.functions.invoke('generate-daily-briefing', {
-            body: { clientId: PETRONAS_CLIENT_ID, test: true }
+            body: { clientId: QA_TEST_CLIENT_ID, test: true }
           });
           return {
             passed: !resp.error,

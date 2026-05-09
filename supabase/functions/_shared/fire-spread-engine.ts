@@ -31,10 +31,31 @@ export interface HourlyWeatherSlice {
 }
 
 export interface SpreadInputs {
+  /**
+   * Center of the simulation grid as (lat, lng). When ignitionPerimeter
+   * is omitted, this is also the single ignition point.
+   * When ignitionPerimeter is present, the grid is centered on this
+   * coordinate (typically the centroid of the perimeter) but every
+   * cell whose center lies inside the perimeter polygon is seeded as
+   * already-burning at t=0.
+   */
   ignitionLat: number;
   ignitionLng: number;
   ignitionTime: string;
   durationHours: number;
+  /**
+   * Optional starting perimeter as a closed ring of [lng, lat] pairs
+   * (GeoJSON Polygon outer-ring shape). When supplied, the simulator
+   * treats every cell inside this polygon as already-burning at t=0
+   * and propagates outward. Use this for projecting an existing
+   * BCWS-published fire perimeter forward in time. When omitted, the
+   * simulator falls back to single-cell ignition at the grid center.
+   *
+   * Coordinate convention: [lng, lat] pairs (matches GeoJSON / our
+   * cellToLngLat output). Ring may or may not close (last == first);
+   * the engine handles both.
+   */
+  ignitionPerimeter?: Array<[number, number]>;
   /**
    * Hourly weather over the simulation horizon. Length must be at
    * least durationHours. In manual mode the same snapshot is repeated
@@ -70,6 +91,12 @@ export interface SpreadOutput {
   checkpoints: SpreadCheckpoint[];
   metadata: {
     ignition: { lat: number; lng: number; time: string };
+    /** 'point' — single-cell start; 'perimeter' — seeded from polygon. */
+    ignition_type: 'point' | 'perimeter';
+    /** Cells initially marked burning at t=0 (1 for point, N for perimeter). */
+    seeded_cells: number;
+    /** Initial perimeter (when ignition_type='perimeter') as [lng,lat] pairs. */
+    seed_perimeter?: number[][];
     duration_hours: number;
     fuel: string;
     /** ROS / direction at hour 0 (representative — actual values varied per cell visit). */
@@ -208,6 +235,23 @@ function cellToLngLat(x: number, y: number, center: number, igLat: number, igLng
   return [igLng + dLng, igLat + dLat];
 }
 
+// Ray-cast point-in-polygon. Polygon is a list of [lng, lat] pairs.
+// Closing point optional (handles both closed and open rings). Used
+// to seed the engine's queue from a perimeter — every cell whose
+// center is inside the polygon starts at t=0.
+function pointInRing(lng: number, lat: number, ring: Array<[number, number]>): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersect =
+      yi > lat !== yj > lat &&
+      lng < ((xj - xi) * (lat - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 // Compass bearing from cell to neighbor in radians (0 = N, increasing
 // clockwise). dx is east, dy is south (since y increases southward).
 function bearingFromOffset(dx: number, dy: number): number {
@@ -220,7 +264,53 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
   const center = N_CELLS >> 1;
   const total = N_CELLS * N_CELLS;
   const arrival = new Float64Array(total).fill(Infinity);
-  arrival[center * N_CELLS + center] = 0;
+
+  // ── Seed the arrival grid ────────────────────────────────────────
+  // Two paths:
+  //   • PERIMETER ignition — every cell whose center lies inside
+  //     the supplied polygon starts at t=0. This lets us project
+  //     an existing BCWS fire perimeter forward instead of starting
+  //     from scratch.
+  //   • POINT ignition (default) — single center cell at t=0.
+  // The min-heap is seeded from the same set so propagation begins
+  // from the perimeter edge outward.
+  const ignitionType: 'point' | 'perimeter' =
+    input.ignitionPerimeter && input.ignitionPerimeter.length >= 3 ? 'perimeter' : 'point';
+  const seeded: number[] = [];
+  if (ignitionType === 'perimeter') {
+    const ring = input.ignitionPerimeter!;
+    // Compute polygon bbox in lng/lat to skip distant cells cheaply.
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const [lng, lat] of ring) {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+    for (let y = 0; y < N_CELLS; y++) {
+      for (let x = 0; x < N_CELLS; x++) {
+        const [lng, lat] = cellToLngLat(x, y, center, input.ignitionLat, input.ignitionLng);
+        if (lng < minLng || lng > maxLng || lat < minLat || lat > maxLat) continue;
+        if (pointInRing(lng, lat, ring)) {
+          const idx = y * N_CELLS + x;
+          arrival[idx] = 0;
+          seeded.push(idx);
+        }
+      }
+    }
+    // Defensive fallback — if the perimeter happens to fall entirely
+    // outside the simulation grid (shouldn't happen with sensible
+    // centroid input but is possible for an oversized perimeter),
+    // fall back to point ignition rather than producing an empty
+    // simulation.
+    if (seeded.length === 0) {
+      arrival[center * N_CELLS + center] = 0;
+      seeded.push(center * N_CELLS + center);
+    }
+  } else {
+    arrival[center * N_CELLS + center] = 0;
+    seeded.push(center * N_CELLS + center);
+  }
 
   if (!input.hourlyWeather || input.hourlyWeather.length === 0) {
     throw new Error("simulateSpread requires hourlyWeather (length >= 1)");
@@ -253,7 +343,7 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
   const diagonalDist = CELL_SIZE_M * Math.SQRT2;
 
   const heap = new MinHeap();
-  heap.push(0, center * N_CELLS + center);
+  for (const idx of seeded) heap.push(0, idx);
 
   const horizonMin = input.durationHours * 60;
 
@@ -350,6 +440,11 @@ export function simulateSpread(input: SpreadInputs): SpreadOutput {
         lng: input.ignitionLng,
         time: input.ignitionTime,
       },
+      ignition_type: ignitionType,
+      seeded_cells: seeded.length,
+      ...(ignitionType === 'perimeter' && input.ignitionPerimeter
+        ? { seed_perimeter: input.ignitionPerimeter.map(([lng, lat]) => [lng, lat]) }
+        : {}),
       duration_hours: input.durationHours,
       fuel: `${input.fuel.code} (${input.fuel.description})`,
       head_ros_m_per_min: Math.round(rosHead0 * 100) / 100,

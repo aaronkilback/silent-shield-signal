@@ -16,8 +16,19 @@ import { useBenchmarkHealth } from "@/hooks/useConstellationData";
  * accessed (operators glance at it, not stare at it) so it pays to
  * only fetch when the operator opens the panel.
  */
-export function BenchmarkHealthPanel() {
-  const [expanded, setExpanded] = useState(false);
+interface BenchmarkHealthPanelProps {
+  expanded?: boolean;
+  onExpandedChange?: (next: boolean) => void;
+}
+
+export function BenchmarkHealthPanel({ expanded: controlledExpanded, onExpandedChange }: BenchmarkHealthPanelProps = {}) {
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isControlled = controlledExpanded !== undefined;
+  const expanded = isControlled ? controlledExpanded : internalExpanded;
+  const toggle = () => {
+    if (isControlled) onExpandedChange?.(!expanded);
+    else setInternalExpanded((e) => !e);
+  };
   const { data, isFetching } = useBenchmarkHealth(expanded);
 
   const latest = data?.latest ?? null;
@@ -53,7 +64,7 @@ export function BenchmarkHealthPanel() {
   return (
     <div className="rounded-md border border-border/50 bg-card/50 p-3 text-sm">
       <button
-        onClick={() => setExpanded((e) => !e)}
+        onClick={toggle}
         className="flex w-full items-center justify-between gap-2 text-left"
       >
         <div className="flex items-center gap-2">

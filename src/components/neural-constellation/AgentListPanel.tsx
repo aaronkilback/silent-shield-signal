@@ -1,6 +1,7 @@
-import { useMemo } from "react";
-import { GripHorizontal, Cpu } from "lucide-react";
+import { useMemo, useState } from "react";
+import { GripHorizontal, Cpu, ClipboardCheck } from "lucide-react";
 import { DraggablePanel } from "./DraggablePanel";
+import { FleetAuditSheet } from "./FleetAuditSheet";
 import type { AgentActivityMetrics } from "@/hooks/useConstellationData";
 
 interface AgentEntry {
@@ -25,6 +26,7 @@ function statusDot(score: number) {
 }
 
 export function AgentListPanel({ agents, activityMetrics, onSelectAgent }: AgentListPanelProps) {
+  const [auditOpen, setAuditOpen] = useState(false);
   const metricsMap = useMemo(() => {
     const m = new Map<string, AgentActivityMetrics>();
     activityMetrics.forEach((a) => m.set(a.callSign, a));
@@ -72,9 +74,17 @@ export function AgentListPanel({ agents, activityMetrics, onSelectAgent }: Agent
           </div>
           <div className="flex items-center gap-2 mt-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[9px] text-muted-foreground font-mono">
+            <span className="text-[9px] text-muted-foreground font-mono flex-1">
               {activeCount}/{sorted.length} ONLINE
             </span>
+            <button
+              onClick={(e) => { e.stopPropagation(); setAuditOpen(true); }}
+              title="Fleet Persona Audit — every agent's stated lane vs. recent behavior"
+              className="text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider text-cyan-400 hover:bg-cyan-400/10 transition-colors flex items-center gap-1"
+            >
+              <ClipboardCheck className="w-2.5 h-2.5" />
+              Audit
+            </button>
           </div>
         </div>
 
@@ -169,6 +179,14 @@ export function AgentListPanel({ agents, activityMetrics, onSelectAgent }: Agent
           </div>
         </div>
       </div>
+      <FleetAuditSheet
+        open={auditOpen}
+        onOpenChange={setAuditOpen}
+        onSelectAgent={(cs) => {
+          setAuditOpen(false);
+          onSelectAgent?.(cs);
+        }}
+      />
     </DraggablePanel>
   );
 }

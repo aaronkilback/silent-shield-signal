@@ -230,6 +230,13 @@ export const SignalHistory = () => {
         `)
         .is('deleted_at', null)
         .neq('status', 'archived')
+        // Hide signals an agent has dismissed as false positives.
+        // review-signal-agent writes status='false_positive' when its
+        // verdict is 'dismiss' on a sub-threshold signal — that's
+        // exactly the "agent reasoning said it was generic" pathway
+        // the operator caught May 2026 where the verdict was being
+        // recorded but never honored as a gate.
+        .neq('status', 'false_positive')
         .or('signal_type.neq.pattern,signal_type.is.null')
         .neq('is_test', true)
         .order('created_at', { ascending: false })
@@ -852,7 +859,14 @@ export const SignalHistory = () => {
               <div className="flex items-center gap-2 flex-shrink-0">
                 <SignalScoreExplainer signalId={signal.id} score={signal.relevance_score} />
                 <span className="text-xs text-muted-foreground font-medium">
-                  {Math.round(signal.confidence || 0)}%
+                  {/* normalizeConfidence handles legacy 0-100 values
+                      and current 0-1 values uniformly. Without it,
+                      AI-classified signals (confidence=0.85) rendered
+                      as "1%" while keyword-scored signals
+                      (confidence=65) rendered as "65%" — the
+                      junk-pages-out-rank-real-events bug the operator
+                      caught May 4 2026. */}
+                  {Math.round(normalizeConfidence(signal.confidence) ?? 0)}%
                 </span>
                 <SignalFeedback
                   signalId={signal.id}

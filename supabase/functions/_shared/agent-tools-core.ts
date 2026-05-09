@@ -803,9 +803,254 @@ const arcgisQueryLayer: ToolHandler = {
   },
 };
 
-// ── Register all sixteen ───────────────────────────────────────────────────
+// ── Tool: get_client_security_context ──────────────────────────────────────
+// Exposes a client's monitoring keywords + high-value assets so an agent can
+// decide whether a generic / horizon-class signal (CISA KEV CVE, CCCS
+// advisory, vendor breach disclosure) is elevated by stack/asset match.
+//
+// Why this exists: until May 2026 the review-signal-agent had no way to
+// distinguish "this CVE affects Petronas's actual tech stack" from "this is
+// a generic CVE about software they don't run". With no signal of stack
+// match, the agent fell back to "isolated = noise" and dismissed every
+// cyber-horizon signal. This tool gives the agent the data it needs to
+// make a real elevate/baseline call.
+//
+// Returns: { monitoring_keywords[], high_value_assets[], industry,
+// asset_summary } — small payload deliberately, so the model can quickly
+// scan for vendor/product overlap without wading through full client
+// records.
+
+const getClientSecurityContext: ToolHandler = {
+  name: 'get_client_security_context',
+  description:
+    'Retrieve a client\'s monitoring keywords, high-value assets, and industry — used to assess whether a generic security-horizon signal (e.g. a CVE, vendor breach, sector advisory) intersects with that client\'s actual tech stack or operational footprint. Pass the client_id from the signal under review. Returns the keyword/asset list verbatim plus a one-line summary.',
+  parameters: {
+    type: 'object',
+    properties: {
+      client_id: { type: 'string', description: 'UUID of the client whose security context to retrieve. Use the signal\'s client_id.' },
+    },
+    required: ['client_id'],
+  },
+  async execute(args, _ctx, supabase) {
+    const clientId = String(args.client_id || '').trim();
+    if (!clientId) return { error: 'client_id required' };
+    const { data, error } = await supabase
+      .from('clients')
+      .select('id, name, industry, monitoring_keywords, high_value_assets, locations')
+      .eq('id', clientId)
+      .maybeSingle();
+    if (error) return { error: error.message };
+    if (!data) return { client_id: clientId, found: false };
+    return {
+      client_id: clientId,
+      client_name: data.name,
+      industry: data.industry || null,
+      monitoring_keywords: data.monitoring_keywords || [],
+      high_value_assets: data.high_value_assets || [],
+      locations: data.locations || [],
+      asset_summary: [
+        data.industry ? `industry=${data.industry}` : null,
+        Array.isArray(data.high_value_assets) && data.high_value_assets.length > 0
+          ? `${data.high_value_assets.length} high-value asset(s)`
+          : null,
+        Array.isArray(data.monitoring_keywords) && data.monitoring_keywords.length > 0
+          ? `${data.monitoring_keywords.length} monitoring keyword(s)`
+          : null,
+      ].filter(Boolean).join(', ') || 'No security context populated.',
+    };
+  },
+};
+
+// ── Tool: query_carver_scores ──────────────────────────────────────────────
+// Read CARVER scores for a client's assets. Used by VERIDIAN-TANGO,
+// AEGIS-CMD, and any agent reasoning over physical-infrastructure
+// threat. The CARVER framework is documented as an expert_knowledge
+// row — agents should call query_expert_knowledge('CARVER') first
+// for the methodology, then this tool to retrieve actual scores.
+
+const queryCarverScores: ToolHandler = {
+  name: 'query_carver_scores',
+  description:
+    "Retrieve CARVER target-assessment scores for a client's high-value assets. Returns each asset's six-dimension score (Criticality / Accessibility / Recuperability / Vulnerability / Effect / Recognizability), total (6-30), and priority tier (low / medium / high / critical). Use to ground recommendations about asset hardening or threat focus. Pass client_id from the signal/incident under review. Optionally filter by asset_name (substring match) to score-check a specific asset.",
+  parameters: {
+    type: 'object',
+    properties: {
+      client_id:    { type: 'string', description: 'UUID of the client whose CARVER scores to retrieve.' },
+      asset_name:   { type: 'string', description: 'Optional asset name substring filter (case-insensitive).' },
+      min_priority: {
+        type: 'string',
+        enum: ['low', 'medium', 'high', 'critical'],
+        description: 'Optional minimum priority tier — return only assets at or above this tier.',
+      },
+    },
+    required: ['client_id'],
+  },
+  async execute(args, _ctx, supabase) {
+    const clientId = String(args.client_id || '').trim();
+    if (!clientId) return { error: 'client_id required' };
+    let q = supabase
+      .from('asset_carver_scores')
+      .select('asset_name, asset_category, asset_location, criticality, accessibility, recuperability, vulnerability, effect, recognizability, total_score, priority_tier, validated_at, last_reviewed_at, justification, scored_by, scored_at')
+      .eq('client_id', clientId)
+      .order('total_score', { ascending: false });
+
+    if (typeof args.asset_name === 'string' && args.asset_name.trim()) {
+      q = q.ilike('asset_name', `%${args.asset_name.replace(/[%,]/g, '')}%`);
+    }
+    if (typeof args.min_priority === 'string') {
+      const tierRank: Record<string, string[]> = {
+        low: ['low', 'medium', 'high', 'critical'],
+        medium: ['medium', 'high', 'critical'],
+        high: ['high', 'critical'],
+        critical: ['critical'],
+      };
+      const allowed = tierRank[args.min_priority];
+      if (allowed) q = q.in('priority_tier', allowed);
+    }
+
+    const { data, error } = await q;
+    if (error) return { error: error.message };
+    return {
+      client_id: clientId,
+      count: data?.length ?? 0,
+      assets: (data ?? []).map((a: any) => ({
+        asset_name: a.asset_name,
+        asset_category: a.asset_category,
+        asset_location: a.asset_location,
+        carver: {
+          criticality:     a.criticality,
+          accessibility:   a.accessibility,
+          recuperability:  a.recuperability,
+          vulnerability:   a.vulnerability,
+          effect:          a.effect,
+          recognizability: a.recognizability,
+        },
+        total_score:    a.total_score,
+        priority_tier:  a.priority_tier,
+        // Surface the validation status so the agent can include
+        // appropriate hedging in its reply ("score is initial seed,
+        // pending analyst review").
+        validation_status: a.validated_at ? 'validated' : 'initial_seed_pending_review',
+        last_reviewed_at:  a.last_reviewed_at,
+        scored_by:         a.scored_by,
+        // Truncated justification — agents almost never need the full
+        // JSON, just the overall_notes for context.
+        overall_notes:     a.justification?.overall_notes ?? null,
+      })),
+    };
+  },
+};
+
+// ── Tool: score_asset_carver ───────────────────────────────────────────────
+// Write or update a CARVER score. Used by VERIDIAN-TANGO during a
+// formal threat-assessment investigation. Each dimension MUST come
+// with a one-line justification — scores without reasoning are
+// rejected on review and are operationally useless. The justification
+// JSON is a checked input shape, not free-form.
+
+const scoreAssetCarver: ToolHandler = {
+  name: 'score_asset_carver',
+  description:
+    'Score (or re-score) a client asset using the CARVER methodology. All six dimensions are required and each MUST be paired with a one-sentence justification — scores without reasoning are operationally useless and will be flagged on review. Use this tool when you have evidence to back a score: prior incident history, public reporting, asset-specific intelligence, or an analyst directive. The asset_name must match an existing asset on the client (otherwise this is treated as a new asset added to scoring).',
+  parameters: {
+    type: 'object',
+    properties: {
+      client_id:        { type: 'string', description: 'UUID of the client.' },
+      asset_name:       { type: 'string', description: 'Exact asset name (matches client.high_value_assets entries).' },
+      asset_category:   { type: 'string', description: 'Asset category — pipeline, lng_terminal, upstream_gas, storage, admin, etc.' },
+      asset_location:   { type: 'string', description: 'Human-readable location (e.g. "Kitimat, BC").' },
+      criticality:      { type: 'integer', minimum: 1, maximum: 5, description: 'Mission impact if disrupted (1=trivial, 5=catastrophic).' },
+      accessibility:    { type: 'integer', minimum: 1, maximum: 5, description: 'How easily a threat actor can reach the asset (1=hardened/remote, 5=open access).' },
+      recuperability:   { type: 'integer', minimum: 1, maximum: 5, description: 'INVERSE — how slow is recovery? (1=hours, 5=12+ months).' },
+      vulnerability:    { type: 'integer', minimum: 1, maximum: 5, description: 'Exposure to known attack methods (1=defended, 5=exposed).' },
+      effect:           { type: 'integer', minimum: 1, maximum: 5, description: 'Cascading consequences (1=contained, 5=systemic cascade).' },
+      recognizability:  { type: 'integer', minimum: 1, maximum: 5, description: 'How easily a threat actor can identify this as a target (1=obscure, 5=globally famous).' },
+      criticality_reason:     { type: 'string', description: 'One-sentence justification for criticality score.' },
+      accessibility_reason:   { type: 'string', description: 'One-sentence justification for accessibility score.' },
+      recuperability_reason:  { type: 'string', description: 'One-sentence justification for recuperability score.' },
+      vulnerability_reason:   { type: 'string', description: 'One-sentence justification for vulnerability score.' },
+      effect_reason:          { type: 'string', description: 'One-sentence justification for effect score.' },
+      recognizability_reason: { type: 'string', description: 'One-sentence justification for recognizability score.' },
+      overall_notes:          { type: 'string', description: 'Optional summary of the assessment context.' },
+    },
+    required: [
+      'client_id', 'asset_name',
+      'criticality', 'accessibility', 'recuperability', 'vulnerability', 'effect', 'recognizability',
+      'criticality_reason', 'accessibility_reason', 'recuperability_reason',
+      'vulnerability_reason', 'effect_reason', 'recognizability_reason',
+    ],
+  },
+  async execute(args, ctx, supabase) {
+    const clientId = String(args.client_id || '').trim();
+    const assetName = String(args.asset_name || '').trim();
+    if (!clientId || !assetName) return { error: 'client_id and asset_name required' };
+
+    const dims = ['criticality', 'accessibility', 'recuperability', 'vulnerability', 'effect', 'recognizability'] as const;
+    for (const d of dims) {
+      const v = Number((args as any)[d]);
+      if (!Number.isInteger(v) || v < 1 || v > 5) {
+        return { error: `${d} must be an integer 1–5 (got ${(args as any)[d]})` };
+      }
+      const reason = String((args as any)[`${d}_reason`] || '').trim();
+      if (!reason || reason.length < 10) {
+        return { error: `${d}_reason required (>= 10 chars). Scores without reasoning are operationally useless.` };
+      }
+    }
+
+    const justification = {
+      criticality_reason:     args.criticality_reason,
+      accessibility_reason:   args.accessibility_reason,
+      recuperability_reason:  args.recuperability_reason,
+      vulnerability_reason:   args.vulnerability_reason,
+      effect_reason:          args.effect_reason,
+      recognizability_reason: args.recognizability_reason,
+      overall_notes:          args.overall_notes ?? null,
+    };
+
+    const scoredBy = `agent:${ctx.agentCallSign || 'unknown'}`;
+    const payload = {
+      client_id: clientId,
+      asset_name: assetName,
+      asset_category: args.asset_category ?? null,
+      asset_location: args.asset_location ?? null,
+      criticality:     Number(args.criticality),
+      accessibility:   Number(args.accessibility),
+      recuperability:  Number(args.recuperability),
+      vulnerability:   Number(args.vulnerability),
+      effect:          Number(args.effect),
+      recognizability: Number(args.recognizability),
+      justification,
+      scored_by: scoredBy,
+      scored_at: new Date().toISOString(),
+      last_reviewed_at: new Date().toISOString(),
+    };
+
+    // Upsert on the (client_id, asset_name) unique constraint —
+    // re-scoring an existing asset replaces values; the trigger
+    // snapshots the prior version into history.
+    const { data, error } = await supabase
+      .from('asset_carver_scores')
+      .upsert(payload, { onConflict: 'client_id,asset_name' })
+      .select('id, total_score, priority_tier')
+      .single();
+    if (error) return { error: error.message };
+    return {
+      ok: true,
+      asset_name: assetName,
+      total_score: data?.total_score,
+      priority_tier: data?.priority_tier,
+      scored_by: scoredBy,
+      note: 'Score recorded. validated_at is null until a human analyst reviews — flag accordingly when surfacing this score in operator-facing output.',
+    };
+  },
+};
+
+// ── Register all tools ─────────────────────────────────────────────────────
 
 registerTool(lookupHistoricalSignals);
+registerTool(getClientSecurityContext);
+registerTool(queryCarverScores);
+registerTool(scoreAssetCarver);
 registerTool(queryEntityRelationships);
 registerTool(retrieveSimilarPastDecisions);
 registerTool(emitPrediction);

@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { logError } from "../_shared/error-logger.ts";
+import { resolveServiceRoleKey } from "../_shared/current-service-key.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,16 +22,22 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
+    // Resolve current service-role key from vault. The Deno env holds
+    // legacy JWT format (missing `sub` claim) which auth rejects with
+    // 401 — root cause of the 77 "Monitor X failed: Unauthorized"
+    // errors. Resolve once here, pass to everything downstream.
+    const currentServiceKey = await resolveServiceRoleKey(supabase);
+
     console.log('Auto-orchestrator: Starting batch processing cycle...');
 
     // Start background tasks without blocking response
     const backgroundTasks = [
-      processSignalsInBackground(supabase),
+      processSignalsInBackground(supabase, currentServiceKey),
       escalateIncidentsInBackground(supabase),
       autoCloseIncidentsInBackground(supabase),
-      runOSINTMonitorsInBackground(supabase),
+      runOSINTMonitorsInBackground(supabase, currentServiceKey),
       cleanupQueueInBackground(supabase),
-      detectThreatPatternsInBackground(supabase),
+      detectThreatPatternsInBackground(supabase, currentServiceKey),
     ];
 
     // Use EdgeRuntime.waitUntil to run tasks without blocking
@@ -66,7 +73,7 @@ Deno.serve(async (req) => {
 });
 
 // Background task: Process signals from queue in batches
-async function processSignalsInBackground(supabase: any) {
+async function processSignalsInBackground(supabase: any, currentServiceKey?: string) {
   try {
     console.log('Starting signal processing...');
     
@@ -109,7 +116,7 @@ async function processSignalsInBackground(supabase: any) {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+              'Authorization': `Bearer ${currentServiceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
             },
             body: JSON.stringify({ action: 'decision-engine', signal_id: queueItem.entity_id })
           }
@@ -294,7 +301,7 @@ async function autoCloseIncidentsInBackground(supabase: any) {
 }
 
 // Background task: Run OSINT monitors with concurrency control and circuit breaker
-async function runOSINTMonitorsInBackground(supabase: any) {
+async function runOSINTMonitorsInBackground(supabase: any, currentServiceKey: string) {
   try {
     console.log('Starting OSINT monitors...');
     
@@ -363,7 +370,7 @@ async function runOSINTMonitorsInBackground(supabase: any) {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+                'Authorization': `Bearer ${currentServiceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
               },
               body: JSON.stringify({ action: monitorAction }),
               signal: controller.signal
@@ -420,7 +427,7 @@ async function runOSINTMonitorsInBackground(supabase: any) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+            'Authorization': `Bearer ${currentServiceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
           },
           body: JSON.stringify({ action: 'consolidate', hours_back: 24 })
         }
@@ -445,7 +452,7 @@ async function runOSINTMonitorsInBackground(supabase: any) {
 }
 
 // Background task: Detect threat patterns (entity escalation, geo clusters, frequency spikes, type clusters)
-async function detectThreatPatternsInBackground(supabase: any) {
+async function detectThreatPatternsInBackground(supabase: any, currentServiceKey: string) {
   try {
     console.log('Starting threat pattern detection...');
     const controller = new AbortController();
@@ -457,7 +464,7 @@ async function detectThreatPatternsInBackground(supabase: any) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          'Authorization': `Bearer ${currentServiceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
         },
         body: JSON.stringify({}),
         signal: controller.signal,

@@ -42,30 +42,102 @@ export function NodeAgentChat({ agent }: NodeAgentChatProps) {
     setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setIsLoading(true);
 
+    // agent-chat returns Server-Sent Events. supabase.functions.invoke
+    // doesn't natively read SSE — it returned the SSE text as a string,
+    // and the client tried to read .response on a string, getting
+    // undefined → "No response received." fallback. Same fix pattern
+    // used by DashboardAIAssistant.tsx: read the stream chunk by chunk
+    // and accumulate delta.content into the assistant message.
+    const history = [
+      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      { role: "user" as const, content: userMessage },
+    ];
+
+    let contentBuffer = "";
     try {
-      // Build conversation history for context
-      const history = [
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
-        { role: "user" as const, content: userMessage },
-      ];
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error("Session expired");
+      }
 
-      const { data, error } = await supabase.functions.invoke("agent-chat", {
-        body: {
-          messages: history,
-          agentId: agent.id,
-          agentCallSign: agent.callSign,
-        },
-      });
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-chat`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            messages: history,
+            agentId: agent.id,
+            agentCallSign: agent.callSign,
+          }),
+        }
+      );
 
-      if (error) throw error;
+      if (!response.ok || !response.body) {
+        const errText = await response.text();
+        throw new Error(`agent-chat ${response.status}: ${errText.substring(0, 200)}`);
+      }
 
-      const reply = data?.response || data?.content || "No response received.";
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let textBuffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        textBuffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex: number;
+        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+          let line = textBuffer.slice(0, newlineIndex);
+          textBuffer = textBuffer.slice(newlineIndex + 1);
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          if (line.startsWith(":") || line.trim() === "") continue;
+          if (!line.startsWith("data: ")) continue;
+
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === "[DONE]") break;
+
+          try {
+            const parsed = JSON.parse(jsonStr);
+            // agent-chat emits SSE in its OWN shape, not OpenAI's:
+            //   - Content delta:  { type: 'content', content: '...' }
+            //   - Tool result:    { type: 'tool_result', tool, result }
+            //   - Status / error: { type: 'status' | 'error', ... }
+            //   - Final:          { type: 'final', content: '...' }
+            // (The function wraps the underlying OpenAI streaming
+            // chunks into these envelopes — see agent-chat/index.ts
+            // around line 1665 for the writer side.)
+            // Operator-facing chat only renders text deltas + the
+            // final summary; tool/status events are platform
+            // telemetry that would pollute the conversation.
+            if (parsed.type === 'content' && typeof parsed.content === 'string') {
+              contentBuffer += parsed.content;
+            } else if (parsed.type === 'final' && typeof parsed.content === 'string') {
+              // Some pipelines emit only a final, no incremental deltas.
+              if (!contentBuffer.trim()) contentBuffer = parsed.content;
+            } else if (parsed.choices?.[0]?.delta?.content) {
+              // Defensive: also accept raw OpenAI-style chunks.
+              contentBuffer += parsed.choices[0].delta.content;
+            }
+          } catch {
+            // Re-buffer on partial line; agent-chat sends multi-line JSON.
+            textBuffer = line + "\n" + textBuffer;
+            break;
+          }
+        }
+      }
+
+      const finalContent = contentBuffer.trim() || "No response received.";
+      setMessages((prev) => [...prev, { role: "assistant", content: finalContent }]);
     } catch (err) {
       console.error("Agent chat error:", err);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "⚠ Comms disrupted. Try again." },
+        { role: "assistant", content: contentBuffer.trim() || "⚠ Comms disrupted. Try again." },
       ]);
     } finally {
       setIsLoading(false);

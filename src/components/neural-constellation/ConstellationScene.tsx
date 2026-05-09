@@ -21,6 +21,41 @@ interface AgentNode {
   tier: "primary" | "secondary" | "support";
 }
 
+/** Health state derived from cron heartbeats. Phase 1 of the
+ * diagnostic-overlay rebuild — when an agent's backing cron has
+ * stopped firing, the node visually screams instead of blending in. */
+export type AgentHealth = {
+  status: 'healthy' | 'stale' | 'critical' | 'unknown';
+  reason: string;
+};
+
+/** Phase 2 diagnostic overlay — system-watchdog finding pinned to a
+ * specific agent. Distinct from AgentHealth: a node can be cron-
+ * healthy AND have an active behavioral-health finding (the
+ * canonical "heartbeat green, signals_created=0" failure mode). */
+export type AgentFindingSummary = {
+  count: number;
+  worstSeverity: 'info' | 'low' | 'medium' | 'high' | 'critical';
+  /** Truncated titles, ordered worst-severity first, max 3. */
+  titles: string[];
+};
+
+/** Phase 3 diagnostic overlay — open Tier-2 review loops attributed
+ * to this agent. Each is a signal that crossed the review threshold
+ * but has no closing verdict in raw_json.agent_review. */
+export type AgentOpenLoops = {
+  count: number;
+  oldestMinutes: number | null;
+};
+
+/** Phase 3 diagnostic overlay — agent has not produced a scan or
+ * message in its expected activity window. Distinct from "low
+ * activity" (which is healthy quiet) — silent means we expected
+ * output and got none. */
+export type AgentSilenceInfo = {
+  silentMinutes: number;
+};
+
 type CameraView = "constellation" | "earth" | "cinematic";
 
 interface ConstellationSceneProps {
@@ -49,6 +84,31 @@ interface ConstellationSceneProps {
   // Realtime effects
   signalBurst?: { agentCallSign: string; severity: string } | null;
   aegisPulse?: boolean;
+  /** Per-agent health derived from cron-heartbeat staleness. Stale
+   * or critical agents render with a red warning ring + override
+   * color. See computeAgentHealthFromCrons() in
+   * src/hooks/useConstellationData.ts. */
+  agentHealth?: Map<string, AgentHealth>;
+  /** Per-agent active findings from system-watchdog (Phase 2 of
+   * the diagnostic overlay). Distinct from agentHealth — a node
+   * can be cron-healthy yet have a finding (e.g. "0 signals
+   * across 3 runs"). When present, renders an info dot above the
+   * node + tooltip listing the active findings. */
+  agentFindings?: Map<string, AgentFindingSummary>;
+  /** Phase 3 — per-agent count of stuck reasoning loops (signals
+   * past the review threshold without a closing verdict). */
+  agentOpenLoops?: Map<string, AgentOpenLoops>;
+  /** Phase 3 — agents that haven't produced activity in the
+   * expected window. */
+  agentSilence?: Map<string, AgentSilenceInfo>;
+  /** Per-agent count of REAL escalations in the last hour
+   * (severity=critical OR composite>=0.85 OR has incident_id).
+   * Drives the red `alert` particles flowing to AEGIS-CMD. Earlier
+   * the red particles came from `activityMetrics.totalAlertsGenerated`
+   * which counts items considered per scan and pins on every routine
+   * sweep — making the visual show constant red traffic regardless
+   * of actual operational state. */
+  recentEscalations?: Map<string, number>;
 }
 
 // Camera presets
@@ -511,13 +571,24 @@ function OperatorDeviceNode({ position, isOnline = false, deviceCount = 0, hasMe
 }
 
 // Agent node with activity-driven pulse speed + hover tooltip
-function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, onUnhover }: {
+function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, onUnhover, health, findings, openLoops, silence }: {
   agent: AgentNode;
   onClick?: () => void;
   isInDebate?: boolean;
   activityScore?: number;
   onHover?: (agent: AgentNode) => void;
   onUnhover?: () => void;
+  /** Phase 1 diagnostic overlay — when an agent's backing cron has
+   * gone stale or critical, override the body color and add a
+   * pulsing alert ring so the operator can spot it at a glance. */
+  health?: AgentHealth;
+  /** Phase 2 diagnostic overlay — active behavioral-health findings
+   * from system-watchdog pinned to this agent. */
+  findings?: AgentFindingSummary;
+  /** Phase 3 — stuck reasoning loops attributed to this agent. */
+  openLoops?: AgentOpenLoops;
+  /** Phase 3 — agent has gone silent past expected window. */
+  silence?: AgentSilenceInfo;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
@@ -525,7 +596,20 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
   const pulseRef = useRef(Math.random() * Math.PI * 2);
   const [hovered, setHovered] = useState(false);
 
-  const color = new THREE.Color(agent.color);
+  // Health override (Phase 1 diagnostic overlay).
+  //   stale     → amber body color; warning halo
+  //   critical  → red body color; pulsing alert ring + larger halo
+  //   healthy/unknown → original domain color
+  // The pulsing ring is rendered with its own ref + useFrame below
+  // so it only animates when actually present (no work for healthy
+  // nodes).
+  const isStale = health?.status === 'stale';
+  const isCritical = health?.status === 'critical';
+  const isAlerting = isStale || isCritical;
+  const alertRingRef = useRef<THREE.Mesh>(null);
+  const baseColor = isCritical ? '#ef4444' : isStale ? '#f59e0b' : agent.color;
+
+  const color = new THREE.Color(baseColor);
   const size = agent.tier === "primary" ? 0.6 : agent.tier === "secondary" ? 0.38 : 0.22;
 
   // Activity drives pulse speed: more active = faster pulse
@@ -548,8 +632,20 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
     }
     if (outerRef.current) {
       outerRef.current.scale.setScalar((isInDebate ? 5.0 : 3.0 + activityScore * 1.5) + pulse * 0.6);
-      (outerRef.current.material as THREE.MeshBasicMaterial).opacity = 
+      (outerRef.current.material as THREE.MeshBasicMaterial).opacity =
         (isInDebate ? 0.08 : 0.02 + activityScore * 0.04) + pulse * 0.02;
+    }
+    // Alert ring (only rendered when stale/critical) — fast-pulsing
+    // visual scream so the operator catches it on a quick scan.
+    // Critical pulses faster than stale so the eye picks the worse
+    // state out of a dashboard with multiple warnings.
+    if (alertRingRef.current && isAlerting) {
+      const alertSpeed = isCritical ? 6.0 : 3.5;
+      const alertPulse = Math.sin(pulseRef.current * alertSpeed / pulseSpeed);
+      const baseRingScale = isCritical ? 4.5 : 3.5;
+      alertRingRef.current.scale.setScalar(baseRingScale + alertPulse * 0.6);
+      (alertRingRef.current.material as THREE.MeshBasicMaterial).opacity =
+        (isCritical ? 0.55 : 0.4) + alertPulse * 0.2;
     }
   });
 
@@ -566,19 +662,42 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
   }, [onUnhover]);
 
   const emissiveColor = isInDebate ? new THREE.Color("#f59e0b") : color;
-  // Higher emissive intensity so bloom post-processing creates visible glow halos
-  const emissiveIntensity = isInDebate ? 3.0 : 1.2 + activityScore * 2.5;
+  // Emissive tuned for the May 2026 bloom rework — previous values
+  // (1.2 + 2.5*activity, max ~3.7) were calibrated for an aggressive
+  // bloom radius of 0.8 + threshold 0.15. With the new tighter bloom
+  // (radius 0.4 + threshold 0.55) those values produced over-saturated
+  // hot spots that lost shape definition. New values keep activity-
+  // driven brightness without saturating.
+  const emissiveIntensity = isInDebate ? 1.6 : 0.5 + activityScore * 1.2;
 
   return (
     <group position={agent.position}>
+      {/* Outer hit-target shell. Kept large for hover affordance but
+          near-invisible so it doesn't contribute to the bloom soup. */}
       <mesh ref={outerRef} onClick={onClick} onPointerOver={handlePointerOver} onPointerOut={handlePointerOut}>
         <sphereGeometry args={[size, 12, 12]} />
-        <meshBasicMaterial color={isInDebate ? "#f59e0b" : color} transparent opacity={0.04} />
+        <meshBasicMaterial color={isInDebate ? "#f59e0b" : color} transparent opacity={0.02} />
       </mesh>
+      {/* Mid glow shell. Was 0.15 — too aggressive when combined
+          with bloom; the halos overlapped into a soup. */}
       <mesh ref={glowRef}>
         <sphereGeometry args={[size, 16, 16]} />
-        <meshBasicMaterial color={isInDebate ? "#f59e0b" : color} transparent opacity={0.15} />
+        <meshBasicMaterial color={isInDebate ? "#f59e0b" : color} transparent opacity={0.07} />
       </mesh>
+      {/* Alert ring — pulsing torus around stale/critical agents.
+          Phase 1 diagnostic overlay. Render only when alerting so
+          healthy nodes get no extra geometry. */}
+      {isAlerting && (
+        <mesh ref={alertRingRef} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[size * 1.4, size * 0.06, 8, 32]} />
+          <meshBasicMaterial
+            color={isCritical ? "#ef4444" : "#f59e0b"}
+            transparent
+            opacity={0.5}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
       <mesh ref={meshRef}>
         <sphereGeometry args={[size, agent.tier === "primary" ? 20 : 12, agent.tier === "primary" ? 20 : 12]} />
         <meshStandardMaterial
@@ -589,6 +708,164 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
           metalness={0.8}
         />
       </mesh>
+      {/* Always-on call-sign label for primary-tier nodes (the
+          core agents that anchor the topology). Was hover-only —
+          the constellation rendered as colored balls with no
+          identity at idle. Tier hierarchy:
+            primary   → persistent label here
+            secondary → hover label (existing block below)
+            tertiary  → hover label (existing block below)
+          Pure DOM via drei <Html>; pointer-events:none so the
+          label never blocks click/hover on the underlying mesh. */}
+      {/* Persistent open-loop counter — purple badge with the count
+          when the agent has stuck Tier-2 review loops. Phase 3. */}
+      {openLoops && openLoops.count > 0 && !hovered && (
+        <Html
+          center
+          distanceFactor={20}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+          zIndexRange={[14, 0]}
+        >
+          <div
+            style={{
+              transform: `translate(-${size * 14}px, -${size * 14 + 4}px)`,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: "9px",
+              fontWeight: 700,
+              padding: "1px 4px",
+              borderRadius: "3px",
+              background: "rgba(168,85,247,0.95)",
+              color: "white",
+              textShadow: "0 0 2px rgba(0,0,0,0.6)",
+              whiteSpace: "nowrap",
+              boxShadow: "0 0 6px rgba(168,85,247,0.55)",
+            }}
+            title={`${openLoops.count} open Tier-2 review loop${openLoops.count > 1 ? 's' : ''}`}
+          >
+            ↻ {openLoops.count}
+          </div>
+        </Html>
+      )}
+      {/* Persistent silent badge — slate, low-key, sits below the
+          node so it doesn't compete with critical/finding badges.
+          Phase 3. */}
+      {silence && !hovered && (
+        <Html
+          center
+          distanceFactor={20}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+          zIndexRange={[12, 0]}
+        >
+          <div
+            style={{
+              transform: `translateY(${size * 14 + 4}px)`,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: "9px",
+              fontWeight: 700,
+              padding: "1px 4px",
+              borderRadius: "3px",
+              background: "rgba(71,85,105,0.95)",
+              color: "#cbd5e1",
+              border: "1px solid rgba(148,163,184,0.4)",
+              whiteSpace: "nowrap",
+            }}
+            title={`Silent — no activity in ${silence.silentMinutes}m`}
+          >
+            ⏸ silent
+          </div>
+        </Html>
+      )}
+      {/* Persistent finding indicator — small dot above the node
+          when there's an active watchdog finding. Color matches
+          severity. Hidden when the node is hovered (the full
+          tooltip below carries the detail). */}
+      {findings && findings.count > 0 && !hovered && (
+        <Html
+          center
+          distanceFactor={20}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+          zIndexRange={[15, 0]}
+        >
+          <div
+            style={{
+              transform: `translate(${size * 12}px, -${size * 14 + 4}px)`,
+              width: "10px",
+              height: "10px",
+              borderRadius: "50%",
+              background:
+                findings.worstSeverity === 'critical' ? "#ef4444" :
+                findings.worstSeverity === 'high'     ? "#f59e0b" :
+                                                        "#6366f1",
+              border: "1.5px solid rgba(0,0,0,0.85)",
+              boxShadow:
+                findings.worstSeverity === 'critical' ? "0 0 6px rgba(239,68,68,0.7)" :
+                findings.worstSeverity === 'high'     ? "0 0 5px rgba(245,158,11,0.6)" :
+                                                        "0 0 4px rgba(99,102,241,0.5)",
+            }}
+            title={`${findings.count} watchdog finding${findings.count > 1 ? 's' : ''} — hover for detail`}
+          />
+        </Html>
+      )}
+      {/* Persistent alert badge for non-primary agents — primaries
+          already have a persistent call-sign label below; ensure
+          stale/critical secondary/support agents also surface a
+          visible warning even when not being hovered. */}
+      {isAlerting && agent.tier !== "primary" && !hovered && (
+        <Html
+          center
+          distanceFactor={22}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+          zIndexRange={[20, 0]}
+        >
+          <div
+            style={{
+              transform: `translateY(-${size * 14 + 16}px)`,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: "9px",
+              fontWeight: 700,
+              letterSpacing: "0.1em",
+              padding: "1px 5px",
+              borderRadius: "3px",
+              background: isCritical ? "rgba(239,68,68,0.95)" : "rgba(245,158,11,0.95)",
+              color: "white",
+              textShadow: "0 0 2px rgba(0,0,0,0.6)",
+              whiteSpace: "nowrap",
+              boxShadow: isCritical
+                ? "0 0 8px rgba(239,68,68,0.6)"
+                : "0 0 6px rgba(245,158,11,0.5)",
+            }}
+          >
+            {isCritical ? "⚠ CRITICAL" : "⚠ STALE"} · {agent.callSign}
+          </div>
+        </Html>
+      )}
+      {agent.tier === "primary" && !hovered && (
+        <Html
+          center
+          distanceFactor={26}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+          zIndexRange={[10, 0]}
+        >
+          <div
+            style={{
+              transform: `translateY(-${size * 12 + 18}px)`,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: "10px",
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              color: isAlerting
+                ? (isCritical ? "#fca5a5" : "#fcd34d")
+                : "rgba(255, 255, 255, 0.92)",
+              textShadow:
+                "0 0 4px rgba(0,0,0,0.95), 0 0 10px rgba(0,0,0,0.7), 0 0 2px rgba(0,0,0,1)",
+              whiteSpace: "nowrap",
+              padding: "0 4px",
+            }}
+          >
+            {isAlerting && (isCritical ? "⚠ " : "⚠ ")}{agent.callSign}
+          </div>
+        </Html>
+      )}
       {/* pointLight only on primary/debating agents — too expensive for all 28+ nodes */}
       {(agent.tier === "primary" || isInDebate) && (
         <pointLight
@@ -628,6 +905,93 @@ function AgentSphere({ agent, onClick, isInDebate, activityScore = 0, onHover, o
               </span>
             </div>
             <div className="text-[9px] text-muted-foreground mt-1">{agent.specialty}</div>
+            {/* Health diagnostic — only renders for stale/critical agents.
+                Phase 1 of the diagnostic-overlay rebuild. */}
+            {isAlerting && health && (
+              <div
+                className="text-[9px] mt-1.5 px-1.5 py-1 rounded leading-tight"
+                style={{
+                  background: isCritical ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.15)",
+                  color: isCritical ? "#fca5a5" : "#fcd34d",
+                  border: `1px solid ${isCritical ? "rgba(239,68,68,0.4)" : "rgba(245,158,11,0.4)"}`,
+                }}
+              >
+                <div className="font-bold uppercase tracking-wider mb-0.5">
+                  {isCritical ? "⚠ CRITICAL" : "⚠ STALE"}
+                </div>
+                <div>{health.reason}</div>
+              </div>
+            )}
+            {/* Open-loop counter — Phase 3 diagnostic overlay.
+                Reasoning the agent started but didn't close. */}
+            {openLoops && openLoops.count > 0 && (
+              <div
+                className="text-[9px] mt-1.5 px-1.5 py-1 rounded leading-tight"
+                style={{
+                  background: "rgba(168,85,247,0.15)",
+                  color: "#d8b4fe",
+                  border: "1px solid rgba(168,85,247,0.4)",
+                }}
+              >
+                <div className="font-bold uppercase tracking-wider mb-0.5">
+                  ↻ {openLoops.count} open loop{openLoops.count > 1 ? 's' : ''}
+                </div>
+                {openLoops.oldestMinutes != null && (
+                  <div>oldest: {openLoops.oldestMinutes < 60
+                    ? `${openLoops.oldestMinutes}m`
+                    : `${Math.round(openLoops.oldestMinutes / 60)}h`} since trigger</div>
+                )}
+              </div>
+            )}
+            {/* Silent agent — Phase 3 diagnostic overlay. */}
+            {silence && (
+              <div
+                className="text-[9px] mt-1.5 px-1.5 py-1 rounded leading-tight"
+                style={{
+                  background: "rgba(100,116,139,0.18)",
+                  color: "#94a3b8",
+                  border: "1px solid rgba(100,116,139,0.45)",
+                }}
+              >
+                <div className="font-bold uppercase tracking-wider mb-0.5">
+                  ⏸ silent — no activity in {silence.silentMinutes < 60
+                    ? `${silence.silentMinutes}m`
+                    : silence.silentMinutes < 1440
+                      ? `${Math.round(silence.silentMinutes / 60)}h`
+                      : `${Math.round(silence.silentMinutes / 1440)}d`}
+                </div>
+              </div>
+            )}
+            {/* Active watchdog findings — Phase 2 diagnostic overlay.
+                Distinct from cron staleness (heartbeat may be green
+                while behavioral-health invariants are still failing). */}
+            {findings && findings.count > 0 && (
+              <div
+                className="text-[9px] mt-1.5 px-1.5 py-1 rounded leading-tight"
+                style={{
+                  background:
+                    findings.worstSeverity === 'critical' ? "rgba(239,68,68,0.15)" :
+                    findings.worstSeverity === 'high'     ? "rgba(245,158,11,0.15)" :
+                                                            "rgba(99,102,241,0.15)",
+                  color:
+                    findings.worstSeverity === 'critical' ? "#fca5a5" :
+                    findings.worstSeverity === 'high'     ? "#fcd34d" :
+                                                            "#a5b4fc",
+                  border: `1px solid ${
+                    findings.worstSeverity === 'critical' ? "rgba(239,68,68,0.4)" :
+                    findings.worstSeverity === 'high'     ? "rgba(245,158,11,0.4)" :
+                                                            "rgba(99,102,241,0.4)"
+                  }`,
+                }}
+              >
+                <div className="font-bold uppercase tracking-wider mb-0.5">
+                  ⚐ {findings.count} watchdog finding{findings.count > 1 ? 's' : ''} ({findings.worstSeverity})
+                </div>
+                {findings.titles.map((t, i) => (
+                  <div key={i} className="truncate">• {t}</div>
+                ))}
+              </div>
+            )}
             {isInDebate && (
               <div className="flex items-center gap-1 mt-1">
                 <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -712,12 +1076,20 @@ function ConnectionLines({ agents, commLinks = [], activityMetrics = [] }: {
     return conns;
   }, [agents, commLinks, activityMap]);
 
-  // Richer colors + higher opacity — bloom amplifies these into visible glowing veins
+  // Edge hierarchy. Visual weight is meant to convey traffic
+  // intensity: inactive ≪ active < battle-tested < redundant.
+  // Pre-May-2026 the spread was too compressed (inactive at 0.18
+  // opacity was still loud against the bloom-amplified background)
+  // so all edges read as roughly equal. New spread widens the
+  // contrast: inactive nearly invisible, active subtle, battle-
+  // tested confident, redundant assertive — the eye should now be
+  // able to trace the high-traffic backbone of the network at a
+  // glance instead of seeing uniform spaghetti.
   const edgeVisuals: Record<string, { color: string; opacity: number; lineWidth: number; dashed: boolean; dashScale: number; dashSize: number; gapSize: number }> = {
-    inactive:        { color: "#ff2244", opacity: 0.18, lineWidth: 0.6,  dashed: true,  dashScale: 1, dashSize: 0.2, gapSize: 0.4 },
-    active:          { color: "#ffaa00", opacity: 0.55, lineWidth: 1.4,  dashed: true,  dashScale: 1, dashSize: 0.7, gapSize: 0.15 },
-    'battle-tested': { color: "#00ff88", opacity: 0.75, lineWidth: 2.0,  dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
-    redundant:       { color: "#00eeff", opacity: 0.85, lineWidth: 3.0,  dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
+    inactive:        { color: "#475569", opacity: 0.07, lineWidth: 0.4,  dashed: true,  dashScale: 1, dashSize: 0.2, gapSize: 0.6 },
+    active:          { color: "#ffaa00", opacity: 0.35, lineWidth: 1.0,  dashed: true,  dashScale: 1, dashSize: 0.7, gapSize: 0.15 },
+    'battle-tested': { color: "#00ff88", opacity: 0.65, lineWidth: 1.6,  dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
+    redundant:       { color: "#00eeff", opacity: 0.85, lineWidth: 2.4,  dashed: false, dashScale: 1, dashSize: 1,   gapSize: 0 },
   };
 
   return (
@@ -969,11 +1341,16 @@ function getGlowTexture(): THREE.Texture {
   return _glowTexture;
 }
 
-function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPulses = [] }: {
+function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPulses = [], recentEscalations }: {
   agents: AgentNode[];
   commLinks?: AgentCommLink[];
   activityMetrics?: AgentActivityMetrics[];
   scanPulses?: ScanPulse[];
+  /** Per-agent real-escalation count over the last hour. When provided,
+   * red `alert` particles fire only for agents in this map (and one
+   * particle per escalation up to a cap). When absent or empty, no
+   * red traffic — distinct from "lots of routine activity". */
+  recentEscalations?: Map<string, number>;
 }) {
   const particleCount = 120;
   const ref = useRef<THREE.Points>(null);
@@ -1017,22 +1394,38 @@ function SignalParticles({ agents, commLinks = [], activityMetrics = [], scanPul
       }
     });
 
-    // 3. Per-agent metrics → signal_ingest (cyan) and alert (red) particles
+    // 3a. Per-agent metrics → signal_ingest (cyan) particles
+    // Cyan = signals being routed from command to this agent for analysis.
     activityMetrics.forEach((m) => {
       const idx = callSignIndex.get(m.callSign);
       if (idx === undefined || aegisIdx === undefined) return;
 
       if (m.totalSignalsAnalyzed > 0) {
-        // Cyan particles: signals being routed from command to this agent for analysis
         routes.push({ from: aegisIdx, to: idx, type: "signal_ingest" });
         activeAgents.add(idx);
       }
-      if (m.totalAlertsGenerated > 0) {
-        // Red particles: alerts escalated back to command
-        routes.push({ from: idx, to: aegisIdx, type: "alert" });
-        activeAgents.add(idx);
-      }
     });
+
+    // 3b. REAL escalations → alert (red) particles
+    // Source: signals in last 1h with severity=critical OR composite>=0.85
+    // OR incident_id IS NOT NULL, grouped by routed agent. Earlier this
+    // path used activityMetrics.totalAlertsGenerated, which counts items
+    // considered per scan and pins on every routine sweep — making red
+    // traffic constant regardless of operational reality. Now red only
+    // fires when an actual high-priority signal hit the platform.
+    if (recentEscalations && aegisIdx !== undefined) {
+      recentEscalations.forEach((count, callSign) => {
+        const idx = callSignIndex.get(callSign);
+        if (idx === undefined) return;
+        // Cap particles per agent to keep the visual readable when one
+        // agent has a flurry of escalations.
+        const particles = Math.min(count, 3);
+        for (let p = 0; p < particles; p++) {
+          routes.push({ from: idx, to: aegisIdx, type: "alert" });
+        }
+        activeAgents.add(idx);
+      });
+    }
 
     // 4. Idle agents — agents with no recent activity get slow slate particles
     if (aegisIdx !== undefined) {
@@ -2446,6 +2839,11 @@ export function ConstellationScene({
   entityRelationships = [],
   signalBurst,
   aegisPulse = false,
+  agentHealth,
+  agentFindings,
+  agentOpenLoops,
+  agentSilence,
+  recentEscalations,
 }: ConstellationSceneProps) {
   const [cameraView, setCameraViewState] = useState<CameraView>("constellation");
   const setCameraView = useCallback((view: CameraView) => {
@@ -2518,29 +2916,45 @@ export function ConstellationScene({
         <directionalLight position={[-70, 20, -80]} intensity={1.2} color="#fff4e0" />
         <pointLight position={[0, 30, 0]} intensity={0.4} color="#1a0533" distance={80} />
 
-        {/* Post-processing — bloom is the #1 visual upgrade */}
+        {/* Post-processing — bloom is polish, not the main signal.
+            May 2026 legibility pass: every node previously had a
+            halo 2-3× its actual size with a low luminance threshold,
+            making the whole constellation look like a soup of
+            overlapping translucent circles where node positions
+            were unreadable. Tighter bloom (lower intensity, higher
+            threshold, smaller radius) lets the actual network
+            topology surface through. */}
         <EffectComposer multisampling={0}>
           <Bloom
-            intensity={1.8}
-            luminanceThreshold={0.15}
-            luminanceSmoothing={0.9}
+            intensity={0.5}
+            luminanceThreshold={0.55}
+            luminanceSmoothing={0.85}
             mipmapBlur
-            radius={0.8}
+            radius={0.4}
           />
           <Vignette
             offset={0.3}
-            darkness={0.7}
+            darkness={0.55}
             blendFunction={BlendFunction.NORMAL}
           />
           <ChromaticAberration
-            offset={[0.0008, 0.0008] as any}
+            offset={[0.0004, 0.0004] as any}
             blendFunction={BlendFunction.NORMAL}
           />
         </EffectComposer>
+        {/* Backdrop chrome.
+            May 2026 legibility pass: starfield + shooting stars +
+            asteroid belt + comets stay (subtle, sense-of-scale,
+            non-competing). MilkyWayBand and PlanetParade are
+            disabled — they're the loud backdrop elements (a bright
+            band stretching across the canvas, large lit planets on
+            the sides) that competed hardest with the foreground
+            network for attention. Re-enable by uncommenting if a
+            "cinematic" mode is wanted later. */}
         <DeepSpaceField neutralizedCount={neutralizedCount} />
         <ShootingStars />
-        <MilkyWayBand />
-        <PlanetParade />
+        {/* <MilkyWayBand /> */}
+        {/* <PlanetParade /> */}
         <AsteroidBelt />
         <Comets />
 
@@ -2576,7 +2990,7 @@ export function ConstellationScene({
 
 
         <ConnectionLines agents={visibleAgents} commLinks={commLinks} activityMetrics={activityMetrics} />
-        <SignalParticles agents={visibleAgents} commLinks={commLinks} activityMetrics={activityMetrics} scanPulses={scanPulses} />
+        <SignalParticles agents={visibleAgents} commLinks={commLinks} activityMetrics={activityMetrics} scanPulses={scanPulses} recentEscalations={recentEscalations} />
 
         {/* Knowledge graph overlay — dashed colored arcs */}
         {!isExecutiveMode && knowledgeGraphEdges.length > 0 && (
@@ -2662,6 +3076,10 @@ export function ConstellationScene({
             activityScore={activityMap.get(agent.callSign) || 0}
             onHover={setHoveredAgent}
             onUnhover={() => setHoveredAgent(null)}
+            health={agentHealth?.get(agent.callSign)}
+            findings={agentFindings?.get(agent.callSign)}
+            openLoops={agentOpenLoops?.get(agent.callSign)}
+            silence={agentSilence?.get(agent.callSign)}
           />
         ))}
 

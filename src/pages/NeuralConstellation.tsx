@@ -228,6 +228,17 @@ const NeuralConstellation = () => {
   const [latestMessage, setLatestMessage] = useState<MessageBurstEvent | null>(null);
   const [signalBurst, setSignalBurst] = useState<{ agentCallSign: string; severity: string } | null>(null);
   const [aegisPulse, setAegisPulse] = useState(false);
+  // Accordion state for the right-rail diagnostic stack — only one
+  // panel may be expanded at a time so the stack never grows past
+  // ~42vh and never bleeds over the Live Activity feed below.
+  const [openDiagnosticPanel, setOpenDiagnosticPanel] = useState<
+    'benchmark' | 'monitor' | 'watchdog' | 'fortify' | null
+  >(null);
+  const makePanelToggle = useCallback(
+    (key: 'benchmark' | 'monitor' | 'watchdog' | 'fortify') =>
+      (next: boolean) => setOpenDiagnosticPanel(next ? key : null),
+    [],
+  );
   const aegisPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleGodsEyeFilter = useCallback((type: GlobeDataType) => {
@@ -585,26 +596,38 @@ const NeuralConstellation = () => {
             now sits at top:calc(55vh + 24px) — see below). Earlier the
             stack used calc(100vh - 80px) which let it cover the entire
             right column and clip activity-feed content behind it. */}
-        <div className="absolute top-4 right-4 z-20 w-[340px] space-y-2 pointer-events-auto max-h-[calc(50vh)] overflow-y-auto bg-[#020408]/85 backdrop-blur-xl rounded-lg p-2 border border-border/40">
-          {/* Benchmark health — moved to top of stack 2026-05-08:
-              the prior placement (between vitals and FortressHUD) was
-              below the 42vh scroll-fold so operators couldn't see it
-              without scrolling within the panel column. Promoted here
-              so the regression-score chip is always one of the first
-              things visible. Stays collapsed by default — one-line
-              chip; expands on click for 4 metrics + class breakdown. */}
-          <BenchmarkHealthPanel />
-          <MonitorHealthPanel />
-          <WatchdogFindingsPanel platformWide={platformWideFindings} agentScopedCount={agentFindings.size} />
-          {/* Phase 4 vitals — platform-wide diagnostics that don't pin
-              to a single agent: watchdog self-pulse + gate-distribution
-              gauge. Lives below the issue panels but above the FORTIFY
-              loop-health card. */}
+        {/* Diagnostic stack — ACCORDION mode (May 9 2026 redesign).
+            Only one panel may be expanded at a time. With at most one
+            open, the rail's worst-case height fits within ~42vh, so
+            it never bleeds over the Live Activity feed below (which
+            sits at top:55vh+24px). Earlier this was a stack of
+            independent collapsibles which let an operator open
+            several at once — when both Monitor Health and FORTIFY
+            were expanded the rail crowded into the activity feed. */}
+        <div className="absolute top-4 right-4 z-20 w-[340px] space-y-2 pointer-events-auto max-h-[calc(42vh)] overflow-y-auto bg-[#020408]/85 backdrop-blur-xl rounded-lg p-2 border border-border/40">
+          <BenchmarkHealthPanel
+            expanded={openDiagnosticPanel === 'benchmark'}
+            onExpandedChange={makePanelToggle('benchmark')}
+          />
+          <MonitorHealthPanel
+            expanded={openDiagnosticPanel === 'monitor'}
+            onExpandedChange={makePanelToggle('monitor')}
+          />
+          <WatchdogFindingsPanel
+            platformWide={platformWideFindings}
+            agentScopedCount={agentFindings.size}
+            expanded={openDiagnosticPanel === 'watchdog'}
+            onExpandedChange={makePanelToggle('watchdog')}
+          />
+          {/* Phase 4 vitals — always-on horizontal strip (not a
+              collapsible), so it stays outside the accordion. */}
           <PlatformVitalsBar />
-          {/* FORTIFY loop-health (was an absolute-positioned floater that
-              overlapped AUDITOR PULSE and GATE DIST). Now stacks here so
-              the right rail has a single coherent column. */}
-          <FortressHUD health={fortressHealth} isLoading={fortressLoading} />
+          <FortressHUD
+            health={fortressHealth}
+            isLoading={fortressLoading}
+            expanded={openDiagnosticPanel === 'fortify'}
+            onExpandedChange={makePanelToggle('fortify')}
+          />
         </div>
 
         {/* Right Panel — activity feed when no node selected; node detail when agent clicked */}

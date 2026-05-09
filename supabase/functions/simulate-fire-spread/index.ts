@@ -26,6 +26,7 @@
 import { simulateSpread, type HourlyWeatherSlice } from "../_shared/fire-spread-engine.ts";
 import { DEFAULT_FUEL } from "../_shared/fbp-fuel.ts";
 import { fetchHourlyForecast, fetchElevations, bilinearInterp } from "../_shared/open-meteo-data.ts";
+import { estimateFwiCodes, type EstimatedFwiCodes } from "../_shared/fwi-estimator.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,6 +48,20 @@ interface RequestBody {
     ffmc?: unknown;
     bui?: unknown;
   };
+  /**
+   * Optional starting perimeter (GeoJSON Polygon). When provided, the
+   * simulator seeds every cell inside the polygon as already-burning
+   * at t=0 and propagates outward — projecting an existing BCWS fire
+   * forward in time rather than starting from a single ignition point.
+   * Coordinates: [lng, lat] pairs, GeoJSON convention.
+   *   { "type": "Polygon", "coordinates": [[[lng,lat],[lng,lat],...]] }
+   * The lat/lng fields above are still required and used as the grid
+   * center (typically the polygon centroid; the UI computes this).
+   */
+  ignition_perimeter?: {
+    type?: string;
+    coordinates?: unknown;
+  } | null;
 }
 
 const DEFAULT_WEATHER = {
@@ -172,6 +187,15 @@ Deno.serve(async (req) => {
     durationHours = Math.max(1, Math.min(72, durationHours));
 
     const requestedMode = body?.weather_mode === "manual" ? "manual" : "forecast";
+    // Track whether the caller explicitly supplied FFMC/BUI vs. let
+    // them default. In forecast mode without explicit values we
+    // back-derive from BCWS rating + recent precip (see
+    // _shared/fwi-estimator.ts) so we don't apply mid-summer drought
+    // defaults to spring/post-snowmelt conditions.
+    const userSuppliedFfmc =
+      body?.weather?.ffmc !== undefined && body?.weather?.ffmc !== null && body?.weather?.ffmc !== "";
+    const userSuppliedBui =
+      body?.weather?.bui !== undefined && body?.weather?.bui !== null && body?.weather?.bui !== "";
     const manualWeather = {
       tempC:   num(body?.weather?.tempC,   DEFAULT_WEATHER.tempC),
       rhPct:   num(body?.weather?.rhPct,   DEFAULT_WEATHER.rhPct),
@@ -186,6 +210,8 @@ Deno.serve(async (req) => {
     let forecastError: string | null = null;
     let ffmc = manualWeather.ffmc;
     let bui = manualWeather.bui;
+    let fwiSource: EstimatedFwiCodes['source'] | null = null;
+    let fwiEstimateError: string | null = null;
 
     if (requestedMode === "forecast") {
       try {
@@ -221,6 +247,28 @@ Deno.serve(async (req) => {
       }, durationHours);
     }
 
+    // FFMC/BUI back-derivation. Only fires in forecast mode and only
+    // when the caller did NOT explicitly supply values. The defaults
+    // (90/60) are mid-summer drought levels — applying them in
+    // spring/post-snowmelt produced wildly aggressive projections
+    // (operator caught this on a Mile-132 Alaska Hwy run May 2026).
+    // Now we pull the BCWS official danger rating at the ignition
+    // point + last 5 days of precipitation from Open-Meteo and map to
+    // a season-aware FFMC/BUI table.
+    if (actualMode === "forecast" && (!userSuppliedFfmc || !userSuppliedBui)) {
+      const tFwiStart = Date.now();
+      try {
+        const est = await estimateFwiCodes(lat, lng);
+        if (!userSuppliedFfmc) ffmc = est.ffmc;
+        if (!userSuppliedBui) bui = est.bui;
+        fwiSource = est.source;
+        console.log(`[simulate-fire-spread] FWI estimate FFMC=${est.ffmc} BUI=${est.bui} in ${Date.now() - tFwiStart}ms (${est.source.note})`);
+      } catch (err: any) {
+        fwiEstimateError = err?.message || String(err);
+        console.warn(`[simulate-fire-spread] FWI estimate failed, keeping defaults: ${fwiEstimateError}`);
+      }
+    }
+
     // Slope grid is best-effort. Always attempt it (worth ~1-3s of
     // fetch latency for the meaningful improvement in spread fidelity).
     const tSlopeStart = Date.now();
@@ -230,12 +278,49 @@ Deno.serve(async (req) => {
       console.log(`[simulate-fire-spread] slope grid built (elev ${slope.elevMin.toFixed(0)}-${slope.elevMax.toFixed(0)}m) in ${slopeMs}ms`);
     }
 
+    // Parse optional starting perimeter. Validates the GeoJSON shape
+    // and pulls the outer ring as [lng, lat] pairs the engine expects.
+    // Bad input (wrong type / fewer than 3 points / non-numeric coords)
+    // falls through to point ignition with a warning rather than failing
+    // — operators should still get a simulation when they pass a
+    // malformed polygon.
+    let ignitionPerimeter: Array<[number, number]> | undefined;
+    let ignitionPerimeterError: string | null = null;
+    const rawPerim = body?.ignition_perimeter;
+    if (rawPerim && typeof rawPerim === "object") {
+      const coords = (rawPerim as any).coordinates;
+      const type = (rawPerim as any).type;
+      if (type !== "Polygon") {
+        ignitionPerimeterError = `ignition_perimeter.type must be 'Polygon' (got '${type}'). Falling back to point ignition.`;
+      } else if (!Array.isArray(coords) || !Array.isArray(coords[0])) {
+        ignitionPerimeterError = "ignition_perimeter.coordinates must be a polygon ring array. Falling back to point ignition.";
+      } else {
+        const ring = coords[0] as unknown[];
+        const parsed: Array<[number, number]> = [];
+        for (const pt of ring) {
+          if (!Array.isArray(pt) || pt.length < 2) continue;
+          const [lngVal, latVal] = pt as number[];
+          if (Number.isFinite(lngVal) && Number.isFinite(latVal)) {
+            parsed.push([Number(lngVal), Number(latVal)]);
+          }
+        }
+        if (parsed.length < 3) {
+          ignitionPerimeterError = `ignition_perimeter ring needs >= 3 valid points (got ${parsed.length}). Falling back to point ignition.`;
+        } else {
+          ignitionPerimeter = parsed;
+          console.log(`[simulate-fire-spread] perimeter ignition: ${parsed.length}-vertex ring`);
+        }
+      }
+      if (ignitionPerimeterError) console.warn(`[simulate-fire-spread] ${ignitionPerimeterError}`);
+    }
+
     const tSimStart = Date.now();
     const result = simulateSpread({
       ignitionLat: lat,
       ignitionLng: lng,
       ignitionTime,
       durationHours,
+      ignitionPerimeter,
       hourlyWeather,
       ffmc,
       bui,
@@ -269,6 +354,17 @@ Deno.serve(async (req) => {
         elevation_range_m: slope ? { min: Math.round(slope.elevMin), max: Math.round(slope.elevMax) } : null,
         forecast_error: forecastError,
         requested_mode: requestedMode,
+        // Final FFMC/BUI used by the engine + where they came from.
+        // UI surfaces this so the operator sees that "Live Forecast"
+        // mode actually reflects today's BCWS rating + recent rain
+        // instead of the old mid-summer defaults.
+        ffmc_used: ffmc,
+        bui_used: bui,
+        ffmc_user_supplied: userSuppliedFfmc,
+        bui_user_supplied: userSuppliedBui,
+        fwi_source: fwiSource,
+        fwi_estimate_error: fwiEstimateError,
+        ignition_perimeter_error: ignitionPerimeterError,
       },
       features,
     };

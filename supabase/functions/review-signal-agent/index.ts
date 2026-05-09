@@ -28,10 +28,43 @@ const CONTEXT_SIGNALS_LIMIT = 5;   // similar recent signals to surface for cont
 const CONTEXT_LOOKBACK_DAYS = 30;  // how far back to look for related signals
 
 interface AgentReview {
-  verdict: 'promote' | 'enrich' | 'flag' | 'dismiss';
+  verdict:
+    | 'promote'    // sub-threshold OSINT signal that should become an incident
+    | 'enrich'     // above-threshold OSINT signal — add context to its incident
+    | 'flag'       // above-threshold OSINT signal — mark incident as low-confidence
+    | 'dismiss'    // OSINT signal — no corroboration, hide as false_positive
+    | 'baseline'   // cyber-advisory — pre-vetted by source authority, no further action
+    | 'elevate';   // cyber-advisory — client tech stack match found, raise priority
   reasoning: string;
   confidence_delta: number;   // suggested adjustment to composite_confidence (-0.15 to +0.15)
   reviewed_at: string;
+  /** True when the review applied the cyber-advisory verdict ladder
+   * (baseline | elevate) instead of the OSINT ladder. Persisted so
+   * downstream learning loops can score the two ladders separately. */
+  cyber_advisory_path?: boolean;
+}
+
+/**
+ * Cyber-horizon advisories are signals where relevance derives from source
+ * authority (CISA, CCCS, NVD), not from corroboration with our own data.
+ * Running the OSINT verdict ladder ('promote'|'dismiss') on them produced
+ * silent suppressions of real CVE alerts because the agent saw "no related
+ * signals, no active incidents" and dismissed. The cyber-advisory ladder
+ * is 'baseline' (default — pre-vetted relevance is enough) or 'elevate'
+ * (when the client tech stack / vendor list intersects the advisory).
+ *
+ * Detection priority: explicit category_hint > signal_origin > source_key.
+ */
+function isCyberAdvisorySignal(signal: any): boolean {
+  const hint = signal?.raw_json?.category_hint;
+  if (typeof hint === 'string' && (hint === 'cyber_advisory' || hint === 'cybersecurity' || hint === 'cyber_credential_leak')) {
+    return true;
+  }
+  const origin = signal?.raw_json?.signal_origin;
+  if (typeof origin === 'string' && (origin === 'monitor-cisa-kev' || origin === 'monitor-csis')) {
+    return true;
+  }
+  return false;
 }
 
 Deno.serve(async (req) => {
@@ -49,9 +82,15 @@ Deno.serve(async (req) => {
     if (!signal_id) return errorResponse('signal_id is required', 400);
 
     const compositeScore = Number(composite_score) || 0;
-    if (compositeScore < 0.60) {
-      // Below minimum threshold — nothing to do
-      return successResponse({ skipped: true, reason: 'composite_score below 0.60' });
+    if (compositeScore < 0.45) {
+      // Below minimum threshold — nothing to do.
+      // 2026-05-08: lowered from 0.60 to 0.45 to match the relevance gate's
+      // new threshold. Previously 67% of signals (those scoring 0.45–0.59)
+      // got NO specialist review and fell back to the Decision Engine
+      // reasoning panel only. Lowering here gives more signals a Tier-2
+      // narrative — combined with the UI fallback, every signal should
+      // now have visible reasoning.
+      return successResponse({ skipped: true, reason: 'composite_score below 0.45' });
     }
 
     // ── 1. Fetch the signal ──────────────────────────────────────────────────
@@ -112,6 +151,7 @@ Deno.serve(async (req) => {
 
     // ── 4. Build the prompt ──────────────────────────────────────────────────
     const isSubThreshold = compositeScore < 0.65;
+    const isCyberAdvisory = isCyberAdvisorySignal(signal);
     const context = `
 Signal under review:
 - ID: ${signal.id}
@@ -134,9 +174,38 @@ ${activeIncidents.length === 0
   : activeIncidents.map((i: any) => `  - [${i.priority}/${i.status}] "${i.title}"`).join('\n')}
 `.trim();
 
-    const systemPrompt = isSubThreshold
-      ? `You are a Tier 2 Signal Review Agent for a corporate security intelligence platform. A signal scored ${compositeScore.toFixed(3)} composite confidence — just below the 0.65 incident creation threshold. The automated tier-1 gates passed this signal as relevant. Your job is to review it with broader context and decide if an incident should be created.\n\nReturn JSON with exactly: { "verdict": "promote"|"dismiss", "reasoning": "1-2 sentences", "confidence_delta": number between -0.10 and +0.10 }\n\nRules:\n- "promote" only if the context clearly corroborates a real threat (related signals, active incidents, escalating pattern)\n- "dismiss" if the signal appears isolated, low-quality, or not corroborated by context\n- confidence_delta: how much you'd adjust the composite score (+= for promotion, -= for dismiss)\n- Be conservative: only promote if genuinely warranted by evidence`
-      : `You are a Tier 2 Signal Review Agent for a corporate security intelligence platform. A signal scored ${compositeScore.toFixed(3)} composite confidence — above threshold but in the 0.65–0.75 range where additional review adds value. An incident was already created. Your job is to assess whether the incident needs enrichment or a low-confidence flag.\n\nReturn JSON with exactly: { "verdict": "enrich"|"flag"|"dismiss", "reasoning": "1-2 sentences", "confidence_delta": number between -0.10 and +0.10 }\n\nRules:\n- "enrich" if context adds meaningful intelligence to the existing incident\n- "flag" if the signal appears weak, isolated, or potentially a false positive — adds a low_confidence note\n- "dismiss" if the incident is already well-contextualized and no action needed\n- confidence_delta: suggested score adjustment`;
+    let systemPrompt: string;
+    if (isCyberAdvisory) {
+      // Cyber-horizon advisory ladder. Source authority (CISA KEV /
+      // CCCS / NVD) already establishes baseline relevance — these
+      // advisories are pre-vetted as actively-exploited or
+      // sector-impacting. The agent's job is NOT to confirm
+      // relevance ("does this advisory matter?") but to decide
+      // whether the CLIENT'S tech stack elevates the advisory above
+      // baseline. dismiss is intentionally not in the verdict set:
+      // dismissing a CISA KEV CVE as "uncorroborated" was the May
+      // 2026 silent-suppression bug.
+      systemPrompt =
+        `You are a Tier 2 Signal Review Agent for a corporate security intelligence platform. ` +
+        `The signal under review is a CYBER-HORIZON ADVISORY (CISA KEV entry, CCCS alert, or equivalent authoritative cyber feed). ` +
+        `Source authority alone establishes baseline relevance — DO NOT dismiss this signal for "no corroboration" or "isolated event". ` +
+        `Your job is to decide whether the client's specific tech stack / vendor list / high-value-asset inventory ELEVATES this advisory above baseline.\n\n` +
+        `Use the get_client_security_context tool with this signal's client_id to retrieve the client's monitoring_keywords and high_value_assets. ` +
+        `Then look for vendor/product/asset overlap with the advisory text. Examples of elevation triggers:\n` +
+        `  - Advisory names a vendor/product that appears in client.monitoring_keywords or client.high_value_assets\n` +
+        `  - Advisory targets a CWE / sector explicitly in the client's industry profile\n` +
+        `  - Known ransomware-campaign use AND client operates critical infrastructure\n\n` +
+        `Return JSON with exactly: { "verdict": "baseline"|"elevate", "reasoning": "1-3 sentences citing the specific stack/asset match (or absence of one)", "confidence_delta": number between -0.05 and +0.15 }\n\n` +
+        `Rules:\n` +
+        `- "elevate" when you can name a SPECIFIC client asset / keyword / vendor that intersects this advisory. Supply +0.05 to +0.15 delta.\n` +
+        `- "baseline" when no specific intersection found. The signal stays in the feed at its source-authority confidence — this is the correct outcome for most KEV entries. Use 0 to +0.02 delta (never negative).\n` +
+        `- DISMISS IS NOT AVAILABLE for cyber-horizon advisories. If you cannot find an elevation trigger, the verdict is "baseline" — not "dismiss".\n` +
+        `- Be specific. "Petronas operates critical infrastructure" is too generic to elevate. "Petronas's high_value_assets list includes ConnectWise ScreenConnect, advisory CVE-2024-1708 affects exactly that product" is correct.`;
+    } else if (isSubThreshold) {
+      systemPrompt = `You are a Tier 2 Signal Review Agent for a corporate security intelligence platform. A signal scored ${compositeScore.toFixed(3)} composite confidence — just below the 0.65 incident creation threshold. The automated tier-1 gates passed this signal as relevant. Your job is to review it with broader context and decide if an incident should be created.\n\nReturn JSON with exactly: { "verdict": "promote"|"dismiss", "reasoning": "1-2 sentences", "confidence_delta": number between -0.10 and +0.10 }\n\nRules:\n- "promote" only if the context clearly corroborates a real threat (related signals, active incidents, escalating pattern)\n- "dismiss" if the signal appears isolated, low-quality, or not corroborated by context\n- confidence_delta: how much you'd adjust the composite score (+= for promotion, -= for dismiss)\n- Be conservative: only promote if genuinely warranted by evidence`;
+    } else {
+      systemPrompt = `You are a Tier 2 Signal Review Agent for a corporate security intelligence platform. A signal scored ${compositeScore.toFixed(3)} composite confidence — above threshold but in the 0.65–0.75 range where additional review adds value. An incident was already created. Your job is to assess whether the incident needs enrichment or a low-confidence flag.\n\nReturn JSON with exactly: { "verdict": "enrich"|"flag"|"dismiss", "reasoning": "1-2 sentences", "confidence_delta": number between -0.10 and +0.10 }\n\nRules:\n- "enrich" if context adds meaningful intelligence to the existing incident\n- "flag" if the signal appears weak, isolated, or potentially a false positive — adds a low_confidence note\n- "dismiss" if the incident is already well-contextualized and no action needed\n- confidence_delta: suggested score adjustment`;
+    }
 
     // ── 5a. Investigation phase (tool use) ───────────────────────────────────
     // Before making the verdict, let the agent investigate using tools:
@@ -187,17 +256,31 @@ ${activeIncidents.length === 0
 
     const review = aiResult.data;
     const verdict = review.verdict as string;
-    const validVerdicts = isSubThreshold ? ['promote', 'dismiss'] : ['enrich', 'flag', 'dismiss'];
+    const validVerdicts = isCyberAdvisory
+      ? ['baseline', 'elevate']
+      : isSubThreshold
+        ? ['promote', 'dismiss']
+        : ['enrich', 'flag', 'dismiss'];
     if (!validVerdicts.includes(verdict)) {
-      console.warn(`[ReviewAgent] Unexpected verdict "${verdict}", treating as dismiss`);
-      review.verdict = 'dismiss';
+      // Fallback: cyber-advisory defaults to 'baseline' (the safe
+      // no-op for this class — preserves the source-authority
+      // signal in the feed). OSINT defaults to 'dismiss' as
+      // before.
+      const fallback = isCyberAdvisory ? 'baseline' : 'dismiss';
+      console.warn(`[ReviewAgent] Unexpected verdict "${verdict}" for ${isCyberAdvisory ? 'cyber-advisory' : 'OSINT'} ladder — treating as ${fallback}`);
+      review.verdict = fallback;
     }
 
+    // Cyber-advisory deltas have a different range (never strongly
+    // negative, since baseline is a no-op rather than a suppression).
+    const deltaMin = isCyberAdvisory ? -0.05 : -0.10;
+    const deltaMax = isCyberAdvisory ? 0.15 : 0.10;
     const agentReview: AgentReview = {
       verdict: review.verdict,
       reasoning: (review.reasoning || '').substring(0, 500),
-      confidence_delta: Math.max(-0.10, Math.min(0.10, Number(review.confidence_delta) || 0)),
+      confidence_delta: Math.max(deltaMin, Math.min(deltaMax, Number(review.confidence_delta) || 0)),
       reviewed_at: new Date().toISOString(),
+      cyber_advisory_path: isCyberAdvisory,
     };
 
     console.log(`[ReviewAgent] Signal ${signal_id}: verdict=${agentReview.verdict}, delta=${agentReview.confidence_delta.toFixed(3)}`);
@@ -297,6 +380,71 @@ ${activeIncidents.length === 0
         } catch (e) {
           console.error('[ReviewAgent] Promotion call failed:', e instanceof Error ? e.message : e);
         }
+      }
+
+    } else if (agentReview.verdict === 'baseline') {
+      // Cyber-advisory baseline — no state change. The agent's
+      // reasoning is captured in raw_json.agent_review. The signal
+      // stays in the feed at its source-authority confidence.
+      console.log(`[ReviewAgent] Cyber-advisory ${signal_id} → baseline (no client stack match found)`);
+
+    } else if (agentReview.verdict === 'elevate') {
+      // Cyber-advisory elevation — the agent identified a
+      // client-tech-stack / asset / vendor intersection that raises
+      // this advisory above generic horizon. Bump the signal's
+      // severity-tier proxy (composite_confidence already adjusted
+      // above; here we also nudge the severity field if currently
+      // 'low' or 'medium' so the UI surfaces it correctly).
+      const currentSeverity = signal.severity || 'low';
+      let upgradedSeverity: string | null = null;
+      if (currentSeverity === 'low') upgradedSeverity = 'medium';
+      else if (currentSeverity === 'medium') upgradedSeverity = 'high';
+      // 'high' and 'critical' don't need elevation — already at
+      // ceiling.
+
+      const updates: Record<string, any> = {};
+      if (upgradedSeverity) updates.severity = upgradedSeverity;
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('signals').update(updates).eq('id', signal_id);
+      }
+      console.log(`[ReviewAgent] Cyber-advisory ${signal_id} → elevate (severity: ${currentSeverity}${upgradedSeverity ? ` → ${upgradedSeverity}` : ' [already at ceiling]'}, delta=${agentReview.confidence_delta.toFixed(3)})`);
+
+    } else if (agentReview.verdict === 'dismiss' && !isCyberAdvisory) {
+      // Honor the dismiss verdict by marking the signal as a false
+      // positive. Operator caught May 2026 that dismiss verdicts
+      // were being recorded into raw_json.agent_review for audit but
+      // never actually acting as a gate — the agent would write
+      // "verdict: dismiss" with reasoning, and the signal would
+      // still appear in the active feed at status 'triaged'. The
+      // SignalHistory query excludes status='false_positive' from
+      // the default view, so this hides the signal without losing
+      // its data; analysts can still surface it via a "show
+      // false-positives" toggle.
+      //
+      // Only auto-dismiss when the agent's confidence_delta is
+      // sufficiently negative to back the verdict. A near-zero
+      // delta means "the agent agrees the signal is borderline but
+      // doesn't strongly object" — too soft to suppress unilaterally.
+      // This guard keeps the dismiss behavior conservative; agents
+      // that add a real -0.05 or worse penalty actually hide the
+      // signal.
+      //
+      // Cyber-advisory signals are guarded above the && check so
+      // they never enter this branch even on verdict-fallback —
+      // dismissing CISA KEV / CCCS for "no corroboration" was the
+      // exact silent-suppression failure this whole change set
+      // exists to fix.
+      const DISMISS_DELTA_THRESHOLD = -0.03;
+      if (agentReview.confidence_delta <= DISMISS_DELTA_THRESHOLD || isSubThreshold) {
+        await supabase
+          .from('signals')
+          .update({
+            status: 'false_positive',
+          })
+          .eq('id', signal_id);
+        console.log(`[ReviewAgent] Dismissed signal ${signal_id} as false_positive (delta=${agentReview.confidence_delta.toFixed(3)})`);
+      } else {
+        console.log(`[ReviewAgent] Dismiss verdict for ${signal_id} but delta=${agentReview.confidence_delta.toFixed(3)} above threshold — leaving status untouched.`);
       }
 
     } else if ((agentReview.verdict === 'enrich' || agentReview.verdict === 'flag') && incident_id) {

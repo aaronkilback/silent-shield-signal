@@ -5,6 +5,8 @@ import type { FortressHealth, LoopStatus } from "@/hooks/useFortressHealth";
 interface FortressHUDProps {
   health: FortressHealth | undefined;
   isLoading: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (next: boolean) => void;
 }
 
 const layerColors: Record<LoopStatus["layer"], string> = {
@@ -33,8 +35,14 @@ const statusColors: Record<LoopStatus["status"], string> = {
   idle: "#ef4444",
 };
 
-export function FortressHUD({ health, isLoading }: FortressHUDProps) {
-  const [expanded, setExpanded] = useState(false);
+export function FortressHUD({ health, isLoading, expanded: controlledExpanded, onExpandedChange }: FortressHUDProps) {
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isControlled = controlledExpanded !== undefined;
+  const expanded = isControlled ? controlledExpanded : internalExpanded;
+  const toggle = () => {
+    if (isControlled) onExpandedChange?.(!expanded);
+    else setInternalExpanded((e) => !e);
+  };
 
   if (isLoading || !health) return null;
 
@@ -60,7 +68,7 @@ export function FortressHUD({ health, isLoading }: FortressHUDProps) {
 
         {/* Compact header */}
         <button
-          onClick={() => setExpanded((p) => !p)}
+          onClick={toggle}
           className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-accent/10 transition-colors"
         >
           <Shield className="w-4 h-4" style={{ color: scoreColor }} />

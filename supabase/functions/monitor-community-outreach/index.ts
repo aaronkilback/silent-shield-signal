@@ -1,6 +1,7 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { recordHeartbeat } from "../_shared/heartbeat.ts";
 import { enqueueJob } from "../_shared/queue.ts";
+import { toProbability } from "../_shared/signal-scores.ts";
 
 /**
  * Community Outreach Monitor
@@ -232,7 +233,47 @@ Deno.serve(async (req) => {
               continue;
             }
 
-            const content = `${item.title} ${item.snippet}`.toLowerCase();
+            // Junk-content gate. Reject literal nav/search/sitemap
+            // pages BEFORE the keyword scorer sees them — operator
+            // caught the feed flooding with "Search | Town of Peace
+            // River" hits because those pages happen to contain the
+            // keyword "Peace".
+            const rawTitle = item.title || '';
+            const rawSnippet = item.snippet || '';
+            if (isJunkContent(rawTitle) || isJunkContent(rawSnippet)) {
+              console.log(`[Junk] Skipping nav/search page: ${rawTitle.substring(0, 80)}`);
+              continue;
+            }
+
+            const content = `${rawTitle} ${rawSnippet}`.toLowerCase();
+
+            // Geographic gate. The RSS path already enforces this for
+            // broad-coverage feeds; the Google Search path didn't,
+            // letting matches from off-geography municipalities
+            // (Toronto accountants, Nanaimo chapels, generic Alberta
+            // sober-living lists) pass through. Re-use the same NE-BC
+            // / operational-zone keyword set so both paths are
+            // consistent.
+            const geoTerms = [
+              'fort st. john', 'fort st john', 'dawson creek', "hudson's hope",
+              'chetwynd', 'tumbler ridge', 'taylor bc', 'peace river regional',
+              'northeast bc', 'charlie lake', 'pink mountain', 'wonowon',
+              'montney', 'kiskatinaw', 'blueberry river', 'doig river',
+              'halfway river', 'prophet river', 'west moberly', 'saulteau',
+              'mcleod lake', 'tsay keh dene', 'kwadacha',
+              'kitimat', 'skeena', 'coastal gaslink', 'lng canada',
+              // Note: deliberately NOT including the bare token "peace"
+              // or "peace river" alone — too many false positives
+              // ("Town of Peace River" search nav, "rest in peace"
+              // in obituaries, etc). Use "peace river regional"
+              // (district name) and the specific First Nations names
+              // instead.
+            ];
+            if (!geoTerms.some((t) => content.includes(t))) {
+              console.log(`[GeoGate] Skipping off-geography Google result: ${rawTitle.substring(0, 60)}`);
+              continue;
+            }
+
             const relevance = scoreOutreachRelevance(content);
 
             // Google results already match queries, but raise threshold to reduce noise
@@ -406,6 +447,30 @@ interface RelevanceResult {
   outreachType: string;
 }
 
+// Junk-content patterns. A title or snippet matching any of these is
+// almost certainly a search page / site nav / index — NOT outreach
+// content. Operator caught this when the feed flooded with 9× "Search
+// | Town of Peace River" entries May 2026; the keyword scorer was
+// matching the literal word "Peace" in those nav-page titles.
+const JUNK_CONTENT_PATTERNS = [
+  /^search\s*[|:|–|-]/i,             // "Search | Town of X"
+  /^search results/i,
+  /^site\s*map\b/i,
+  /^index of\b/i,
+  /^untitled\b/i,
+  /\bpage not found\b/i,
+  /\b404\s*(error|not found)\b/i,
+  /^how much does an? .* cost/i,     // "How much does an accountant cost in Toronto?"
+  /\bbest .* (?:rehab|sober living|treatment) (?:homes|centers?|centres?)\b/i,
+];
+
+function isJunkContent(rawContent: string): boolean {
+  // Use the original (non-lowercased) content if available so the
+  // patterns can anchor on title-case starts. Tolerate either form.
+  const c = rawContent.trim();
+  return JUNK_CONTENT_PATTERNS.some((re) => re.test(c));
+}
+
 function scoreOutreachRelevance(content: string): RelevanceResult {
   let score = 0;
   const reasons: string[] = [];
@@ -416,6 +481,12 @@ function scoreOutreachRelevance(content: string): RelevanceResult {
     if (pattern.test(content)) {
       return { score: 0, reasons: ['Excluded: crime/emergency content'], outreachType: 'excluded' };
     }
+  }
+
+  // Reject site-nav / search-page / generic-Q&A junk that has no
+  // operational content even if it happens to keyword-match.
+  if (isJunkContent(content)) {
+    return { score: 0, reasons: ['Excluded: junk/nav-page content'], outreachType: 'excluded' };
   }
 
   // First Nations / Indigenous keywords (high value)
@@ -551,10 +622,22 @@ async function createOutreachSignal(supabase: any, data: {
     // earlier in this function. After insert, fire-and-forget ai-decision-engine
     // so the signal still gets composite_confidence + agent_review enrichment.
     // Watchdog 2026-04-30 surfaced these as missing AI context.
+    // signals.confidence is on the 0-1 probability scale. The
+    // keyword scorer outputs 0-100. _shared/signal-scores.ts is the
+    // single source of truth for the conversion — every writer of
+    // this column should use toProbability() instead of inlining a
+    // /100 (which is what failed to ship here in the first place,
+    // causing the "junk pages render as 65%, real events render
+    // as 1%" inversion).
+    const confidence01 = toProbability(data.relevanceScore) ?? 0;
+
     const { data: insertedSignal, error } = await supabase
       .from('signals')
       .insert({
         client_id: data.clientId,
+        // 2026-05-08: source_id populated for watchdog source-coverage
+        // tracking. Maps to public.sources WHERE name='Community Outreach Monitor'.
+        source_id: 'b604b8c8-8a19-4ddc-a0e6-9ea422af474f',
         category: 'community_outreach',
         severity: 'low',
         status: 'new',
@@ -562,11 +645,11 @@ async function createOutreachSignal(supabase: any, data: {
         normalized_text: normalizedText,
         content_hash: contentHash,
         event_date: data.publishedDate ? new Date(data.publishedDate).toISOString() : null,
-        confidence: data.relevanceScore,
+        confidence: confidence01,
         raw_json: {
           source: data.source,
           outreach_type: data.outreachType,
-          relevance_score: data.relevanceScore,
+          relevance_score: data.relevanceScore,    // 0-100 (keep for analytics)
           relevance_reasons: data.relevanceReasons,
           url: data.url,
           published_date: data.publishedDate,

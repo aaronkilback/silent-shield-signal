@@ -99,26 +99,17 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 }
 
 // ─── Restriction Logic ───────────────────────────────────────────────────────
-function getRestrictions(code: string) {
-  const allow = '✓ Permitted';
-  const restricted = '⚠ Restricted';
-  const banned = '✗ Prohibited';
-
-  switch (code) {
-    case 'L':
-      return { campfire: allow, openBurn: allow, industrial: allow, ohv: allow };
-    case 'M':
-      return { campfire: allow, openBurn: allow, industrial: allow, ohv: allow };
-    case 'H':
-      return { campfire: restricted, openBurn: restricted, industrial: allow, ohv: allow };
-    case 'VH':
-      return { campfire: banned, openBurn: banned, industrial: restricted, ohv: restricted };
-    case 'E':
-      return { campfire: banned, openBurn: banned, industrial: banned, ohv: banned };
-    default:
-      return { campfire: '—', openBurn: '—', industrial: '—', ohv: '—' };
-  }
-}
+// Removed May 2026: getRestrictions(code) inferred fire bans from danger
+// rating, which was wrong both ways (false bans on VH days when no BCWS
+// prohibition was in effect, missed real bans on lower-rating days when
+// BCWS HAD issued one). Replaced by:
+//   • Real BCWS prohibitions via fetchBCWSFireBansWithGeometry +
+//     filterBansAtPoint (see _shared/bcws.ts) — used in Section 2b of
+//     the report for legal ban presentation.
+//   • petronasProtocol(code, daysAtRating) (below) — for the Petronas
+//     INTERNAL operational protocol, which IS correctly tied to the
+//     danger rating since it's a company-policy decision matrix, not
+//     a legal claim.
 
 // ─── Open-Meteo Fetch ────────────────────────────────────────────────────────
 interface StationWeather {
@@ -581,7 +572,16 @@ interface StationData {
   fwi: number;
   dangerInfo: { rating: string; code: string; color: string };
   daysAtRating: number;
-  restrictions: ReturnType<typeof getRestrictions>;
+  active_bans: Array<{
+    type: string;
+    description: string;
+    category: string;
+    categories: number[];
+    fire_centre: string | null;
+    fire_zone: string | null;
+    effective_date: string | null;
+    bulletin_url: string | null;
+  }>;
 }
 
 function buildHtmlReport(params: {
@@ -595,8 +595,13 @@ function buildHtmlReport(params: {
   dbSignals: any[];
   bcwsFires: any[];
   bcwsEvacs: any[];
+  allFireBans: Array<{ type: string; description: string; category: string; categories: number[]; fire_centre: string | null; fire_zone: string | null; effective_date: string | null; bulletin_url: string | null }>;
+  fireBansFetchError: string | null;
 }): string {
-  const { reportDate, generatedAt, stationsData, activeFires, flares, lightning, aqhi, dbSignals, bcwsFires, bcwsEvacs } = params;
+  const {
+    reportDate, generatedAt, stationsData, activeFires, flares, lightning, aqhi, dbSignals, bcwsFires, bcwsEvacs,
+    allFireBans, fireBansFetchError,
+  } = params;
   const season = getFireSeason();
   const isoDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD for NASA Worldview URLs
 
@@ -636,19 +641,31 @@ function buildHtmlReport(params: {
       ? `<span style="background:#e65100;color:#fff;padding:2px 10px;border-radius:3px;font-size:11px;font-weight:700;margin-left:12px">⚠ SHOULDER SEASON</span>`
       : `<span style="background:#1565c0;color:#fff;padding:2px 10px;border-radius:3px;font-size:11px;font-weight:700;margin-left:12px">❄ OFF-SEASON</span>`;
 
-  // Operational status banner
+  // Operational status banner. Language is based on (1) the highest
+  // station danger rating — drives Petronas's INTERNAL operational
+  // protocol — and (2) whether any Petronas station is inside an
+  // ACTIVE BCWS prohibition polygon — drives whether legal fire
+  // bans apply. Pre-May-2026 the banner inferred "TOTAL BURN BAN IN
+  // EFFECT" purely from rating, which was wrong both ways. Now
+  // the banner only claims a legal ban when one is actually in
+  // place per BCWS data.
+  const stationsUnderBan = stationsData.filter(sd => sd.active_bans.length > 0).length;
+  const hasActiveBan = stationsUnderBan > 0;
+  const banPhrase = hasActiveBan
+    ? `BCWS prohibition active at ${stationsUnderBan}/${stationsData.length} station${stationsData.length > 1 ? 's' : ''}`
+    : 'No active BCWS prohibition at Petronas stations';
   let opStatus = '', opBg = '';
   if (highestCode === 'E') {
-    opStatus = 'CRITICAL — TOTAL BURN BAN IN EFFECT. Halt all ignition sources. Emergency protocols active.';
+    opStatus = `CRITICAL — Extreme fire danger at ${highestRisk?.station.name ?? 'a Petronas station'}. Petronas protocol: cease all activity for full day after 3 consecutive days at Extreme. ${banPhrase}.`;
     opBg = '#6a1b9a';
   } else if (highestCode === 'VH') {
-    opStatus = 'HIGH ALERT — No campfires or open burning. Industrial ignition restrictions apply. Heightened monitoring required.';
+    opStatus = `HIGH ALERT — Very High fire danger. Petronas protocol: cease activity 1 pm – sunset, fire watcher 2 hrs after work. ${banPhrase}.`;
     opBg = '#c62828';
   } else if (highestCode === 'H') {
-    opStatus = 'ELEVATED — Campfire and open burning restrictions in effect. Review Hot Work permit requirements.';
+    opStatus = `ELEVATED — High fire danger. Petronas protocol: fire watcher 2 hrs after work; cease 1 pm – sunset after 3 consecutive days. ${banPhrase}.`;
     opBg = '#e65100';
   } else if (highestCode === 'M') {
-    opStatus = 'ADVISORY — Moderate fire danger. Standard fire prevention protocols apply.';
+    opStatus = `ADVISORY — Moderate fire danger. Petronas protocol: fire watcher 1 hr after work after 3 consecutive days. ${banPhrase}.`;
     opBg = '#f57c00';
   } else {
     opStatus = 'NORMAL — Low fire danger. Standard protocols apply.';
@@ -656,7 +673,6 @@ function buildHtmlReport(params: {
   }
 
   const stationRows = stationsData.map(sd => {
-    const r = sd.restrictions;
     const w = sd.weather;
     const { code, color } = sd.dangerInfo;
     const textColor = code === 'M' ? '#333' : '#fff';
@@ -950,6 +966,85 @@ ${!season.isFireSeason ? `
     </tbody>
   </table>
   <p class="note" style="margin-top:8px">FWI = Fire Weather Index. Danger ratings follow CIFFC/BCWS classification thresholds (L &lt;8 · M 8–16 · H 17–29 · VH 30–49 · E ≥50). Current Restrictions reflect Petronas operational protocol — confirm with the Site Supervisor and current BC Wildfire Service orders at bcwildfire.ca before high-risk activity.</p>
+</section>
+
+<!-- ─── Section 2b: BC Government Fire Bans (LIVE BCWS DATA) ───────────────── -->
+<!-- Real prohibitions from the BCWS Bans and Prohibition Areas feature
+     service. Distinct from the Petronas operational protocol matrix below
+     (which is rating-driven internal company policy). A station can have
+     a HIGH danger rating without any active BC ban, and vice versa —
+     these are independent. -->
+<section>
+  <h2>BC Government Fire Bans — Active Today</h2>
+  ${fireBansFetchError ? `
+    <p class="note" style="background:#fff3e0;padding:10px;border-left:3px solid #f57c00;color:#c62828">
+      ⚠ BCWS fire-bans feed unavailable (${fireBansFetchError}). The Petronas operational protocol matrix below remains valid; for current legal restrictions on Category 1/2/3 burning consult <a href="https://www2.gov.bc.ca/gov/content/safety/wildfire-status/prevention/fire-bans-and-restrictions">bcwildfire.ca</a> directly.
+    </p>
+  ` : (() => {
+      const bansAffectingStations = stationsData.filter(sd => sd.active_bans.length > 0);
+      const totalProvincial = allFireBans.length;
+      if (totalProvincial === 0) {
+        return `
+          <p style="font-size:13px;color:#2e7d32;background:#e8f5e9;padding:10px;border-left:3px solid #2e7d32;border-radius:3px">
+            ✓ <strong>No active fire prohibitions</strong> anywhere in British Columbia today (as published by BC Wildfire Service). Routine Wildfire Act / Wildfire Regulation rules apply to high-risk activities — see Petronas operational protocol below.
+          </p>`;
+      }
+      const stationsAffected = bansAffectingStations.length;
+      const provincialSummaryRows = allFireBans.map(b => `
+        <tr>
+          <td style="font-weight:600">${b.fire_centre ?? 'Provincial'}${b.fire_zone ? ` · ${b.fire_zone}` : ''}</td>
+          <td>${b.type}</td>
+          <td>${b.description || b.category || '—'}</td>
+          <td style="font-size:11px">${b.effective_date ? new Date(b.effective_date).toISOString().split('T')[0] : '—'}</td>
+          <td style="font-size:11px">${b.bulletin_url ? `<a href="${b.bulletin_url}" target="_blank">Bulletin →</a>` : '—'}</td>
+        </tr>
+      `).join('');
+      const stationCoverageRows = stationsData.map(sd => {
+        if (sd.active_bans.length === 0) {
+          return `
+            <tr>
+              <td><strong>${sd.station.name}</strong> (${sd.station.bu})</td>
+              <td style="color:#2e7d32;font-weight:600">✓ No active prohibition</td>
+              <td style="color:#777;font-size:11px">Standard Wildfire Act rules apply.</td>
+            </tr>`;
+        }
+        const cats = [...new Set(sd.active_bans.flatMap(b => b.categories))].sort();
+        return `
+          <tr>
+            <td><strong>${sd.station.name}</strong> (${sd.station.bu})</td>
+            <td style="color:#c62828;font-weight:700">⚠ ${sd.active_bans.length} prohibition${sd.active_bans.length > 1 ? 's' : ''} in effect</td>
+            <td style="font-size:12px">
+              ${sd.active_bans.map(b => `
+                <div style="margin-bottom:4px">
+                  <strong>${b.type}</strong> — ${b.description || b.category}
+                  ${b.bulletin_url ? ` <a href="${b.bulletin_url}" target="_blank" style="font-size:11px">[bulletin]</a>` : ''}
+                </div>
+              `).join('')}
+              ${cats.length > 0 ? `<div style="font-size:11px;color:#555;margin-top:4px">Categories prohibited: ${cats.map(c => `Cat ${c}`).join(', ')}</div>` : ''}
+            </td>
+          </tr>`;
+      }).join('');
+      return `
+        <p style="font-size:13px;color:#c62828;background:#ffebee;padding:10px;border-left:3px solid #c62828;border-radius:3px;margin-bottom:12px">
+          <strong>${totalProvincial} active fire prohibition${totalProvincial > 1 ? 's' : ''} in BC today.</strong>
+          ${stationsAffected > 0 ? `${stationsAffected} of ${stationsData.length} Petronas station${stationsData.length > 1 ? 's' : ''} ${stationsAffected === 1 ? 'is' : 'are'} inside a ban polygon.` : 'None of the Petronas stations are inside a current ban polygon.'}
+        </p>
+        <h3 style="font-size:13px;margin:8px 0 4px 0">Per-Station Coverage</h3>
+        <table>
+          <thead><tr><th style="width:200px">Station</th><th style="width:200px">BC Ban Status</th><th>Active Prohibitions</th></tr></thead>
+          <tbody>${stationCoverageRows}</tbody>
+        </table>
+        <h3 style="font-size:13px;margin:12px 0 4px 0">All Provincial Prohibitions (BC-wide)</h3>
+        <table>
+          <thead><tr><th>Fire Centre / Zone</th><th>Type</th><th>Categories</th><th>Effective</th><th>Bulletin</th></tr></thead>
+          <tbody>${provincialSummaryRows}</tbody>
+        </table>
+        <p class="note" style="margin-top:8px">
+          Source: <a href="https://www2.gov.bc.ca/gov/content/safety/wildfire-status/prevention/fire-bans-and-restrictions" target="_blank">BC Wildfire Service — Fire Bans and Restrictions</a>.
+          These are LEGAL prohibitions issued by BCWS — distinct from the Petronas operational protocol below (which is rating-driven internal policy and applies regardless of legal ban status).
+          For activities not covered by an active prohibition, follow the Wildfire Act, Wildfire Regulation, and Petronas operational protocol.
+        </p>`;
+    })()}
 </section>
 
 <!-- ─── Section 3: High Risk Activity Restrictions Matrix ──────────────────── -->
@@ -1361,36 +1456,67 @@ ${(() => {
 </section>
 
 <!-- ─── Section 8: Recommendations ─────────────────────────────────────────── -->
+<!-- Recommendations are split into two distinct lists:
+       (A) Active BC government fire bans — only present when BCWS has
+           an actual prohibition covering at least one Petronas station.
+           Items here are CITATIONS of existing legal restrictions, not
+           inferred from danger rating.
+       (B) Petronas internal operational protocol — driven by the
+           highest danger rating across stations + days-at-rating. These
+           are company-policy recommendations Petronas applies regardless
+           of whether a BCWS ban is in effect.
+     Pre-May 2026 the two lists were collapsed into one and rating-
+     inferred lines like "Campfire restrictions in effect" appeared
+     even when no BCWS prohibition existed. Fixed by sourcing (A)
+     from real ban data and labeling (B) as Petronas-internal. -->
 <section>
   <h2>Operational Recommendations</h2>
+
+  ${stationsUnderBan > 0 ? `
+  <h3 style="font-size:13px;margin:6px 0 4px 0;color:#c62828">⚠ Active BC Government Fire Bans</h3>
+  <ul class="rec-list" style="margin-bottom:10px">
+    ${stationsData.filter(sd => sd.active_bans.length > 0).map(sd => {
+      const cats = [...new Set(sd.active_bans.flatMap(b => b.categories))].sort();
+      const catText = cats.length > 0 ? cats.map(c => `Category ${c}`).join(', ') : 'prohibited activities';
+      const bulletins = sd.active_bans.map(b => b.bulletin_url).filter(Boolean) as string[];
+      const bulletinLink = bulletins[0] ? ` <a href="${bulletins[0]}" target="_blank" style="font-size:11px">[bulletin]</a>` : '';
+      return `<li><strong>${sd.station.name}:</strong> ${catText} prohibited per BCWS legal order. Communicate to all field personnel and contractors operating in this zone.${bulletinLink}</li>`;
+    }).join('\n    ')}
+    <li>For zones without an active prohibition, default Wildfire Act / Wildfire Regulation rules apply — see Petronas operational protocol below.</li>
+  </ul>
+  ` : ''}
+
+  <h3 style="font-size:13px;margin:${stationsUnderBan > 0 ? '10px' : '6px'} 0 4px 0">Petronas Internal Operational Protocol</h3>
+  <p class="note" style="margin-bottom:6px">Driven by current danger rating + days-at-rating. Applies regardless of whether a BC government fire ban is in effect.</p>
   <ul class="rec-list">
     ${highestCode === 'E' ? `
-    <li>IMMEDIATE: Issue total burn ban across all Petronas PECL operational sites. No exceptions without VP approval.</li>
-    <li>IMMEDIATE: Activate fire emergency response pre-positioning at ${highestRisk.station.name} area.</li>
-    <li>IMMEDIATE: Restrict all chainsaw, grinder, and hot work operations site-wide.</li>
-    <li>IMMEDIATE: Brief all field personnel on evacuation routes and emergency assembly points.</li>
+    <li><strong>EXTREME rating at ${highestRisk.station.name}:</strong> cease activity 1 pm – sunset and maintain fire watcher 2 hrs after work. After 3 consecutive days at Extreme, cease ALL activity for the full day per published Petronas protocol.</li>
+    <li>Activate fire emergency response pre-positioning at ${highestRisk.station.name} area.</li>
+    <li>Restrict all chainsaw, grinder, and hot work operations site-wide pending site-supervisor sign-off.</li>
+    <li>Brief all field personnel on evacuation routes and emergency assembly points.</li>
     <li>Monitor CWFIS active fire map every 30 minutes during extreme conditions.</li>
     ` : highestCode === 'VH' ? `
-    <li>Enforce campfire prohibition and Category 2 burn ban at all sites in VH rating zones.</li>
+    <li><strong>VERY HIGH rating at ${highestRisk.station.name}:</strong> cease activity 1 pm – sunset and maintain fire watcher 2 hrs after work per published Petronas protocol.</li>
     <li>All Hot Work permits require additional sign-off; standby firefighting equipment mandatory.</li>
     <li>Review OHV operation hours — restrict to early morning before 10:00 MST when practical.</li>
     <li>Pre-position water tenders and firefighting equipment at high-risk locations.</li>
     <li>Confirm evacuation routes and emergency contacts are current for all field crews.</li>
     ` : highestCode === 'H' ? `
-    <li>Campfire restrictions in effect — communicate to all field personnel and contractors.</li>
+    <li><strong>HIGH rating at ${highestRisk.station.name}:</strong> maintain fire watcher 2 hrs after work per published Petronas protocol. After 3 consecutive days at High, cease activity 1 pm – sunset until rating drops to Moderate for 2 consecutive days.</li>
     <li>Review pending Hot Work permits; ensure firewatch and extinguisher requirements are met.</li>
     <li>Inspect all equipment for fuel leaks and spark arrestors before deployment.</li>
     <li>Ensure fire extinguishers, shovels, and water cans are on all field vehicles.</li>
     ` : highestCode === 'M' ? `
-    <li>Standard fire prevention protocols apply. Conduct daily equipment inspection.</li>
+    <li><strong>MODERATE rating at ${highestRisk.station.name}:</strong> after 3 consecutive days at Moderate, maintain fire watcher 1 hr after work per published Petronas protocol. Standard fire prevention practices otherwise.</li>
+    <li>Conduct daily equipment inspection.</li>
     <li>Brief field crews on campfire regulations and fire reporting procedures.</li>
     <li>Ensure all vehicles carry fire suppression equipment (extinguisher, water, shovel).</li>
     ` : `
-    <li>Low fire danger — standard protocols apply. Continue routine monitoring.</li>
+    <li><strong>LOW rating across all stations</strong> — no Petronas work restrictions. Continue normal daily work practices and routine monitoring.</li>
     <li>Ensure fire suppression equipment is inspected and ready for rapid transition if ratings increase.</li>
     `}
-    <li>Report any smoke or fire observations immediately to BC Wildfire Service: 1-800-663-5555.</li>
-    <li>Next report scheduled for tomorrow morning. Monitor bcwildfire.ca for real-time orders.</li>
+    <li>Report any smoke or fire observations immediately to BC Wildfire Service: <strong>1-800-663-5555</strong>.</li>
+    <li>Next report scheduled for tomorrow morning. Monitor <a href="https://www2.gov.bc.ca/gov/content/safety/wildfire-status">bcwildfire.ca</a> for real-time prohibition updates.</li>
   </ul>
 </section>
 
@@ -1438,7 +1564,8 @@ Deno.serve(async (req) => {
     // fallback (used only when the BCWS spatial query returns null) and
     // for the 3-day forecast cells (BCWS doesn't publish forecast
     // ratings, only today's).
-    const { fetchBCWSDangerRatingAtPoint } = await import("../_shared/bcws.ts");
+    const { fetchBCWSDangerRatingAtPoint, fetchBCWSFireBansWithGeometry, filterBansAtPoint } =
+      await import("../_shared/bcws.ts");
     const officialRatings = await Promise.all(
       STATIONS.map((s) =>
         fetchBCWSDangerRatingAtPoint(s.lat, s.lon).catch((e: any) => {
@@ -1447,6 +1574,24 @@ Deno.serve(async (req) => {
         })
       )
     );
+
+    // Real fire bans from BCWS — fetched ONCE, then filtered per
+    // station via point-in-polygon. Replaces the previous
+    // getRestrictions(code) inference path which was wrong both
+    // ways: false bans on VH days where no BCWS prohibition was in
+    // effect, and missed real bans during early-season Moderate
+    // ratings. Empty array on fetch failure so the section renders
+    // honestly ("ban data unavailable") rather than silently
+    // showing rating-inferred bans.
+    let allBans: Awaited<ReturnType<typeof fetchBCWSFireBansWithGeometry>> = [];
+    let bansFetchError: string | null = null;
+    try {
+      allBans = await fetchBCWSFireBansWithGeometry();
+      console.log(`[wildfire-report] ${allBans.length} active BC fire bans fetched`);
+    } catch (err: any) {
+      bansFetchError = err?.message || String(err);
+      console.warn(`[wildfire-report] fire-bans fetch failed: ${bansFetchError}`);
+    }
 
     for (let i = 0; i < STATIONS.length; i++) {
       const station = STATIONS[i];
@@ -1499,13 +1644,19 @@ Deno.serve(async (req) => {
         .eq('station_id', station.id)
         .eq('rating_date', today);
 
+      // Real BCWS prohibitions covering this station's coordinates,
+      // filtered from the single bulk fetch above. Empty array means
+      // no actual ban is in legal effect at this station — even if
+      // the danger rating is High or VH.
+      const stationBans = filterBansAtPoint(allBans, station.lat, station.lon);
+
       stationsData.push({
         station,
         weather,
         fwi,
         dangerInfo,
         daysAtRating,
-        restrictions: getRestrictions(dangerInfo.code),
+        active_bans: stationBans,
       });
     }
 
@@ -1577,6 +1728,17 @@ Deno.serve(async (req) => {
       dbSignals: dbSignals ?? [],
       bcwsFires,
       bcwsEvacs,
+      allFireBans: allBans.map((b) => ({
+        type: b.type,
+        description: b.description,
+        category: b.category,
+        categories: b.categories,
+        fire_centre: b.fire_centre,
+        fire_zone: b.fire_zone,
+        effective_date: b.effective_date,
+        bulletin_url: b.bulletin_url,
+      })),
+      fireBansFetchError: bansFetchError,
     });
 
     return new Response(

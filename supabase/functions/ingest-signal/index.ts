@@ -27,6 +27,12 @@ const SignalInputSchema = z.object({
   sourceType: z.string().optional(),       // source type tag (e.g. 'qa_test')
   sourceData: z.any().optional(),          // source metadata
   skip_relevance_gate: z.boolean().optional(), // bypass AI gate when upstream keyword matching already vetted the signal
+  // Fallback classification when the AI classifier silently fails (returns
+  // empty/unknown). Monitors with known signal types (monitor-wildfires →
+  // 'wildfire', NAAD → 'active_threat') should provide these so a classifier
+  // outage doesn't collapse the entire feed to category=unknown / sev=medium.
+  fallback_category: z.string().optional(),
+  fallback_severity: z.enum(['critical', 'high', 'medium', 'low']).optional(),
 }).refine(data => data.text || data.event || data.url, {
   message: "Either 'text', 'event', or 'url' must be provided"
 });
@@ -124,7 +130,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity } = validationResult.data;
     // Auto-flag any signal whose source URL points at example.com / qa.test / localhost
     // as is_test=true, regardless of caller. These domains are always test fixtures and
     // must never appear in the production live feed (operators have mistaken them for
@@ -139,22 +145,38 @@ Deno.serve(async (req) => {
     if (explicitClientId) {
       const { data: clientCheck, error: clientCheckError } = await supabase
         .from('clients')
-        .select('id, name')
+        .select('id, name, status')
         .eq('id', explicitClientId)
         .single();
-      
+
       if (clientCheckError || !clientCheck) {
         console.error(`⚠ INVALID CLIENT_ID: Provided client_id ${explicitClientId} does not exist`);
         return new Response(
-          JSON.stringify({ 
-            error: 'Invalid client_id', 
-            message: `Client with id ${explicitClientId} not found` 
+          JSON.stringify({
+            error: 'Invalid client_id',
+            message: `Client with id ${explicitClientId} not found`
           }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+
+      // Block test signals against active clients. Until 2026-05-07 the
+      // fortress-qa-agent injected synthetic signals into Petronas Canada
+      // because is_test=true was permitted on any client. Use a status
+      // != 'active' QA client (e.g. _qa_test_client).
+      if (is_test === true && clientCheck.status === 'active') {
+        console.error(`⚠ TEST SIGNAL BLOCKED: is_test=true cannot target active client ${clientCheck.name} (${clientCheck.id})`);
+        return new Response(
+          JSON.stringify({
+            error: 'test signals not permitted on active clients',
+            message: `Client ${clientCheck.name} has status='active'. Use a status='inactive' QA test client instead.`,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       validatedExplicitClientId = clientCheck.id;
-      console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id})`);
+      console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id}) status=${clientCheck.status}`);
     }
     
     let signalText = text || JSON.stringify(event);
@@ -308,29 +330,32 @@ Be specific and concise. Focus on facts, not speculation.`
 
     let sourceId = null;
     
-    // If source_key provided, validate source
+    // If source_key provided, validate source. Note: the sources
+    // table has a `status` text column, not an `is_active` boolean
+    // — this path was dormant until cyber-advisory monitors started
+    // passing source_key in May 2026.
     if (source_key) {
       const { data: source, error: sourceError } = await supabase
         .from('sources')
-        .select('id, is_active')
+        .select('id, status')
         .eq('name', source_key)
         .single();
 
       if (sourceError || !source) {
-        console.error('Source not found:', source_key);
+        console.error('Source not found:', source_key, sourceError?.message);
         return new Response(
           JSON.stringify({ error: 'Source not found or inactive' }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      if (!source.is_active) {
+      if (source.status !== 'active') {
         return new Response(
-          JSON.stringify({ error: 'Source is not active' }),
+          JSON.stringify({ error: `Source ${source_key} status=${source.status}` }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      
+
       sourceId = source.id;
     }
 
@@ -437,7 +462,30 @@ Respond ONLY with valid JSON.`
     });
 
     if (classResult.data) {
-      classification = { ...classification, ...classResult.data };
+      // 2026-05-08 source-fidelity: when the input is scraped news (Google
+      // News API or RSS), preserve the verbatim title+snippet as
+      // normalized_text. gpt-4o-mini was generating prose from background
+      // knowledge that didn't match the source URL — 50% drift rate
+      // observed in May 8 audit. Classification fields (category, severity,
+      // entities) are still LLM-derived, but the rendered prose is now
+      // directly traceable to what was scraped.
+      const sourceTag = String(signalRaw?.source || raw_json?.source || '');
+      // Sources that ship pre-structured verbatim content (we want
+      // operators to read the source's own words, not LLM
+      // re-interpretation). Originally just news/RSS to fix the May 8
+      // 50%-drift problem; extended to GitHub Code Search after May 8
+      // false-positive audit (LLM was rewriting the monitor's own
+      // structured "GitHub Credential Exposure" text into vague
+      // "may have been exposed" prose).
+      const isScrapedNews =
+        sourceTag === 'google_news_api' ||
+        sourceTag === 'rss' ||
+        sourceTag === 'rss_feed' ||
+        sourceTag === 'GitHub Code Search';
+      const llmFields = isScrapedNews
+        ? { ...classResult.data, normalized_text: signalText }
+        : classResult.data;
+      classification = { ...classification, ...llmFields };
       // Normalize confidence to 0-1 range
       if (classResult.data.confidence && classResult.data.confidence > 1) {
         classification.confidence = classResult.data.confidence / 100;
@@ -459,6 +507,30 @@ Respond ONLY with valid JSON.`
         if (!rulesResult.severity) {
           classification.severity = 'low';
         }
+      }
+    } else if (classResult.error) {
+      // The classifier returned no data (gateway failure, JSON parse fail,
+      // empty content). Without this log the failure is invisible — the May
+      // 2026 'unknown-category flood' regression went unnoticed for hours
+      // because there was no surface for "AI didn't classify this."
+      console.warn(`[Classifier] AI classification failed: ${classResult.error}. signalText="${signalText.substring(0, 120)}"`);
+    }
+
+    // ═══ FALLBACK CLASSIFICATION ═══
+    // When AI silently fails, monitors with known signal types provide
+    // fallback_category / fallback_severity so the feed doesn't collapse to
+    // unknown/medium. A classifier outage shouldn't strip every wildfire
+    // detection of its category.
+    if (classification.category === 'unknown' && fallback_category) {
+      console.log(`[Classifier Fallback] Using fallback_category=${fallback_category} for monitor-supplied signal`);
+      classification.category = fallback_category;
+      if (fallback_severity && !rulesResult.severity) {
+        classification.severity = fallback_severity;
+      }
+      // Confidence floor: fallback came from a monitor that knows what it
+      // detected, treat as high-trust enough to not get rejected as noise.
+      if (classification.confidence < 0.70) {
+        classification.confidence = 0.75;
       }
     }
 
@@ -999,23 +1071,55 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
       return `${sevPrefix}${catLabel} Detected`.substring(0, 100);
     };
 
-    // Generate title from normalized_text (first sentence or first 100 chars)
+    // Generate title from normalized_text (first sentence or first 100 chars).
+    //
+    // Sentence-end detection has to ignore periods inside numbers ($1.5B),
+    // abbreviations (Fort St., Mr., Inc.), and very short fragments. Earlier
+    // logic was `text.match(/[.!?]/)` — that cut at the first period anywhere,
+    // producing titles like "TC Energy has approved the $1." and "Coastal
+    // GasLink pipeline section near Fort St.". Two corrections:
+    //   1. Period must be followed by whitespace OR end-of-string (rules out
+    //      numbers like "$1.5" where the period is followed by a digit).
+    //   2. The chars immediately before the period must not be a known
+    //      abbreviation (St, Mr, Mrs, Ms, Dr, Prof, Inc, Corp, Ltd, Co, Ave,
+    //      Blvd, Rd, Mt, Sr, Jr, U.S, U.K).
+    //   3. Sentence end must be at least 30 chars in (defensive — short
+    //      fragments aren't titles).
+    const ABBREV_RE = /\b(?:Mr|Mrs|Ms|Dr|Prof|St|Mt|Sr|Jr|Inc|Corp|Co|Ltd|Ave|Blvd|Rd|U\.S|U\.K)$/i;
     const generateTitle = (text: string): string => {
       if (!text || text.length === 0) return 'Signal - ' + new Date().toISOString().slice(0, 16);
-      
-      // Find first sentence end
-      const sentenceEndMatch = text.match(/[.!?]/);
-      const firstSentenceEnd = sentenceEndMatch ? (sentenceEndMatch.index ?? 99) + 1 : 100;
-      
-      // Take first sentence or first 100 chars, whichever is shorter
-      const titleLength = Math.min(firstSentenceEnd, 100);
+
+      let sentenceEnd = -1;
+      const re = /[.!?](?=\s|$)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        const idx = m.index;
+        if (idx < 30) continue;
+        // For periods (not ! or ?), check the immediately preceding word for
+        // a known abbreviation pattern.
+        if (text[idx] === '.') {
+          const before = text.substring(Math.max(0, idx - 12), idx);
+          if (ABBREV_RE.test(before)) continue;
+        }
+        sentenceEnd = idx + 1;
+        break;
+      }
+
+      const honorSentence = sentenceEnd > 0;
+      const TITLE_CAP = 200;
+      const titleLength = honorSentence ? Math.min(sentenceEnd, TITLE_CAP) : TITLE_CAP;
       let title = text.substring(0, titleLength).trim();
-      
-      // Add ellipsis if truncated mid-sentence
-      if (titleLength === 100 && text.length > 100) {
+
+      // Append ellipsis when we couldn't render the full intended span — either
+      // no sentence end was found and the source ran past TITLE_CAP, OR we
+      // found a sentence end but it lay beyond the cap.
+      const truncatedAtCap =
+        (!honorSentence && text.length > TITLE_CAP) ||
+        (honorSentence && sentenceEnd > TITLE_CAP);
+      if (truncatedAtCap) {
         title = title.replace(/\s+\S*$/, '') + '...';
       }
-      
+
       return title || 'Signal - ' + new Date().toISOString().slice(0, 16);
     };
     
@@ -1023,11 +1127,13 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
     
     // ===== AI RELEVANCE GATE: PECL-calibrated two-stage check =====
     // Stage 1: LLM scores relevance (0-1) + classifies connection type
-    // Stage 2: Threshold check at 0.55 — below = write to filtered_signals and reject
+    // Stage 2: Threshold check at 0.45 — below = write to filtered_signals and reject
     // Threshold history: 0.60 → 0.45 (admitted too much junk) → 0.65 (rejected legit
     // signals like Coastal GasLink blockade + Petronas Canada at score 0.60) → 0.55.
-    // Empirically gpt-4o-mini scores direct-asset references at 0.55–0.70 and pure
-    // noise at 0.45–0.55, so 0.55 is the cleanest separator. Bounds 0.50–0.70.
+    // 2026-05-08 audit: 0.55 was rejecting JERA/LNG-Canada (0.45), Tangeman/Kitimat
+    // (0.20), Poirier/TC-Energy (0) — all real but borderline. Dropped to 0.45 with
+    // bounds 0.40–0.65 to admit the JERA-class signals. Operators can dismiss noise
+    // via the relevance score visible in UI; 0.45 stays well above pure-noise band.
     if (skip_relevance_gate) {
       console.log(`[AI Relevance Gate] BYPASSED — upstream keyword matching already vetted this signal`);
     }
@@ -1144,9 +1250,9 @@ Score this signal's relevance and classify the connection.`
 
           // Phase 3C: Per-source threshold adjustment
           // Low-credibility sources face a higher bar; proven sources get more slack.
-          // Bounded ±0.15 from base (floor 0.50, ceiling 0.70) to prevent runaway suppression.
+          // Bounded ±0.15 from base (floor 0.40, ceiling 0.65) to prevent runaway suppression.
           // Also applies learned threshold adjustment from analyst feedback patterns.
-          let relevanceThreshold = Math.min(0.70, Math.max(0.50, 0.55 + learnedThresholdAdjustment));
+          let relevanceThreshold = Math.min(0.65, Math.max(0.40, 0.45 + learnedThresholdAdjustment));
           if (learnedThresholdAdjustment !== 0) {
             console.log(`[Learning] Threshold adjusted by analyst patterns: ${learnedThresholdAdjustment > 0 ? '+' : ''}${learnedThresholdAdjustment.toFixed(2)} → ${relevanceThreshold.toFixed(2)}`);
           }
@@ -1159,8 +1265,8 @@ Score this signal's relevance and classify the connection.`
             // Only adjust if we have enough signal history (thin data protection)
             if (credScore?.current_credibility && (credScore.total_signals ?? 0) >= 5) {
               const adjustment = (0.65 - credScore.current_credibility) * 0.40;
-              relevanceThreshold = Math.min(0.70, Math.max(0.50, 0.55 + adjustment));
-              if (Math.abs(relevanceThreshold - 0.55) > 0.005) {
+              relevanceThreshold = Math.min(0.65, Math.max(0.40, 0.45 + adjustment));
+              if (Math.abs(relevanceThreshold - 0.45) > 0.005) {
                 console.log(`[Phase3C] ${source_key} threshold adjusted: ${relevanceThreshold.toFixed(2)} (credibility: ${credScore.current_credibility.toFixed(3)}, signals: ${credScore.total_signals})`);
               }
             }

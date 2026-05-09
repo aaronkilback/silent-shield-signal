@@ -12,10 +12,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { 
-  ArrowLeft, Save, Plus, Trash2, Upload, Download, 
+import {
+  ArrowLeft, Save, Plus, Trash2, Upload, Download,
   FileText, Image as ImageIcon, Video, Music, File,
-  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2, MessageSquare, Zap, CalendarIcon, Clock
+  Loader2, Sparkles, Users, ClipboardList, Paperclip, FileDown, AlertTriangle, Link, X, MapPin, Map, Building2, MessageSquare, Zap, CalendarIcon, Clock, Pencil
 } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -64,6 +64,26 @@ const InvestigationDetail = () => {
   const [newPersonCompany, setNewPersonCompany] = useState("");
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
   const [editingPersonData, setEditingPersonData] = useState<Record<string, string>>({});
+  // Entries-tab edit state — fixes the "can't edit entries" gap
+  // (the tab previously only supported Add and Delete).
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingEntryText, setEditingEntryText] = useState<string>("");
+  // Locations-tab edit state — locations are stored as `entities`
+  // rows with type='location'. Editable fields: name, current_location
+  // (the human-readable address / coords), description.
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [editingLocationData, setEditingLocationData] = useState<{
+    name: string;
+    current_location: string;
+    description: string;
+  }>({ name: "", current_location: "", description: "" });
+  // Cross-references-tab edit state — each link in
+  // investigations.cross_references (jsonb) carries an optional `note`
+  // explaining WHY two investigations are linked. Editing the note is
+  // the only per-link field; the linked investigation itself is
+  // editable by navigating to it.
+  const [editingXrefId, setEditingXrefId] = useState<string | null>(null);
+  const [editingXrefNote, setEditingXrefNote] = useState<string>("");
   const [suggestedReferences, setSuggestedReferences] = useState<any[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [newLocationName, setNewLocationName] = useState("");
@@ -198,20 +218,39 @@ const InvestigationDetail = () => {
     enabled: !!id
   });
 
+  // Cross-references on investigations are stored in a jsonb column
+  // as `[{ id, note }]` after the May 2026 migration. Older records may
+  // still have legacy uuid-string entries — normalizeCrossRefs handles
+  // both shapes so the UI doesn't crash on unmigrated rows that are
+  // updated client-side before the next read.
+  const normalizeCrossRefs = (raw: unknown): Array<{ id: string; note: string | null }> => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((r: any) =>
+        typeof r === 'string'
+          ? { id: r, note: null as string | null }
+          : { id: r?.id, note: (r?.note ?? null) as string | null }
+      )
+      .filter((r) => typeof r.id === 'string' && r.id.length > 0);
+  };
+
   const { data: crossReferences = [] } = useQuery({
     queryKey: ['investigation-cross-references', id],
     queryFn: async () => {
-      if (!investigation?.cross_references || investigation.cross_references.length === 0) {
-        return [];
-      }
+      const refs = normalizeCrossRefs((investigation as any)?.cross_references);
+      if (refs.length === 0) return [];
 
       const { data, error } = await supabase
         .from('investigations')
         .select('id, file_number, synopsis, file_status')
-        .in('id', investigation.cross_references);
-      
+        .in('id', refs.map((r) => r.id));
+
       if (error) throw error;
-      return data;
+      // Merge the per-link note onto each result so the UI can render it.
+      return (data || []).map((row) => ({
+        ...row,
+        note: refs.find((r) => r.id === row.id)?.note ?? null,
+      }));
     },
     enabled: !!investigation
   });
@@ -318,6 +357,74 @@ const InvestigationDetail = () => {
     } catch (error: any) {
       toast.error(error.message || "Failed to delete entry");
     }
+  };
+
+  const startEditEntry = (entry: any) => {
+    setEditingEntryId(entry.id);
+    setEditingEntryText(entry.entry_text || "");
+  };
+
+  const saveEditEntry = async (entryId: string) => {
+    if (!editingEntryText.trim()) {
+      toast.error("Entry text cannot be empty");
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('investigation_entries')
+        .update({ entry_text: editingEntryText })
+        .eq('id', entryId);
+      if (error) throw error;
+      setEditingEntryId(null);
+      setEditingEntryText("");
+      queryClient.invalidateQueries({ queryKey: ['investigation-entries', id] });
+      toast.success("Entry updated");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update entry");
+    }
+  };
+
+  const cancelEditEntry = () => {
+    setEditingEntryId(null);
+    setEditingEntryText("");
+  };
+
+  const startEditLocation = (location: any) => {
+    setEditingLocationId(location.id);
+    setEditingLocationData({
+      name: location.name || "",
+      current_location: location.current_location || "",
+      description: location.description || "",
+    });
+  };
+
+  const saveEditLocation = async (locationId: string) => {
+    if (!editingLocationData.name.trim()) {
+      toast.error("Location name cannot be empty");
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('entities')
+        .update({
+          name: editingLocationData.name.trim(),
+          current_location: editingLocationData.current_location.trim() || null,
+          description: editingLocationData.description.trim() || null,
+        })
+        .eq('id', locationId);
+      if (error) throw error;
+      setEditingLocationId(null);
+      // Re-geocode on next render — bump the locations query.
+      queryClient.invalidateQueries({ queryKey: ['investigation-locations', id] });
+      toast.success("Location updated");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update location");
+    }
+  };
+
+  const cancelEditLocation = () => {
+    setEditingLocationId(null);
+    setEditingLocationData({ name: "", current_location: "", description: "" });
   };
 
   const addPerson = async () => {
@@ -430,59 +537,90 @@ const InvestigationDetail = () => {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files || files.length === 0 || !id || !user) return;
+    if (!files || files.length === 0) return;
+    if (!id) {
+      toast.error("Investigation not loaded — cannot attach files yet.");
+      return;
+    }
+    if (!user) {
+      toast.error("You're signed out — sign in and retry.");
+      return;
+    }
 
     const fileArray = Array.from(files);
     const totalFiles = fileArray.length;
+    const loadingToastId = toast.loading(`Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''}...`);
 
-    try {
-      toast.loading(`Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''}...`);
+    // Walk files sequentially when there's an error so the message
+    // identifies the specific file + step that failed. Previous
+    // implementation used Promise.all which collapsed all errors
+    // into one generic "Failed to upload files" toast and gave the
+    // operator no way to diagnose what was actually rejected.
+    const successful: Array<{ investigation_id: string; filename: string; storage_path: string; file_type: string; file_size: number; uploaded_by: string }> = [];
+    let failedFile: string | null = null;
+    let failureStep: 'storage' | 'database' | null = null;
+    let failureMessage: string | null = null;
 
-      // Upload all files in parallel
-      const uploadPromises = fileArray.map(async (file) => {
-        const fileExt = file.name.split('.').pop();
-        const filePath = `${id}/${crypto.randomUUID()}.${fileExt}`;
+    for (const file of fileArray) {
+      const fileExt = file.name.split('.').pop();
+      const filePath = `${id}/${crypto.randomUUID()}.${fileExt}`;
+      const { error: uploadError } = await supabase.storage
+        .from('investigation-files')
+        .upload(filePath, file);
 
-        const { error: uploadError } = await supabase.storage
-          .from('investigation-files')
-          .upload(filePath, file);
+      if (uploadError) {
+        failedFile = file.name;
+        failureStep = 'storage';
+        failureMessage = uploadError.message;
+        console.error(`[Investigations] Storage upload failed for ${file.name}:`, uploadError);
+        break;
+      }
 
-        if (uploadError) throw uploadError;
+      let fileType = 'other';
+      if (file.type.startsWith('image/')) fileType = 'image';
+      else if (file.type.startsWith('video/')) fileType = 'video';
+      else if (file.type.startsWith('audio/')) fileType = 'audio';
+      else if (file.type.includes('document') || file.type.includes('pdf')) fileType = 'document';
 
-        let fileType = 'other';
-        if (file.type.startsWith('image/')) fileType = 'image';
-        else if (file.type.startsWith('video/')) fileType = 'video';
-        else if (file.type.startsWith('audio/')) fileType = 'audio';
-        else if (file.type.includes('document') || file.type.includes('pdf')) fileType = 'document';
-
-        return {
-          investigation_id: id,
-          filename: file.name,
-          storage_path: filePath,
-          file_type: fileType,
-          file_size: file.size,
-          uploaded_by: user.id
-        };
+      successful.push({
+        investigation_id: id,
+        filename: file.name,
+        storage_path: filePath,
+        file_type: fileType,
+        file_size: file.size,
+        uploaded_by: user.id,
       });
+    }
 
-      const attachmentRecords = await Promise.all(uploadPromises);
-
-      // Insert all records in one batch
+    // Even if some files failed in storage, persist the metadata for
+    // ones that did upload — operator gets partial progress instead
+    // of losing everything to one bad file.
+    if (successful.length > 0) {
       const { error: dbError } = await supabase
         .from('investigation_attachments')
-        .insert(attachmentRecords);
+        .insert(successful);
+      if (dbError) {
+        failureStep = 'database';
+        failureMessage = dbError.message;
+        console.error('[Investigations] DB insert failed:', dbError);
+      }
+    }
 
-      if (dbError) throw dbError;
+    queryClient.invalidateQueries({ queryKey: ['investigation-attachments', id] });
+    toast.dismiss(loadingToastId);
+    e.target.value = '';
 
-      queryClient.invalidateQueries({ queryKey: ['investigation-attachments', id] });
-      toast.dismiss();
+    if (failureStep && failureMessage) {
+      const where = failureStep === 'storage'
+        ? `Storage rejected ${failedFile ?? 'a file'}`
+        : 'Database rejected the attachment record';
+      toast.error(`${where}: ${failureMessage}`, { duration: 8000 });
+      return;
+    }
+    if (successful.length === totalFiles) {
       toast.success(`${totalFiles} file${totalFiles > 1 ? 's' : ''} uploaded successfully`);
-      
-      // Reset the file input
-      e.target.value = '';
-    } catch (error: any) {
-      toast.dismiss();
-      toast.error(error.message || "Failed to upload files");
+    } else {
+      toast.success(`${successful.length} of ${totalFiles} uploaded; check console for the failed file's error.`);
     }
   };
 
@@ -555,16 +693,17 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
   const addCrossReference = async (refId: string) => {
     if (!id || !investigation) return;
 
-    const currentRefs = investigation.cross_references || [];
-    if (currentRefs.includes(refId)) {
+    const currentRefs = normalizeCrossRefs((investigation as any).cross_references);
+    if (currentRefs.some((r) => r.id === refId)) {
       toast.error("This investigation is already cross-referenced");
       return;
     }
 
     try {
+      const newRefs = [...currentRefs, { id: refId, note: null }];
       const { error } = await supabase
         .from('investigations')
-        .update({ cross_references: [...currentRefs, refId] })
+        .update({ cross_references: newRefs as any })
         .eq('id', id);
 
       if (error) throw error;
@@ -572,8 +711,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       queryClient.invalidateQueries({ queryKey: ['investigation', id] });
       queryClient.invalidateQueries({ queryKey: ['investigation-cross-references', id] });
       toast.success("Cross-reference added");
-      
-      // Remove from suggestions
+
       setSuggestedReferences(prev => prev.filter(s => s.id !== refId));
     } catch (error: any) {
       toast.error(error.message || "Failed to add cross-reference");
@@ -584,11 +722,12 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     if (!id || !investigation) return;
 
     try {
-      const newRefs = (investigation.cross_references || []).filter(r => r !== refId);
-      
+      const newRefs = normalizeCrossRefs((investigation as any).cross_references)
+        .filter((r) => r.id !== refId);
+
       const { error } = await supabase
         .from('investigations')
-        .update({ cross_references: newRefs })
+        .update({ cross_references: newRefs as any })
         .eq('id', id);
 
       if (error) throw error;
@@ -598,6 +737,42 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       toast.success("Cross-reference removed");
     } catch (error: any) {
       toast.error(error.message || "Failed to remove cross-reference");
+    }
+  };
+
+  const startEditXref = (refId: string, currentNote: string | null) => {
+    setEditingXrefId(refId);
+    setEditingXrefNote(currentNote ?? "");
+  };
+
+  const cancelEditXref = () => {
+    setEditingXrefId(null);
+    setEditingXrefNote("");
+  };
+
+  const saveEditXref = async (refId: string) => {
+    if (!id || !investigation) return;
+
+    try {
+      const trimmed = editingXrefNote.trim();
+      const newRefs = normalizeCrossRefs((investigation as any).cross_references).map((r) =>
+        r.id === refId ? { id: r.id, note: trimmed.length ? trimmed : null } : r
+      );
+
+      const { error } = await supabase
+        .from('investigations')
+        .update({ cross_references: newRefs as any })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+      queryClient.invalidateQueries({ queryKey: ['investigation-cross-references', id] });
+      toast.success("Note saved");
+      setEditingXrefId(null);
+      setEditingXrefNote("");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save note");
     }
   };
 
@@ -1330,8 +1505,8 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                           <span className="text-sm text-muted-foreground">{person.email}</span>
                           <span className="text-sm text-muted-foreground">{person.position}</span>
                           <span className="text-sm text-muted-foreground">{person.company}</span>
-                          <Button variant="ghost" size="sm" onClick={() => startEditPerson(person)}>
-                            <ClipboardList className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" onClick={() => startEditPerson(person)} title="Edit person">
+                            <Pencil className="w-4 h-4" />
                           </Button>
                           <Button 
                             variant="outline" 
@@ -1425,61 +1600,115 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
 
                       {/* List of locations */}
                       <div className="space-y-2">
-                        {locations.map((location) => (
-                          <Card key={location.id}>
-                            <CardContent className="p-4">
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="flex-1 space-y-1">
-                                  <h4 className="font-medium">{location.name}</h4>
-                                  {location.current_location && (
-                                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                                      <MapPin className="w-3 h-3" />
-                                      {location.current_location}
-                                    </p>
-                                  )}
-                                  {location.description && (
-                                    <p className="text-sm text-muted-foreground">{location.description}</p>
-                                  )}
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => navigate(`/entities?entity=${location.id}`)}
-                                  >
-                                    View Details
-                                  </Button>
-                                  <Button 
-                                    variant="ghost" 
-                                    size="icon"
-                                    onClick={async () => {
-                                      try {
-                                        const updatedIds = (investigation?.correlated_entity_ids || []).filter(
-                                          (entityId: string) => entityId !== location.id
-                                        );
-                                        
-                                        const { error } = await supabase
-                                          .from('investigations')
-                                          .update({ correlated_entity_ids: updatedIds })
-                                          .eq('id', id);
+                        {locations.map((location) => {
+                          const isEditing = editingLocationId === location.id;
+                          return (
+                            <Card key={location.id}>
+                              <CardContent className="p-4">
+                                {isEditing ? (
+                                  <div className="space-y-3">
+                                    <div>
+                                      <label className="text-xs font-medium text-muted-foreground">Name</label>
+                                      <Input
+                                        value={editingLocationData.name}
+                                        onChange={(e) => setEditingLocationData(d => ({ ...d, name: e.target.value }))}
+                                        placeholder="Location name"
+                                        autoFocus
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-xs font-medium text-muted-foreground">Address / Coordinates</label>
+                                      <Input
+                                        value={editingLocationData.current_location}
+                                        onChange={(e) => setEditingLocationData(d => ({ ...d, current_location: e.target.value }))}
+                                        placeholder='Full address, or "lat, lng" — used for the map'
+                                      />
+                                      <p className="text-[10px] text-muted-foreground mt-1">
+                                        Tip: for precise pins, paste coordinates as <code>51.0447, -114.0719</code>.
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <label className="text-xs font-medium text-muted-foreground">Notes</label>
+                                      <Textarea
+                                        value={editingLocationData.description}
+                                        onChange={(e) => setEditingLocationData(d => ({ ...d, description: e.target.value }))}
+                                        placeholder="Description / context"
+                                        className="min-h-[80px]"
+                                      />
+                                    </div>
+                                    <div className="flex gap-2 justify-end">
+                                      <Button variant="ghost" size="sm" onClick={cancelEditLocation}>
+                                        <X className="w-4 h-4 mr-1" /> Cancel
+                                      </Button>
+                                      <Button size="sm" onClick={() => saveEditLocation(location.id)}>
+                                        <Save className="w-4 h-4 mr-1" /> Save
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1 space-y-1">
+                                      <h4 className="font-medium">{location.name}</h4>
+                                      {location.current_location && (
+                                        <p className="text-sm text-muted-foreground flex items-center gap-1">
+                                          <MapPin className="w-3 h-3" />
+                                          {location.current_location}
+                                        </p>
+                                      )}
+                                      {location.description && (
+                                        <p className="text-sm text-muted-foreground">{location.description}</p>
+                                      )}
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => startEditLocation(location)}
+                                        title="Edit location"
+                                      >
+                                        <Pencil className="w-4 h-4" />
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => navigate(`/entities?entity=${location.id}`)}
+                                      >
+                                        View Details
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={async () => {
+                                          try {
+                                            const updatedIds = (investigation?.correlated_entity_ids || []).filter(
+                                              (entityId: string) => entityId !== location.id
+                                            );
 
-                                        if (error) throw error;
+                                            const { error } = await supabase
+                                              .from('investigations')
+                                              .update({ correlated_entity_ids: updatedIds })
+                                              .eq('id', id);
 
-                                        queryClient.invalidateQueries({ queryKey: ['investigation', id] });
-                                        queryClient.invalidateQueries({ queryKey: ['investigation-locations', id] });
-                                        toast.success("Location removed from investigation");
-                                      } catch (error: any) {
-                                        toast.error(error.message || "Failed to remove location");
-                                      }
-                                    }}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </Button>
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
+                                            if (error) throw error;
+
+                                            queryClient.invalidateQueries({ queryKey: ['investigation', id] });
+                                            queryClient.invalidateQueries({ queryKey: ['investigation-locations', id] });
+                                            toast.success("Location removed from investigation");
+                                          } catch (error: any) {
+                                            toast.error(error.message || "Failed to remove location");
+                                          }
+                                        }}
+                                        title="Remove from investigation"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
                       </div>
                     </>
                   ) : (
@@ -1613,36 +1842,69 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                 </div>
 
                 <div className="space-y-3">
-                  {entries.map((entry) => (
-                    <Card key={entry.id}>
-                      <CardContent className="pt-6">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="text-xs text-muted-foreground">
-                            <p className="font-medium">{entry.created_by_name}</p>
-                            {(entry as any).event_time && (
-                              <p className="text-foreground/80">Event: {format(new Date((entry as any).event_time), 'MMM dd, yyyy HH:mm')}</p>
-                            )}
-                            <p>Logged: {format(new Date(entry.entry_timestamp), 'MMM dd, yyyy HH:mm')}</p>
+                  {entries.map((entry) => {
+                    const isEditing = editingEntryId === entry.id;
+                    return (
+                      <Card key={entry.id}>
+                        <CardContent className="pt-6">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="text-xs text-muted-foreground">
+                              <p className="font-medium">{entry.created_by_name}</p>
+                              {(entry as any).event_time && (
+                                <p className="text-foreground/80">Event: {format(new Date((entry as any).event_time), 'MMM dd, yyyy HH:mm')}</p>
+                              )}
+                              <p>Logged: {format(new Date(entry.entry_timestamp), 'MMM dd, yyyy HH:mm')}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {entry.is_ai_generated && (
+                                <span className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 rounded">
+                                  AI Generated
+                                </span>
+                              )}
+                              {isEditing ? (
+                                <>
+                                  <Button size="sm" onClick={() => saveEditEntry(entry.id)}>
+                                    <Save className="w-4 h-4 mr-1" /> Save
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={cancelEditEntry}>
+                                    <X className="w-4 h-4" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => startEditEntry(entry)}
+                                    title="Edit entry text"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => deleteEntry(entry.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            {entry.is_ai_generated && (
-                              <span className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 rounded">
-                                AI Generated
-                              </span>
-                            )}
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              onClick={() => deleteEntry(entry.id)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                        <p className="text-sm whitespace-pre-wrap">{entry.entry_text}</p>
-                      </CardContent>
-                    </Card>
-                  ))}
+                          {isEditing ? (
+                            <Textarea
+                              value={editingEntryText}
+                              onChange={(e) => setEditingEntryText(e.target.value)}
+                              className="min-h-[100px] text-sm"
+                              autoFocus
+                            />
+                          ) : (
+                            <p className="text-sm whitespace-pre-wrap">{entry.entry_text}</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
@@ -1796,40 +2058,94 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                     </p>
                   ) : (
                     <div className="space-y-2">
-                      {crossReferences.map((ref) => (
-                        <div 
-                          key={ref.id} 
-                          className="flex items-start gap-3 p-3 border rounded-lg hover:bg-accent/5 cursor-pointer"
-                          onClick={() => navigate(`/investigation/${ref.id}`)}
-                        >
-                          <FileText className="w-4 h-4 text-primary mt-1" />
-                          <div className="flex-1">
-                            <p className="font-medium">{ref.file_number}</p>
-                            <p className="text-sm text-muted-foreground line-clamp-1">
-                              {ref.synopsis || 'No synopsis available'}
-                            </p>
-                            <span className={`text-xs px-2 py-1 rounded mt-1 inline-block ${
-                              ref.file_status === 'open' 
-                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                                : ref.file_status === 'under_review'
-                                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
-                                : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
-                            }`}>
-                              {ref.file_status.replace('_', ' ')}
-                            </span>
-                          </div>
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeCrossReference(ref.id);
-                            }}
+                      {crossReferences.map((ref) => {
+                        const isEditing = editingXrefId === ref.id;
+                        return (
+                          <div
+                            key={ref.id}
+                            className={`flex items-start gap-3 p-3 border rounded-lg ${isEditing ? '' : 'hover:bg-accent/5 cursor-pointer'}`}
+                            onClick={() => { if (!isEditing) navigate(`/investigation/${ref.id}`); }}
                           >
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      ))}
+                            <FileText className="w-4 h-4 text-primary mt-1" />
+                            <div className="flex-1 space-y-1">
+                              <p className="font-medium">{ref.file_number}</p>
+                              <p className="text-sm text-muted-foreground line-clamp-1">
+                                {ref.synopsis || 'No synopsis available'}
+                              </p>
+                              <span className={`text-xs px-2 py-1 rounded inline-block ${
+                                ref.file_status === 'open'
+                                  ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                  : ref.file_status === 'under_review'
+                                  ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                                  : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'
+                              }`}>
+                                {ref.file_status.replace('_', ' ')}
+                              </span>
+
+                              {isEditing ? (
+                                <div className="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+                                  <Label className="text-xs text-muted-foreground">
+                                    Why are these investigations linked?
+                                  </Label>
+                                  <Textarea
+                                    value={editingXrefNote}
+                                    onChange={(e) => setEditingXrefNote(e.target.value)}
+                                    placeholder="e.g. same suspect, overlapping timeline, related location"
+                                    className="text-sm"
+                                    rows={2}
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      onClick={(e) => { e.stopPropagation(); saveEditXref(ref.id); }}
+                                    >
+                                      <Save className="w-3 h-3 mr-1" /> Save
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={(e) => { e.stopPropagation(); cancelEditXref(); }}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : ref.note ? (
+                                <p className="text-xs italic text-foreground/80 mt-1 border-l-2 border-primary/30 pl-2">
+                                  {ref.note}
+                                </p>
+                              ) : null}
+                            </div>
+
+                            {!isEditing && (
+                              <div className="flex flex-col gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  title={ref.note ? 'Edit link note' : 'Add link note'}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startEditXref(ref.id, ref.note);
+                                  }}
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  title="Remove cross-reference"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    removeCrossReference(ref.id);
+                                  }}
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

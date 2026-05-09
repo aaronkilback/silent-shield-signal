@@ -19,7 +19,7 @@
  */
 
 // Circuit breaker import removed — direct provider calls use simple retry instead
-import { logError } from "./error-logger.ts";
+import { logError, enqueueForRetry } from "./error-logger.ts";
 import { recordTelemetry, classifyError } from "./observability.ts";
 import { createServiceClient } from "./supabase-client.ts";
 import { getCriticalDateContext, validateAIOutput } from "./anti-hallucination.ts";
@@ -329,6 +329,19 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
             context: { attempts: attempt + 1, status_code: status ?? null },
           });
         }
+        // dlqOnFailure was previously declared on the request type but never
+        // honored — meaning silent classifier failures (e.g. ingest-signal AI
+        // classifier returning unknown category for an entire feed) produced
+        // no DLQ trail. Enqueue here so future regressions are visible in the
+        // dlq_health view.
+        if (request.dlqOnFailure) {
+          await enqueueForRetry(
+            request.functionName,
+            { ...(request.dlqPayload ?? {}), failure_kind: 'gateway_call_failed', model: provider.model },
+            errMsg,
+            null
+          );
+        }
         return { content: null, raw: null, error: errMsg, circuitOpen: false };
       }
     }
@@ -437,7 +450,20 @@ export async function callAiGatewayJson<T = any>(request: AiGatewayRequest): Pro
     }
     return { data: JSON.parse(jsonStr) as T, error: null, circuitOpen: false };
   } catch (parseErr) {
-    console.warn(`[${request.functionName}] Failed to parse AI JSON response`);
+    const errMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+    console.warn(`[${request.functionName}] Failed to parse AI JSON response: ${errMsg}`);
+    if (request.dlqOnFailure) {
+      await enqueueForRetry(
+        request.functionName,
+        {
+          ...(request.dlqPayload ?? {}),
+          failure_kind: 'json_parse_failed',
+          response_excerpt: result.content?.substring(0, 500),
+        },
+        `JSON parse failed: ${errMsg}`,
+        null
+      );
+    }
     return { data: null, error: 'Failed to parse AI response as JSON', circuitOpen: false };
   }
 }

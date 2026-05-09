@@ -21,9 +21,20 @@ import { useCronHealth, type CronHealth, type CronHealthStatus } from "@/hooks/u
  *   • critical  — last run > 4× expected, OR no heartbeat ever
  *   • unknown   — registered but no expected interval (manual trigger)
  */
-export function MonitorHealthPanel() {
+interface MonitorHealthPanelProps {
+  expanded?: boolean;
+  onExpandedChange?: (next: boolean) => void;
+}
+
+export function MonitorHealthPanel({ expanded: controlledExpanded, onExpandedChange }: MonitorHealthPanelProps = {}) {
   const { data: crons, isLoading } = useCronHealth();
-  const [expanded, setExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isControlled = controlledExpanded !== undefined;
+  const expanded = isControlled ? controlledExpanded : internalExpanded;
+  const toggle = () => {
+    if (isControlled) onExpandedChange?.(!expanded);
+    else setInternalExpanded((e) => !e);
+  };
 
   if (isLoading || !crons) return null;
 
@@ -67,7 +78,7 @@ export function MonitorHealthPanel() {
         : "bg-card/80 border-border"
     }`}>
       <button
-        onClick={() => setExpanded((e) => !e)}
+        onClick={toggle}
         className="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/5 transition-colors"
       >
         {hasIssues ? (

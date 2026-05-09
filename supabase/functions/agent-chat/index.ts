@@ -1435,6 +1435,21 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
     {
       type: "function",
       function: {
+        name: "trigger_multi_agent_debate",
+        description: "Run a structured multi-agent debate where 3+ specialists independently analyze the same incident or signal, then a judge synthesizes their findings. Use when the operator asks for a 'multi-agent analysis', 'debate', 'cross-functional review', or 'synthesis' on a specific signal or incident. CRITICAL: You MUST pass either signal_id or incident_id. Look in the conversation history for SIG-YYYY-NNNNNN or SIG-{8-hex-chars} references — those are signal_ids. Without a reference, the tool will error and you must NOT fabricate a synthesis claiming specialists analyzed anything.",
+        parameters: {
+          type: "object",
+          properties: {
+            incident_id: { type: "string", description: "Existing incident UUID to debate. Use this if the operator references an open incident." },
+            signal_id: { type: "string", description: "REQUIRED unless incident_id is provided. The signal reference operators see in the UI. Accepts SIG-2026-000123 (human-readable, post-migration), SIG-c06d4b91 (UUID-prefix fallback), or a full UUID. Look in the conversation history for the most recent SIG-* mentioned — that's almost always what the operator wants." },
+            topic: { type: "string", description: "Brief description of what to analyze, for the audit trail." },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "broadcast_to_agents",
         description: "Send a message or question to ALL active agents and receive their live responses. Use when you need input from the full team, want to share intelligence broadly, or are coordinating a multi-agent investigation.",
         parameters: {
@@ -1676,6 +1691,21 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
     };
     const toolCalls = streamedToolCalls;
     const toolResults: { tool: string; result: any }[] = [];
+
+    // First-call safety net. gpt-4o-mini occasionally returns ZERO
+    // content AND zero tool_calls (an empty completion). Without this,
+    // the client's contentBuffer stays empty, the stream closes with
+    // [DONE], and the chat shows "No response received." Symptom we
+    // hit testing the multi-agent flow: operator says "yes" to a
+    // follow-up question, AEGIS responds with literally nothing, the
+    // chat panel falls back to its empty-state string. Force a
+    // graceful "I didn't follow that" so the operator can re-prompt.
+    if (!streamedContent && streamedToolCalls.length === 0) {
+      const safeText =
+        "I didn't generate a response — could you re-state the request? " +
+        "If you're following up on a tool action, paste the signal reference (e.g., SIG-2026-000123) explicitly so I can route it correctly.";
+      await sendSSE({ type: 'content', content: safeText });
+    }
     
     for (const toolCall of toolCalls) {
       const funcName = toolCall.function?.name;
@@ -3045,6 +3075,273 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             toolResults.push({ tool: 'consult_agent', result: { error: String(e) } });
           }
 
+        } else if (funcName === 'trigger_multi_agent_debate') {
+          // Operator asked AEGIS (or another agent in chat) to run a
+          // structured multi-agent analysis. Route through the
+          // multi-agent-debate edge function with debate_type =
+          // 'command_synthesis' so AEGIS adjudicates with its real
+          // persona + 5-part Command Synthesis directive.
+          //
+          // Accepts either incident_id (existing) or signal_id (auto-
+          // opens an incident from the signal first). signal_id
+          // accepts BOTH the UUID and the human-readable signal_number
+          // (SIG-YYYY-NNNNNN) — operators reference signals by the
+          // human ID in chat, but the FK is still the UUID.
+          let { incident_id: dIncidentId, signal_id: dSignalId, topic } = args;
+          console.log(`[trigger_multi_agent_debate] Called with args: ${JSON.stringify(args)}`);
+
+          // Conversation-history fallback — runs if signal_id wasn't
+          // passed cleanly by the LLM. Also runs if signal_id was
+          // passed but doesn't match any known format (so the lookup
+          // would error anyway). Scan messages newest→oldest for
+          // SIG-YYYY-NNNNNN or SIG-{8-hex}.
+          const sigPattern = /\bSIG-(?:\d{4}-\d+|[0-9a-f]{8})\b/gi;
+          const looksLikeSig = (s: string | undefined | null) =>
+            !!s && /^(SIG-\d{4}-\d+|SIG-[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(s.trim());
+
+          if (!dIncidentId && (!dSignalId || !looksLikeSig(dSignalId))) {
+            console.log(`[trigger_multi_agent_debate] dSignalId="${dSignalId}" — running history fallback`);
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const m: any = messages[i];
+              const content = typeof m?.content === 'string' ? m.content : '';
+              const matches = content.match(sigPattern);
+              if (matches && matches.length > 0) {
+                dSignalId = matches[matches.length - 1];
+                console.log(`[trigger_multi_agent_debate] Recovered signal_id from history: ${dSignalId}`);
+                break;
+              }
+            }
+            if (!dSignalId) {
+              console.log(`[trigger_multi_agent_debate] No SIG-* found in ${messages.length} messages`);
+            }
+          }
+
+          try {
+            let resolvedIncidentId: string | null = dIncidentId || null;
+
+            // Three possible signal_id formats from operator chat:
+            //   1. SIG-YYYY-NNNNNN — post-migration human-readable
+            //   2. SIG-{8-hex-prefix} — pre-migration UUID-prefix fallback
+            //      that the UI shows when signal_number isn't populated
+            //   3. raw UUID — when a tool or programmatic caller passes it
+            // The lookup tries all three so the operator's pasted value
+            // resolves regardless of which UI surface they copied from.
+            const trimmed = (dSignalId || '').trim();
+            const isFullSignalNumber = /^SIG-\d{4}-\d+$/i.test(trimmed);
+            const isUuidPrefixFallback = /^SIG-[0-9a-f]{8}$/i.test(trimmed);
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+
+            if (!resolvedIncidentId && dSignalId) {
+              // Note: signals table does NOT have an incident_id column.
+              // The relation runs the other way: incidents.signal_id
+              // points to signals.id. Earlier code SELECTed incident_id
+              // here and the whole query 42703-errored ("column does not
+              // exist"), making every lookup return empty and producing
+              // the "Need either incident_id or signal_id" loop.
+              const sigQuery = supabase
+                .from('signals')
+                .select('id, title, severity, client_id, normalized_text, signal_number');
+              let sig: any = null;
+              if (isFullSignalNumber) {
+                const { data } = await sigQuery.eq('signal_number', trimmed.toUpperCase()).maybeSingle();
+                sig = data;
+              } else if (isUuid) {
+                const { data } = await sigQuery.eq('id', trimmed).maybeSingle();
+                sig = data;
+              } else if (isUuidPrefixFallback) {
+                // SIG-c06d4b91 → look up by UUID prefix. PostgREST's
+                // .ilike() doesn't have a uuid operator (42883 error:
+                // "operator does not exist: uuid ~~* unknown") — Postgres
+                // needs id::text for ILIKE to work, which the JS client
+                // can't express. UUIDs ARE sortable as native types
+                // though, so we use a range query: any UUID whose first
+                // 8 hex chars match the prefix falls in [prefix000…, prefix+1000…).
+                const prefix = trimmed.substring(4).toLowerCase();
+                const lowUuid = `${prefix}-0000-0000-0000-000000000000`;
+                // Increment the 8-char prefix as a hex BigInt to get the
+                // exclusive upper bound. Pad to 8 chars so it stays well-formed.
+                const nextPrefix = (BigInt('0x' + prefix) + 1n)
+                  .toString(16)
+                  .padStart(8, '0');
+                const highUuid = `${nextPrefix}-0000-0000-0000-000000000000`;
+                const { data, error: lookupErr } = await sigQuery
+                  .gte('id', lowUuid)
+                  .lt('id', highUuid)
+                  .limit(1)
+                  .maybeSingle();
+                if (lookupErr) console.error(`[trigger_multi_agent_debate] Prefix range lookup error for "${prefix}":`, lookupErr);
+                console.log(`[trigger_multi_agent_debate] Prefix range [${lowUuid}, ${highUuid}) → ${data ? 'FOUND ' + data.id : 'NOT FOUND'}`);
+                sig = data;
+              } else {
+                // Last-resort: try as UUID anyway (might be a malformed
+                // signal_number that's still valid as a UUID).
+                const { data } = await sigQuery.eq('id', trimmed).maybeSingle();
+                sig = data;
+              }
+              // Look up an existing incident for this signal (the FK
+              // points incidents → signals, so we query incidents). If
+              // none, create one.
+              if (sig) {
+                const { data: existingIncident } = await supabase
+                  .from('incidents')
+                  .select('id')
+                  .eq('signal_id', sig.id)
+                  .order('opened_at', { ascending: false })
+                  .limit(1)
+                  .maybeSingle();
+                if (existingIncident?.id) {
+                  resolvedIncidentId = existingIncident.id;
+                  console.log(`[trigger_multi_agent_debate] Reusing existing incident ${existingIncident.id} for signal ${sig.id}`);
+                }
+              }
+              if (!resolvedIncidentId && sig) {
+                // Map signal severity → incident_priority enum (p1..p4).
+                // The enum is strict: critical→p1, high→p2, medium→p3,
+                // low→p4. Wrong values silently fail the insert (no
+                // exception, just null data), which is exactly how the
+                // earlier "Need either incident_id or signal_id" loop
+                // happened — the lookup succeeded but the incident
+                // wasn't created.
+                const priorityMap: Record<string, 'p1' | 'p2' | 'p3' | 'p4'> = {
+                  critical: 'p1', high: 'p2', medium: 'p3', low: 'p4',
+                };
+                const priority = priorityMap[(sig.severity || 'medium').toLowerCase()] || 'p3';
+
+                const { data: newIncident, error: insertErr } = await supabase
+                  .from('incidents')
+                  .insert({
+                    title: sig.title || `Auto-opened from signal ${sig.id.slice(0, 8)}`,
+                    // `summary` is the body field, not `description` —
+                    // earlier code was using a non-existent column.
+                    summary: (sig.normalized_text || topic || 'Operator-initiated multi-agent analysis').substring(0, 500),
+                    // `status` enum: open|acknowledged|contained|resolved|closed.
+                    // Earlier 'investigating' was rejected (not in enum).
+                    status: 'open',
+                    priority,
+                    client_id: sig.client_id,
+                    signal_id: sig.id,
+                    opened_at: new Date().toISOString(),
+                  })
+                  .select('id')
+                  .single();
+                if (insertErr) {
+                  console.error('[trigger_multi_agent_debate] incident insert failed:', insertErr);
+                }
+                if (newIncident?.id) {
+                  resolvedIncidentId = newIncident.id;
+                  // No signal-side backlink needed — the relation lives
+                  // on incidents.signal_id (already set in the insert
+                  // above), and future debate calls can find this
+                  // incident by querying incidents WHERE signal_id = ?.
+                  console.log(`[trigger_multi_agent_debate] Created incident ${newIncident.id} for signal ${sig.id}`);
+                }
+              }
+            }
+
+            if (!resolvedIncidentId) {
+              toolResults.push({
+                tool: 'trigger_multi_agent_debate',
+                result: {
+                  error: 'Need either incident_id or signal_id. The signal must exist; an incident will be auto-opened from it.',
+                  hint: 'Ask the operator which specific signal or incident they want analyzed.',
+                },
+              });
+            } else {
+              const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+              const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+              const debateRes = await fetch(`${supabaseUrl}/functions/v1/multi-agent-debate`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  incident_id: resolvedIncidentId,
+                  debate_type: 'command_synthesis',
+                  custom_prompt: topic,
+                }),
+              });
+              if (!debateRes.ok) {
+                const errText = await debateRes.text();
+                toolResults.push({ tool: 'trigger_multi_agent_debate', result: { error: `Debate failed: ${errText.substring(0, 200)}` } });
+              } else {
+                const debateJson = await debateRes.json();
+                // Verify the debate actually wrote a record. multi-agent-
+                // debate returns 200 even when its internal insert into
+                // agent_debate_records fails — without this check, the
+                // chat marks success and the follow-up LLM hallucinates
+                // a synthesis with fabricated specialists. The persona
+                // audit panel showed zero new debate records after a
+                // "✅ completed" confirmation, which is exactly the
+                // fidelity failure we built the audit panel to catch.
+                if (!debateJson?.debate_record_id) {
+                  console.error('[trigger_multi_agent_debate] Debate returned 200 but no debate_record_id — internal failure:', JSON.stringify(debateJson).substring(0, 500));
+                  toolResults.push({
+                    tool: 'trigger_multi_agent_debate',
+                    result: {
+                      error: `Debate returned success but no record was written. The multi-agent orchestrator silently failed. Common causes: agent_debate_records insert violated a constraint, or specialist analyses all errored. Check multi-agent-debate function logs.`,
+                      debate_response: debateJson,
+                    },
+                  });
+                } else {
+                // Defensively pull the synthesis text from any of the
+                // shapes multi-agent-debate may return:
+                //   - debateJson.synthesis as a STRING (legacy path)
+                //   - debateJson.synthesis.final_assessment (current
+                //     shape — synthesisStructured tool output)
+                //   - debateJson.synthesis.content (alternate fallback)
+                //   - debateJson.final_assessment (top-level — never
+                //     emitted today but covered for safety)
+                // If none of those produce real text, fetch from the
+                // DB by debate_record_id as the source of truth.
+                const sObj: any = debateJson?.synthesis;
+                let assessmentText: string =
+                  (typeof sObj === 'string' ? sObj : '')
+                  || (typeof sObj?.final_assessment === 'string' ? sObj.final_assessment : '')
+                  || (typeof sObj?.content === 'string' ? sObj.content : '')
+                  || (typeof debateJson?.final_assessment === 'string' ? debateJson.final_assessment : '')
+                  || '';
+                // Always fetch from the DB record — it's the source of
+                // truth for both final_assessment AND participating_agents
+                // (the function's JSON response omits participating_agents
+                // entirely, only returning a count, so the chat would
+                // show "Participants: unknown" otherwise).
+                let dbParticipants: string[] | null = null;
+                if (debateJson?.debate_record_id) {
+                  const { data: dbRow } = await supabase
+                    .from('agent_debate_records')
+                    .select('final_assessment, participating_agents')
+                    .eq('id', debateJson.debate_record_id)
+                    .maybeSingle();
+                  if (dbRow?.final_assessment && (!assessmentText || assessmentText.length < 50)) {
+                    assessmentText = dbRow.final_assessment;
+                    console.log('[trigger_multi_agent_debate] Recovered final_assessment from DB');
+                  }
+                  if (Array.isArray(dbRow?.participating_agents)) {
+                    dbParticipants = dbRow.participating_agents as string[];
+                  }
+                }
+                console.log(`[trigger_multi_agent_debate] assessment length=${assessmentText.length}, participants=${dbParticipants?.join(',') ?? 'n/a'}`);
+
+                toolResults.push({
+                  tool: 'trigger_multi_agent_debate',
+                  result: {
+                    success: true,
+                    incident_id: resolvedIncidentId,
+                    debate_type: 'command_synthesis',
+                    judge: 'AEGIS-CMD',
+                    consensus_score: debateJson.consensus_score,
+                    final_assessment: assessmentText.substring(0, 4000),
+                    participating_agents: dbParticipants || debateJson.participating_agents || [],
+                    individual_analyses_count: debateJson.individual_analyses?.length || 0,
+                    debate_record_id: debateJson.debate_record_id,
+                    note: 'Multi-agent debate complete. AEGIS adjudicated with the 5-part Command Synthesis structure.',
+                  },
+                });
+                }
+              }
+            }
+          } catch (e) {
+            toolResults.push({ tool: 'trigger_multi_agent_debate', result: { error: String(e) } });
+          }
+
         } else if (funcName === 'broadcast_to_agents') {
           const { message: bcastMsg } = args;
           try {
@@ -3179,11 +3476,87 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
         content: JSON.stringify(toolResults[idx]?.result || { error: 'No result' })
       }));
       
+      // CRITICAL — early-return path for successful command_synthesis
+      // debates. The debate has ALREADY produced a synthesis (authored
+      // by AEGIS-CMD as judge). Sending that to another LLM to
+      // "summarize" only introduces fidelity risk: gpt-4o-mini
+      // consistently rewrites the synthesis with hallucinated content
+      // (live test: debate accurately analyzed TC Energy, follow-up
+      // LLM rewrote it as a wildfire analysis with fabricated
+      // specialist attributions). Render the real synthesis directly,
+      // skip the follow-up LLM round-trip.
+      const debateResultEarly = toolResults.find((t) => t.tool === 'trigger_multi_agent_debate');
+      const debateSucceededEarly = debateResultEarly && debateResultEarly.result?.success;
+      const debateAssessmentEarly: string = debateSucceededEarly
+        ? (debateResultEarly?.result?.final_assessment || '')
+        : '';
+
+      if (debateAssessmentEarly && debateAssessmentEarly.length > 50) {
+        const consensusPct = Math.round(((debateResultEarly?.result?.consensus_score ?? 0) as number));
+        const directOutput =
+          `# Command Synthesis (judge: ${debateResultEarly?.result?.judge || 'AEGIS-CMD'})\n\n` +
+          `**Participants:** ${(debateResultEarly?.result?.participating_agents || []).join(', ') || 'unknown'}\n` +
+          `**Consensus:** ${consensusPct}%\n\n` +
+          `${debateAssessmentEarly}`;
+        await sendSSE({ type: 'content', content: directOutput });
+        agentResponse = directOutput;
+
+        // Action summary appended directly — no LLM involved.
+        const successful = toolResults.filter(t => t.result.success);
+        const failed = toolResults.filter(t => !t.result.success);
+        let actionSummary = '\n\n---\n**Actions Taken:**\n';
+        for (const result of successful) actionSummary += `✅ ${result.tool}: completed\n`;
+        for (const result of failed) actionSummary += `❌ ${result.tool}: ${result.result.error}\n`;
+        agentResponse += actionSummary;
+        await sendSSE({ type: 'content', content: actionSummary });
+        await sendSSE('[DONE]');
+        await sseWriter.close();
+        return;
+      }
+
       // Make follow-up call with tool results - with retry and validation
+      // Two distinct fidelity failures to prevent in the follow-up:
+      //   (a) Debate tool FAILED — LLM must not fabricate a synthesis
+      //       at all
+      //   (b) Debate tool SUCCEEDED but with different agents than
+      //       the LLM's training expects — LLM must use ONLY the
+      //       actual participating_agents, not fabricate specialist
+      //       names (NEO/WILDFIRE/etc. when the real participants
+      //       were THREAT-ANALYST/PATTERN-ANALYST/STRATEGIC-ANALYST).
+      // Both failure modes observed live testing the platform.
+      const debateResult = toolResults.find((t) => t.tool === 'trigger_multi_agent_debate');
+      const debateFailed = debateResult && !debateResult.result?.success;
+      const debateSucceeded = debateResult && debateResult.result?.success;
+      const actualParticipants: string[] = debateSucceeded
+        ? (debateResult?.result?.participating_agents || [])
+        : [];
+
+      let honestyDirective = '';
+      if (debateFailed) {
+        honestyDirective = `\n\nCRITICAL HONESTY DIRECTIVE: trigger_multi_agent_debate FAILED in this turn. The error is in the tool result above. You MUST:
+1. Clearly state in the FIRST sentence that the multi-agent debate did NOT run.
+2. Do NOT write a Command Synthesis with sections claiming specialists provided assessments — no agent contributed analysis to this turn.
+3. Do NOT name specialists (NEO, CERBERUS, MERIDIAN, WILDFIRE, etc.) as having participated.
+4. Tell the operator what's needed to retry — usually a valid SIG-* reference or incident_id.
+5. If you have data from query_fortress_data or other tools that DID succeed, you MAY summarize that data — but label it explicitly as YOUR analysis, not a multi-agent integration.
+
+Fabricating multi-agent integration when the tool failed is a fidelity failure that breaks the platform's audit trail. Be honest.`;
+      } else if (debateSucceeded) {
+        honestyDirective = `\n\nCRITICAL ATTRIBUTION DIRECTIVE: trigger_multi_agent_debate succeeded. The ACTUAL participating agents in this debate were: ${actualParticipants.length > 0 ? actualParticipants.join(', ') : '(unknown — empty list returned)'}. You MUST:
+1. Use ONLY these names in the "Agent Assessments Synthesized" section — do NOT name agents who did not actually run.
+2. If a specialist's name commonly used in your training (e.g., NEO, WILDFIRE, MERIDIAN, CERBERUS, FININT, ECHO-WATCH, INSIDE-EYE, GUARDIAN, ORACLE) is NOT in the list above, do NOT cite them as having contributed analysis.
+3. The 5-part Command Synthesis structure is required, but the "Agent Assessments Synthesized" section MUST reflect the actual participants only — even if their names are generic (THREAT-ANALYST, PATTERN-ANALYST, STRATEGIC-ANALYST). Generic names mean the platform's auto-agent-selection fell back to generic roles; that is itself signal worth flagging to the operator, not a license to fabricate specialists.
+4. The synthesis content (final_assessment) returned by the tool is the source of truth. Quote or paraphrase it — do not invent contradictory analysis.
+
+Fabricating specialist attribution is the platform's worst failure mode. Be precise about who actually ran.`;
+      }
       const followUpMessages = [
         ...messages,
         choice.message, // Include the assistant's message with tool_calls
-        ...toolResultMessages
+        ...toolResultMessages,
+        ...(honestyDirective
+          ? [{ role: 'system' as const, content: honestyDirective }]
+          : []),
       ];
       
       // ── FOLLOW-UP CALL — streaming ─────────────────────────────
@@ -3218,6 +3591,17 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           }
         }
         agentResponse = fuContent || generateFallbackResponse(toolResults);
+        // If the LLM follow-up stream produced ZERO text content, the
+        // operator's chat client has nothing to render and shows
+        // "No response received." Force-send the fallback so the user
+        // sees the tool execution summary even when the model elides
+        // a textual response (gpt-4o-mini occasionally does this after
+        // tool calls). Symptom we hit while testing:
+        // trigger_multi_agent_debate succeeded → no follow-up text →
+        // chat showed "No response received" despite the tool working.
+        if (!fuContent) {
+          await sendSSE({ type: 'content', content: agentResponse });
+        }
       } else {
         // Streaming unavailable — fallback to blocking call
         console.warn('Follow-up stream failed, falling back to blocking call:', fuErr);
@@ -3267,8 +3651,17 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       for (const result of failed) {
         actionSummary += `❌ ${result.tool}: ${result.result.error}\n`;
       }
-      
+
       agentResponse += actionSummary;
+      // Stream the action summary too — without this, the operator's
+      // client only sees the LLM's narrative response, not the
+      // ✅ / ❌ tool execution outcomes. Operators need the
+      // receipts: "did the multi-agent debate actually run? did the
+      // signal lookup succeed?" — those answers live in the action
+      // summary, not in the LLM narrative.
+      if (toolResults.length > 0) {
+        await sendSSE({ type: 'content', content: actionSummary });
+      }
     }
 
     // Final validation check

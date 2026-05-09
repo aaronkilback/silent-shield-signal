@@ -145,6 +145,38 @@ Deno.serve(async (req) => {
 
     if (incidentsError) throw incidentsError;
 
+    // ── Multi-agent debate syntheses for this period (Day 2 of plan) ──
+    // The executive report's analytical content must reflect the
+    // platform's actual specialist work: AEGIS-CMD-adjudicated
+    // syntheses with named participants, consensus scores, and
+    // authored final_assessments. Without this, the report
+    // regenerates analysis from raw signals via single-LLM —
+    // destroying the auditable reasoning trail the platform's
+    // value proposition rests on.
+    const incidentIds = (incidents ?? []).map((i: any) => i.id).filter(Boolean);
+    const { data: rawDebates } = incidentIds.length > 0
+      ? await supabase
+          .from('agent_debate_records')
+          .select('id, debate_type, judge_agent, participating_agents, consensus_score, final_assessment, created_at, incident_id')
+          .in('incident_id', incidentIds)
+          .order('created_at', { ascending: false })
+          .limit(60)
+      : { data: [] as any[] };
+    // Dedup per incident — keep only the most recent debate per
+    // incident_id. Without this, the report can include multiple
+    // debates of the same incident (e.g., 6 TC Energy syntheses in
+    // 4 hours from repeated chat-triggered runs) which clutters the
+    // synthesis section with near-duplicate content. The newest
+    // debate also tends to have the best specialty-routed
+    // participants since the routing logic improves over time.
+    const seenIncidents = new Set<string>();
+    const periodDebates = (rawDebates || []).filter((d: any) => {
+      if (!d?.incident_id) return false;
+      if (seenIncidents.has(d.incident_id)) return false;
+      seenIncidents.add(d.incident_id);
+      return true;
+    }).slice(0, 15);
+
     // Fetch tone transformation rules
     const { data: toneRules } = await supabase
       .from('executive_tone_rules')
@@ -499,6 +531,17 @@ ${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (opened >7 days ago, sti
 Top 5 Signals:
 ${freshSignals.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
 
+MULTI-AGENT DEBATE SYNTHESES (last ${period_days}d, ${(periodDebates ?? []).length}):
+These are AEGIS-CMD-judged syntheses authored by specialist agents under structured debate. They are the platform's primary analytical output for incidents in this period. Use them as the interpretive backbone of the executive summary — distill their judgments into the BLUF and summary paragraphs. Do NOT regenerate analysis the agents already produced.
+${(periodDebates ?? []).slice(0, 8).map((d: any, idx: number) => {
+  const linkedIncident = (incidents ?? []).find((i: any) => i.id === d.incident_id);
+  const incTitle = linkedIncident?.title || `Incident ${String(d.incident_id).slice(0, 8)}`;
+  const participants = Array.isArray(d.participating_agents) ? d.participating_agents.join(', ') : 'unknown';
+  const consensus = typeof d.consensus_score === 'number' ? `${Math.round(d.consensus_score * 100)}%` : 'n/a';
+  return `--- DEBATE ${idx + 1} on "${incTitle}" (judge: ${d.judge_agent || 'AEGIS-CMD'} · ${participants} · consensus ${consensus}) ---
+${String(d.final_assessment || '').substring(0, 700)}`;
+}).join('\n\n') || 'No multi-agent debates ran in this period.'}
+
 Write a professional 2-3 paragraph executive summary that:
 1. Opens with a BLUF (Bottom Line Up Front) — one sentence stating the single most important thing the executive needs to know right now
 2. Names all key individuals using SURNAME in CAPITALS following intelligence tradecraft convention (e.g., activist organizer Richard BROOKS, journalist Danny NUNES, Dr. Ulrike MEYER)
@@ -508,6 +551,11 @@ Write a professional 2-3 paragraph executive summary that:
 6. Closes with one specific sentence on what ${client.name} leadership should prioritize in the next 24 hours
 
 CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates. Do NOT fabricate clusters or groups.
+
+NUMBER RECONCILIATION RULE: A separate Risk Assessment table appears below the summary, showing threat-factor categories (Surveillance / Protest / Work Interruption / Sabotage / Critical Threats) with risk ratings and counts. Those counts are factor-grouped — not severity-tier counts. To prevent reader confusion when reading the summary alongside the table:
+- If you cite a severity-tier count (e.g. "X high severity signals"), append the threat-factor breakdown that explains it: "X high-severity signals (mostly regulatory and cyber-vulnerability), distributed across..."
+- If a severity-tier count cannot be cleanly broken down by factor, omit the count from the summary and rely on the table to convey volume.
+- Never present a number that contradicts what an executive will see two paragraphs later.
 
 OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
@@ -620,9 +668,25 @@ GROUNDING VERIFICATION — before writing each deduction:
 5. Zero signals = zero deductions. Write "Insufficient signal data for strategic deductions this period." instead.
 
 Threat signals to analyze:
-${[...criticalSignals, ...highSignals].slice(0, 10).map((s, i) =>
-  `${i + 1}. ${s.category}: ${s.normalized_text}`
-).join('\n')}
+${(() => {
+  // Prefer critical+high. If those are sparse (<3), broaden to all
+  // reportable signals so the deduction prompt has substance to work
+  // with. Earlier behavior — only feeding critical+high — produced
+  // "Insufficient signal data" reports even when 63 medium/low
+  // signals had genuine strategic relevance (regulatory pressure,
+  // industry capex announcements, civil emergencies in operational
+  // areas). The "high severity" label is set during ingest by an AI
+  // classifier that often under-classifies regulatory/financial
+  // intelligence as medium — operational relevance is broader than
+  // severity tier.
+  const tier1 = [...criticalSignals, ...highSignals];
+  const widened = tier1.length >= 3
+    ? tier1.slice(0, 10)
+    : [...tier1, ...reportableSignals.filter((s: any) => !['critical', 'high'].includes(s.severity))].slice(0, 10);
+  return widened.length > 0
+    ? widened.map((s: any, i: number) => `${i + 1}. [${(s.severity || 'medium').toUpperCase()}] ${s.category}: ${s.normalized_text}`).join('\n')
+    : '(No reportable signals in this period.)';
+})()}
 ${(() => {
   const deductionSignals = [...criticalSignals, ...highSignals].slice(0, 10);
   const hasStale = deductionSignals.some((s: any) => {
@@ -1322,7 +1386,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
               <strong>${getCategoryDisplay(signal.category || 'signal')}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
             </p>
             <div style="font-size: 8pt; color: #666;">
-              ID: ${signal.id.substring(0, 8).toUpperCase()}${signal.source_url ? ` — <a href="${signal.source_url}" target="_blank" rel="noopener noreferrer" style="color: #333; text-decoration: underline;">Original Source</a>` : ''}
+              ID: ${signal.signal_number || `SIG-${signal.id.substring(0, 8).toUpperCase()}`}${signal.source_url ? ` — <a href="${signal.source_url}" target="_blank" rel="noopener noreferrer" style="color: #333; text-decoration: underline;">Original Source</a>` : ''}
             </div>
           </div>
         `).join('')}

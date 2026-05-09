@@ -26,11 +26,21 @@ import type { PlatformFinding } from "@/hooks/useConstellationData";
 export function WatchdogFindingsPanel({
   platformWide,
   agentScopedCount,
+  expanded: controlledExpanded,
+  onExpandedChange,
 }: {
   platformWide: PlatformFinding[];
   agentScopedCount: number;
+  expanded?: boolean;
+  onExpandedChange?: (next: boolean) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isControlled = controlledExpanded !== undefined;
+  const expanded = isControlled ? controlledExpanded : internalExpanded;
+  const toggle = () => {
+    if (isControlled) onExpandedChange?.(!expanded);
+    else setInternalExpanded((e) => !e);
+  };
 
   const hasIssues = platformWide.length > 0 || agentScopedCount > 0;
 
@@ -63,7 +73,7 @@ export function WatchdogFindingsPanel({
   return (
     <div className={`backdrop-blur-xl border rounded-lg overflow-hidden transition-all ${headerTone}`}>
       <button
-        onClick={() => setExpanded((e) => !e)}
+        onClick={toggle}
         className="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/5 transition-colors"
       >
         <Flag className={`w-4 h-4 flex-shrink-0 ${

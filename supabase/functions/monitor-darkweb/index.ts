@@ -32,63 +32,70 @@ Deno.serve(async (req) => {
 
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, organization, contact_email');
+      .select('id, name, organization, contact_email, monitored_domains');
 
     if (clientsError) throw clientsError;
 
     let signalsCreated = 0;
 
     for (const client of clients || []) {
-      // Derive domain: prefer contact_email domain, fallback to org name guess
-      let domain: string;
-      if (client.contact_email && client.contact_email.includes('@')) {
-        domain = client.contact_email.split('@')[1].toLowerCase().trim();
+      // Build domains list: monitored_domains[] preferred (explicit operator
+      // configuration), falls back to contact_email-derived domain, then to
+      // org-name guess. Pre-2026-05-08 only the last two were used, which
+      // produced bogus domains like 'bcchildrenshospitalgenderclinic.com'
+      // for clients without contact_email — making the monitor look broken.
+      const domains: string[] = [];
+      if (Array.isArray(client.monitored_domains) && client.monitored_domains.length > 0) {
+        for (const d of client.monitored_domains) {
+          if (typeof d === 'string' && d.trim().length > 0) domains.push(d.trim().toLowerCase());
+        }
+      } else if (client.contact_email && client.contact_email.includes('@')) {
+        domains.push(client.contact_email.split('@')[1].toLowerCase().trim());
       } else {
-        domain = (client.organization || client.name)
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '') + '.com';
+        domains.push((client.organization || client.name).toLowerCase().replace(/[^a-z0-9]/g, '') + '.com');
       }
 
-      // --- 1. Domain breach check (no API key required) ---
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
+      for (const domain of domains) {
+        // --- Domain breach check (no API key required) ---
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
 
-        const resp = await fetch(
-          `https://haveibeenpwned.com/api/v3/breaches?domain=${encodeURIComponent(domain)}`,
-          { headers: hibpHeaders, signal: controller.signal }
-        ).finally(() => clearTimeout(timeout));
+          const resp = await fetch(
+            `https://haveibeenpwned.com/api/v3/breaches?domain=${encodeURIComponent(domain)}`,
+            { headers: hibpHeaders, signal: controller.signal }
+          ).finally(() => clearTimeout(timeout));
 
-        if (resp.ok) {
-          const breaches: any[] = await resp.json();
-          console.log(`[DarkWeb] ${domain}: ${breaches.length} breaches found`);
+          if (resp.ok) {
+            const breaches: any[] = await resp.json();
+            console.log(`[DarkWeb] ${domain}: ${breaches.length} breaches found`);
 
-          // Sort by BreachDate descending, take most recent 5
-          const recent = breaches
-            .sort((a, b) => new Date(b.BreachDate || 0).getTime() - new Date(a.BreachDate || 0).getTime())
-            .slice(0, 5);
+            const recent = breaches
+              .sort((a, b) => new Date(b.BreachDate || 0).getTime() - new Date(a.BreachDate || 0).getTime())
+              .slice(0, 5);
 
-          for (const breach of recent) {
-            const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
-              body: {
-                text: `Data Breach Detected: ${breach.Title || breach.Name}\n\nDomain: ${domain} | Breach date: ${breach.BreachDate || 'Unknown'} | Affected accounts: ${breach.PwnCount?.toLocaleString() || 'Unknown'}\n\nData exposed: ${(breach.DataClasses || []).join(', ')}\n\n${breach.Description ? breach.Description.replace(/<[^>]+>/g, '') : ''}`,
-                source_url: `https://haveibeenpwned.com/PwnedWebsites#${breach.Name}`,
-                location: 'Dark Web / Breach Database',
-                clientId: client.id,
-              }
-            });
-            if (!ingestError) signalsCreated++;
+            for (const breach of recent) {
+              const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
+                body: {
+                  text: `Data Breach Detected: ${breach.Title || breach.Name}\n\nDomain: ${domain} | Breach date: ${breach.BreachDate || 'Unknown'} | Affected accounts: ${breach.PwnCount?.toLocaleString() || 'Unknown'}\n\nData exposed: ${(breach.DataClasses || []).join(', ')}\n\n${breach.Description ? breach.Description.replace(/<[^>]+>/g, '') : ''}`,
+                  source_url: `https://haveibeenpwned.com/PwnedWebsites#${breach.Name}`,
+                  location: 'Dark Web / Breach Database',
+                  clientId: client.id,
+                }
+              });
+              if (!ingestError) signalsCreated++;
+            }
+          } else if (resp.status === 404) {
+            console.log(`[DarkWeb] ${domain}: no known breaches`);
+          } else {
+            console.log(`[DarkWeb] HIBP domain check failed for ${domain}: ${resp.status}`);
           }
-        } else if (resp.status === 404) {
-          console.log(`[DarkWeb] ${domain}: no known breaches`);
-        } else {
-          console.log(`[DarkWeb] HIBP domain check failed for ${domain}: ${resp.status}`);
-        }
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
-          console.log(`[DarkWeb] HIBP domain check timeout for ${domain}`);
-        } else {
-          console.error(`[DarkWeb] Error checking domain ${domain}:`, err.message);
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            console.log(`[DarkWeb] HIBP domain check timeout for ${domain}`);
+          } else {
+            console.error(`[DarkWeb] Error checking domain ${domain}:`, err.message);
+          }
         }
       }
 

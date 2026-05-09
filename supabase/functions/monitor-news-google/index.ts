@@ -2,6 +2,21 @@ import { createServiceClient, corsHeaders, handleCors, successResponse, errorRes
 import { extractOGImage } from "../_shared/og-image.ts";
 import { recordHeartbeat } from "../_shared/heartbeat.ts";
 
+// A truncated headline ending in a stray initial — "for the B.",
+// "criticized U.", "the U." — signals the source title was clipped
+// by Google CSE's preview machinery. The underlying content can still
+// be relevant, but a truncated title makes the signal hard to triage
+// without the full article. We DON'T reject these (the content may
+// matter); we DO log them so we can tune later if they're noisy.
+function looksTruncated(title: string | null | undefined): boolean {
+  if (!title) return false;
+  // Trailing single capital letter + period (e.g. "for the B.")
+  if (/\s[A-Z]\.\s*$/.test(title)) return true;
+  // Trailing "the X." pattern
+  if (/\bthe\s+[A-Z]\.\s*$/.test(title)) return true;
+  return false;
+}
+
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
@@ -25,6 +40,16 @@ Deno.serve(async (req) => {
   try {
     console.log('Starting Google News API monitoring scan...');
 
+    // 2026-05-08: write heartbeat at the START. With 70+ keyword queries
+    // per run (29 Petronas + 43 BCCH client keywords), this function
+    // routinely exceeds the 150s edge-function execution limit and gets
+    // killed before reaching the end-of-function heartbeat at line 278.
+    // The Monitor Health panel was showing 3-day staleness despite the
+    // function actually firing every hour — heartbeat was the missing
+    // signal. Writing 'running' here gives operators visibility even if
+    // the run gets cut short.
+    await recordHeartbeat(supabase, 'monitor-news-google-hourly', 'running', { phase: 'started' });
+
     if (!googleApiKey || !googleEngineId) {
       console.warn('Google Search API not configured - using fallback RSS method');
       
@@ -45,10 +70,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get all clients with monitoring keywords
+    // Get all clients with monitoring keywords + negative-keyword
+    // config. Negative keywords are appended to every Google CSE
+    // query for that client as `-term` exclusions, pushing out
+    // content matching unwanted scope (e.g. Petronas's Malaysian
+    // HQ news for the Petronas Canada client). Stored on
+    // clients.monitoring_config.negative_keywords as a JSON array
+    // of strings.
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, industry, monitoring_keywords');
+      .select('id, name, industry, monitoring_keywords, monitoring_config');
 
     if (clientsError) throw clientsError;
 
@@ -78,15 +109,43 @@ Deno.serve(async (req) => {
     for (const client of clients || []) {
       const queries: string[] = [];
 
-      // Add client name as primary query
-      queries.push(`"${client.name}" security OR threat OR incident`);
-      queries.push(`"${client.name}" protest OR activist OR opposition`);
+      // Build the negative-keyword suffix once per client. Each
+      // configured negative keyword is appended as a `-term` Google
+      // CSE exclusion — pushes out content scoped against unwanted
+      // geography or topics. For Petronas Canada this excludes the
+      // Malaysian HQ content (Sabah, Sarawak, Bintulu, RGT-3, FSRU,
+      // Kuala Lumpur, Bursa Malaysia, etc.) that was leaking into
+      // the Canadian feed via global "Petronas" keyword matches.
+      // Multi-word negatives are wrapped in quotes so they match as
+      // a phrase rather than exclude every article containing any
+      // of the words separately.
+      const negativeKeywords: string[] = Array.isArray(client.monitoring_config?.negative_keywords)
+        ? client.monitoring_config.negative_keywords.filter((k: any) => typeof k === 'string' && k.trim().length > 0)
+        : [];
+      const negSuffix = negativeKeywords
+        .map((k) => (k.includes(' ') ? `-"${k}"` : `-${k}`))
+        .join(' ');
+      const withNeg = (q: string) => negSuffix ? `${q} ${negSuffix}` : q;
 
-      // Add monitoring keywords — always scoped to Canada/BC to avoid
-      // matching unrelated global use of broad terms like "LNG"
+      // Add client name as primary query
+      queries.push(withNeg(`"${client.name}" security OR threat OR incident`));
+      queries.push(withNeg(`"${client.name}" protest OR activist OR opposition`));
+
+      // Add monitoring keywords — always scoped to Canadian geography
+      // to avoid matching unrelated global use of broad terms like
+      // "LNG". The bare "BC" token is intentionally NOT in the scope
+      // — Google CSE matches it to too many false positives ("B.C.
+      // Smith" bylines, building codes, etc.) which let Malaysian
+      // Petronas content through during May 2026 audit. Use the full
+      // "British Columbia" string only.
+      //
+      // 2026-05-07: removed .slice(0, 3) cap. With it, 26 of Petronas's
+      // 29 keywords (Wet'suwet'en, Gidimt'en, Coastal GasLink, Stand.earth,
+      // pipeline protest BC, etc.) were never reaching Google News API —
+      // 30-day reality probe returned 0 hits for any of those terms.
       if (client.monitoring_keywords?.length > 0) {
-        for (const keyword of client.monitoring_keywords.slice(0, 3)) {
-          queries.push(`"${keyword}" Canada OR "British Columbia" OR "BC" news`);
+        for (const keyword of client.monitoring_keywords) {
+          queries.push(withNeg(`"${keyword}" Canada OR "British Columbia" news`));
         }
       }
 
@@ -95,7 +154,7 @@ Deno.serve(async (req) => {
       // surface targeted coverage, threats, or protest activity.
       const personNames = clientPersonsMap.get(client.id) || [];
       for (const name of personNames.slice(0, 6)) {
-        queries.push(`"${name}" news OR threat OR protest OR harassment OR controversy`);
+        queries.push(withNeg(`"${name}" news OR threat OR protest OR harassment OR controversy`));
       }
 
       // Execute Google Custom Search for each query
@@ -127,6 +186,30 @@ Deno.serve(async (req) => {
             const snippet = (item.snippet || '').trim();
             if (snippet.length < 40) continue;
 
+            // 2026-05-08 source-fidelity guard: require title or snippet to
+            // contain at least one client-specific token. Google CSE
+            // sometimes returns tangentially-matched articles where the
+            // search term appears only in metadata, not the article body.
+            // The LLM then hallucinates rich prose from background knowledge.
+            const clientTokens = (client.monitoring_keywords || [])
+              .filter((k: string) => typeof k === 'string' && k.trim().length >= 3)
+              .map((k: string) => k.toLowerCase());
+            if (clientTokens.length > 0) {
+              const haystack = `${item.title || ''} ${snippet}`.toLowerCase();
+              const matched = clientTokens.some((tok: string) => haystack.includes(tok));
+              if (!matched) {
+                console.log(`[news-google] dropping no-token-match: ${item.title?.substring(0, 80)}`);
+                continue;
+              }
+            }
+
+            // Note truncated titles for telemetry — content is still
+            // ingested (it may be operationally relevant) but we log
+            // the marker so we can revisit if these prove noisy.
+            if (looksTruncated(item.title)) {
+              console.log(`[news-google] truncated-title marker on: ${item.title?.substring(0, 80)}`);
+            }
+
             const signalText = `${item.title}\n\n${snippet}`;
 
             // Extract OG image from article page (non-blocking)
@@ -139,6 +222,7 @@ Deno.serve(async (req) => {
                 source_url: item.link || null,
                 image_url: imageUrl || undefined,
                 client_id: client.id,
+                source_key: 'Google News API',
                 raw_json: {
                   source: 'google_news_api',
                   source_url: item.link,

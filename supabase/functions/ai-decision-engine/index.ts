@@ -1,7 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { resolveServiceRoleKey } from "../_shared/current-service-key.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
 import { classifySignalIntoStoryline } from "../_shared/storyline-engine.ts";
+import { computeComposite } from "../_shared/signal-scores.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -611,7 +613,17 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
     // raw_json.agent_review unset network-wide.
     const aiConfidence = decision.confidence || 0;
     const relevanceScore = signal.relevance_score || 0.5;
-    const compositeScore = (aiConfidence * 0.50) + (relevanceScore * 0.35) + (sourceCredibility * 0.15);
+    // computeComposite from _shared/signal-scores.ts is the single
+    // source of truth for the weighting (0.50/0.35/0.15) and the
+    // 3-decimal rounding. Future agents that derive composite scores
+    // should use the same helper instead of re-deriving — drift
+    // between formulas was previously the source of "the score
+    // looks different in different views" complaints.
+    const compositeScore = computeComposite({
+      ai_confidence: aiConfidence,
+      relevance_score: relevanceScore,
+      source_credibility: sourceCredibility,
+    });
     console.log(`[AI-Decision] Composite score: ${compositeScore.toFixed(3)} (ai=${aiConfidence.toFixed(2)}, relevance=${relevanceScore.toFixed(2)}, source=${sourceCredibility.toFixed(2)})`);
 
     // Write composite ONLY — do NOT touch raw_json here. The downstream
@@ -733,7 +745,12 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
     const isHighValueSignal_pre = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
     if (isAmbiguousTier_pre || isHighValueSignal_pre || isHighSeverityLabel) {
       const supabaseUrlPre = Deno.env.get('SUPABASE_URL');
-      const serviceRoleKeyPre = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      // 2026-05-08: env var holds the legacy JWT (no `sub` claim) which
+      // gets rejected by the new auth layer with 401 — symptom: Tier-2
+      // review gap reported as 0% of eligible signals reviewed because
+      // every fire-and-forget fetch silently 401'd. Resolve the current
+      // key from vault instead.
+      const serviceRoleKeyPre = await resolveServiceRoleKey(supabase);
       if (supabaseUrlPre && serviceRoleKeyPre) {
         try {
           await fetch(`${supabaseUrlPre}/functions/v1/review-signal-agent`, {
@@ -1107,7 +1124,8 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         const isHighValueSignal = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
         if (!tier2_promotion && (isAmbiguousTier || isHighValueSignal || isHighSeverityLabel)) {
           const supabaseUrlT2 = Deno.env.get('SUPABASE_URL');
-          const serviceRoleKeyT2 = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+          // Same legacy-JWT fix as above — vault-resolved key.
+          const serviceRoleKeyT2 = await resolveServiceRoleKey(supabase);
           if (supabaseUrlT2 && serviceRoleKeyT2) {
             fetch(`${supabaseUrlT2}/functions/v1/review-signal-agent`, {
               method: 'POST',
@@ -1257,12 +1275,14 @@ Generated: ${new Date().toISOString()}
     ) {
       try {
         console.log(`[AI-Decision] Running cross-model consensus for P1/P2 signal ${signal.id}`);
+        // 2026-05-08: vault-resolved key (env holds legacy JWT rejected by gateway).
+        const serviceRoleKeyConsensus = await resolveServiceRoleKey(supabase);
         const consensusResponse = await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/multi-model-consensus`,
           {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+              'Authorization': `Bearer ${serviceRoleKeyConsensus}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({

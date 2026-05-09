@@ -19,6 +19,7 @@
 
 import { Resend } from "npm:resend@2.0.0";
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const ALERT_EMAIL = 'ak@silentshieldsecurity.com';
 
@@ -2479,8 +2480,17 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  const supabase = createServiceClient();
+  // Heartbeat for the Phase 4 "Auditor Pulse" diagnostic — without
+  // this, the constellation's watchdog-self-pulse panel always shows
+  // "never" because the hook reads cron_heartbeat. Earlier this
+  // function was missing any heartbeat write; the pulse was a blind
+  // indicator. The job_name MUST match the pg_cron job name
+  // ('system-watchdog-daily') so the hook's `like 'system-watchdog%'`
+  // query finds it.
+  const hb = await startHeartbeat(supabase, 'system-watchdog-daily');
+
   try {
-    const supabase = createServiceClient();
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
     const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@silentshieldsecurity.com>';
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
@@ -2546,7 +2556,7 @@ Deno.serve(async (req) => {
         analysis: `Tests that were passing yesterday are now failing: ${regressions.map((r: any) => r.test_name).join(', ')}`,
         recommendation: 'Check recent deployments for breaking changes.',
         plainEnglish: `Features that were working yesterday are now broken: ${regressions.map((r: any) => r.test_name.replace(/_/g, ' ')).join(', ')}`,
-        action: 'Check recent Claude Code deployments. One of them broke something. Fix before client demo on April 8.',
+        action: 'Check recent deployments and the AI gateway DLQ — a deploy or upstream provider outage usually explains a same-day regression.',
         canAutoRemediate: false,
         remediationAction: 'none',
       });
@@ -2683,26 +2693,33 @@ Deno.serve(async (req) => {
     const behavioralFindings: any[] = [];
 
     try {
-      // 1. Agent enrichment coverage — high-severity signals should get agent analysis
-      const { data: recentHighSeverity } = await supabase
+      // 1. Agent enrichment coverage — measure on the population that's
+      // actually expected to get reviewed. review-signal-agent only fires
+      // for composite_confidence in [0.60, 0.75) (tier-2 review band).
+      // The earlier check used severity_score >= 50 as the denominator,
+      // which double-counted every high-severity-but-low-composite signal
+      // as "missed enrichment" — it produced a permanent ~28% reading
+      // because the gate is supposed to skip those signals.
+      const { data: tier2Eligible } = await supabase
         .from('signals')
-        .select('id, raw_json')
-        .gte('severity_score', 50)
+        .select('id, raw_json, composite_confidence')
+        .gte('composite_confidence', 0.60)
+        .lt('composite_confidence', 0.75)
         .gte('created_at', new Date(Date.now() - 48 * 3600000).toISOString())
         .eq('is_test', false)
         .limit(100);
 
-      if (recentHighSeverity && recentHighSeverity.length > 0) {
-        const withAgentReview = recentHighSeverity.filter(s => s.raw_json?.agent_review);
-        const coveragePct = Math.round((withAgentReview.length / recentHighSeverity.length) * 100);
-        if (coveragePct < 50) {
+      if (tier2Eligible && tier2Eligible.length >= 5) {
+        const withAgentReview = tier2Eligible.filter(s => s.raw_json?.agent_review);
+        const coveragePct = Math.round((withAgentReview.length / tier2Eligible.length) * 100);
+        if (coveragePct < 70) {
           behavioralFindings.push({
             category: 'behavioral_health',
             severity: 'high',
-            title: `Agent enrichment gap: only ${coveragePct}% of high-severity signals analyzed`,
-            analysis: `${withAgentReview.length} of ${recentHighSeverity.length} signals from last 48h have agent_review. Expected ≥50%.`,
-            plainEnglish: `High-priority signals are entering the feed without AI context added. Analysts see threats without explanation of why they matter.`,
-            action: `Check ai-decision-engine logs — review-signal-agent may not be firing for high-confidence signals.`,
+            title: `Tier-2 review gap: only ${coveragePct}% of eligible signals reviewed`,
+            analysis: `${withAgentReview.length} of ${tier2Eligible.length} signals in the tier-2 band (composite 0.60-0.75) from last 48h have agent_review. Expected ≥70%.`,
+            plainEnglish: `Signals in the tier-2 review band are landing without the deeper AI context that explains why they matter. Operators see borderline-relevance threats without reasoning.`,
+            action: `Check ai-decision-engine logs — review-signal-agent may not be firing for tier-2-eligible signals (composite_confidence in [0.60, 0.75)).`,
           });
         }
       }
@@ -2736,6 +2753,100 @@ Deno.serve(async (req) => {
             action: `Check ${jobName} logs for API errors or empty CSE responses. Verify search queries match current client keywords.`,
           });
         }
+      }
+
+      // 2a. General monitor signal-yield health. The social-monitor
+      // check above only covers monitor-twitter / monitor-social-*. In
+      // May 2026 the operator caught that the cyber-feeder monitors
+      // (pastebin / github / darkweb / csis) had been running cleanly
+      // for the entire history of the platform with `signals_created:
+      // 0` on every single run — never produced a single signal — and
+      // the watchdog hadn't flagged it because they aren't in the
+      // social bucket. This check generalizes the invariant to any
+      // monitor-* function, with explicit exclusions for those that
+      // are LEGITIMATELY quiet most of the time (NAAD only fires on
+      // real emergency alerts; earthquakes only when one happens; the
+      // court-registry is updated infrequently).
+      const QUIET_MONITORS_OK = new Set([
+        'monitor-naad-alerts-15min',
+        'monitor-naad-alerts',
+        'monitor-earthquakes',
+        'monitor-court-registry',
+        'monitor-court-registry-4h',
+        'monitor-domains',           // domain registrations are rare
+        'monitor-emergency-google',  // only fires on real emergencies
+        'monitor-macro-indicators',  // macro shifts are slow
+        'monitor-entity-proximity',  // proximity events are infrequent
+        // 2026-05-08: credential/breach monitors. 0 signals = clean
+        // reputation, the HEALTHY outcome. Function fires its API call
+        // every cycle; if HIBP returns no breaches for the configured
+        // domains and GitHub returns no structural credential matches,
+        // we WANT 0 signals. Watchdog was flagging these as "NEVER
+        // produced — structurally broken" but they're working correctly
+        // — there are simply no real exposures to surface for clean
+        // enterprise stacks (Petronas Canada / BC Children's Hospital).
+        'monitor-darkweb-6h',
+        'monitor-darkweb',
+        'monitor-github-6h',
+        'monitor-github',
+        'monitor-pastebin',           // similar — paste leaks are rare
+        'monitor-pastebin-6h',
+      ]);
+      const SOCIAL_ALREADY_CHECKED = new Set([
+        'monitor-twitter', 'monitor-social-unified',
+        'monitor-social-hourly', 'monitor-social',
+      ]);
+
+      const { data: monitorHeartbeats } = await supabase
+        .from('cron_heartbeat')
+        .select('job_name, result_summary, completed_at')
+        .like('job_name', 'monitor-%')
+        .gte('completed_at', new Date(Date.now() - 24 * 3600000).toISOString())
+        .order('completed_at', { ascending: false })
+        .limit(500);
+
+      const monitorByJob = new Map<string, any[]>();
+      for (const hb of monitorHeartbeats || []) {
+        if (QUIET_MONITORS_OK.has(hb.job_name)) continue;
+        if (SOCIAL_ALREADY_CHECKED.has(hb.job_name)) continue;
+        if (!monitorByJob.has(hb.job_name)) monitorByJob.set(hb.job_name, []);
+        monitorByJob.get(hb.job_name)!.push(hb);
+      }
+
+      for (const [jobName, runs] of monitorByJob) {
+        if (runs.length < 3) continue;
+        const totalSignals = runs.reduce(
+          (sum: number, r: any) => sum + (r.result_summary?.signals_created ?? 0),
+          0,
+        );
+        if (totalSignals !== 0) continue;
+
+        // Tier severity by lifetime yield. A monitor that has NEVER
+        // produced a signal in the database is structurally broken;
+        // one that's just been quiet for 24h is a softer warning.
+        const { count: lifetimeRuns } = await supabase
+          .from('cron_heartbeat')
+          .select('*', { count: 'exact', head: true })
+          .eq('job_name', jobName)
+          .gte('result_summary->>signals_created', '1');
+
+        const everProduced = (lifetimeRuns ?? 0) > 0;
+        behavioralFindings.push({
+          category: 'behavioral_health',
+          severity: everProduced ? 'medium' : 'high',
+          title: everProduced
+            ? `${jobName}: 0 signals across ${runs.length} runs in last 24h`
+            : `${jobName}: NEVER produced a signal — likely structurally broken`,
+          analysis: everProduced
+            ? `${jobName} ran ${runs.length} times in the last 24h with 0 signals_created. Has produced signals in the past, so this is likely a regression — API key revoked, source schema changed, or relevance gate over-rejecting.`
+            : `${jobName} has run cleanly in the last 24h but has 0 lifetime successful signal creations across the entire platform history. The pipe is intact (heartbeat success) but no data flows through. Root cause is almost certainly in the monitor's logic, not the AI gate.`,
+          plainEnglish: everProduced
+            ? `${jobName} used to produce signals but hasn't in the last 24 hours. A source it depends on may have changed.`
+            : `${jobName} has been deployed but has never created a signal in the platform's entire history. It looks like it's running, but it isn't actually delivering data.`,
+          action: everProduced
+            ? `Check API keys and source URLs for ${jobName}. Run a manual invocation and inspect logs.`
+            : `Audit ${jobName} end-to-end — query format, source response shape, ingest-signal payload. This is a pipe-rot situation, not a transient outage.`,
+        });
       }
 
       // 2b. BCWS endpoint health — monitor-wildfires writes
@@ -2863,6 +2974,100 @@ Deno.serve(async (req) => {
       console.log(`[Watchdog] Behavioral health: ${behavioralFindings.length} findings`);
     } catch (behavioralErr) {
       console.warn('[Watchdog] Behavioral health check failed:', behavioralErr);
+    }
+
+    // ═══ PERSIST FINDINGS TO platform_findings TABLE ═══
+    // Phase 2 of the Neural Constellation diagnostic overlay.
+    // Each watchdog run writes its findings to platform_findings
+    // so the /neural-constellation page can pin live warnings onto
+    // specific agent nodes. Findings auto-resolve: anything that
+    // does NOT appear in this run gets resolved_at stamped so the
+    // UI clears stale warnings without manual intervention.
+    //
+    // Fingerprint = stable hash of (category + first 100 chars of
+    // title) so repeat findings upsert in place rather than
+    // creating duplicate rows.
+    try {
+      const allFindings = [...findings, ...behavioralFindings];
+      const sha256Sync = (s: string): Promise<string> =>
+        crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+          .then(b => Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, '0')).join(''));
+
+      // Best-effort agent / job inference from title text. Most
+      // findings already include the job_name verbatim; some don't
+      // and just stay platform-wide.
+      const inferAffected = (title: string, analysis?: string) => {
+        const text = `${title} ${analysis || ''}`;
+        const jobMatch = text.match(/\b(monitor-[a-z-]+|job-worker|fortress-loop-closer-\d+h|snapshot-bcws-ratings-daily|knowledge-synthesizer-nightly|agent-knowledge-seeker-\w+|self-improvement-nightly|auto-summarize-incidents-nightly|resolve-agent-predictions-nightly|proactive-intelligence-push-\w+|monitor-naad-alerts-\w+|monitor-cisa-kev-\w+)\b/);
+        const job = jobMatch?.[1] ?? null;
+        // Same mapping the constellation uses (kept inline rather
+        // than imported because edge functions don't share src/).
+        const CRON_TO_AGENT: Record<string, string> = {
+          'monitor-wildfires':              'WILDFIRE',
+          'monitor-social-unified':         'ECHO-WATCH',
+          'monitor-social-hourly':          'ECHO-WATCH',
+          'monitor-twitter':                'ECHO-WATCH',
+          'monitor-twitter-30min':          'ECHO-WATCH',
+          'snapshot-bcws-ratings-daily':    'WILDFIRE',
+          'monitor-cisa-kev-12h':           'NEO',
+          'monitor-darkweb-6h':             'NEO',
+          'monitor-github-6h':              'NEO',
+          'monitor-csis-6h':                'NEO',
+        };
+        const agent = job && CRON_TO_AGENT[job] ? CRON_TO_AGENT[job] : null;
+        return { job, agent };
+      };
+
+      const fingerprintsThisRun: string[] = [];
+      for (const f of allFindings) {
+        const { job, agent } = inferAffected(String(f.title || ''), String(f.analysis || ''));
+        const fp = await sha256Sync(`${f.category}|${String(f.title || '').substring(0, 100)}|${job ?? ''}`);
+        fingerprintsThisRun.push(fp);
+
+        await supabase
+          .from('platform_findings')
+          .upsert({
+            fingerprint: fp,
+            category: f.category || 'unknown',
+            severity: f.severity || 'info',
+            title: f.title,
+            analysis: f.analysis ?? null,
+            plain_english: f.plainEnglish ?? null,
+            action: f.action ?? null,
+            affected_agent: agent,
+            affected_job: job,
+            metadata: { source: 'system-watchdog' },
+            last_seen_at: new Date().toISOString(),
+          }, { onConflict: 'fingerprint' });
+
+        // For recurring findings, bump the occurrence_count separately
+        // (upsert above sets last_seen_at but onConflict can't
+        // increment a column).
+        await supabase.rpc('exec_increment_finding_occurrence', { fp_in: fp })
+          .then(() => null)
+          .catch(() => null); // helper RPC may not exist yet — non-fatal
+      }
+
+      // Auto-resolve findings that didn't appear in THIS run. They
+      // either fixed themselves or the watchdog stopped detecting
+      // them; either way the operator shouldn't see them as live.
+      // Scope: only auto-resolve findings older than 1 hour (to
+      // avoid races during long watchdog runs).
+      if (fingerprintsThisRun.length >= 0) {
+        await supabase
+          .from('platform_findings')
+          .update({
+            resolved_at: new Date().toISOString(),
+            resolution_note: 'auto-resolved: not detected in subsequent watchdog run',
+          })
+          .is('resolved_at', null)
+          .lt('last_seen_at', new Date(Date.now() - 3600 * 1000).toISOString())
+          .not('fingerprint', 'in', `(${fingerprintsThisRun.map(f => `"${f}"`).join(',') || '"none"'})`);
+      }
+
+      console.log(`[Watchdog] Persisted ${allFindings.length} findings to platform_findings`);
+    } catch (persistErr) {
+      console.warn('[Watchdog] Failed to persist findings:', persistErr);
     }
 
     // Filter out recurring findings whose underlying metric is now resolved.
@@ -3073,6 +3278,13 @@ Deno.serve(async (req) => {
         });
       }
 
+      await completeHeartbeat(supabase, hb, {
+        severity: analysis.severity,
+        findings: analysis.findings.length,
+        fixed: fixedCount,
+        chronic: chronicCount,
+        email_sent: !emailError,
+      });
       return successResponse({
         success: true, severity: analysis.severity, runId,
         findings: analysis.findings.length, remediations: remediationResults.length,
@@ -3082,10 +3294,16 @@ Deno.serve(async (req) => {
     }
 
     console.log('[Watchdog] ✓ All systems nominal — no email needed');
+    await completeHeartbeat(supabase, hb, {
+      severity: analysis.severity,
+      findings: 0,
+      assessment: analysis.overallAssessment,
+    });
     return successResponse({ success: true, severity: analysis.severity, runId, findings: 0, emailSent: false, learningsStored: true, assessment: analysis.overallAssessment });
 
   } catch (error) {
     console.error('[Watchdog] Fatal error:', error);
+    await failHeartbeat(supabase, hb, error instanceof Error ? error : new Error(String(error)));
     try {
       const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
       const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@silentshieldsecurity.com>';

@@ -5468,7 +5468,7 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query signals
       if (query_type === 'signals' || query_type === 'comprehensive') {
-        let signalsQ = supabaseClient.from('signals').select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json');
+        let signalsQ = supabaseClient.from('signals').select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json').neq('is_test', true);
         signalsQ = applyFilters(signalsQ);
         if (filters.severity?.length) signalsQ = signalsQ.in('severity', filters.severity);
         if (filters.status?.length) signalsQ = signalsQ.in('status', filters.status);
@@ -8005,10 +8005,18 @@ Return a JSON object (no markdown, only valid JSON):
 
     case "trigger_multi_agent_debate": {
       const { incident_id, debate_type, custom_prompt } = args;
-      
+
       const supabaseUrl2 = Deno.env.get("SUPABASE_URL") ?? "";
       const serviceKey2 = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-      
+
+      // Default to command_synthesis when AEGIS-CMD initiates a
+      // multi-agent debate from operator chat. This puts AEGIS in the
+      // judge seat with its own persona + 5-part Command Synthesis
+      // structural directive — matching the persona's stated role as
+      // the integration layer. The earlier default 'adversarial' set
+      // a generic JUDGE-SYNTHESIZER as judge regardless of context.
+      const resolvedDebateType = debate_type || "command_synthesis";
+
       const debateResponse = await fetch(
         `${supabaseUrl2}/functions/v1/multi-agent-debate`,
         {
@@ -8017,10 +8025,10 @@ Return a JSON object (no markdown, only valid JSON):
             "Authorization": `Bearer ${serviceKey2}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ 
-            incident_id, 
-            debate_type: debate_type || "adversarial",
-            custom_prompt 
+          body: JSON.stringify({
+            incident_id,
+            debate_type: resolvedDebateType,
+            custom_prompt
           }),
         }
       );

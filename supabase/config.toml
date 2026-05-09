@@ -132,6 +132,9 @@ verify_jwt = false
 [functions.monitor-csis]
 verify_jwt = false
 
+[functions.monitor-cisa-kev]
+verify_jwt = false
+
 [functions.api-v1-security]
 verify_jwt = false
 
