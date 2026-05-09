@@ -149,6 +149,30 @@ Deno.serve(async (req) => {
         }
       }
 
+      // 2026-05-09: tactic-term queries that land protest/activism news
+      // even when the article doesn't name a client-specific keyword.
+      // Splunk Cookbook follow-up — broaden beyond named entities so
+      // generic-coverage-quiet weeks (May 1-9 2026 had 0 protest signals
+      // for 6 of 7 days because every monitor query required a Wet'suwet'en
+      // / Coastal GasLink / Stand.earth-style proper-noun match) start
+      // producing volume. Each tactic still gets the Canada/BC geo
+      // restriction so we don't pull global protest news.
+      const TACTIC_TERMS = [
+        'direct action pipeline',
+        'encampment First Nation',
+        'land defenders blockade',
+        'rail blockade Indigenous',
+        'pipeline protest',
+        'climate camp',
+        'occupation protest',
+        'gender clinic protest',
+        'anti-trans protest',
+        'parental rights protest',
+      ];
+      for (const tactic of TACTIC_TERMS) {
+        queries.push(withNeg(`"${tactic}" Canada OR "British Columbia"`));
+      }
+
       // Add person entity name queries — searches for staff/VIPs by name
       // in news and activist contexts. These are the queries most likely to
       // surface targeted coverage, threats, or protest activity.
