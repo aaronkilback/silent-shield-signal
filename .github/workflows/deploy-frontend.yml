@@ -14,6 +14,8 @@ on:
       - 'tailwind.config.ts'
       - 'tsconfig*.json'
       - 'postcss.config.js'
+      - '.env'
+      - '.github/workflows/deploy-frontend.yml'
   workflow_dispatch: {}
 
 jobs:
