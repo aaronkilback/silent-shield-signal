@@ -1729,3 +1729,81 @@ export function useBenchmarkHealth(enabled: boolean = true) {
     },
   });
 }
+
+// ============================================================================
+// Signal sequences — Tier 1B (multi-stage escalation patterns)
+// ============================================================================
+
+export type SequenceStatus = 'open' | 'escalated' | 'resolved' | 'expired' | 'dismissed';
+
+export interface SignalSequence {
+  id: string;
+  patternName: string;
+  patternDescription: string | null;
+  clientId: string;
+  clientName: string;
+  anchorLabel: string;
+  matchedStages: string[];
+  totalStages: number;
+  status: SequenceStatus;
+  sequenceScore: number;
+  signalIds: string[];
+  startedAt: string;
+  lastEventAt: string;
+  hoursSinceLastEvent: number;
+}
+
+/** Active (open + escalated) sequences. Lazy: only queries when enabled. */
+export function useSignalSequences(enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['signal-sequences-active'],
+    enabled,
+    refetchInterval: 60_000,
+    queryFn: async (): Promise<SignalSequence[]> => {
+      const { data, error } = await supabase
+        .from('signal_sequences')
+        .select(`
+          id,
+          client_id,
+          anchor_label,
+          matched_stages,
+          status,
+          sequence_score,
+          signal_ids,
+          started_at,
+          last_event_at,
+          sequence_patterns!inner (name, description, stages),
+          clients (name)
+        `)
+        .in('status', ['open', 'escalated'])
+        .order('last_event_at', { ascending: false })
+        .limit(50);
+
+      if (error) {
+        console.warn('[useSignalSequences] query failed:', error.message);
+        return [];
+      }
+
+      const now = Date.now();
+      return (data ?? []).map((row: any) => {
+        const stages = Array.isArray(row.sequence_patterns?.stages) ? row.sequence_patterns.stages : [];
+        return {
+          id: row.id,
+          patternName: row.sequence_patterns?.name ?? 'unknown',
+          patternDescription: row.sequence_patterns?.description ?? null,
+          clientId: row.client_id,
+          clientName: row.clients?.name ?? '—',
+          anchorLabel: row.anchor_label,
+          matchedStages: row.matched_stages ?? [],
+          totalStages: stages.length || 1,
+          status: row.status as SequenceStatus,
+          sequenceScore: Number(row.sequence_score ?? 0),
+          signalIds: row.signal_ids ?? [],
+          startedAt: row.started_at,
+          lastEventAt: row.last_event_at,
+          hoursSinceLastEvent: (now - new Date(row.last_event_at).getTime()) / 3_600_000,
+        } as SignalSequence;
+      });
+    },
+  });
+}

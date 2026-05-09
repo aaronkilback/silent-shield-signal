@@ -33,6 +33,7 @@ import { MonitorHealthPanel } from "@/components/neural-constellation/MonitorHea
 import { WatchdogFindingsPanel } from "@/components/neural-constellation/WatchdogFindingsPanel";
 import { PlatformVitalsBar } from "@/components/neural-constellation/PlatformVitalsBar";
 import { BenchmarkHealthPanel } from "@/components/neural-constellation/BenchmarkHealthPanel";
+import { SequencesPanel } from "@/components/neural-constellation/SequencesPanel";
 import type { AgentFindingSummary, AgentOpenLoops, AgentSilenceInfo } from "@/components/neural-constellation/ConstellationScene";
 import { useFortressHealth } from "@/hooks/useFortressHealth";
 import { useSystemHealth } from "@/hooks/useSystemHealth";
@@ -232,10 +233,10 @@ const NeuralConstellation = () => {
   // panel may be expanded at a time so the stack never grows past
   // ~42vh and never bleeds over the Live Activity feed below.
   const [openDiagnosticPanel, setOpenDiagnosticPanel] = useState<
-    'benchmark' | 'monitor' | 'watchdog' | 'fortify' | null
+    'benchmark' | 'monitor' | 'watchdog' | 'fortify' | 'sequences' | null
   >(null);
   const makePanelToggle = useCallback(
-    (key: 'benchmark' | 'monitor' | 'watchdog' | 'fortify') =>
+    (key: 'benchmark' | 'monitor' | 'watchdog' | 'fortify' | 'sequences') =>
       (next: boolean) => setOpenDiagnosticPanel(next ? key : null),
     [],
   );
@@ -605,6 +606,14 @@ const NeuralConstellation = () => {
             several at once — when both Monitor Health and FORTIFY
             were expanded the rail crowded into the activity feed. */}
         <div className="absolute top-4 right-4 z-20 w-[340px] space-y-2 pointer-events-auto max-h-[calc(42vh)] overflow-y-auto bg-[#020408]/85 backdrop-blur-xl rounded-lg p-2 border border-border/40">
+          {/* Tier 1B (May 9 2026) — active escalation sequences sit at the
+              top of the diagnostic stack because an escalated sequence is
+              the highest-priority operator signal: multiple separately-
+              ingested signals just got linked into one pattern. */}
+          <SequencesPanel
+            expanded={openDiagnosticPanel === 'sequences'}
+            onExpandedChange={makePanelToggle('sequences')}
+          />
           <BenchmarkHealthPanel
             expanded={openDiagnosticPanel === 'benchmark'}
             onExpandedChange={makePanelToggle('benchmark')}
