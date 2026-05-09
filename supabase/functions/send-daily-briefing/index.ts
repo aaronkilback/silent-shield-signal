@@ -6,6 +6,7 @@ import { Resend } from "npm:resend@2.0.0";
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -13,6 +14,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createServiceClient();
+    const hb = await startHeartbeat(supabase, 'send-daily-briefing-13utc');
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
     const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Fortress AI <notifications@silentshieldsecurity.com>';
 
@@ -35,26 +37,53 @@ Deno.serve(async (req) => {
 
     const cutoff24h = new Date(Date.now() - 24 * 3600000).toISOString();
 
-    // doctrine_library + autonomous_scan_results queries removed — the
-    // doctrine line was replaced with a deterministic trajectory footer,
-    // and the risk score is now computed from real signal/incident data
-    // instead of an orthogonal scanner reading.
+    // 2026-05-09 quality fixes: signals now scope to active clients
+    // (drops platform-level NAAD alerts from outside operational
+    // regions); autonomous actions exclude operator-irrelevant types
+    // (document ingestion, push-with-zero-recipients); active
+    // sequences from Tier 1B added for the EMERGING PATTERNS section.
+    const { data: activeClients } = await supabase
+      .from('clients')
+      .select('id, name, locations')
+      .eq('status', 'active');
+    const activeClientIds = (activeClients ?? []).map((c: any) => c.id);
+
     const [
       { data: recentSignals },
       { data: openIncidents },
       { data: recentActions },
+      { data: activeSequences },
     ] = await Promise.all([
-      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence')
+      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence, client_id')
         .gte('created_at', cutoff24h)
         .neq('status', 'false_positive')
         .neq('is_test', true)
+        .in('client_id', activeClientIds)
         .order('created_at', { ascending: false }).limit(50),
-      supabase.from('incidents').select('id, priority, status, opened_at, title, signal_id')
+      supabase.from('incidents').select('id, priority, status, opened_at, title, signal_id, client_id')
         .eq('status', 'open').neq('is_test', true)
+        .in('client_id', activeClientIds)
         .order('opened_at', { ascending: false }).limit(50),
-      supabase.from('autonomous_actions_log').select('action_type, action_details, created_at')
+      // Filter operator-irrelevant action types out of the briefing.
+      // proactive_intelligence_push fires every 15 min; >95% of records
+      // are "delivered to 0 recipients" platform plumbing. document_*
+      // are content-ingest events from the operator UI, not autonomous
+      // actions. Keep daily_email_briefing, monitoring_proposal_*,
+      // and any incident-acting types.
+      supabase.from('autonomous_actions_log').select('action_type, action_details, created_at, status')
         .gte('created_at', cutoff24h)
+        .not('action_type', 'in', '(proactive_intelligence_push,document_dissemination,document_ingested,document_processed,daily_email_briefing)')
         .order('created_at', { ascending: false }).limit(20),
+      // Tier 1B (May 9 2026): active escalation sequences for the
+      // EMERGING PATTERNS section. signal_sequences groups otherwise-
+      // independent signals into named multi-stage patterns. The
+      // briefing renders these so operators see the joined view, not
+      // the per-signal fragments.
+      supabase.from('signal_sequences')
+        .select('anchor_label, matched_stages, sequence_score, signal_ids, last_event_at, sequence_patterns(name, description), clients(name)')
+        .in('status', ['open', 'escalated'])
+        .order('last_event_at', { ascending: false })
+        .limit(10),
     ]);
 
     // Filter signals for briefing quality: exclude historical, low-quality, and low-relevance
@@ -162,7 +191,33 @@ Deno.serve(async (req) => {
       currentTotalPriority < previousTotalPriority * 0.8 ? 'DE-ESCALATING' : 'STABLE';
 
     const trajectoryDelta = currentTotalPriority - previousTotalPriority;
-    const trajectoryReason = `${Math.abs(trajectoryDelta)} ${trajectoryDelta >= 0 ? 'more' : 'fewer'} priority signals vs previous 7-day period (${previousTotalPriority} → ${currentTotalPriority})`;
+    let trajectoryReason = `${Math.abs(trajectoryDelta)} ${trajectoryDelta >= 0 ? 'more' : 'fewer'} priority signals vs previous 7-day period (${previousTotalPriority} → ${currentTotalPriority})`;
+
+    // Trajectory caveat: a drop in priority signals can be a real
+    // de-escalation OR a coverage-gap blackout (twitter disabled,
+    // news quiet, monitor degraded). Check the comparison period for
+    // monitors that had degraded coverage and disclaim accordingly,
+    // so the operator doesn't read a sensor outage as good news.
+    if (trajectoryDirection === 'DE-ESCALATING') {
+      const { data: monitorIssues } = await supabase
+        .from('cron_heartbeat')
+        .select('job_name')
+        .gte('started_at', previousPeriodStart)
+        .lt('started_at', cutoff24h)
+        .eq('status', 'failed')
+        .limit(50);
+      const failedMonitorNames = new Set((monitorIssues ?? []).map((r: any) => r.job_name));
+      const { data: twitterCron } = await supabase
+        .from('cron_heartbeat').select('job_name').eq('job_name', 'monitor-twitter-30min')
+        .gte('started_at', previousPeriodStart).limit(1).maybeSingle();
+      const twitterDark = !twitterCron;
+      if (failedMonitorNames.size > 0 || twitterDark) {
+        const causes: string[] = [];
+        if (twitterDark) causes.push('monitor-twitter dark for the comparison period');
+        if (failedMonitorNames.size > 0) causes.push(`${failedMonitorNames.size} monitor(s) had failures`);
+        trajectoryReason += ` — caveat: ${causes.join(' + ')} during comparison window, so part of the drop may be coverage gap rather than real de-escalation`;
+      }
+    }
 
     // Footer line — replaces the old "doctrine quote" boilerplate
     // (operators tuned the inspirational quote out anyway). Now a
@@ -237,7 +292,20 @@ ${JSON.stringify((recentActions || []).slice(0, 12).map((a: any) => ({
   at: a.created_at,
 })), null, 2)}
 
-When you write the KEY METRICS section, NAME the open incidents (priority + title) and the autonomous actions (action + brief detail), don't summarize them as raw counts. If there are zero of either, say so explicitly.`,
+ACTIVE SIGNAL SEQUENCES (Tier 1B multi-stage patterns, ${(activeSequences || []).length}):
+${JSON.stringify((activeSequences || []).map((s: any) => ({
+  pattern: (s.sequence_patterns as any)?.name,
+  client: (s.clients as any)?.name,
+  anchor: s.anchor_label,
+  matched_stages: s.matched_stages,
+  score: typeof s.sequence_score === 'number' ? Number(s.sequence_score.toFixed(2)) : null,
+  signal_count: Array.isArray(s.signal_ids) ? s.signal_ids.length : 0,
+  last_event: s.last_event_at,
+})), null, 2)}
+
+When you write the KEY METRICS section, NAME the open incidents (priority + title) and the autonomous actions (action + brief detail), don't summarize them as raw counts. If there are zero of either, say so explicitly.
+
+When you write the EMERGING PATTERNS section, USE the ACTIVE SIGNAL SEQUENCES list above as the primary content. For each sequence, write one DEDUCTION line that names: pattern, client, anchor, which stages have matched, and the sequence score. If the list is empty, say "No active multi-stage patterns detected in this period." — do not pad. Sequences are the platform's joined-view output; the briefing must surface them where they exist.`,
         },
       ],
       functionName: 'send-daily-briefing',
@@ -330,9 +398,21 @@ When you write the KEY METRICS section, NAME the open incidents (priority + titl
       console.error('[DailyBriefing] Audio generation error (non-blocking):', audioErr);
     }
 
+    await completeHeartbeat(supabase, hb, {
+      sent: sentCount,
+      errors: errors.length,
+      signals_24h: metrics.signals_24h,
+      open_incidents: metrics.open_incidents,
+      sequences_active: (activeSequences ?? []).length,
+    });
+
     return successResponse({ success: true, sent: sentCount, audio_url: audioUrl, errors: errors.length > 0 ? errors : undefined, date: dateContext.currentDateISO });
   } catch (error) {
     console.error('[DailyBriefing] Error:', error);
+    try {
+      const supabase = createServiceClient();
+      await failHeartbeat(supabase, { id: '', job_name: 'send-daily-briefing-13utc' } as any, error);
+    } catch { /* best-effort */ }
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
