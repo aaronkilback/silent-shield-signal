@@ -317,6 +317,64 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
         await new Promise(r => setTimeout(r, delay));
       } else {
         console.error(`[${request.functionName}] All attempts failed: ${errMsg}`);
+
+        // Cross-provider fallback: when OpenAI returns 429 (quota exceeded
+        // or rate-limited) and GEMINI_API_KEY is configured, try once on
+        // Gemini before giving up. Without this, an OpenAI billing event
+        // takes the whole pipeline down — exactly the May 9 2026 regression
+        // where ingest-signal silently dropped 525 items in 4h because the
+        // relevance gate couldn't reach OpenAI. The fallback model defaults
+        // to `gemini-1.5-flash` (widely available, not in MODEL_NORMALIZATION
+        // redirects) and is overridable via OPENAI_FALLBACK_GEMINI_MODEL.
+        const isOpenAi429 = aiProvider === 'openai' && status === 429;
+        const geminiKey = Deno.env.get('GEMINI_API_KEY');
+        if (isOpenAi429 && geminiKey) {
+          // Default to gemini-2.5-flash — verified May 9 2026 as the model
+          // this project's GEMINI_API_KEY can actually call (1.5 flash/pro
+          // and 2.0 flash all 404 against this key). Note: this bypasses
+          // MODEL_NORMALIZATION (which redirects gemini-2.5-flash → gpt-4o-mini
+          // for callers that route through getProviderConfig), since we're
+          // building the fetch directly here.
+          const fallbackModel = Deno.env.get('OPENAI_FALLBACK_GEMINI_MODEL') ?? 'gemini-2.5-flash';
+          try {
+            console.warn(`[${request.functionName}] OpenAI 429 → falling back to Gemini ${fallbackModel}`);
+            const fbResponse = await fetch(
+              'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+              {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${geminiKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ model: fallbackModel, messages, ...request.extraBody }),
+              },
+            );
+            if (fbResponse.ok) {
+              const fbData = await fbResponse.json();
+              const fbContent = fbData?.choices?.[0]?.message?.content || null;
+              const fbUsage = fbData?.usage || {};
+              if (telemetryClient) {
+                await recordTelemetry(telemetryClient, {
+                  functionName: request.functionName,
+                  durationMs: Date.now() - callStartedAt,
+                  status: 'success',
+                  aiProvider: 'gemini',
+                  aiModel: fallbackModel,
+                  tokensIn: fbUsage.prompt_tokens ?? fbUsage.input_tokens,
+                  tokensOut: fbUsage.completion_tokens ?? fbUsage.output_tokens,
+                  context: { fallback_from: 'openai_429', original_model: provider.model },
+                });
+              }
+              return { content: fbContent, raw: fbData, error: null, circuitOpen: false };
+            } else {
+              const fbErrText = await fbResponse.text();
+              console.warn(`[${request.functionName}] Gemini fallback ${fbResponse.status}: ${fbErrText.substring(0, 200)}`);
+            }
+          } catch (fbErr) {
+            console.warn(`[${request.functionName}] Gemini fallback threw: ${fbErr instanceof Error ? fbErr.message : String(fbErr)}`);
+          }
+        }
+
         if (telemetryClient) {
           await recordTelemetry(telemetryClient, {
             functionName: request.functionName,
