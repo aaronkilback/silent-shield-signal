@@ -211,6 +211,30 @@ Deno.serve(async (req) => {
     let signalRaw = raw_json || event || { text: signalText };
     // Ensure source_url is always accessible inside raw_json (UI reads from both places)
     if (source_url && !signalRaw.source_url) signalRaw = { ...signalRaw, source_url };
+
+    // Tier 1A: per-client first-time-seen tracking (Splunk Cookbook recipe).
+    // Record the source_domain and source_key observations; attach novelty
+    // metadata to raw_json so review-signal-agent and operators can see
+    // whether this signal is from a brand-new source for this client. Best
+    // effort — failures here MUST NOT block ingest.
+    if (clientId) {
+      try {
+        const { recordObservation, extractDomain } = await import('../_shared/observation-baselines.ts');
+        const domain = extractDomain(source_url) ?? extractDomain(signalRaw?.source_url);
+        const noveltyMeta: Record<string, unknown> = {};
+        if (domain) {
+          noveltyMeta.domain = await recordObservation(supabase, clientId, 'source_domain', domain);
+        }
+        if (source_key) {
+          noveltyMeta.source_key = await recordObservation(supabase, clientId, 'source_key', source_key);
+        }
+        if (Object.keys(noveltyMeta).length > 0) {
+          signalRaw = { ...signalRaw, novelty: noveltyMeta };
+        }
+      } catch (noveltyErr) {
+        console.warn('[Novelty] non-blocking error:', noveltyErr instanceof Error ? noveltyErr.message : noveltyErr);
+      }
+    }
     
     // If URL is provided, fetch and analyze the website
     if (url) {

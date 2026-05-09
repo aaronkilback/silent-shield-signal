@@ -823,3 +823,6 @@ verify_jwt = false
 
 [functions.wraith-breach-check]
 verify_jwt = false
+
+[functions.detect-signal-sequences]
+verify_jwt = false
