@@ -720,3 +720,118 @@ verify_jwt = false
 
 [functions.signal-processor]
 verify_jwt = false
+
+# ----------------------------------------------------------------
+# Drift capture (May 9 2026): these 35 functions were deployed with
+# verify_jwt=false but had no entry in config.toml. Detected during
+# the deploy-functions.yml fix — without this, the first redeploy
+# would have flipped them back to verify_jwt=true and broken
+# webhooks (heygen, auth-email), voice (aegis-stt/tts), monitors,
+# and assorted inter-function calls. Captures current production
+# state. Audit later for any that legitimately need verify_jwt=true.
+# ----------------------------------------------------------------
+
+[functions.accept-operator-invite]
+verify_jwt = false
+
+[functions.aegis-monitor]
+verify_jwt = false
+
+[functions.aegis-stt]
+verify_jwt = false
+
+[functions.aegis-tts]
+verify_jwt = false
+
+[functions.agent-self-learning]
+verify_jwt = false
+
+[functions.apply-feedback-to-agent]
+verify_jwt = false
+
+[functions.arcgis-test-connection]
+verify_jwt = false
+
+[functions.auth-email-hook]
+verify_jwt = false
+
+[functions.backfill-analysis-embeddings]
+verify_jwt = false
+
+[functions.calibration-updater]
+verify_jwt = false
+
+[functions.create-operator-invite]
+verify_jwt = false
+
+[functions.detect-threat-patterns]
+verify_jwt = false
+
+[functions.execute-approved-action]
+verify_jwt = false
+
+[functions.extract-predicted-events]
+verify_jwt = false
+
+[functions.fetch-url-content]
+verify_jwt = false
+
+[functions.flight-auto-scan]
+verify_jwt = false
+
+[functions.flight-lookup]
+verify_jwt = false
+
+[functions.fortress-loop-closer]
+verify_jwt = false
+
+[functions.fortress-qa-agent]
+verify_jwt = false
+
+[functions.generate-lesson-video]
+verify_jwt = false
+
+[functions.heygen-webhook]
+verify_jwt = false
+
+[functions.job-worker]
+verify_jwt = false
+
+[functions.monitor-community-outreach]
+verify_jwt = false
+
+[functions.osint-collector]
+verify_jwt = false
+
+[functions.process-feedback]
+verify_jwt = false
+
+[functions.realtime-telemetry]
+verify_jwt = false
+
+[functions.red-team-review]
+verify_jwt = false
+
+[functions.resolve-agent-predictions]
+verify_jwt = false
+
+[functions.run-benchmark]
+verify_jwt = false
+
+[functions.score-signal-anomaly]
+verify_jwt = false
+
+[functions.self-improvement-orchestrator]
+verify_jwt = false
+
+[functions.synthesize-entity-narratives]
+verify_jwt = false
+
+[functions.system-watchdog]
+verify_jwt = false
+
+[functions.voice-tool-executor]
+verify_jwt = false
+
+[functions.wraith-breach-check]
+verify_jwt = false
