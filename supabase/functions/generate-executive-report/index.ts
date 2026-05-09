@@ -473,7 +473,25 @@ Provide a JSON response with exactly this structure:
 Be specific, cite EXACT data from above, and use executive-appropriate language. DO NOT claim clusters or groups that don't exist in the data.`;
 
     console.log('Generating executive flash banner...');
-    let executiveFlash = {
+
+    // 2026-05-09 quality fix: posture-aware flash. Previously the LLM
+    // was asked to generate a "most pressing issue" + "recommended
+    // action" regardless of actual posture. With 0 critical and 0 high
+    // signals + LOW risk, it would still fabricate urgency ("Immediate
+    // attention is required for high severity signals...") which
+    // contradicts the body's "Risk Level: LOW" — the kind of inversion
+    // that breaks executive trust.
+    //
+    // When the period is quiet on every measurable axis, short-circuit
+    // with a deterministic flash that matches the body. The LLM only
+    // gets called when there's something to actually say.
+    const isQuietPeriod =
+      criticalSignals.length === 0
+      && highSignals.length === 0
+      && newIncidentsLast24h.length === 0
+      && (overallRiskLevel || '').toUpperCase() === 'LOW';
+
+    let executiveFlash: any = {
       mostPressingIssue: 'Intelligence analysis in progress',
       confidence: 'Medium',
       recommendedAction: 'Review detailed findings below',
@@ -481,15 +499,34 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
       deadlineUrgency: '48 hours'
     };
 
-    const flashResult = await callAiGatewayJson({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are a security intelligence advisor. Always respond with valid JSON only, no markdown.' },
-        { role: 'user', content: flashPrompt }
-      ],
-      functionName: 'generate-executive-report',
-    });
-    if (flashResult.data) executiveFlash = flashResult.data;
+    if (isQuietPeriod) {
+      console.log('[ExecBrief] Quiet period — using deterministic flash (no LLM)');
+      const periodSignalCount = freshSignals.length;
+      executiveFlash = {
+        mostPressingIssue: periodSignalCount === 0
+          ? `No actionable signals collected against ${client.name} during this reporting period.`
+          : `No critical or high-severity signals against ${client.name} this period. ${periodSignalCount} lower-severity signals collected, no escalation indicators.`,
+        confidence: 'High',
+        recommendedAction: 'No immediate action required. Continue routine monitoring; reassess at next scheduled report.',
+        ownerSuggestion: 'Intelligence',
+        deadlineUrgency: 'This week',
+        trajectory: 'STABLE',
+        trajectoryReason: 'No new critical or high-severity signals in the last 24 hours; no escalation indicators present.'
+      };
+    } else {
+      const flashResult = await callAiGatewayJson({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a security intelligence advisor. Always respond with valid JSON only, no markdown. CRITICAL: if the verified data shows 0 critical signals AND 0 high signals AND 0 new incidents, the recommendedAction must explicitly state "no immediate action required" — do not fabricate urgency the data does not support. Inverting body posture in the flash breaks executive trust.'
+          },
+          { role: 'user', content: flashPrompt }
+        ],
+        functionName: 'generate-executive-report',
+      });
+      if (flashResult.data) executiveFlash = flashResult.data;
+    }
 
     // Generate Impact Ladders for top issues
     const impactPrompt = `As a security strategist, create impact ladders for the top 3 threats facing ${client.name}.
