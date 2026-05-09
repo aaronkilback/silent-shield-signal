@@ -696,3 +696,27 @@ verify_jwt = false
 
 [functions.wraith-snapshot-codebase]
 verify_jwt = false
+
+# Inter-function fetch targets — flipped to verify_jwt=false May 9 2026
+# alongside the 21 cron-triggered functions above. Pre-existing handlers
+# inside these functions accept service-role bearer (or the call is
+# trusted because the *caller* function authenticates the original
+# request).
+
+[functions.agent-mesh-dispatcher]
+verify_jwt = false
+
+[functions.create-agent]
+verify_jwt = false
+
+[functions.generate-briefing-audio]
+verify_jwt = false
+
+[functions.get-login-summary]
+verify_jwt = false
+
+[functions.intelligence-engine]
+verify_jwt = false
+
+[functions.signal-processor]
+verify_jwt = false

@@ -1,38 +1,139 @@
 name: Deploy Edge Functions
 
+# Detects which function directories changed in the push and deploys each
+# one. If the shared module (_shared/) changed, deploys ALL functions
+# because the shared code is bundled into each function at deploy time
+# (so a fix in _shared/ai-gateway.ts only takes effect for a function
+# the next time that function is itself redeployed).
+#
+# Replaces the original workflow which only ever deployed
+# agent-activity-scanner — explaining several weeks of CI showing green
+# while the live functions ran stale code (May 9 2026 root-cause).
+
 on:
   push:
     branches: [main]
     paths:
       - 'supabase/functions/**'
+      - 'supabase/config.toml'
   workflow_dispatch:
     inputs:
-      function_name:
-        description: 'Function to deploy (leave blank for all changed)'
+      target:
+        description: 'Function name, "all", or blank for changed-only'
         required: false
+        default: ''
+
+concurrency:
+  # Serialize deploys per branch so two pushes can't race the CLI auth.
+  group: deploy-functions-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   deploy-functions:
     name: Deploy Supabase Edge Functions
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need previous commit to diff against for changed-only mode.
+          fetch-depth: 2
 
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v1
         with:
           version: latest
 
-      - name: Deploy agent-activity-scanner
+      - name: Determine functions to deploy
+        id: detect
         run: |
-          supabase functions deploy agent-activity-scanner --no-verify-jwt
+          set -euo pipefail
+          MODE="changed"
+          TARGET_INPUT='${{ github.event.inputs.target }}'
+
+          list_all_functions() {
+            # Every directory under supabase/functions/ except those starting
+            # with `_` (the convention for shared modules).
+            find supabase/functions -mindepth 1 -maxdepth 1 -type d \
+              | awk -F/ '{print $NF}' \
+              | grep -v '^_' \
+              | sort
+          }
+
+          if [[ -n "$TARGET_INPUT" ]]; then
+            if [[ "$TARGET_INPUT" == "all" ]]; then
+              MODE="all"
+              FUNCTIONS=$(list_all_functions)
+            else
+              MODE="manual"
+              FUNCTIONS="$TARGET_INPUT"
+            fi
+          else
+            CHANGED=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- supabase/functions/ supabase/config.toml \
+              | awk -F/ '/^supabase\/functions\// {print $3}; /^supabase\/config\.toml$/ {print "_config_toml_"}' \
+              | sort -u \
+              | grep -v '^$' || true)
+
+            if echo "$CHANGED" | grep -qE '^_shared$|^_config_toml_$'; then
+              # _shared/ change → bundled into every function, redeploy all.
+              # config.toml change → verify_jwt or other per-function settings
+              # may have moved; redeploy all to keep deployed state in sync.
+              MODE="redeploy_all"
+              FUNCTIONS=$(list_all_functions)
+            else
+              FUNCTIONS=$(echo "$CHANGED" | grep -v '^_' || true)
+            fi
+          fi
+
+          if [[ -z "$FUNCTIONS" ]]; then
+            echo "No functions to deploy."
+            echo "mode=noop" >> "$GITHUB_OUTPUT"
+            echo "functions=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # GitHub Actions can't pass multi-line values through outputs the
+          # naive way; use a heredoc-style delimiter.
+          {
+            echo "mode=$MODE"
+            echo "functions<<EOF"
+            echo "$FUNCTIONS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Mode: $MODE"
+          echo "Functions to deploy:"
+          echo "$FUNCTIONS"
+
+      - name: Deploy
+        if: steps.detect.outputs.mode != 'noop'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          PROJECT_ID: kpuqukppbmwebiptqmog
-
-      - name: Verify deployment
+          PROJECT_REF: kpuqukppbmwebiptqmog
         run: |
-          echo "Deployed agent-activity-scanner"
-          echo "Cron job agent-activity-scanner-15min registered (jobid 30)"
-          echo "First run will occur at next :00 or :15 mark"
+          # Don't fail-fast: a single function deploy failure shouldn't
+          # block the rest. Track failures and exit non-zero at the end so
+          # the workflow run is red and the operator notices.
+          FAILED=()
+          DEPLOYED=()
+
+          while IFS= read -r fn; do
+            [[ -z "$fn" ]] && continue
+            echo "::group::Deploy $fn"
+            if supabase functions deploy "$fn" --project-ref "$PROJECT_REF" 2>&1; then
+              DEPLOYED+=("$fn")
+              echo "::endgroup::"
+            else
+              FAILED+=("$fn")
+              echo "::endgroup::"
+              echo "::error title=Deploy failed::$fn"
+            fi
+          done <<< "${{ steps.detect.outputs.functions }}"
+
+          echo ""
+          echo "─── Summary ─────────────────────────────────────────"
+          echo "Deployed: ${#DEPLOYED[@]}"
+          echo "Failed:   ${#FAILED[@]}"
+          if [ ${#FAILED[@]} -gt 0 ]; then
+            printf '  - %s\n' "${FAILED[@]}"
+            exit 1
+          fi
