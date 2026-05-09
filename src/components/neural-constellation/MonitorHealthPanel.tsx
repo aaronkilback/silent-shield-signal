@@ -89,7 +89,7 @@ export function MonitorHealthPanel() {
       </button>
 
       {expanded && (
-        <div className="border-t border-border/30 max-h-[320px] overflow-y-auto">
+        <div className="border-t border-border/30 max-h-[200px] overflow-y-auto">
           {sorted.map((cron) => (
             <CronRow key={cron.jobName} cron={cron} />
           ))}

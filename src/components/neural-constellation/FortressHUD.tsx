@@ -48,11 +48,16 @@ export function FortressHUD({ health, isLoading }: FortressHUDProps) {
     return { layer, closed, total: loops.length, pct: loops.length > 0 ? closed / loops.length : 0 };
   });
 
+  // Renders as a stacking panel inside the right-rail diagnostic stack
+  // (NeuralConstellation.tsx) — NO self-positioning. Earlier this lived
+  // as `absolute top-4 right-4` with a hardcoded 120px marginTop, which
+  // dropped it directly on top of AUDITOR PULSE / GATE DIST in the
+  // right rail. Keeping it in the stack lets the parent flow control
+  // ordering and prevents z-index collisions with the other panels.
   return (
-    <div className="absolute top-4 right-4 z-20 pointer-events-none" style={{ marginTop: "120px" }}>
-      <div className="backdrop-blur-xl border rounded-lg transition-all duration-500 bg-card/80 border-border overflow-hidden pointer-events-auto"
-        style={{ minWidth: expanded ? "260px" : "200px" }}>
-        
+    <div className="w-full">
+      <div className="backdrop-blur-xl border rounded-lg transition-all duration-500 bg-card/80 border-border overflow-hidden">
+
         {/* Compact header */}
         <button
           onClick={() => setExpanded((p) => !p)}
@@ -119,7 +124,7 @@ export function FortressHUD({ health, isLoading }: FortressHUDProps) {
 
         {/* Expanded drilldown */}
         {expanded && (
-          <div className="border-t border-border/50 px-3 py-2 space-y-2 max-h-[320px] overflow-y-auto">
+          <div className="border-t border-border/50 px-3 py-2 space-y-2 max-h-[200px] overflow-y-auto">
             {/* Signal Integrity */}
             <div className="space-y-1">
               <div className="text-[9px] uppercase tracking-widest text-muted-foreground font-semibold">Signal Integrity</div>

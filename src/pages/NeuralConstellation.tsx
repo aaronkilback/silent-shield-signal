@@ -585,7 +585,7 @@ const NeuralConstellation = () => {
             now sits at top:calc(55vh + 24px) — see below). Earlier the
             stack used calc(100vh - 80px) which let it cover the entire
             right column and clip activity-feed content behind it. */}
-        <div className="absolute top-4 right-4 z-20 w-[340px] space-y-2 pointer-events-auto max-h-[calc(42vh)] overflow-y-auto bg-[#020408]/85 backdrop-blur-xl rounded-lg p-2 border border-border/40">
+        <div className="absolute top-4 right-4 z-20 w-[340px] space-y-2 pointer-events-auto max-h-[calc(50vh)] overflow-y-auto bg-[#020408]/85 backdrop-blur-xl rounded-lg p-2 border border-border/40">
           {/* Benchmark health — moved to top of stack 2026-05-08:
               the prior placement (between vitals and FortressHUD) was
               below the 42vh scroll-fold so operators couldn't see it
