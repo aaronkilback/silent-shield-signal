@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
 
     const { data: clients } = await supabase
       .from('clients')
-      .select('id, name')
+      .select('id, name, high_value_assets, monitoring_keywords')
       .eq('status', 'active');
 
     if (!clients || clients.length === 0) {
@@ -99,13 +99,19 @@ Deno.serve(async (req) => {
 
       if (!signals || signals.length === 0) continue;
 
+      // Build per-client anchor candidates from high_value_assets +
+      // monitoring_keywords. These replace the hardcoded KNOWN_ASSETS
+      // list — new clients work without code changes.
+      const clientAnchors = buildClientAnchors(client);
+
       for (const pattern of patterns as SequencePattern[]) {
         const patternSinceISO = new Date(Date.now() - pattern.window_seconds * 1000).toISOString();
         const inWindow = signals.filter(s => s.created_at > patternSinceISO);
         if (inWindow.length === 0) continue;
 
-        // Group by anchor — first entity_tag, or extracted asset, or matched_client
-        const grouped = groupByAnchor(inWindow);
+        // Group by anchor — first entity_tag, matched_client, or one of
+        // the client's high_value_assets / monitoring_keywords.
+        const grouped = groupByAnchor(inWindow, clientAnchors);
 
         for (const [anchor, anchorSignals] of grouped.entries()) {
           // For each pattern stage, find matching signals
@@ -208,10 +214,10 @@ Deno.serve(async (req) => {
   }
 });
 
-function groupByAnchor(signals: SignalRow[]): Map<string, SignalRow[]> {
+function groupByAnchor(signals: SignalRow[], clientAnchors: string[]): Map<string, SignalRow[]> {
   const grouped = new Map<string, SignalRow[]>();
   for (const sig of signals) {
-    const anchor = pickAnchor(sig);
+    const anchor = pickAnchor(sig, clientAnchors);
     if (!anchor) continue;
     const norm = anchor.toLowerCase().trim().substring(0, 100);
     if (!grouped.has(norm)) grouped.set(norm, []);
@@ -220,30 +226,54 @@ function groupByAnchor(signals: SignalRow[]): Map<string, SignalRow[]> {
   return grouped;
 }
 
+// Build a flat list of anchor candidates for a client by normalizing their
+// high_value_assets + the meaningful subset of monitoring_keywords. Skips
+// short tokens (<6 chars) and generic keywords because they'd over-group.
+function buildClientAnchors(client: { high_value_assets?: string[] | null; monitoring_keywords?: string[] | null }): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (raw: string) => {
+    const norm = (raw || '').trim().toLowerCase();
+    // Strip parenthetical qualifiers: "LNG Canada terminal (Kitimat)" → "lng canada terminal"
+    const cleaned = norm.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleaned.length < 6) return;
+    if (seen.has(cleaned)) return;
+    seen.add(cleaned);
+    out.push(cleaned);
+  };
+  for (const a of client.high_value_assets ?? []) add(a);
+  for (const k of client.monitoring_keywords ?? []) {
+    // Only include monitoring_keywords that look proper-noun-ish
+    // (mixed case in original, length ≥ 8). Drops generic terms like
+    // "protest", "lawsuit", "cybersecurity vulnerability healthcare".
+    if (typeof k === 'string' && k.length >= 8 && /[A-Z]/.test(k)) add(k);
+  }
+  return out;
+}
+
 // Anchor selection precedence:
 //   1. First entity_tag (if monitor populated it)
 //   2. raw_json.matched_client (Petronas / BCCH / etc.)
-//   3. Detected asset name in title (LNG Canada, Coastal GasLink, BCCH, etc.)
+//   3. Substring match against the client's own high_value_assets /
+//      monitoring_keywords — this scales to new clients without code changes.
 //   4. null — signal can't be grouped, drops out of sequence detection
-function pickAnchor(sig: SignalRow): string | null {
+function pickAnchor(sig: SignalRow, clientAnchors: string[]): string | null {
   const tags = sig.entity_tags ?? [];
   if (tags.length > 0 && tags[0]) return tags[0];
 
   const matchedClient = sig.raw_json?.matched_client;
   if (matchedClient) return matchedClient;
 
-  const title = (sig.title ?? '').toLowerCase();
-  // Extend this list as more clients onboard. Could move to client.high_value_assets in future.
-  const KNOWN_ASSETS = [
-    'coastal gaslink', 'cgl pipeline', 'lng canada', 'kitimat lng', 'prince rupert gas',
-    'wet\'suwet\'en', 'gidimt\'en', 'unist\'ot\'en',
-    'bcch', 'bc children\'s hospital', 'gender clinic',
-    'progress energy', 'petronas',
-  ];
-  for (const asset of KNOWN_ASSETS) {
-    if (title.includes(asset)) return asset;
+  const haystack = `${sig.title ?? ''} ${sig.raw_json?.snippet ?? ''}`.toLowerCase();
+  // Prefer the LONGEST matching anchor — "lng canada terminal" beats
+  // "lng canada" beats "lng" — so the most specific group wins.
+  let best: string | null = null;
+  for (const anchor of clientAnchors) {
+    if (haystack.includes(anchor) && (!best || anchor.length > best.length)) {
+      best = anchor;
+    }
   }
-  return null;
+  return best;
 }
 
 function stageMatches(signal: SignalRow, m: StageMatch): boolean {

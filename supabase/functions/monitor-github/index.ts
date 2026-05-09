@@ -205,6 +205,16 @@ Deno.serve(async (req) => {
                 continue;
               }
 
+              // Tier 1A: track every github_repo we surface findings from.
+              // First-time-seen repos for this client are higher priority
+              // than ones we've already flagged before — operators see the
+              // novelty in raw_json downstream.
+              try {
+                const { recordObservation } = await import('../_shared/observation-baselines.ts');
+                await recordObservation(supabase, client.id, 'github_repo', repoFullName,
+                  { matched_pattern: matchedPattern, file_path: item.path });
+              } catch { /* non-blocking */ }
+
               const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
                 body: {
                   text: `GitHub Credential Exposure: file contains a credential pattern matching domain ${term} for ${client.name}.\n\nRepo: ${repoFullName}\nFile: ${item.path}\nMatched pattern: ${matchedPattern}\n\nReview the file directly to assess whether the credential is active or already-rotated. Pattern match alone confirms the file has credential-shaped content — operator must validate currency.`,

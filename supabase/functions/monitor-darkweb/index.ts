@@ -75,6 +75,17 @@ Deno.serve(async (req) => {
               .slice(0, 5);
 
             for (const breach of recent) {
+              // Tier 1A: track every breach we see for this client+domain.
+              // observation_value is `breach_name@domain` so re-emergence
+              // of an old breach (e.g. data re-shared on a new dump site)
+              // shows as first_seen_30d, not first_seen_ever.
+              try {
+                const { recordObservation } = await import('../_shared/observation-baselines.ts');
+                await recordObservation(supabase, client.id, 'hibp_breach',
+                  `${(breach.Name || 'unknown').toLowerCase()}@${domain}`,
+                  { breach_date: breach.BreachDate, pwn_count: breach.PwnCount });
+              } catch { /* non-blocking */ }
+
               const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
                 body: {
                   text: `Data Breach Detected: ${breach.Title || breach.Name}\n\nDomain: ${domain} | Breach date: ${breach.BreachDate || 'Unknown'} | Affected accounts: ${breach.PwnCount?.toLocaleString() || 'Unknown'}\n\nData exposed: ${(breach.DataClasses || []).join(', ')}\n\n${breach.Description ? breach.Description.replace(/<[^>]+>/g, '') : ''}`,

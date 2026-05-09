@@ -22,9 +22,11 @@ export type ObservationKind =
   | 'user_agent'       // for HIBP / web-scrape paths
   | 'source_ip'        // for inbound webhook / API auth events
   | 'github_repo'      // for monitor-github
+  | 'hibp_breach'      // for monitor-darkweb — value is 'breach_name@domain'
   | 'social_handle'    // for social monitors
-  | 'rss_feed_url'     // for monitor-rss-sources
-  | 'naad_event_type'; // for monitor-naad-alerts
+  | 'rss_feed_url'     // for monitor-rss-sources (architectural — sees client linkage)
+  | 'naad_event_type'  // for monitor-naad-alerts
+  | 'cve_id';          // for monitor-cisa-kev — track which CVEs hit each client
 
 export type NoveltyLabel =
   | 'first_seen'        // first time this (client, kind, value) has ever been recorded
