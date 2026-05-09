@@ -33,9 +33,6 @@ verify_jwt = false
 [functions.check-incident-escalation]
 verify_jwt = false
 
-[functions.process-feedback]
-verify_jwt = true
-
 [functions.monitor-rss-sources]
 verify_jwt = false
 
@@ -328,9 +325,6 @@ verify_jwt = false
 [functions.correlate-entities]
 verify_jwt = false
 
-[functions.create-agent]
-verify_jwt = true
-
 [functions.create-entity]
 verify_jwt = true
 
@@ -354,9 +348,6 @@ verify_jwt = true
 
 [functions.extract-signal-insights]
 verify_jwt = false
-
-[functions.generate-briefing-audio]
-verify_jwt = true
 
 [functions.generate-consortium-briefing]
 verify_jwt = true
@@ -500,9 +491,6 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.webhook-management]
-verify_jwt = true
-
-[functions.generate-embeddings]
 verify_jwt = true
 
 [functions.semantic-search]
