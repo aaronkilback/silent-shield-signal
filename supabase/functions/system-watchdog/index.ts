@@ -3002,12 +3002,24 @@ Deno.serve(async (req) => {
         const job = jobMatch?.[1] ?? null;
         // Same mapping the constellation uses (kept inline rather
         // than imported because edge functions don't share src/).
+        //
+        // 2026-05-09: re-attributed monitor-social-* + monitor-twitter
+        // from ECHO-WATCH to RYAN-INTEL. ECHO-WATCH's specialty is
+        // social ENGINEERING (phishing, CIB, influence ops, narrative
+        // manipulation) — it consumes signals across many sources for
+        // behavioral pattern detection, it is NOT the downstream owner
+        // of any single feed. RYAN-INTEL's specialty is "Threat
+        // Detection, OSINT Analysis, Behavioral Signal Mapping, Source
+        // Reliability Evaluation" — the right owner when a social-
+        // media-firehose monitor goes silent. Conflated by older
+        // mapping that treated "social" the verb the same as "social"
+        // the medium.
         const CRON_TO_AGENT: Record<string, string> = {
           'monitor-wildfires':              'WILDFIRE',
-          'monitor-social-unified':         'ECHO-WATCH',
-          'monitor-social-hourly':          'ECHO-WATCH',
-          'monitor-twitter':                'ECHO-WATCH',
-          'monitor-twitter-30min':          'ECHO-WATCH',
+          'monitor-social-unified':         'RYAN-INTEL',
+          'monitor-social-hourly':          'RYAN-INTEL',
+          'monitor-twitter':                'RYAN-INTEL',
+          'monitor-twitter-30min':          'RYAN-INTEL',
           'snapshot-bcws-ratings-daily':    'WILDFIRE',
           'monitor-cisa-kev-12h':           'NEO',
           'monitor-darkweb-6h':             'NEO',
