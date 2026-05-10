@@ -29,7 +29,13 @@ export function BenchmarkHealthPanel({ expanded: controlledExpanded, onExpandedC
     if (isControlled) onExpandedChange?.(!expanded);
     else setInternalExpanded((e) => !e);
   };
-  const { data, isFetching } = useBenchmarkHealth(expanded);
+  // 2026-05-10: load eagerly. Previously gated on `expanded` to save
+  // queries, but the collapsed-panel placeholder "never run" was
+  // misleading — it actually meant "I haven't queried yet" not "no
+  // benchmark exists." Operators read the chip without expanding;
+  // they need the score visible at a glance. Hook has a 30-min
+  // refetch interval, so cost is negligible.
+  const { data, isFetching } = useBenchmarkHealth(true);
 
   const latest = data?.latest ?? null;
   const history = data?.history ?? [];

@@ -2790,6 +2790,14 @@ Deno.serve(async (req) => {
         'monitor-github-6h',
         'monitor-github',
         'monitor-pastebin',           // similar — paste leaks are rare
+        // 2026-05-10: monitor-twitter blocked on X API budget. Cron
+        // fires every 30 min, function returns 429 and exits without
+        // writing a heartbeat. Watchdog sees no recent heartbeat and
+        // flags critical. Treat as quiet-OK until budget refills —
+        // when X API is funded again, signals will start flowing and
+        // we should remove this entry.
+        'monitor-twitter-30min',
+        'monitor-twitter',
         'monitor-pastebin-6h',
       ]);
       const SOCIAL_ALREADY_CHECKED = new Set([

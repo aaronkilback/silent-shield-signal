@@ -1441,7 +1441,21 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[Wildfires] Error:', error);
-    return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
+    const errMsg = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Wildfires] Error:', errMsg);
+    // 2026-05-10: write a failure heartbeat before returning. Without
+    // this, the function exits silently when CWFIS upstream returns
+    // 5xx (which they do — May 10 incident), and the watchdog flags
+    // the cron as "stale" because no heartbeat was written. The
+    // upstream issue is real, but the silence about it isn't useful.
+    try {
+      const supabase = createServiceClient();
+      await supabase.from('cron_heartbeat').insert({
+        job_name: 'monitor-wildfires',
+        status: 'failed',
+        error_message: errMsg.substring(0, 500),
+      });
+    } catch { /* best-effort */ }
+    return errorResponse(errMsg, 500);
   }
 });
