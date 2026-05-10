@@ -370,24 +370,34 @@ export function useAgentActivityMetrics(enabled: boolean) {
           : Infinity;
 
         // Compute absolute activity score
+        // 2026-05-10: tightened to require RECENT activity (24h) for any
+        // non-idle status. Previous version rewarded any historical scan
+        // pulse with score 0.15+ ("standby"), which let agents that
+        // hadn't actually done anything in days/weeks render as standby
+        // instead of idle. The May 9 incident exposed this: 32 agents
+        // showed "active/standby" while only 3 had real recent activity.
+        // Now the panel honestly reflects what's running NOW, not what
+        // ever ran. statusDot thresholds: > 0.35 active, > 0.05 standby,
+        // ≤ 0.05 idle.
         let score = 0;
 
         if (d.veryRecentScanCount > 0 || d.recentMsgCount > 0) {
-          // Active in last hour
+          // Active in last hour — full marks, ranked by volume
           score = 0.75 + Math.min(0.25, (d.veryRecentScanCount + d.recentMsgCount) * 0.025);
         } else if (d.recentScanCount >= 2 || d.recentMsgCount >= 2) {
-          // Active today, multiple scans
+          // Multiple scans in last 24h — solidly active
           score = 0.55 + Math.min(0.2, d.recentScanCount * 0.02);
         } else if (d.recentScanCount >= 1 || d.msgCount >= 1) {
-          // At least one scan today or any message
+          // At least one scan in last 24h — barely active
           score = 0.35 + Math.min(0.15, d.totalAlerts * 0.03);
-        } else if (d.scanCount >= 1) {
-          // Has scans but not recent (older than today, within 7 days)
-          score = 0.15 + Math.min(0.15, d.scanCount * 0.01);
-        } else if (hoursAgo <= 48) {
-          // Recently updated agent record even if no scan data
+        } else if (hoursAgo <= 24) {
+          // Last activity within 24h but no recent scan/msg — standby
           score = 0.10;
         }
+        // No "older than 24h" branch — historical traces decay to 0.
+        // An agent with 50 scans from 6 days ago and nothing since is
+        // idle, not standby. The fleet panel needs to show real-time
+        // engagement, not lifetime accumulation.
 
         return {
           callSign: cs,

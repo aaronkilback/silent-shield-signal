@@ -48,13 +48,36 @@ export function AgentListPanel({ agents, activityMetrics, onSelectAgent }: Agent
     (a) => (metricsMap.get(a.callSign)?.activityScore ?? 0) > 0.05
   ).length;
 
+  // 2026-05-10: dormancy-aware panel chrome. When fleet activation
+  // collapses (May 9 incident: 0/48 active because of upstream TDZ
+  // bug), the panel needs to LOOK alarming, not just whisper a
+  // muted footer. Thresholds: ≥80% idle = critical (red), ≥60% =
+  // warning (amber), otherwise normal.
+  const idleRatio = sorted.length > 0 ? (sorted.length - activeCount) / sorted.length : 0;
+  const dormancyTone =
+    idleRatio >= 0.8 ? 'critical'
+    : idleRatio >= 0.6 ? 'warning'
+    : 'normal';
+  const panelBorder =
+    dormancyTone === 'critical' ? 'border-red-700/60 shadow-lg shadow-red-900/20'
+    : dormancyTone === 'warning' ? 'border-amber-700/50'
+    : 'border-border';
+  const headerColor =
+    dormancyTone === 'critical' ? 'text-red-300'
+    : dormancyTone === 'warning' ? 'text-amber-300'
+    : 'text-cyan-400';
+  const dotColor =
+    dormancyTone === 'critical' ? 'bg-red-400'
+    : dormancyTone === 'warning' ? 'bg-amber-400'
+    : 'bg-emerald-400';
+
   return (
     <DraggablePanel
       className="absolute left-4 z-10 pointer-events-auto"
       style={{ top: "52px", bottom: "60px" }}
     >
       <div
-        className="h-full backdrop-blur-xl border rounded-lg bg-card/90 border-border overflow-hidden flex flex-col"
+        className={`h-full backdrop-blur-xl border rounded-lg bg-card/90 ${panelBorder} overflow-hidden flex flex-col`}
         style={{ width: "220px" }}
       >
         {/* Header */}
@@ -63,18 +86,27 @@ export function AgentListPanel({ agents, activityMetrics, onSelectAgent }: Agent
           className="px-3 py-2.5 border-b border-border/50 cursor-grab active:cursor-grabbing flex-shrink-0"
         >
           <div className="flex items-center gap-2">
-            <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+            <Cpu className={`w-3.5 h-3.5 ${headerColor}`} />
             <span
-              className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400 flex-1"
+              className={`text-[10px] font-bold uppercase tracking-[0.2em] flex-1 ${headerColor}`}
               style={{ fontFamily: "Orbitron, sans-serif" }}
             >
               Agent Network
             </span>
             <GripHorizontal className="w-3 h-3 text-muted-foreground/40" />
           </div>
+          {dormancyTone !== 'normal' && (
+            <div className={`mt-1.5 px-1.5 py-1 rounded text-[9px] font-bold uppercase tracking-wider ${
+              dormancyTone === 'critical'
+                ? 'bg-red-900/40 text-red-200 border border-red-700/40'
+                : 'bg-amber-900/30 text-amber-200 border border-amber-700/40'
+            }`}>
+              {dormancyTone === 'critical' ? '⚠ Fleet largely dormant' : '⚠ Fleet underused'}
+            </div>
+          )}
           <div className="flex items-center gap-2 mt-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[9px] text-muted-foreground font-mono flex-1">
+            <div className={`w-1.5 h-1.5 rounded-full ${dotColor} ${dormancyTone === 'normal' ? 'animate-pulse' : ''}`} />
+            <span className={`text-[9px] font-mono flex-1 ${dormancyTone === 'critical' ? 'text-red-300' : dormancyTone === 'warning' ? 'text-amber-300' : 'text-muted-foreground'}`}>
               {activeCount}/{sorted.length} ONLINE
             </span>
             <button

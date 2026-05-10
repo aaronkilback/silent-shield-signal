@@ -2971,6 +2971,60 @@ Deno.serve(async (req) => {
         });
       }
 
+      // ─── Fleet activation rate (Tier 3 meta-monitoring) ───
+      // Added May 10 2026 after the May 9 incident where 45 of 48 active
+      // agents had 0 signal_agent_analyses in 7 days — pure dormancy —
+      // and the watchdog was blind to it. The constellation page's
+      // AgentListPanel showed "0 active · 48 idle" but only as a
+      // muted footer; nothing flagged it loudly.
+      //
+      // The TDZ bug in ingest-signal compounded this: when the pipeline
+      // is broken, agents have nothing to analyze, dormancy spikes
+      // platform-wide. Without this check, dormancy was a passive UI
+      // state. Now it becomes a watchdog finding that lights up the
+      // right rail.
+      try {
+        const { data: activeAgents } = await supabase
+          .from('ai_agents')
+          .select('call_sign')
+          .eq('is_active', true);
+
+        const fleetSize = (activeAgents || []).length;
+        if (fleetSize > 0) {
+          const since = new Date(Date.now() - 7 * 24 * 3600000).toISOString();
+          const { data: recentAnalyses } = await supabase
+            .from('signal_agent_analyses')
+            .select('agent_call_sign')
+            .gte('created_at', since);
+
+          const seenAgents = new Set((recentAnalyses || []).map((r: any) => r.agent_call_sign));
+          const ranIn7d = (activeAgents || []).filter((a: any) => seenAgents.has(a.call_sign)).length;
+          const dormantPct = Math.round(((fleetSize - ranIn7d) / fleetSize) * 100);
+
+          if (dormantPct >= 80) {
+            behavioralFindings.push({
+              category: 'behavioral_health',
+              severity: 'high',
+              title: `Agent fleet largely dormant: ${ranIn7d}/${fleetSize} ran in 7d`,
+              analysis: `${fleetSize - ranIn7d} of ${fleetSize} active agents have 0 entries in signal_agent_analyses for the past 7 days (${dormantPct}% dormant). Active agents that never run = specialist reasoning never reaches signals = the platform's primary value proposition isn't engaging.`,
+              plainEnglish: `Most of the AI agent fleet is sitting idle. Either tier-2 routing in review-signal-agent is too narrow (only invoking a handful of specialties), the AI gateway is failing silently, or upstream signal flow is broken. The fleet is configured but not being used.`,
+              action: `Audit review-signal-agent specialty routing — confirm it's matching against ai_agents.specialty rather than a hardcoded list. Run a benchmark to verify pipeline end-to-end. Check function_telemetry for AI gateway error spikes in the last 7d.`,
+            });
+          } else if (dormantPct >= 60) {
+            behavioralFindings.push({
+              category: 'behavioral_health',
+              severity: 'medium',
+              title: `Agent fleet underused: ${ranIn7d}/${fleetSize} ran in 7d (${dormantPct}% dormant)`,
+              analysis: `${fleetSize - ranIn7d} of ${fleetSize} active agents have 0 signal_agent_analyses entries in 7d.`,
+              plainEnglish: `More than half the agent fleet hasn't been engaged in a week. May indicate signal-routing breadth is too narrow.`,
+              action: `Review which agent specialties are getting invoked. If only 5-10 of 48 ever run, the routing logic in review-signal-agent needs to broaden.`,
+            });
+          }
+        }
+      } catch (fleetErr) {
+        console.warn('[Watchdog] Fleet dormancy check failed:', fleetErr);
+      }
+
       console.log(`[Watchdog] Behavioral health: ${behavioralFindings.length} findings`);
     } catch (behavioralErr) {
       console.warn('[Watchdog] Behavioral health check failed:', behavioralErr);
