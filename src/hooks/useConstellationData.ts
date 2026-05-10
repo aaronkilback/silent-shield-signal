@@ -261,13 +261,35 @@ export function useAgentActivityMetrics(enabled: boolean) {
 
       const agentIdToCallSign = new Map(agents.map((a) => [a.id, a.call_sign]));
 
-      // 2. Get scan metrics — primary activity signal
-      const { data: scans } = await supabase
-        .from("autonomous_scan_results")
-        .select("agent_call_sign, signals_analyzed, alerts_generated, risk_score, created_at")
+      // 2. Get specialist-reasoning metrics — the meaningful activity signal.
+      //
+      // 2026-05-10: switched from autonomous_scan_results to
+      // signal_agent_analyses. The former is heartbeat noise (AUTO-SENTINEL
+      // threat sweeps fire on most agents every few hours regardless of
+      // whether the agent did real work) and inflated the "active" count
+      // to 42/48 even when the platform's pipeline was 100% broken
+      // (May 9 TDZ incident). signal_agent_analyses is what gets written
+      // when an agent actually reasons over a signal — the platform's
+      // primary value-delivery measure. Now the panel agrees with the
+      // watchdog dormancy finding instead of contradicting it.
+      const { data: analyses } = await supabase
+        .from("signal_agent_analyses")
+        .select("agent_call_sign, created_at, confidence_score")
         .gte("created_at", sevenDaysAgo)
         .order("created_at", { ascending: false })
-        .limit(500);
+        .limit(2000);
+
+      // Adapt analyses → the same shape the rest of this function expects
+      // (signals_analyzed=1 per row, alerts_generated=0, risk_score from
+      // confidence_score). Renamed local var stays "scans" so the existing
+      // aggregation loop below doesn't have to change.
+      const scans = (analyses ?? []).map((a: any) => ({
+        agent_call_sign: a.agent_call_sign,
+        signals_analyzed: 1,
+        alerts_generated: 0,
+        risk_score: a.confidence_score ?? null,
+        created_at: a.created_at,
+      }));
 
       // 3. Get conversations (may be empty — future data source)
       const { data: recentConvs } = await supabase
