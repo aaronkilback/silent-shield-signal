@@ -21,12 +21,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event === 'TOKEN_REFRESHED' && !session) {
-          // Refresh token expired or revoked — clear session and redirect to login
-          supabase.auth.signOut().then(() => {
-            setSession(null);
-            setUser(null);
-            setLoading(false);
-            window.location.href = '/auth';
+          // A token refresh fired with no session attached. This can be
+          // either a genuinely expired/revoked refresh token, OR a transient
+          // race where multiple concurrent supabase-js calls each tried to
+          // refresh and one of them lost the lock. Pages with lots of parallel
+          // queries (e.g. the site-audit wizard) hit this race more often.
+          //
+          // Before redirecting to /auth, double-check by calling getSession().
+          // If a valid session still exists, the event was a race we can ignore.
+          // If not, the session is genuinely dead and we sign out.
+          supabase.auth.getSession().then(({ data: { session: liveSession } }) => {
+            if (liveSession) {
+              setSession(liveSession);
+              setUser(liveSession.user);
+              setLoading(false);
+              return;
+            }
+            supabase.auth.signOut().then(() => {
+              setSession(null);
+              setUser(null);
+              setLoading(false);
+              window.location.href = '/auth';
+            });
           });
           return;
         }
