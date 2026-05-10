@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +86,10 @@ const Auth = () => {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   
   const navigate = useNavigate();
+  const location = useLocation();
+  // The route the operator was trying to reach when ProtectedRoute
+  // bounced them here. Falls back to "/" if they came directly to /auth.
+  const intendedPath: string = ((location.state as { from?: string } | null)?.from) || "/";
 
   // Fetch invitation details if token is present
   useEffect(() => {
@@ -146,7 +150,7 @@ const Auth = () => {
         if (invitation) {
           handleAcceptInvitation(session.user.id);
         } else {
-          navigate("/");
+          navigate(intendedPath);
         }
       }
     });
@@ -180,7 +184,7 @@ const Auth = () => {
         }
         // Only redirect if not already on welcome page
         if (window.location.pathname !== "/welcome") {
-          navigate("/");
+          navigate(intendedPath);
         }
       }
     });
@@ -296,8 +300,8 @@ const Auth = () => {
 
         toast.success("Welcome back to Fortress AI");
 
-        // Navigate to dashboard after successful login (no MFA case)
-        navigate("/");
+        // Navigate to intended destination (or dashboard) after successful login (no MFA case)
+        navigate(intendedPath);
       } else {
         const { error } = await supabase.auth.signUp({
           email,
@@ -348,10 +352,10 @@ const Auth = () => {
       }
       navigate(`/workspace/${invitation.workspace_id}`);
     } else {
-      navigate("/");
+      navigate(intendedPath);
     }
   };
-  
+
   const handleMFACancel = async () => {
     await supabase.auth.signOut();
     setShowMFAChallenge(false);
@@ -370,7 +374,7 @@ const Auth = () => {
       }
       navigate(`/workspace/${invitation.workspace_id}`);
     } else {
-      navigate("/");
+      navigate(intendedPath);
     }
   };
   
