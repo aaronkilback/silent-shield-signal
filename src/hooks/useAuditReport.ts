@@ -23,7 +23,8 @@ export type RiskCategory =
   | "physical_intrusion"
   | "cyber_ot_compromise"
   | "protest_disruption"
-  | "wildlife_force_majeure";
+  | "wildlife_force_majeure"
+  | "wildfire_exposure";
 
 export type ImpactLetter = "A" | "B" | "C" | "D" | "E";
 export type RatingBand = "low" | "medium" | "high" | "severe" | "catastrophic";
@@ -84,13 +85,14 @@ export interface AdjacentIncidents {
 export const RISK_CATEGORY_LABEL: Record<RiskCategory, string> = {
   theft_vandalism: "Theft / Vandalism",
   sabotage: "Sabotage",
-  environmental_damage: "Environmental Damage",
+  environmental_damage: "Environmental Damage (spill, leak)",
   insider_threat: "Insider Threat",
   tampering_supply_chain: "Tampering / Supply Chain",
   physical_intrusion: "Physical Intrusion",
   cyber_ot_compromise: "Cyber / OT Compromise",
   protest_disruption: "Protest / Operational Disruption",
-  wildlife_force_majeure: "Wildlife / Force Majeure",
+  wildlife_force_majeure: "Wildlife Encounter (bear, wolf, moose)",
+  wildfire_exposure: "Wildfire Exposure",
 };
 
 export const LIKELIHOOD_LABEL: Record<1 | 2 | 3 | 4 | 5, string> = {

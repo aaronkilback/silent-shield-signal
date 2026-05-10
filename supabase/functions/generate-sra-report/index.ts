@@ -97,6 +97,49 @@ Deno.serve(async (req) => {
       { p_asset_id: audit.asset.id, p_radius_km: 25 } as never,
     );
 
+    // Pull substrate context (regional district, fire centre, health
+    // authority, nearby features) if the asset has a geom. Used in
+    // the narrative for fire/wildlife/jurisdictional grounding.
+    let substrateContext: { summary_text?: string; jurisdictions?: Array<{ name: string; layer: string }> } | null = null;
+    let wildfireContext: { active_within_50km: number; recent_signals_90d: number; fire_centre: string | null } = {
+      active_within_50km: 0, recent_signals_90d: 0, fire_centre: null,
+    };
+    if (audit.asset) {
+      const assetGeom = await supabase
+        .from("client_assets")
+        .select("geom")
+        .eq("id", audit.asset.id)
+        .maybeSingle();
+      // PostgREST returns geom as GeoJSON; extract coords if present.
+      const g = (assetGeom.data as { geom?: { coordinates?: [number, number] } } | null)?.geom;
+      if (g && Array.isArray(g.coordinates)) {
+        const [lng, lat] = g.coordinates;
+        try {
+          const ctxRes = await supabase.functions.invoke("get-site-context", {
+            body: { lat, lng, radius_km: 25 },
+          });
+          substrateContext = ctxRes.data as never;
+          const fireCentre = (substrateContext?.jurisdictions ?? []).find(
+            (j) => j.layer === "bc_fire_service_area",
+          );
+          wildfireContext.fire_centre = fireCentre?.name ?? null;
+        } catch (err) {
+          console.warn("substrate context fetch failed", err);
+        }
+
+        // Count wildfire signals near this asset's location in last 90 days.
+        // The signals table doesn't have a uniform geom column, so we filter
+        // by signal_type + recency + client and accept a coarse count.
+        const { count: wfCount } = await supabase
+          .from("signals")
+          .select("id", { count: "exact", head: true })
+          .eq("client_id", (audit.asset as { client_id?: string }).client_id ?? "")
+          .or("signal_type.eq.wildfire,category.eq.wildfire,signal_type.eq.ambiguous_near_facility")
+          .gte("created_at", new Date(Date.now() - 90 * 86_400_000).toISOString());
+        wildfireContext.recent_signals_90d = wfCount ?? 0;
+      }
+    }
+
     // Sign URLs for the photos that go into Appendix A.
     const photos = media.filter((m) => m.kind === "photo");
     const signedPhotos = await Promise.all(photos.map(async (p) => ({
@@ -114,6 +157,7 @@ Deno.serve(async (req) => {
       audit, asset: audit.asset, features, ratings, recs,
       adjacentAudits: (adjacent as { audits?: unknown[] } | null)?.audits ?? [],
       adjacentSignals: (adjacent as { signals?: unknown[] } | null)?.signals ?? [],
+      substrateContext, wildfireContext,
     });
 
     // ─── Render HTML ───────────────────────────────────────────────
@@ -154,6 +198,8 @@ async function draftNarrative(input: {
   recs: Array<{ bucket: string; description: string }>;
   adjacentAudits: unknown[];
   adjacentSignals: unknown[];
+  substrateContext: { summary_text?: string; jurisdictions?: Array<{ name: string; layer: string }> } | null;
+  wildfireContext: { active_within_50km: number; recent_signals_90d: number; fire_centre: string | null };
 }): Promise<{ threat_environment: string; vulnerabilities: string[]; summary: string }> {
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
   if (!OPENAI_API_KEY) {
@@ -166,8 +212,16 @@ async function draftNarrative(input: {
 
   const featureSummary = input.features.map((f) => `${f.feature_type}${f.label ? ` "${f.label}"` : ""}`).join("; ");
   const ratingsSummary = input.ratings.map((r) => `${r.risk_category}=${r.rating_label}`).join("; ");
+  const substrateLine = input.substrateContext?.summary_text
+    ? `Jurisdictions: ${input.substrateContext.summary_text}`
+    : "Jurisdictions: not resolved (asset has no GPS yet)";
+  const wildfireLine = `Fire centre: ${input.wildfireContext.fire_centre ?? "unresolved"}; wildfire/ambiguous-flare signals for this client in last 90d: ${input.wildfireContext.recent_signals_90d}`;
+  // Detect wildlife-relevant observations from captured features / labels.
+  const wildlifeMentions = input.features.filter((f) =>
+    /bear|wolf|moose|wildlife|tracks|den/i.test([f.label, JSON.stringify(f.attributes ?? {})].join(" "))
+  ).length;
 
-  const prompt = `You are drafting three narrative sections for a Security Risk Assessment in Aaron Kilback's voice (concise, operational, no marketing).
+  const prompt = `You are drafting three narrative sections for a Security Risk Assessment in Aaron Kilback's voice (concise, operational, no marketing). The site is in remote NE BC oil & gas country — wildfire and wildlife are first-class operational risks alongside theft/vandalism.
 
 Site: ${input.asset.name} (${input.asset.asset_class}, status: ${input.asset.operational_status})
 Captured features: ${featureSummary || "none captured"}
@@ -175,20 +229,32 @@ Risk ratings: ${ratingsSummary || "none rated"}
 Recommendations on file: ${input.recs.length}
 Adjacent audits in last 12 mo: ${input.adjacentAudits.length}
 Adjacent signals: ${input.adjacentSignals.length}
+${substrateLine}
+${wildfireLine}
+Wildlife-tagged feature observations: ${wildlifeMentions}
 Operator's own summary: ${input.audit.summary_text || "(not provided)"}
 
 Output JSON only:
 {
-  "threat_environment": "2-4 sentence narrative of the threat environment for this site, derived ONLY from the captured data above. Mention the unauthorized-access risk, asset value implications, and operational state.",
-  "vulnerabilities": ["bullet 1", "bullet 2", ...],   // each derived from captured features (e.g. no fence_segment captured → 'No fencing or physical barrier'). Maximum 6 bullets.
-  "summary": "1-paragraph summary in operator voice. If operator provided their own summary above, refine it; otherwise draft one from the data."
+  "threat_environment": "3-5 sentence narrative covering: (1) unauthorized-access risk based on operational state + perimeter features, (2) WILDFIRE risk for this site — reference the fire centre and recent fire signal volume if known; note proximity-to-facility considerations; (3) WILDLIFE risk — bear/wolf/moose encounters for remote shut-in sites where personnel patrols are limited. Derived ONLY from the captured data above.",
+  "vulnerabilities": ["bullet 1", "bullet 2", ...],
+  "summary": "1-paragraph summary in operator voice. Must explicitly mention wildfire and wildlife exposure when relevant to the operational state (e.g. shut-in sites with no personnel are more vulnerable to both)."
 }
 
+Vulnerabilities should include (where supported by data):
+- No fencing / damaged fencing → "No fencing or physical barrier..."
+- Lighting removed → "Loss of nighttime deterrence"
+- Shut-in / unmanned → "No designated personnel — slower response to fire ignition or wildlife encounter"
+- Remote response time → "Emergency response > 2 hrs; nearest fire crew via ${input.wildfireContext.fire_centre ?? 'regional centre'}"
+- High wildfire signal volume → "Elevated fire-season exposure based on N signals within 90 days"
+- High-value targets → "${input.features.filter(f => f.feature_type === 'high_value_target').length} high-value targets unsecured" (only if count > 0)
+
 Anti-fabrication:
-- Do NOT invent threats not supported by the captured data.
-- If the data is sparse, say so plainly ("Limited capture in this audit; recommend follow-up").
-- Use specific feature counts where possible ("3 cameras documented, 0 with PTZ capability").
-- Do NOT use words like "robust", "comprehensive", or marketing language.`;
+- Do NOT invent threats not supported by the data.
+- Do NOT manufacture a specific fire incident; reference signal counts and fire centre only.
+- For wildlife: only mention specific species if the operator's notes mention them; otherwise speak generally ("wildlife encounters typical of remote NE BC operations").
+- Use specific feature counts ("3 cameras documented, 0 with PTZ").
+- Skip marketing words ("robust", "comprehensive").`;
 
   try {
     const apiResp = await fetch("https://api.openai.com/v1/chat/completions", {

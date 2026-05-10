@@ -37,13 +37,14 @@ interface RiskMatrixGridProps {
 const DEFAULT_CATEGORIES: RiskCategory[] = [
   "theft_vandalism",
   "sabotage",
-  "environmental_damage",
   "physical_intrusion",
+  "environmental_damage",
+  "wildfire_exposure",
+  "wildlife_force_majeure",
   "insider_threat",
   "tampering_supply_chain",
   "cyber_ot_compromise",
   "protest_disruption",
-  "wildlife_force_majeure",
 ];
 
 const BAND_CLASS: Record<RatingBand, string> = {
