@@ -64,6 +64,7 @@ const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
 const WildfirePortal = lazyWithRetry(() => import("./pages/WildfirePortal"));
 const SuperAdminDashboard = lazyWithRetry(() => import("./pages/SuperAdminDashboard"));
 const VIPDeepScan = lazyWithRetry(() => import("./pages/VIPDeepScan"));
+const SiteAudits = lazyWithRetry(() => import("./pages/SiteAudits"));
 const Consortia = lazyWithRetry(() => import("./pages/Consortia"));
 const IntelligenceHub = lazyWithRetry(() => import("./pages/IntelligenceHub"));
 const BriefingFeedback = lazyWithRetry(() => import("./pages/BriefingFeedback"));
@@ -157,6 +158,8 @@ const App = () => {
                       <Route path="/matching-dashboard" element={<ProtectedRoute><MatchingDashboard /></ProtectedRoute>} />
                       <Route path="/workspace/:id" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
                       <Route path="/vip-deep-scan" element={<ProtectedRoute><VIPDeepScan /></ProtectedRoute>} />
+                      <Route path="/site-audits" element={<ProtectedRoute><SiteAudits /></ProtectedRoute>} />
+                      <Route path="/site-audits/:id" element={<ProtectedRoute><SiteAudits /></ProtectedRoute>} />
                       <Route path="/consortia" element={<ProtectedRoute><Consortia /></ProtectedRoute>} />
                       <Route path="/intelligence-hub" element={<ProtectedRoute><IntelligenceHub /></ProtectedRoute>} />
                       <Route path="/agents" element={<ProtectedRoute><Agents /></ProtectedRoute>} />
