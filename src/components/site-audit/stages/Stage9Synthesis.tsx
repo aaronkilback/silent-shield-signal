@@ -15,9 +15,11 @@ import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle, Loader2 } from "lucide-react";
+import { CheckCircle, Loader2, Sparkles, AlertTriangle } from "lucide-react";
 import { type ClientAsset, type SiteAudit, type SiteObservation } from "@/hooks/useSiteAudit";
 import { VoiceDictationInput } from "@/components/vip-deep-scan/VoiceDictationInput";
+import { useRunStageCoverageAnalysis, useStageCoverageAnalysis } from "@/hooks/useMediaAnalysis";
+import { toast } from "sonner";
 
 interface Stage9Props {
   audit: SiteAudit & { asset: ClientAsset | null };
@@ -77,6 +79,9 @@ export function Stage9Synthesis({ audit, observations, onComplete, isCompleting 
           ))}
       </div>
 
+      {/* Coverage analysis — operator can run a per-stage AI sweep */}
+      <CoverageAnalysisPanel auditId={audit.id} />
+
       {/* Operator summary */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -112,6 +117,78 @@ export function Stage9Synthesis({ audit, observations, onComplete, isCompleting 
         <p className="text-xs text-muted-foreground text-center">
           No observations captured yet. Walk through the earlier stages first.
         </p>
+      )}
+    </div>
+  );
+}
+
+const COVERAGE_STAGES = ["perimeter", "access_personnel", "ot_ics", "comms", "external_intel"] as const;
+
+function CoverageAnalysisPanel({ auditId }: { auditId: string }) {
+  const run = useRunStageCoverageAnalysis();
+  const [activeStage, setActiveStage] = useState<typeof COVERAGE_STAGES[number] | null>(null);
+  const existing = useStageCoverageAnalysis(auditId, activeStage ?? "");
+
+  const handleRun = async (stage: typeof COVERAGE_STAGES[number]) => {
+    setActiveStage(stage);
+    try {
+      await run.mutateAsync({ audit_id: auditId, stage });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Coverage analysis failed");
+    }
+  };
+
+  return (
+    <div className="rounded border bg-gradient-to-br from-amber-50/40 to-transparent dark:from-amber-950/10 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+        <Sparkles className="w-4 h-4" />
+        Agent coverage sweep
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Run a per-stage analysis across all photos captured this audit. Surfaces gaps the operator may have missed.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {COVERAGE_STAGES.map((s) => (
+          <Button
+            key={s}
+            size="sm"
+            variant={activeStage === s ? "default" : "outline"}
+            onClick={() => handleRun(s)}
+            disabled={run.isPending && activeStage === s}
+            className="h-7 text-xs"
+          >
+            {run.isPending && activeStage === s && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+            {stageLabel(s)}
+          </Button>
+        ))}
+      </div>
+
+      {activeStage && existing.data && existing.data.findings.length > 0 && (
+        <div className="space-y-1.5 pt-2 border-t border-foreground/10">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">
+            {stageLabel(activeStage)} — {existing.data.photos_analyzed} photo{existing.data.photos_analyzed === 1 ? "" : "s"} analyzed
+          </div>
+          <ul className="space-y-1">
+            {existing.data.findings.map((f, i) => (
+              <li key={i} className="text-sm border-l-2 border-amber-500/70 pl-2 py-1">
+                <div className="flex items-start gap-1.5">
+                  <AlertTriangle className="w-3 h-3 mt-0.5 text-amber-600 shrink-0" />
+                  <div>
+                    <div className="font-medium">{f.description}</div>
+                    {f.rationale && (
+                      <div className="text-xs text-muted-foreground italic mt-0.5">{f.rationale}</div>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {activeStage && existing.data && existing.data.findings.length === 0 && existing.data.status === "complete" && (
+        <div className="text-xs text-emerald-700 dark:text-emerald-500 pt-2 border-t border-foreground/10">
+          ✓ {stageLabel(activeStage)} coverage looks complete — no gaps flagged.
+        </div>
       )}
     </div>
   );

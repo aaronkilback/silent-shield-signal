@@ -18,9 +18,10 @@
  */
 
 import { useState, useRef } from "react";
-import { Camera, Upload, Loader2, MapPin, AlertTriangle, FileText } from "lucide-react";
+import { Camera, Upload, Loader2, MapPin, AlertTriangle, FileText, Sparkles, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUploadMedia, type MediaAsset } from "@/hooks/useMediaAssets";
+import { usePhotoAnalysis, type PhotoFinding } from "@/hooks/useMediaAnalysis";
 import { confidenceLabel, type ParsedExif } from "@/lib/exif-parser";
 import { toast } from "sonner";
 
@@ -209,51 +210,130 @@ function UploadResultPreview({ result }: { result: { media_asset: MediaAsset; ex
   const isPhoto = media_asset.kind === "photo";
   const hasLocation = exif.lat !== null && exif.lng !== null;
 
+  // Fire + poll AI analysis for photos. The hook self-fires on mount.
+  const analysis = usePhotoAnalysis(isPhoto ? media_asset.id : null);
+
   return (
-    <div className="rounded border bg-card p-3 flex gap-3">
-      {isPhoto && signed_url ? (
-        <img src={signed_url} alt="" className="w-24 h-24 object-cover rounded border" />
-      ) : (
-        <div className="w-24 h-24 rounded border bg-muted flex items-center justify-center">
-          <FileText className="w-8 h-8 text-muted-foreground" />
-        </div>
-      )}
-      <div className="flex-1 min-w-0 space-y-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium truncate">{media_asset.filename}</span>
-          <RecentBadge result={result} />
-        </div>
-        {hasLocation ? (
-          <div className="text-xs text-muted-foreground space-y-0.5">
-            <div className="flex items-center gap-1">
-              <MapPin className="w-3 h-3" />
-              {exif.lat!.toFixed(5)}, {exif.lng!.toFixed(5)}
-              {exif.altitude_m !== null && ` · ${exif.altitude_m.toFixed(0)}m`}
+    <div className="rounded border bg-card p-3 space-y-3">
+      <div className="flex gap-3">
+        {isPhoto && signed_url ? (
+          <img src={signed_url} alt="" className="w-24 h-24 object-cover rounded border" />
+        ) : (
+          <div className="w-24 h-24 rounded border bg-muted flex items-center justify-center">
+            <FileText className="w-8 h-8 text-muted-foreground" />
+          </div>
+        )}
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium truncate">{media_asset.filename}</span>
+            <RecentBadge result={result} />
+          </div>
+          {hasLocation ? (
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              <div className="flex items-center gap-1">
+                <MapPin className="w-3 h-3" />
+                {exif.lat!.toFixed(5)}, {exif.lng!.toFixed(5)}
+                {exif.altitude_m !== null && ` · ${exif.altitude_m.toFixed(0)}m`}
+              </div>
+              {exif.bearing_deg !== null && (
+                <div>📐 Bearing {exif.bearing_deg.toFixed(0)}° {exif.bearing_ref ?? "T"}</div>
+              )}
+              {exif.is_theodolite && exif.pitch_deg !== null && (
+                <div className="text-muted-foreground/70">
+                  Pitch {exif.pitch_deg.toFixed(1)}° · Roll {exif.roll_deg?.toFixed(1)}°
+                  {(Math.abs(exif.pitch_deg) > 10 || Math.abs(exif.roll_deg ?? 0) > 10) && (
+                    <span className="text-amber-600 ml-1">⚠ off-axis</span>
+                  )}
+                </div>
+              )}
+              {exif.captured_at && (
+                <div className="text-muted-foreground/70">
+                  {new Date(exif.captured_at).toLocaleString()}
+                </div>
+              )}
             </div>
-            {exif.bearing_deg !== null && (
-              <div>📐 Bearing {exif.bearing_deg.toFixed(0)}° {exif.bearing_ref ?? "T"}</div>
-            )}
-            {exif.is_theodolite && exif.pitch_deg !== null && (
-              <div className="text-muted-foreground/70">
-                Pitch {exif.pitch_deg.toFixed(1)}° · Roll {exif.roll_deg?.toFixed(1)}°
-                {(Math.abs(exif.pitch_deg) > 10 || Math.abs(exif.roll_deg ?? 0) > 10) && (
-                  <span className="text-amber-600 ml-1">⚠ off-axis</span>
-                )}
-              </div>
-            )}
-            {exif.captured_at && (
-              <div className="text-muted-foreground/70">
-                {new Date(exif.captured_at).toLocaleString()}
-              </div>
-            )}
-          </div>
-        ) : isPhoto ? (
-          <div className="text-xs text-amber-700 dark:text-amber-500 flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" />
-            No GPS metadata — operator must drop pin manually
-          </div>
-        ) : null}
+          ) : isPhoto ? (
+            <div className="text-xs text-amber-700 dark:text-amber-500 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              No GPS metadata — operator must drop pin manually
+            </div>
+          ) : null}
+        </div>
       </div>
+
+      {isPhoto && (
+        <AiFindingsPanel status={analysis.status} findings={analysis.findings?.findings ?? null} imageQuality={analysis.findings?.image_quality ?? null} error={analysis.error} />
+      )}
+    </div>
+  );
+}
+
+function AiFindingsPanel({
+  status,
+  findings,
+  imageQuality,
+  error,
+}: {
+  status: string;
+  findings: PhotoFinding[] | null;
+  imageQuality: string | null;
+  error: string | null;
+}) {
+  if (status === "running" || status === "pending") {
+    return (
+      <div className="text-xs text-muted-foreground flex items-center gap-1.5 border-t pt-2">
+        <Sparkles className="w-3 h-3 animate-pulse text-amber-600" />
+        Agent reviewing photo…
+      </div>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <div className="text-xs text-amber-700 flex items-center gap-1.5 border-t pt-2">
+        <AlertCircle className="w-3 h-3" />
+        Agent review failed{error ? ` — ${error.substring(0, 80)}` : ""}
+      </div>
+    );
+  }
+  if (status === "skipped" || !findings) return null;
+
+  if (findings.length === 0) {
+    return (
+      <div className="text-xs text-emerald-700 dark:text-emerald-500 flex items-center gap-1.5 border-t pt-2">
+        <Sparkles className="w-3 h-3" />
+        Agent review: no concerns flagged
+        {imageQuality && imageQuality !== "good" && imageQuality !== "acceptable" && (
+          <span className="text-amber-600 ml-1">(image quality: {imageQuality})</span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t pt-2 space-y-1.5">
+      <div className="text-xs font-medium flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+        <Sparkles className="w-3 h-3" />
+        Agent flagged {findings.length} observation{findings.length === 1 ? "" : "s"}
+      </div>
+      <ul className="space-y-1">
+        {findings.map((f, i) => (
+          <li
+            key={i}
+            className={`text-xs border-l-2 pl-2 py-1 ${
+              f.severity === "concerning"
+                ? "border-red-500/70 bg-red-50/30 dark:bg-red-950/10"
+                : f.severity === "monitor"
+                  ? "border-amber-500/70"
+                  : "border-muted-foreground/30"
+            }`}
+          >
+            <div className="font-medium">{f.description}</div>
+            <div className="text-muted-foreground italic mt-0.5">
+              {f.category} · {f.severity} · cue: {f.visual_cue}
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
