@@ -1,4 +1,4 @@
-import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch, Swords, ScanEye, Share2, Brain, GraduationCap } from "lucide-react";
+import { Shield, Activity, LogOut, Home, AlertTriangle, Users, FileText, ClipboardList, ClipboardCheck, Radio, Plane, Menu, Bot, ChevronDown, Settings, Database, Building2, Bug, CheckCircle, UserCog, Crosshair, Radar, Plug, BarChart3, FileSearch, Swords, ScanEye, Share2, Brain, GraduationCap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -113,6 +113,7 @@ export const Header = () => {
     { path: "/agent-actions", icon: CheckCircle, label: "Agent Actions", badge: pendingAgentActions },
     { path: "/task-force", icon: Swords, label: "Task Force" },
     ...(isSuperAdmin ? [{ path: "/vip-deep-scan", icon: ScanEye, label: "Vulnerability Scan" }] : []),
+    { path: "/site-audits", icon: ClipboardCheck, label: "Site Audits", matchPrefix: true },
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
     { path: "/security-advisor", icon: Shield, label: "Security Advisor" },

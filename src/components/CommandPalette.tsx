@@ -12,7 +12,7 @@ import {
 import {
   Shield, AlertTriangle, Radio, Search, Users, FileText,
   Plane, Bug, Settings, Zap, Globe, UserCheck, Layers,
-  Activity, Target, Link, MessageSquare,
+  Activity, Target, Link, MessageSquare, ClipboardCheck,
 } from "lucide-react";
 import { useUserRole } from "@/hooks/useUserRole";
 
@@ -58,6 +58,7 @@ export const CommandPalette = () => {
 
     // Operations
     { path: "/travel", label: "Travel Security", icon: Plane, keywords: ["travel", "itineraries", "trips", "security"], group: "operations" },
+    { path: "/site-audits", label: "Site Audits", icon: ClipboardCheck, keywords: ["site", "audit", "audits", "wellpad", "perimeter", "fence", "camera", "walk", "wizard", "field"], group: "operations" },
     { path: "/clients", label: "Clients", icon: UserCheck, keywords: ["clients", "accounts", "organizations"], group: "operations" },
     { path: "/command-center", label: "AI Agents", icon: Zap, keywords: ["agents", "command", "automation", "ai"], group: "operations" },
     { path: "/security-advisor", label: "Security Advisor", icon: Shield, keywords: ["security", "wraith", "breach", "phishing", "wifi", "bluetooth", "password", "hack"], group: "operations" },
