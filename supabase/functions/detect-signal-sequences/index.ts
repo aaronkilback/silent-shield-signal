@@ -161,6 +161,29 @@ Deno.serve(async (req) => {
           const sequenceScore = matchedStages.length / pattern.stages.length;
           const status = sequenceScore >= 0.66 ? 'escalated' : 'open';
 
+          // 2026-05-10: respect operator dismissals. The May 9 cron
+          // kept resurrecting a Coastal GasLink reputational_attack
+          // false positive even after the operator manually set
+          // status='dismissed' — because this query found the row by
+          // (pattern, client, anchor, window) regardless of status
+          // and proceeded to update it. Now we treat dismissed/resolved
+          // as a sticky "leave it alone" — if such a row exists in the
+          // current window, skip both update and re-create.
+          const { data: dismissedExisting } = await supabase
+            .from('signal_sequences')
+            .select('id, status')
+            .eq('pattern_id', pattern.id)
+            .eq('client_id', client.id)
+            .eq('anchor_label', anchor)
+            .gt('last_event_at', patternSinceISO)
+            .in('status', ['dismissed', 'resolved'])
+            .limit(1)
+            .maybeSingle();
+          if (dismissedExisting) {
+            console.log(`[Sequences] skip ${pattern.name}/${anchor} — operator-dismissed (id=${dismissedExisting.id})`);
+            continue;
+          }
+
           const { data: existing } = await supabase
             .from('signal_sequences')
             .select('id, signal_ids, matched_stages, status')
@@ -168,6 +191,7 @@ Deno.serve(async (req) => {
             .eq('client_id', client.id)
             .eq('anchor_label', anchor)
             .gt('last_event_at', patternSinceISO)
+            .in('status', ['open', 'escalated'])
             .order('last_event_at', { ascending: false })
             .limit(1)
             .maybeSingle();
