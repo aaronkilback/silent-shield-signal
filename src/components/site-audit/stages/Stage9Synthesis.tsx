@@ -15,11 +15,15 @@ import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle, Loader2, Sparkles, AlertTriangle } from "lucide-react";
+import { CheckCircle, Loader2, Sparkles, AlertTriangle, FileText, MapPin, ExternalLink } from "lucide-react";
 import { type ClientAsset, type SiteAudit, type SiteObservation } from "@/hooks/useSiteAudit";
 import { VoiceDictationInput } from "@/components/vip-deep-scan/VoiceDictationInput";
 import { useRunStageCoverageAnalysis, useStageCoverageAnalysis } from "@/hooks/useMediaAnalysis";
+import { useAdjacentIncidents, useGenerateSRAReport } from "@/hooks/useAuditReport";
+import { RiskMatrixGrid } from "@/components/site-audit/RiskMatrixGrid";
+import { RecommendationsEditor } from "@/components/site-audit/RecommendationsEditor";
 import { toast } from "sonner";
+import { formatDistanceToNow } from "date-fns";
 
 interface Stage9Props {
   audit: SiteAudit & { asset: ClientAsset | null };
@@ -79,8 +83,32 @@ export function Stage9Synthesis({ audit, observations, onComplete, isCompleting 
           ))}
       </div>
 
+      {/* Risk matrix — 5x5 rating per category */}
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Risk Assessment</Label>
+        <p className="text-xs text-muted-foreground">
+          Rate each risk category on the 5×5 matrix. AI may pre-fill based on captured features; tap to override.
+        </p>
+        <RiskMatrixGrid auditId={audit.id} />
+      </div>
+
+      {/* Adjacent incidents — sister-site events within 25km */}
+      {audit.asset && <AdjacentIncidentsPanel assetId={audit.asset.id} />}
+
+      {/* Recommendations — bucketed action items */}
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Recommendations</Label>
+        <p className="text-xs text-muted-foreground">
+          Action items the operator wants captured in the report. Add manually or use the Generate Report flow to draft AI suggestions.
+        </p>
+        <RecommendationsEditor auditId={audit.id} />
+      </div>
+
       {/* Coverage analysis — operator can run a per-stage AI sweep */}
       <CoverageAnalysisPanel auditId={audit.id} />
+
+      {/* SRA report generation */}
+      <GenerateReportPanel auditId={audit.id} />
 
       {/* Operator summary */}
       <div className="space-y-2">
@@ -190,6 +218,122 @@ function CoverageAnalysisPanel({ auditId }: { auditId: string }) {
           ✓ {stageLabel(activeStage)} coverage looks complete — no gaps flagged.
         </div>
       )}
+    </div>
+  );
+}
+
+function AdjacentIncidentsPanel({ assetId }: { assetId: string }) {
+  const { data, isLoading } = useAdjacentIncidents(assetId);
+  if (isLoading) return null;
+  if (!data) return null;
+
+  const totalAudits = data.audits?.length ?? 0;
+  const totalSignals = data.signals?.length ?? 0;
+  if (data.note) {
+    return (
+      <div className="rounded border bg-amber-50/40 dark:bg-amber-950/10 p-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1.5"><MapPin className="w-3 h-3" /> Adjacent incidents</div>
+        <div className="italic mt-1">{data.note}</div>
+      </div>
+    );
+  }
+
+  if (totalAudits === 0 && totalSignals === 0) {
+    return (
+      <div className="rounded border bg-emerald-50/40 dark:bg-emerald-950/10 p-3 text-xs">
+        <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
+          <MapPin className="w-3 h-3" /> No adjacent incidents within {data.radius_km}km in last 12 months
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded border p-3 space-y-2">
+      <div className="text-sm font-medium flex items-center gap-1.5">
+        <MapPin className="w-4 h-4 text-amber-600" />
+        Adjacent incidents ({data.radius_km}km, last 12 mo)
+      </div>
+      {totalAudits > 0 && (
+        <div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Sister-site audits ({totalAudits})</div>
+          <ul className="space-y-1 mt-1">
+            {data.audits.map((a) => (
+              <li key={a.id} className="text-sm border-l-2 border-amber-500/70 pl-2 py-0.5">
+                <span className="font-medium">{a.asset_name}</span>
+                <span className="text-xs text-muted-foreground ml-2">
+                  {a.distance_km}km · {formatDistanceToNow(new Date(a.completed_at), { addSuffix: true })}
+                </span>
+                {a.summary_text && (
+                  <div className="text-xs text-muted-foreground line-clamp-2">{a.summary_text}</div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {totalSignals > 0 && (
+        <div>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Recent signals ({totalSignals})</div>
+          <ul className="space-y-0.5 mt-1">
+            {data.signals.map((s) => (
+              <li key={s.id} className="text-sm">
+                <span className="text-xs uppercase text-muted-foreground mr-1">{s.severity}</span>
+                {s.title}
+                <span className="text-xs text-muted-foreground ml-1">
+                  · {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GenerateReportPanel({ auditId }: { auditId: string }) {
+  const generate = useGenerateSRAReport();
+  const [reportUrl, setReportUrl] = useState<string | null>(null);
+
+  const handleGenerate = async () => {
+    try {
+      const result = await generate.mutateAsync({ audit_id: auditId });
+      setReportUrl(result.signed_url);
+      toast.success("SRA report generated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Report generation failed");
+    }
+  };
+
+  return (
+    <div className="rounded border bg-gradient-to-br from-blue-50/40 to-transparent dark:from-blue-950/10 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-400">
+        <FileText className="w-4 h-4" />
+        Generate SRA report
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Renders the captured audit (features, photos, risk ratings, recommendations, adjacent incidents) into a finished SRA matching the standard operator format.
+      </p>
+      <div className="flex items-center gap-2">
+        <Button onClick={handleGenerate} disabled={generate.isPending} size="sm">
+          {generate.isPending ? (
+            <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Generating…</>
+          ) : (
+            <>Generate report</>
+          )}
+        </Button>
+        {reportUrl && (
+          <a
+            href={reportUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm flex items-center gap-1 text-blue-700 dark:text-blue-400 hover:underline"
+          >
+            View latest <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
+      </div>
     </div>
   );
 }
