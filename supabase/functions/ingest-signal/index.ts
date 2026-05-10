@@ -217,16 +217,24 @@ Deno.serve(async (req) => {
     // metadata to raw_json so review-signal-agent and operators can see
     // whether this signal is from a brand-new source for this client. Best
     // effort — failures here MUST NOT block ingest.
-    if (clientId) {
+    //
+    // 2026-05-10 fix: previously referenced `clientId` here, but `clientId`
+    // is `let`-declared at line ~587 — TDZ violation threw "Cannot access
+    // 'clientId' before initialization" on every ingest, breaking the
+    // benchmark and the live signal pipeline silently. Use the request-
+    // body values (client_id snake or clientIdCamel) instead — those are
+    // already destructured at line 133 and stable here.
+    const noveltyClientId = client_id || clientIdCamel || null;
+    if (noveltyClientId) {
       try {
         const { recordObservation, extractDomain } = await import('../_shared/observation-baselines.ts');
         const domain = extractDomain(source_url) ?? extractDomain(signalRaw?.source_url);
         const noveltyMeta: Record<string, unknown> = {};
         if (domain) {
-          noveltyMeta.domain = await recordObservation(supabase, clientId, 'source_domain', domain);
+          noveltyMeta.domain = await recordObservation(supabase, noveltyClientId, 'source_domain', domain);
         }
         if (source_key) {
-          noveltyMeta.source_key = await recordObservation(supabase, clientId, 'source_key', source_key);
+          noveltyMeta.source_key = await recordObservation(supabase, noveltyClientId, 'source_key', source_key);
         }
         if (Object.keys(noveltyMeta).length > 0) {
           signalRaw = { ...signalRaw, novelty: noveltyMeta };
