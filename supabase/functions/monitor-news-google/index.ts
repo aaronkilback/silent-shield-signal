@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
     // of strings.
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, industry, monitoring_keywords, monitoring_config');
+      .select('id, name, industry, monitoring_keywords, monitoring_config, tactic_keywords');
 
     if (clientsError) throw clientsError;
 
@@ -149,27 +149,18 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 2026-05-09: tactic-term queries that land protest/activism news
-      // even when the article doesn't name a client-specific keyword.
-      // Splunk Cookbook follow-up — broaden beyond named entities so
-      // generic-coverage-quiet weeks (May 1-9 2026 had 0 protest signals
-      // for 6 of 7 days because every monitor query required a Wet'suwet'en
-      // / Coastal GasLink / Stand.earth-style proper-noun match) start
-      // producing volume. Each tactic still gets the Canada/BC geo
-      // restriction so we don't pull global protest news.
-      const TACTIC_TERMS = [
-        'direct action pipeline',
-        'encampment First Nation',
-        'land defenders blockade',
-        'rail blockade Indigenous',
-        'pipeline protest',
-        'climate camp',
-        'occupation protest',
-        'gender clinic protest',
-        'anti-trans protest',
-        'parental rights protest',
-      ];
-      for (const tactic of TACTIC_TERMS) {
+      // 2026-05-10: tactic terms moved to per-client clients.tactic_keywords.
+      // The previous hardcoded TACTIC_TERMS list mixed Petronas oil/gas
+      // protest tactics with BCCH gender-clinic protest tactics — fine
+      // for those two clients, useless for any future client onboarded
+      // (a tech company, retailer, etc.) without code edits. Now each
+      // client's threat-domain tactics are queried only against that
+      // client. Onboarding client #3 = populate clients.tactic_keywords,
+      // no deploy.
+      const tacticKeywords: string[] = Array.isArray((client as any).tactic_keywords)
+        ? (client as any).tactic_keywords.filter((t: any) => typeof t === 'string' && t.trim().length >= 4)
+        : [];
+      for (const tactic of tacticKeywords) {
         queries.push(withNeg(`"${tactic}" Canada OR "British Columbia"`));
       }
 

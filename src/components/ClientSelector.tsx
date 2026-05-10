@@ -95,9 +95,16 @@ export const ClientSelector = ({
 
   const fetchClients = async () => {
     try {
+      // 2026-05-10: filter to active clients only. The dropdown was
+      // surfacing internal sandboxes (_benchmark_*, _qa_test_client)
+      // alongside real clients, which an operator could accidentally
+      // select and see test fixtures instead of live signals. Inactive
+      // clients still exist for the benchmark + QA pipelines, they
+      // just shouldn't appear in the operator-facing filter.
       const { data, error } = await supabase
         .from("clients")
         .select("id, name, organization, status")
+        .eq("status", "active")
         .order("name", { ascending: true });
 
       if (error) throw error;

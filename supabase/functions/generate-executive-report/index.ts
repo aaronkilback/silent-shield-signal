@@ -109,19 +109,31 @@ Deno.serve(async (req) => {
 
     if (signalsError) throw signalsError;
 
-    // Apply staleness filter: signals older than 14 days only if critical AND directly PECL-relevant
+    // Apply staleness filter: signals older than 14 days only if critical AND directly client-relevant.
+    //
+    // 2026-05-10: previously hardcoded `text.includes('petronas')` etc.
+    // — only worked for one client. Now derives the relevance dictionary
+    // from the client's own monitoring_keywords + high_value_assets,
+    // so every client's exemption set is correct without code changes.
     const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const relevanceTokens: string[] = [
+      ...(Array.isArray((client as any).monitoring_keywords) ? (client as any).monitoring_keywords : []),
+      ...(Array.isArray((client as any).high_value_assets) ? (client as any).high_value_assets : []),
+    ]
+      .filter((t: any) => typeof t === 'string')
+      .map((t: string) => t.toLowerCase().trim())
+      // Keep proper-noun-y tokens; drop short/generic words that would
+      // over-match (e.g. "BC", "energy" alone would let unrelated stale
+      // signals through).
+      .filter((t: string) => t.length >= 5);
+
     let freshSignals = signals?.filter(s => {
       const signalDate = new Date(s.created_at || s.event_date || 0);
       const isRecent = signalDate >= new Date(fourteenDaysAgo);
       if (isRecent) return true;
       const text = (s.normalized_text || '').toLowerCase();
-      const isPECLRelevant =
-        text.includes('petronas') ||
-        text.includes('pecl') ||
-        text.includes('lng canada') ||
-        text.includes('coastal gaslink');
-      return s.severity === 'critical' && isPECLRelevant;
+      const isClientRelevant = relevanceTokens.some((tok: string) => text.includes(tok));
+      return s.severity === 'critical' && isClientRelevant;
     }) ?? [];
 
     // 2026-05-09 quality fixes from Petronas executive brief audit:
