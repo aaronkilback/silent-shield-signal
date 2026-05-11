@@ -259,16 +259,28 @@ export const FEATURE_TYPE_LABELS: Record<FeatureType, string> = {
 
 /** Feature types that belong to each stage. */
 export const STAGE_FEATURE_TYPES: Record<string, FeatureType[]> = {
-  // Perimeter includes access-control features because at a camp / staffed
-  // gatehouse the access control IS the perimeter — operators on a walk
-  // expect to drop entry_point + access_control_reader + staffed_post next
-  // to the gate + fence_segment rather than switching stages.
+  // Perimeter, ordered by walk-flow: boundary → opening → access →
+  // staffing → coverage → lighting → warnings → electronic → gaps.
+  // Access-control features (entry_point, access_control_reader,
+  // staffed_post) live HERE rather than in access_personnel because
+  // for camps + staffed gatehouses the access control IS the
+  // perimeter. Keeping them in one place stops double-listing.
   perimeter: [
-    "fence_segment", "gate", "camera", "lighting_fixture",
-    "sightline_blind_spot", "signage", "intrusion_sensor",
-    "entry_point", "access_control_reader", "staffed_post",
+    "fence_segment",
+    "gate",
+    "entry_point",
+    "access_control_reader",
+    "staffed_post",
+    "camera",
+    "lighting_fixture",
+    "signage",
+    "intrusion_sensor",
+    "sightline_blind_spot",
   ],
-  access_personnel: ["entry_point", "access_control_reader", "visitor_log_location", "staffed_post"],
+  // Stage 4 narrowed to procedures-not-physical: visitor logs (which
+  // are a process artifact, not a perimeter object). Badge policy /
+  // contractor management captured via the freeform notes.
+  access_personnel: ["visitor_log_location"],
   ot_ics: ["scada_node", "plc", "historian", "engineering_workstation", "vendor_remote_endpoint", "removable_media_location"],
   comms: ["radio_repeater", "internet_uplink", "satphone_location"],
   external_intel: ["incident_marker", "surveillance_observation"],

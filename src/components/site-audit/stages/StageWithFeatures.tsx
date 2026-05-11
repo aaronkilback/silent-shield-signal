@@ -52,7 +52,7 @@ interface StageWithFeaturesProps {
 
 const STAGE_PROMPTS: Partial<Record<AuditStage, string>> = {
   perimeter: "Walk the fence line. Photograph each fence segment, gate, camera, and lighting fixture using Theodolite — geo + bearing land automatically.",
-  access_personnel: "Document staffed posts, access readers, and visitor logs. Photograph badge readers + staffed gate houses.",
+  access_personnel: "Personnel procedures only. Entry points, staffed posts, and access readers are captured in Perimeter. Use this stage for visitor logs + freeform notes on badge policy, contractor management, and shift staffing.",
   ot_ics: "Inventory SCADA, PLCs, historians, vendor remote endpoints. Note network segmentation. Take photos of equipment racks + remote-access banners.",
   comms: "Document radio repeaters, internet uplink demarcs, and satphone locations. Test cell coverage; note any dead zones in the freeform notes.",
   external_intel: "Mark recent activity within 25km. Drop incident markers + surveillance observations seen this visit.",
