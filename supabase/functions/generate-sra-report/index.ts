@@ -107,46 +107,7 @@ Deno.serve(async (req) => {
       asset_lng: number | null;
       features: Array<{ id: string; feature_type: string; label: string | null; lat: number | null; lng: number | null }>;
     } | null) ?? { asset_lat: null, asset_lng: null, features: [] };
-
-    // Generate a static map of the asset + features. Uses Mapbox if
-    // MAPBOX_TOKEN is set as a Supabase secret. Token never appears in
-    // the HTML — fetched server-side and uploaded to storage; the HTML
-    // references the storage URL. Graceful skip if token not configured
-    // or asset has no coords.
-    let map_storage_path: string | null = null;
-    const mapboxToken = Deno.env.get("MAPBOX_TOKEN");
-    if (mapboxToken && fwc.asset_lat !== null && fwc.asset_lng !== null) {
-      try {
-        const pins: string[] = [];
-        // Asset centroid — red pin labelled A
-        pins.push(`pin-s-a+e11d48(${fwc.asset_lng},${fwc.asset_lat})`);
-        // Feature pins — orange, up to 40 (URL length cap)
-        const featurePins = fwc.features
-          .filter((f) => f.lat !== null && f.lng !== null)
-          .slice(0, 40);
-        for (const f of featurePins) {
-          pins.push(`pin-s+f59e0b(${f.lng},${f.lat})`);
-        }
-        const overlay = pins.join(",");
-        const mapUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${overlay}/auto/800x500@2x?access_token=${mapboxToken}&padding=40`;
-        const mapResp = await fetch(mapUrl);
-        if (mapResp.ok) {
-          const mapBlob = await mapResp.blob();
-          const mp = `audit/${audit.id}/reports/map-${Date.now()}.png`;
-          const { error: mapUpErr } = await supabase.storage
-            .from(SITE_AUDIT_MEDIA_BUCKET)
-            .upload(mp, mapBlob, { contentType: "image/png", upsert: false });
-          if (!mapUpErr) map_storage_path = mp;
-        } else {
-          console.warn(`[map] mapbox returned ${mapResp.status}`);
-        }
-      } catch (mapErr) {
-        console.warn(`[map] generation failed:`, mapErr);
-      }
-    }
-    const map_signed_url = map_storage_path
-      ? await getSignedUrl(supabase, SITE_AUDIT_MEDIA_BUCKET as never, map_storage_path, 60 * 60 * 24 * 30)
-      : null;
+    const mapFeatures = fwc.features.filter((f) => f.lat !== null && f.lng !== null);
 
     // Pull substrate context (regional district, fire centre, health
     // authority, nearby features) if the asset has a geom. Used in
@@ -217,8 +178,9 @@ Deno.serve(async (req) => {
       operatorName, features, ratings, recs, photos: signedPhotos, documents,
       adjacent: (adjacent as { audits?: Array<Record<string, unknown>>; signals?: Array<Record<string, unknown>> } | null) ?? { audits: [], signals: [] },
       narrative,
-      mapImageUrl: map_signed_url,
-      featureCountWithCoords: fwc.features.filter((f) => f.lat !== null && f.lng !== null).length,
+      assetLat: fwc.asset_lat,
+      assetLng: fwc.asset_lng,
+      mapFeatures,
     });
 
     // Persist to storage so the user gets a stable URL.
@@ -374,8 +336,9 @@ interface RenderInput {
   documents: Array<{ id: string; doc_type: string | null; filename: string | null }>;
   adjacent: { audits?: Array<Record<string, unknown>>; signals?: Array<Record<string, unknown>> };
   narrative: { threat_environment: string; vulnerabilities: string[]; summary: string };
-  mapImageUrl: string | null;
-  featureCountWithCoords: number;
+  assetLat: number | null;
+  assetLng: number | null;
+  mapFeatures: Array<{ id: string; feature_type: string; label: string | null; lat: number | null; lng: number | null }>;
 }
 
 function renderHtml(d: RenderInput): string {
@@ -486,10 +449,73 @@ function renderHtml(d: RenderInput): string {
   </ul>
   <p>${valueText}</p>
 
-  ${d.mapImageUrl ? `
+  ${d.assetLat !== null && d.assetLng !== null && d.mapFeatures.length > 0 ? `
   <h2>Site Map</h2>
-  <p class="meta">Asset centroid (red <strong>A</strong>) and ${esc(d.featureCountWithCoords)} geo-tagged feature${d.featureCountWithCoords === 1 ? "" : "s"} (orange). Mapbox satellite imagery.</p>
-  <p style="text-align:center; margin: 0.5rem 0;"><img src="${esc(d.mapImageUrl)}" alt="Site map" style="max-width: 100%; height: auto; border: 1px solid #999;" /></p>
+  <p class="meta">Asset centroid (red <strong>A</strong>) and ${esc(d.mapFeatures.length)} geo-tagged feature${d.mapFeatures.length === 1 ? "" : "s"} (color-coded by type). Switch layers via the control top-right; click any marker for details.</p>
+  <div id="sra-map" style="height:420px;border:1px solid #ddd;border-radius:6px;overflow:hidden"></div>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+  (function() {
+    var map = L.map('sra-map', { zoomControl: true }).setView([${d.assetLat}, ${d.assetLng}], 18);
+    // Same tile-layer stack the wildfire daily report uses. Esri imagery
+    // is free for non-commercial use within reasonable rate limits.
+    var baseLayers = {
+      'Satellite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19, attribution: 'Imagery: Esri, Maxar, Earthstar Geographics'
+      }),
+      'Topographic': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 18, attribution: 'Topo: Esri, USGS, NOAA'
+      }),
+      'OSM': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '© OpenStreetMap'
+      })
+    };
+    baseLayers['Satellite'].addTo(map);
+    L.control.layers(baseLayers, undefined, { position: 'topright' }).addTo(map);
+
+    // Color-code feature pins by category for at-a-glance scanning.
+    var typeColors = {
+      fence_segment: '#16a34a', gate: '#0891b2', entry_point: '#0284c7',
+      access_control_reader: '#0369a1', staffed_post: '#1d4ed8',
+      camera: '#7c3aed', lighting_fixture: '#eab308', signage: '#a16207',
+      intrusion_sensor: '#9333ea', sightline_blind_spot: '#dc2626',
+      storage_container: '#92400e', fuel_or_hazmat_storage: '#ea580c',
+      wildlife_attractant: '#65a30d',
+      scada_node: '#be185d', plc: '#9d174d', historian: '#831843',
+      engineering_workstation: '#86198f', vendor_remote_endpoint: '#a21caf',
+      removable_media_location: '#701a75', server_room: '#581c87',
+      radio_repeater: '#0e7490', internet_uplink: '#155e75', satphone_location: '#164e63',
+      incident_marker: '#b91c1c', surveillance_observation: '#dc2626',
+      high_value_target: '#f59e0b', other: '#525252',
+    };
+
+    // Asset centroid — large red labeled marker
+    var assetIcon = L.divIcon({
+      html: '<div style="background:#dc2626;color:#fff;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)">A</div>',
+      iconSize: [36,36], iconAnchor: [18,18], className: ''
+    });
+    L.marker([${d.assetLat}, ${d.assetLng}], { icon: assetIcon }).addTo(map)
+      .bindPopup('<strong>${esc(d.asset.name)}</strong><br><small>Asset centroid</small>');
+
+    var features = ${JSON.stringify(d.mapFeatures.map(f => ({
+      type: f.feature_type, label: f.label ?? '', lat: f.lat, lng: f.lng,
+    })))};
+    var bounds = L.latLngBounds([[${d.assetLat}, ${d.assetLng}]]);
+    features.forEach(function(f) {
+      var col = typeColors[f.type] || '#525252';
+      L.circleMarker([f.lat, f.lng], {
+        radius: 7, color: col, fillColor: col, fillOpacity: 0.85, weight: 1.5
+      }).addTo(map).bindPopup(
+        '<strong>' + (f.label || f.type) + '</strong><br><small>' + f.type.replace(/_/g, ' ') + '</small>'
+      );
+      bounds.extend([f.lat, f.lng]);
+    });
+    if (features.length > 0) {
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 19 });
+    }
+  })();
+  </script>
   ` : ""}
 
   <h2>Site Status</h2>
