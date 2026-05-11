@@ -299,7 +299,9 @@ function GenerateReportPanel({ auditId }: { auditId: string }) {
   const handleGenerate = async () => {
     try {
       const result = await generate.mutateAsync({ audit_id: auditId });
-      setReportUrl(result.signed_url);
+      // Prefer view_url — renders inline in browser. signed_url is raw
+      // bytes that may display as source code on some browsers.
+      setReportUrl(result.view_url ?? result.signed_url);
       toast.success("SRA report generated");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Report generation failed");

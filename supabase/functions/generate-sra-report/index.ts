@@ -168,12 +168,12 @@ Deno.serve(async (req) => {
       narrative,
     });
 
-    // Persist to storage so the user gets a stable signed URL.
+    // Persist to storage so the user gets a stable URL.
     const path = `audit/${audit.id}/reports/sra-${Date.now()}.html`;
     const { error: uploadErr } = await supabase.storage
       .from(SITE_AUDIT_MEDIA_BUCKET)
-      .upload(path, new Blob([html], { type: "text/html" }), {
-        contentType: "text/html",
+      .upload(path, new Blob([html], { type: "text/html; charset=utf-8" }), {
+        contentType: "text/html; charset=utf-8",
         upsert: false,
       });
     let signed_url: string | null = null;
@@ -181,7 +181,16 @@ Deno.serve(async (req) => {
       signed_url = await getSignedUrl(supabase, SITE_AUDIT_MEDIA_BUCKET as never, path, 60 * 60 * 24 * 30);
     }
 
-    return successResponse({ html, signed_url, storage_path: path });
+    // View URL — points at view-sra-report function which reads from
+    // storage and serves with explicit text/html;charset=utf-8 +
+    // Content-Disposition:inline so browsers render the report rather
+    // than display source / download as octet-stream.
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const view_url = supabaseUrl
+      ? `${supabaseUrl}/functions/v1/view-sra-report?path=${encodeURIComponent(path)}`
+      : null;
+
+    return successResponse({ html, signed_url, view_url, storage_path: path });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
     console.error("generate-sra-report error:", e);
@@ -323,7 +332,7 @@ function renderHtml(d: RenderInput): string {
     : new Date().toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" });
   const kmMarker = (d.asset.attributes as { km_marker?: string })?.km_marker;
   const roadAccess = (d.asset.attributes as { road_access?: string })?.road_access;
-  const siteLocation = [kmMarker && `Km ${esc(kmMarker)}`, roadAccess && `on ${esc(roadAccess)}`].filter(Boolean).join(" ") || "—";
+  const siteLocation = [kmMarker && `Km ${esc(kmMarker)}`, roadAccess && `on ${esc(roadAccess)}`].filter(Boolean).join(" ") || "&mdash;";
 
   // Group features by category.
   const featByType = new Map<string, typeof d.features>();
@@ -385,17 +394,17 @@ function renderHtml(d: RenderInput): string {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Security Risk Assessment — ${esc(d.asset.name)}</title>
+  <title>Security Risk Assessment &mdash; ${esc(d.asset.name)}</title>
   ${STYLE}
 </head>
 <body>
   <h1>Security Risk Assessment</h1>
-  <h2>Security Risk Assessment – ${esc(d.asset.name)}</h2>
+  <h2>Security Risk Assessment &ndash; ${esc(d.asset.name)}</h2>
   <div class="meta">
     Date: ${esc(date)}<br/>
     Prepared by: ${esc(d.operatorName)}, Field Security Coordinator<br/>
     Site Location: ${siteLocation}<br/>
-    Client: ${esc(d.client?.name ?? "—")}
+    Client: ${esc(d.client?.name ?? "&mdash;")}
   </div>
 
   <h2>Purpose</h2>
@@ -406,7 +415,7 @@ function renderHtml(d: RenderInput): string {
   <p><strong>Assets on site (documented in this audit):</strong></p>
   <ul class="tight">
     ${Array.from(featByType.entries()).map(([type, list]) =>
-      `<li>${esc(list.length)}× ${esc(type.replace(/_/g, " "))}${list.some((f) => f.label) ? `: ${list.filter((f) => f.label).map((f) => esc(f.label)).join(", ")}` : ""}</li>`,
+      `<li>${esc(list.length)}&times; ${esc(type.replace(/_/g, " "))}${list.some((f) => f.label) ? `: ${list.filter((f) => f.label).map((f) => esc(f.label)).join(", ")}` : ""}</li>`,
     ).join("\n    ")}
     ${d.features.length === 0 ? "<li><em>No features captured during this audit.</em></li>" : ""}
   </ul>
@@ -457,13 +466,13 @@ function renderHtml(d: RenderInput): string {
 
   <h2>Recommendations</h2>
 
-  <h3>Short Term (0–3 months)</h3>
+  <h3>Short Term (0&ndash;3 months)</h3>
   <ul class="tight">
     ${recsByBucket.short_term.length === 0 ? "<li><em>None.</em></li>" :
       recsByBucket.short_term.map((r) => `<li>${esc(r.description)}${r.rationale ? ` <em>(${esc(r.rationale)})</em>` : ""}</li>`).join("\n    ")}
   </ul>
 
-  <h3>Medium Term (3–6 months)</h3>
+  <h3>Medium Term (3&ndash;6 months)</h3>
   <ul class="tight">
     ${recsByBucket.medium_term.length === 0 ? "<li><em>None.</em></li>" :
       recsByBucket.medium_term.map((r) => `<li>${esc(r.description)}${r.rationale ? ` <em>(${esc(r.rationale)})</em>` : ""}</li>`).join("\n    ")}
@@ -484,7 +493,7 @@ function renderHtml(d: RenderInput): string {
     ${d.photos.map((p) => `
       <figure>
         <img src="${esc(p.signed_url)}" alt="" />
-        <figcaption>${p.captured_at ? esc(new Date(p.captured_at).toLocaleString()) : ""}${p.bearing_deg !== null ? ` · bearing ${esc(p.bearing_deg.toFixed(0))}°` : ""}</figcaption>
+        <figcaption>${p.captured_at ? esc(new Date(p.captured_at).toLocaleString()) : ""}${p.bearing_deg !== null ? ` &middot; bearing ${esc(p.bearing_deg.toFixed(0))}&deg;` : ""}</figcaption>
       </figure>
     `).join("\n    ")}
   </div>

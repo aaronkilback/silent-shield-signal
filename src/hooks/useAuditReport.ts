@@ -286,12 +286,14 @@ export function useAdjacentIncidents(assetId: string | null) {
   });
 }
 
-/** Generate the SRA report. Returns HTML + signed URL + storage path. */
+/** Generate the SRA report. Returns HTML + view URL (renders inline) +
+ *  signed URL (raw bytes, can download) + storage path. */
 export function useGenerateSRAReport() {
   return useMutation({
     mutationFn: async (input: { audit_id: string }): Promise<{
       html: string;
-      signed_url: string | null;
+      view_url: string | null;     // preferred — renders in browser
+      signed_url: string | null;   // raw bytes from storage
       storage_path: string;
     }> => {
       const { data, error } = await supabase.functions.invoke("generate-sra-report", {

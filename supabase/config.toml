@@ -1,5 +1,8 @@
 project_id = "kpuqukppbmwebiptqmog"
 
+[functions.view-sra-report]
+verify_jwt = false
+
 [functions.generate-wildfire-daily-report]
 verify_jwt = false
 
@@ -804,6 +807,24 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.run-benchmark]
+verify_jwt = false
+
+[functions.activate-dormant-specialists]
+verify_jwt = false
+
+[functions.ingest-world-geography]
+verify_jwt = false
+
+[functions.get-site-context]
+verify_jwt = false
+
+[functions.decay-beliefs-from-calibration]
+verify_jwt = false
+
+[functions.score-agent-calibration]
+verify_jwt = false
+
+[functions.agent-router]
 verify_jwt = false
 
 [functions.score-signal-anomaly]
