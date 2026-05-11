@@ -97,6 +97,57 @@ Deno.serve(async (req) => {
       { p_asset_id: audit.asset.id, p_radius_km: 25 } as never,
     );
 
+    // Pull features with decoded lat/lng for the map embed.
+    const { data: featuresWithCoords } = await supabase.rpc(
+      "get_asset_features_with_coords",
+      { p_asset_id: audit.asset.id } as never,
+    );
+    const fwc = (featuresWithCoords as {
+      asset_lat: number | null;
+      asset_lng: number | null;
+      features: Array<{ id: string; feature_type: string; label: string | null; lat: number | null; lng: number | null }>;
+    } | null) ?? { asset_lat: null, asset_lng: null, features: [] };
+
+    // Generate a static map of the asset + features. Uses Mapbox if
+    // MAPBOX_TOKEN is set as a Supabase secret. Token never appears in
+    // the HTML — fetched server-side and uploaded to storage; the HTML
+    // references the storage URL. Graceful skip if token not configured
+    // or asset has no coords.
+    let map_storage_path: string | null = null;
+    const mapboxToken = Deno.env.get("MAPBOX_TOKEN");
+    if (mapboxToken && fwc.asset_lat !== null && fwc.asset_lng !== null) {
+      try {
+        const pins: string[] = [];
+        // Asset centroid — red pin labelled A
+        pins.push(`pin-s-a+e11d48(${fwc.asset_lng},${fwc.asset_lat})`);
+        // Feature pins — orange, up to 40 (URL length cap)
+        const featurePins = fwc.features
+          .filter((f) => f.lat !== null && f.lng !== null)
+          .slice(0, 40);
+        for (const f of featurePins) {
+          pins.push(`pin-s+f59e0b(${f.lng},${f.lat})`);
+        }
+        const overlay = pins.join(",");
+        const mapUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v12/static/${overlay}/auto/800x500@2x?access_token=${mapboxToken}&padding=40`;
+        const mapResp = await fetch(mapUrl);
+        if (mapResp.ok) {
+          const mapBlob = await mapResp.blob();
+          const mp = `audit/${audit.id}/reports/map-${Date.now()}.png`;
+          const { error: mapUpErr } = await supabase.storage
+            .from(SITE_AUDIT_MEDIA_BUCKET)
+            .upload(mp, mapBlob, { contentType: "image/png", upsert: false });
+          if (!mapUpErr) map_storage_path = mp;
+        } else {
+          console.warn(`[map] mapbox returned ${mapResp.status}`);
+        }
+      } catch (mapErr) {
+        console.warn(`[map] generation failed:`, mapErr);
+      }
+    }
+    const map_signed_url = map_storage_path
+      ? await getSignedUrl(supabase, SITE_AUDIT_MEDIA_BUCKET as never, map_storage_path, 60 * 60 * 24 * 30)
+      : null;
+
     // Pull substrate context (regional district, fire centre, health
     // authority, nearby features) if the asset has a geom. Used in
     // the narrative for fire/wildlife/jurisdictional grounding.
@@ -166,6 +217,8 @@ Deno.serve(async (req) => {
       operatorName, features, ratings, recs, photos: signedPhotos, documents,
       adjacent: (adjacent as { audits?: Array<Record<string, unknown>>; signals?: Array<Record<string, unknown>> } | null) ?? { audits: [], signals: [] },
       narrative,
+      mapImageUrl: map_signed_url,
+      featureCountWithCoords: fwc.features.filter((f) => f.lat !== null && f.lng !== null).length,
     });
 
     // Persist to storage so the user gets a stable URL.
@@ -258,12 +311,15 @@ Vulnerabilities should include (where supported by data):
 - High wildfire signal volume → "Elevated fire-season exposure based on N signals within 90 days"
 - High-value targets → "${input.features.filter(f => f.feature_type === 'high_value_target').length} high-value targets unsecured" (only if count > 0)
 
-Anti-fabrication:
+Anti-fabrication + brevity:
 - Do NOT invent threats not supported by the data.
 - Do NOT manufacture a specific fire incident; reference signal counts and fire centre only.
 - For wildlife: only mention specific species if the operator's notes mention them; otherwise speak generally ("wildlife encounters typical of remote NE BC operations").
 - Use specific feature counts ("3 cameras documented, 0 with PTZ").
-- Skip marketing words ("robust", "comprehensive").`;
+- Skip marketing words ("robust", "comprehensive").
+- ZERO-COUNT RULE: do NOT emit a bullet that begins with "0" or describes the ABSENCE of a problem (e.g. "0 high-value targets unsecured", "No surveillance observations recorded"). If a thing was not present, simply omit the bullet — silence is the right output.
+- TERSE BULLETS: each vulnerability is one short sentence, max 18 words. No restating context already in Threat Environment.
+- Maximum 5 bullets total. If you have more, pick the most operationally significant.`;
 
   try {
     const apiResp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -318,6 +374,8 @@ interface RenderInput {
   documents: Array<{ id: string; doc_type: string | null; filename: string | null }>;
   adjacent: { audits?: Array<Record<string, unknown>>; signals?: Array<Record<string, unknown>> };
   narrative: { threat_environment: string; vulnerabilities: string[]; summary: string };
+  mapImageUrl: string | null;
+  featureCountWithCoords: number;
 }
 
 function renderHtml(d: RenderInput): string {
@@ -378,8 +436,10 @@ function renderHtml(d: RenderInput): string {
       .rating.high         { color: #c2410c; }
       .rating.severe       { color: #b91c1c; }
       .rating.catastrophic { color: #991b1b; background: #fee2e2; padding: 0 0.3rem; }
-      .ai-draft { background: #fefce8; border-left: 3px solid #ca8a04; padding: 0.5rem 0.8rem; margin: 0.5rem 0; }
-      .ai-draft::before { content: "[AI-drafted, edit before sharing] "; font-style: italic; color: #92400e; font-size: 0.85rem; }
+      /* Adopted-text styling — no per-section disclaimer noise. The
+         report has a single attribution note near the top. */
+      .ai-draft { margin: 0.5rem 0; }
+      .ai-attribution { font-size: 0.82rem; color: #555; font-style: italic; border-left: 3px solid #ca8a04; padding: 0.3rem 0.7rem; background: #fefce8; margin: 0.4rem 0; }
       ul.tight { margin: 0.3rem 0; padding-left: 1.5rem; }
       ul.tight li { margin: 0.15rem 0; }
       .photo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin: 0.5rem 0; }
@@ -407,6 +467,8 @@ function renderHtml(d: RenderInput): string {
     Client: ${esc(d.client?.name ?? "&mdash;")}
   </div>
 
+  <p class="ai-attribution">Narrative sections (Threat Environment, Vulnerabilities, Summary) were drafted with AI assistance based on the data captured during this audit and adopted by the preparing operator. Edit before re-issuing if any wording needs adjustment.</p>
+
   <h2>Purpose</h2>
   <p>${esc(d.asset.name)} is a ${esc(d.asset.asset_class.replace(/_/g, " "))} within ${esc(d.client?.name ?? "the client's")} infrastructure. This assessment identifies key vulnerabilities and recommends mitigation strategies to enhance site security and operational integrity.</p>
 
@@ -423,6 +485,12 @@ function renderHtml(d: RenderInput): string {
     ${d.features.length === 0 ? "<li><em>No features captured during this audit.</em></li>" : ""}
   </ul>
   <p>${valueText}</p>
+
+  ${d.mapImageUrl ? `
+  <h2>Site Map</h2>
+  <p class="meta">Asset centroid (red <strong>A</strong>) and ${esc(d.featureCountWithCoords)} geo-tagged feature${d.featureCountWithCoords === 1 ? "" : "s"} (orange). Mapbox satellite imagery.</p>
+  <p style="text-align:center; margin: 0.5rem 0;"><img src="${esc(d.mapImageUrl)}" alt="Site map" style="max-width: 100%; height: auto; border: 1px solid #999;" /></p>
+  ` : ""}
 
   <h2>Site Status</h2>
   <p>Operational status: <strong>${esc(d.asset.operational_status.replace(/_/g, " "))}</strong>${d.asset.criticality_tier ? `. Criticality: ${esc(d.asset.criticality_tier.replace(/_/g, " "))}` : ""}.</p>
