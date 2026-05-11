@@ -91,7 +91,7 @@ Deno.serve(async (req) => {
 
     // Fetch clients and entities in parallel
     const [clientsResult, entitiesResult] = await Promise.all([
-      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords'),
+      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords').eq('status', 'active'),
       supabase.from('entities')
         .select('id, name, type, aliases, risk_level, attributes, client_id')
         .eq('active_monitoring_enabled', true)

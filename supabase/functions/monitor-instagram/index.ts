@@ -53,7 +53,8 @@ Deno.serve(async (req) => {
     // Fetch clients with their monitoring keywords
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, organization, industry, monitoring_keywords, locations');
+      .select('id, name, organization, industry, monitoring_keywords, locations')
+      .eq('status', 'active');
 
     if (clientsError) throw clientsError;
 

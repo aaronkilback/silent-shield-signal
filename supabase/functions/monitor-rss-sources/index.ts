@@ -144,10 +144,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Fetch all clients
+    // Fetch active clients only — inactive ones are benchmark/QA fixtures.
     const { data: clients, error: clientsError } = await supabaseClient
       .from('clients')
-      .select('*');
+      .select('*')
+      .eq('status', 'active');
 
     if (clientsError) {
       console.error('Error fetching clients:', clientsError);

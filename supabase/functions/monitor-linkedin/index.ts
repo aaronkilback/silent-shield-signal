@@ -21,7 +21,7 @@ Deno.serve(async (req) => {
     console.log('Starting LinkedIn monitoring scan...');
 
     const [{ data: clients, error: clientsError }, { data: watchedEntities, error: entitiesError }] = await Promise.all([
-      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords, locations'),
+      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords, locations').eq('status', 'active'),
       supabase.from('entities')
         .select('id, name, type, aliases, risk_level, active_monitoring_enabled')
         .or('risk_level.eq.high,risk_level.eq.critical,active_monitoring_enabled.eq.true')

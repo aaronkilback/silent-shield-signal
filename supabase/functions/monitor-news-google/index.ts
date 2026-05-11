@@ -107,9 +107,15 @@ Deno.serve(async (req) => {
     // HQ news for the Petronas Canada client). Stored on
     // clients.monitoring_config.negative_keywords as a JSON array
     // of strings.
+    // status='active' only. Inactive clients are fixtures (benchmark,
+    // QA) that don't belong in real-time monitoring rotations. Without
+    // this filter, _benchmark_petronas (inactive, identical keywords
+    // to Petronas Canada, sorts alphabetically first) won every
+    // content_hash dedup race and absorbed ~80% of real signals.
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, industry, monitoring_keywords, monitoring_config, tactic_keywords');
+      .select('id, name, industry, monitoring_keywords, monitoring_config, tactic_keywords')
+      .eq('status', 'active');
 
     if (clientsError) throw clientsError;
 

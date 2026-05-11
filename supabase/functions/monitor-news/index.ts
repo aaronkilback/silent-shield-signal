@@ -105,10 +105,11 @@ Deno.serve(async (req) => {
       console.error('Failed to create monitoring history:', historyError);
     }
 
-    // Get all clients
+    // Get active clients only — inactive ones are benchmark/QA fixtures.
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, industry, monitoring_keywords');
+      .select('id, name, industry, monitoring_keywords')
+      .eq('status', 'active');
 
     if (clientsError) throw clientsError;
 

@@ -46,10 +46,11 @@ Deno.serve(async (req) => {
   try {
     console.log('Starting Canadian sources monitoring scan with enhanced relevance scoring');
 
-    // Fetch all clients with monitoring config
+    // Fetch active clients only — inactive ones are benchmark/QA fixtures.
     const { data: clients, error: clientsError } = await supabaseClient
       .from('clients')
-      .select('*');
+      .select('*')
+      .eq('status', 'active');
 
     if (clientsError) throw clientsError;
 
