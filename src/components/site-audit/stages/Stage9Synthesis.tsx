@@ -295,17 +295,33 @@ function AdjacentIncidentsPanel({ assetId }: { assetId: string }) {
 function GenerateReportPanel({ auditId }: { auditId: string }) {
   const generate = useGenerateSRAReport();
   const [reportUrl, setReportUrl] = useState<string | null>(null);
+  const [reportHtml, setReportHtml] = useState<string | null>(null);
 
   const handleGenerate = async () => {
     try {
       const result = await generate.mutateAsync({ audit_id: auditId });
-      // Prefer view_url — renders inline in browser. signed_url is raw
-      // bytes that may display as source code on some browsers.
       setReportUrl(result.view_url ?? result.signed_url);
+      setReportHtml(result.html ?? null);
       toast.success("SRA report generated");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Report generation failed");
     }
+  };
+
+  // Open the report HTML directly in a new tab via document.write —
+  // bulletproof rendering regardless of storage Content-Type headers.
+  // Used as a primary "View now" path since signed URLs were displaying
+  // source instead of rendering.
+  const openInline = () => {
+    if (!reportHtml) return;
+    const win = window.open("", "_blank");
+    if (!win) {
+      toast.error("Popup blocked — allow popups for this site");
+      return;
+    }
+    win.document.open();
+    win.document.write(reportHtml);
+    win.document.close();
   };
 
   return (
@@ -317,7 +333,7 @@ function GenerateReportPanel({ auditId }: { auditId: string }) {
       <p className="text-xs text-muted-foreground">
         Renders the captured audit (features, photos, risk ratings, recommendations, adjacent incidents) into a finished SRA matching the standard operator format.
       </p>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <Button onClick={handleGenerate} disabled={generate.isPending} size="sm">
           {generate.isPending ? (
             <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Generating…</>
@@ -325,14 +341,25 @@ function GenerateReportPanel({ auditId }: { auditId: string }) {
             <>Generate report</>
           )}
         </Button>
+        {reportHtml && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={openInline}
+            title="Open the report HTML directly — bypasses storage URL"
+          >
+            View now <ExternalLink className="w-3 h-3 ml-1" />
+          </Button>
+        )}
         {reportUrl && (
           <a
             href={reportUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm flex items-center gap-1 text-blue-700 dark:text-blue-400 hover:underline"
+            className="text-xs flex items-center gap-1 text-muted-foreground hover:underline"
+            title="Stored copy — for sharing / archive"
           >
-            View latest <ExternalLink className="w-3 h-3" />
+            Stored URL <ExternalLink className="w-3 h-3" />
           </a>
         )}
       </div>
