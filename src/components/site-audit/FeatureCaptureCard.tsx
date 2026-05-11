@@ -27,6 +27,7 @@ import {
   useCreateFeature,
   type FeatureType,
   FEATURE_TYPE_LABELS,
+  FEATURE_TYPE_DESCRIPTIONS,
 } from "@/hooks/useSiteFeatures";
 import { useUpdateFeature } from "@/hooks/useSiteFeatures";
 import { MediaUploadField } from "./MediaUploadField";
@@ -248,6 +249,12 @@ export function FeatureCaptureCard({
               <X className="w-4 h-4" />
             </Button>
           )}
+        </div>
+        {/* Plain-language explanation of what this feature type is.
+            Especially helpful for OT/ICS jargon (SCADA, PLC, historian)
+            that non-engineer operators won't immediately know. */}
+        <div className="text-xs text-muted-foreground italic border-l-2 border-foreground/20 pl-2 -mt-1">
+          {FEATURE_TYPE_DESCRIPTIONS[feature_type]}
         </div>
 
         <div className="space-y-1.5">

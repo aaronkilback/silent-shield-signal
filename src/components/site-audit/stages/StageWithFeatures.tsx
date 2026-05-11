@@ -55,8 +55,8 @@ interface StageWithFeaturesProps {
 const STAGE_PROMPTS: Partial<Record<AuditStage, string>> = {
   perimeter: "Walk the fence line. Photograph each fence segment, gate, camera, and lighting fixture using Theodolite — geo + bearing land automatically.",
   access_personnel: "Personnel procedures only. Entry points, staffed posts, and access readers are captured in Perimeter. Use this stage for visitor logs + freeform notes on badge policy, contractor management, and shift staffing.",
-  ot_ics: "Inventory SCADA, PLCs, historians, vendor remote endpoints. Note network segmentation. Take photos of equipment racks + remote-access banners.",
-  comms: "Document radio repeaters, internet uplink demarcs, and satphone locations. Test cell coverage; note any dead zones in the freeform notes.",
+  ot_ics: "Industrial control systems. Capture what's here: SCADA workstation (central monitoring/control screen), PLC (small computer in a panel that runs valves/pumps), historian (data recorder), vendor remote endpoint (how Honeywell/ABB log in remotely). Camps often have a SCADA workstation for gas + water + power monitoring. Sites with no industrial control (pure office/residence) can skip.",
+  comms: "Document radio repeaters and communication TOWERS, internet uplink demarcs, and satphone locations. Capture comms towers here — they're not OT/ICS even though they're tall and electronic. Test cell coverage; note dead zones in freeform notes.",
   external_intel: "Mark recent activity within 25km. Drop incident markers + surveillance observations seen this visit.",
 };
 

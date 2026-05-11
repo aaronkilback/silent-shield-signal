@@ -307,7 +307,45 @@ export const FEATURE_TYPE_LABELS: Record<FeatureType, string> = {
   satphone_location: "Satphone",
   incident_marker: "Incident marker",
   surveillance_observation: "Surveillance observation",
+  high_value_target: "High-value target",
   other: "Other",
+};
+
+/** Plain-language one-liner per feature type — shown as a help hint
+ *  in the capture card + dropdown so operators don't have to guess
+ *  at the jargon (especially the OT/ICS terms which are industrial-
+ *  control vocabulary unfamiliar to non-engineers). */
+export const FEATURE_TYPE_DESCRIPTIONS: Record<FeatureType, string> = {
+  // Perimeter
+  fence_segment: "A run of fence between two endpoints (e.g., north fence between gates).",
+  gate: "Any opening in the fence — vehicle gate, pedestrian gate, emergency exit.",
+  camera: "Surveillance camera — dome, bullet, PTZ. Capture the direction it covers.",
+  lighting_fixture: "Outdoor light fixture — pole, wall pack, perimeter floodlight.",
+  sightline_blind_spot: "A spot where vegetation, terrain, or a structure blocks visibility.",
+  signage: "Warning, no-trespass, hazard, or information sign.",
+  intrusion_sensor: "PIR, microwave, fence-strain, or buried-cable sensor.",
+  // Access & Personnel
+  entry_point: "Where people enter the site — gate, door, turnstile.",
+  access_control_reader: "Badge reader, keypad, biometric scanner at an entry point.",
+  visitor_log_location: "Where visitors sign in (gatehouse counter, electronic kiosk, paper book).",
+  staffed_post: "A position with a person stationed — security gate house, reception.",
+  // OT/ICS (industrial control — only relevant for plants/wellpads/pipelines)
+  scada_node: "SCADA = Supervisory Control & Data Acquisition. The central monitoring/control screen, usually a server or HMI in a control room. Skip if site is non-industrial (camp, office, residence).",
+  plc: "PLC = Programmable Logic Controller. Ruggedized small computer that directly controls valves, pumps, sensors. Usually in a panel cabinet in the field. Skip for non-industrial sites.",
+  historian: "Time-series database that stores process data (pressures, flows, temps) for analysis and regulatory compliance. Lives in a server room. Skip for non-industrial sites.",
+  engineering_workstation: "A computer engineers use to program / modify PLC + SCADA logic. Higher-privilege than an operator console.",
+  vendor_remote_endpoint: "Network connection a vendor (Honeywell, ABB, etc.) uses to remotely service equipment. VPN, jump host, modem.",
+  removable_media_location: "A station, policy, or kiosk for handling USB drives / removable media. Often the riskiest OT entry point.",
+  // Comms
+  radio_repeater: "Radio repeater / base station — VHF, UHF, 700/800MHz public-safety bands.",
+  internet_uplink: "How the site connects to the internet — fiber, microwave, satellite, cellular modem.",
+  satphone_location: "Satellite phone (Iridium, Inmarsat) — emergency comms when cell/internet fail.",
+  // External Intel
+  incident_marker: "A location where something happened (protest, sabotage, vandalism, trespass) within 25km in the last 12 months.",
+  surveillance_observation: "A drone, repeat unknown vehicle, photographer, or other surveillance behavior seen.",
+  // Other
+  high_value_target: "Inside-the-fence high-value asset (copper wiring, batteries, solar panels, hazmat).",
+  other: "Anything that doesn't fit the other types — note what it is in the label and freeform notes.",
 };
 
 /** Feature types that belong to each stage. */
