@@ -74,6 +74,7 @@ const FEATURE_FIELDS: Partial<Record<FeatureType, FieldDef[]>> = {
     { key: "viewing_destination", label: "Viewed at", type: "select", options: ["gate_house","SOC","cloud","local_only"] },
   ],
   lighting_fixture: [
+    { key: "operational_status", label: "Operational status", type: "select", options: ["working","intermittent","non_functioning","unknown"] },
     { key: "fixture_type", label: "Type", type: "select", options: ["LED","sodium_vapor","halide","incandescent"] },
     { key: "height_m", label: "Height", type: "number", unit: "m" },
     { key: "schedule", label: "Schedule", type: "select", options: ["dusk_dawn","timer","motion","manual","always_on"] },
@@ -93,6 +94,7 @@ const FEATURE_FIELDS: Partial<Record<FeatureType, FieldDef[]>> = {
     { key: "risk_score", label: "Risk", type: "select", options: ["low","medium","high"] },
   ],
   entry_point: [
+    { key: "lock_status", label: "Lock status", type: "select", options: ["locked","unlocked","disabled","unknown"] },
     { key: "entry_type", label: "Type", type: "select", options: ["vehicle","pedestrian","both"] },
     { key: "staffed_hours", label: "Staffed hours", type: "text" },
   ],
