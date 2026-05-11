@@ -34,6 +34,8 @@ import {
   useAuditObservations,
   type AuditStage,
 } from "@/hooks/useSiteAudit";
+import { useAssetFeatures, STAGE_FEATURE_TYPES } from "@/hooks/useSiteFeatures";
+import { useAuditMedia } from "@/hooks/useMediaAssets";
 import { Stage1Identity } from "./stages/Stage1Identity";
 import { StageNotesOnly } from "./stages/StageNotesOnly";
 import { StageWithFeatures } from "./stages/StageWithFeatures";
@@ -61,6 +63,11 @@ export function SiteAuditWizard({ auditId }: SiteAuditWizardProps) {
   const navigate = useNavigate();
   const { data: audit, isLoading } = useSiteAudit(auditId);
   const { data: observations } = useAuditObservations(auditId);
+  // Feature + media counts drive the per-stage capture density badges.
+  // Operators on a real walk need to see at a glance which stages they
+  // have populated and which are still blank.
+  const { data: features } = useAssetFeatures(audit?.asset?.id ?? null);
+  const { data: media } = useAuditMedia(auditId);
   const updateWizardState = useUpdateWizardState();
   const completeAudit = useCompleteAudit();
 
@@ -158,23 +165,73 @@ export function SiteAuditWizard({ auditId }: SiteAuditWizardProps) {
               · {audit.asset?.asset_class}
             </span>
           </CardTitle>
+          {/* Compact progress summary: totals at a glance */}
+          {(() => {
+            const featureCount = features?.length ?? 0;
+            const photoCount = (media ?? []).filter((m) => m.kind === "photo").length;
+            const docCount = (media ?? []).filter((m) => m.kind === "document").length;
+            const obsCount = observations?.length ?? 0;
+            const total = featureCount + photoCount + docCount + obsCount;
+            return (
+              <div className="text-xs text-muted-foreground mt-1.5 flex items-center gap-3 flex-wrap">
+                <span>📦 {featureCount} feature{featureCount === 1 ? "" : "s"}</span>
+                <span>📷 {photoCount} photo{photoCount === 1 ? "" : "s"}</span>
+                {docCount > 0 && <span>📄 {docCount} doc{docCount === 1 ? "" : "s"}</span>}
+                <span>📝 {obsCount} note{obsCount === 1 ? "" : "s"}</span>
+                {total === 0 && <span className="text-amber-600">— nothing captured yet</span>}
+              </div>
+            );
+          })()}
           <div className="flex items-center gap-1 mt-2 overflow-x-auto pb-1">
             {STAGES.map((s, i) => {
               const Icon = s.icon;
               const isCurrent = i === currentIdx;
               const isDone = completedStages.includes(s.id);
+              // Per-stage capture density: count features + observations
+              // that belong to this stage so the operator can see at a
+              // glance where they've worked and where they haven't.
+              const stageFeatureTypes = STAGE_FEATURE_TYPES[s.id] ?? [];
+              const stageFeatures = (features ?? []).filter((f) =>
+                stageFeatureTypes.includes(f.feature_type),
+              ).length;
+              const stageObs = (observations ?? []).filter((o) => o.stage === s.id).length;
+              const stageDocs = s.id === "docs_compliance"
+                ? (media ?? []).filter((m) => m.kind === "document").length
+                : 0;
+              const stageTotal = stageFeatures + stageObs + stageDocs;
+              // Color tier — gray=0, amber=1-2, green=3+
+              const densityClass = stageTotal === 0
+                ? "text-muted-foreground"
+                : stageTotal <= 2
+                  ? "text-amber-600"
+                  : "text-emerald-600";
               return (
                 <button
                   key={s.id}
                   onClick={() => advanceTo(i)}
-                  className={`flex flex-col items-center min-w-[3.5rem] py-1 px-1.5 rounded text-[10px] transition-colors flex-shrink-0 ${
-                    isCurrent ? "bg-primary text-primary-foreground" :
-                    isDone ? "text-emerald-600" :
-                    "text-muted-foreground hover:bg-muted/50"
+                  className={`relative flex flex-col items-center min-w-[3.5rem] py-1 px-1.5 rounded text-[10px] transition-colors flex-shrink-0 ${
+                    isCurrent
+                      ? "bg-primary text-primary-foreground"
+                      : `${densityClass} hover:bg-muted/50`
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5 mb-0.5" />
                   <span className="text-center leading-tight">{s.title.split(" ")[0]}</span>
+                  {/* Capture-count badge */}
+                  {stageTotal > 0 && (
+                    <span className={`absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full text-[9px] font-bold flex items-center justify-center ${
+                      isCurrent
+                        ? "bg-primary-foreground text-primary"
+                        : stageTotal <= 2
+                          ? "bg-amber-500 text-white"
+                          : "bg-emerald-500 text-white"
+                    }`}>
+                      {stageTotal}
+                    </span>
+                  )}
+                  {isDone && !isCurrent && stageTotal === 0 && (
+                    <CheckCircle className="w-2.5 h-2.5 absolute -top-0.5 -right-0.5 text-emerald-600" />
+                  )}
                 </button>
               );
             })}
