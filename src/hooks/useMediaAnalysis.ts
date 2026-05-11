@@ -29,6 +29,11 @@ export interface PhotoAnalysisResult {
   // to auto-fill the text_summary attribute on signage features.
   extracted_text?: string | null;
   extracted_text_language?: string | null;
+  // Suggested short label for the feature based on what's in the photo
+  // (e.g. 'Dorm A east entrance', 'South fence segment'). Auto-fills
+  // the FeatureCaptureCard's label field when the operator hasn't typed
+  // anything. Operator can always edit.
+  suggested_label?: string | null;
   analyzed_at: string;
 }
 

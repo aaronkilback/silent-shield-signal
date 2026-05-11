@@ -165,22 +165,33 @@ export function FeatureCaptureCard({
 
   const setAttr = (k: string, v: unknown) => setAttributes((prev) => ({ ...prev, [k]: v }));
 
-  // For signage photos: poll the AI vision analysis and auto-populate
-  // text_summary with the OCR'd sign text when it arrives. Only fires
-  // for the signage feature_type and only if the operator hasn't
-  // already typed something in text_summary.
-  const photoAnalysis = usePhotoAnalysis(
-    feature_type === "signage" ? lastPhotoMediaId : null,
-  );
+  // Poll the AI vision analysis on the most recent photo. Used for
+  // two auto-fills:
+  //   (1) suggested_label (all feature_types) — fills the label
+  //       field if operator hasn't typed anything
+  //   (2) extracted_text + language (signage only) — fills the
+  //       text_summary attribute with OCR'd sign text
+  // Auto-fill never clobbers operator edits.
+  const photoAnalysis = usePhotoAnalysis(lastPhotoMediaId);
+
+  // Auto-fill label from suggested_label (all feature types)
+  useEffect(() => {
+    const suggested = photoAnalysis.findings?.suggested_label;
+    if (!suggested) return;
+    if (label.trim().length > 0) return; // don't clobber typed text
+    setLabel(suggested);
+    toast.success(`Label suggested: ${suggested}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoAnalysis.findings?.suggested_label]);
+
+  // Auto-fill OCR'd sign text (signage only)
   useEffect(() => {
     if (feature_type !== "signage") return;
     const extracted = photoAnalysis.findings?.extracted_text;
     if (!extracted) return;
     const current = (attributes.text_summary as string | undefined) ?? "";
-    // Don't clobber operator edits — only auto-fill if empty.
     if (current.trim().length === 0) {
       setAttr("text_summary", extracted);
-      // Also fill language if empty.
       const lang = photoAnalysis.findings?.extracted_text_language;
       if (lang && !attributes.language) setAttr("language", lang);
       toast.success("Sign text auto-filled from photo");

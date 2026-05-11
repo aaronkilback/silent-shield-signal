@@ -56,6 +56,14 @@ interface AnalysisResult {
   // Null when feature_type != signage OR no text was readable.
   extracted_text?: string | null;
   extracted_text_language?: string | null;
+  // Short descriptive label suggested by the LLM based on what's
+  // visible in the photo. Format: "<building/area> <direction>
+  // <feature>" e.g. "Dorm A east entrance", "Main gate north",
+  // "South fence segment". Used to auto-fill the FeatureCaptureCard's
+  // label field so the operator doesn't have to compose the label
+  // verbally in the field. Operator can edit; auto-fill never
+  // overwrites typed text.
+  suggested_label?: string | null;
   analyzed_at: string;
 }
 
@@ -158,6 +166,9 @@ Deno.serve(async (req) => {
       extracted_text_language: featureType === "signage" && parsed.extracted_text_language
         ? String(parsed.extracted_text_language).substring(0, 30)
         : null,
+      suggested_label: parsed.suggested_label
+        ? String(parsed.suggested_label).substring(0, 80)
+        : null,
       findings: sanitizeFindings(parsed.findings ?? []),
       analyzed_at: new Date().toISOString(),
     };
@@ -243,7 +254,8 @@ OUTPUT FORMAT (JSON only):
     }
   ],
   "extracted_text": "READABLE TEXT FROM THE SIGN, verbatim, preserving line breaks as \\n. Null if no text is readable or this is not a signage photo. Keep punctuation. Do NOT paraphrase.",
-  "extracted_text_language": "ISO 639-1 code of the primary language on the sign (e.g. 'en', 'fr', 'multi' if bilingual). Null if extracted_text is null."
+  "extracted_text_language": "ISO 639-1 code of the primary language on the sign (e.g. 'en', 'fr', 'multi' if bilingual). Null if extracted_text is null.",
+  "suggested_label": "Short 3-8 word descriptive label combining (a) building/area name if visible (e.g. 'Dorm A', 'Gymnasium', 'Mess hall', 'Gate house'), (b) compass direction if inferrable (north/south/east/west/NW/etc.), (c) the feature itself in plain language. Examples: 'Dorm A east entrance', 'Main gate north', 'South fence segment', 'Camera covering parking lot', 'Yard light pole NW corner'. If building/direction is not visible in the photo, use just feature + visible detail ('Wooden gate with padlock', 'Chain-link fence segment'). Null if too poor a photo to label."
 }
 
 Return ONLY the JSON object, no prose.`;
