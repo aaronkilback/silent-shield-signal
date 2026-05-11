@@ -1263,6 +1263,19 @@ CONNECTION TYPES (pick one):
 - supply_chain: client's transporter, lender, insurer, or named partner has a material event
 - none: no meaningful connection
 
+INDIGENOUS-RELATIONS CONTEXT (admit these — they shape the protective-intelligence operating environment):
+- Treaty / benefits agreement ratifications affecting client's projects or operating territory → 0.65–0.85 (material_development)
+- Court rulings on Indigenous law in client's operating territory → 0.55–0.75 (regulatory)
+- MMIWG memorials, Red Dress Day, residential school commemorations in client's operating territory → 0.45–0.60 (geographic)
+- Indigenous-rights legal proceedings (defamation suits, injunctions, charges) within or adjacent to operating area → 0.50–0.70 (regulatory)
+- First Nations chief / council public statements about client or sector → 0.55–0.75 (material_development)
+A "good news" benefits agreement is STILL a material development — it shapes activist target prioritization, capital flow, and stakeholder dynamics. Do not score low because no threat is named.
+
+DOXXING / NAMED-STAFF TARGETING (admit at ≥0.7 regardless of how indirect the threat language is):
+- Any signal that names a specific client staff member or executive in a public-pressure, exposure, or campaign-to-fire context → 0.7–0.95 (direct_naming)
+- Activist newsletter / coalition piece naming individual healthcare providers, security staff, or executives → 0.7–0.85
+- The mere act of NAMING is the protective-intel concern, not the explicit threat words
+
 CATEGORICAL EXCLUSIONS — return score 0.0 regardless of location:
 - Sports leagues, tryouts, tournaments, recreational activities
 - School events, graduations, concerts, festivals, community social events (paint nights, art classes)
