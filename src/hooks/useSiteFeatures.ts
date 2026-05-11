@@ -22,11 +22,13 @@ export type FeatureType =
   | "entry_point" | "access_control_reader" | "visitor_log_location" | "staffed_post"
   // OT/ICS
   | "scada_node" | "plc" | "historian" | "engineering_workstation"
-  | "vendor_remote_endpoint" | "removable_media_location"
+  | "vendor_remote_endpoint" | "removable_media_location" | "server_room"
   // Comms
   | "radio_repeater" | "internet_uplink" | "satphone_location"
   // External Intel
   | "incident_marker" | "surveillance_observation"
+  // HVAs
+  | "high_value_target"
   | "other";
 
 export interface SiteFeature {
@@ -302,6 +304,7 @@ export const FEATURE_TYPE_LABELS: Record<FeatureType, string> = {
   engineering_workstation: "Eng. workstation",
   vendor_remote_endpoint: "Vendor remote endpoint",
   removable_media_location: "Removable media station",
+  server_room: "Server room",
   radio_repeater: "Radio repeater",
   internet_uplink: "Internet uplink",
   satphone_location: "Satphone",
@@ -336,6 +339,7 @@ export const FEATURE_TYPE_DESCRIPTIONS: Record<FeatureType, string> = {
   engineering_workstation: "A computer engineers use to program / modify PLC + SCADA logic. Higher-privilege than an operator console.",
   vendor_remote_endpoint: "Network connection a vendor (Honeywell, ABB, etc.) uses to remotely service equipment. VPN, jump host, modem.",
   removable_media_location: "A station, policy, or kiosk for handling USB drives / removable media. Often the riskiest OT entry point.",
+  server_room: "Dedicated room housing servers (IT, OT, or both), network gear, UPS, and AC. Capture door lock + access control + fire suppression + visibility from outside. Single point of failure if compromised.",
   // Comms
   radio_repeater: "Radio repeater / base station — VHF, UHF, 700/800MHz public-safety bands.",
   internet_uplink: "How the site connects to the internet — fiber, microwave, satellite, cellular modem.",
@@ -372,7 +376,7 @@ export const STAGE_FEATURE_TYPES: Record<string, FeatureType[]> = {
   // are a process artifact, not a perimeter object). Badge policy /
   // contractor management captured via the freeform notes.
   access_personnel: ["visitor_log_location"],
-  ot_ics: ["scada_node", "plc", "historian", "engineering_workstation", "vendor_remote_endpoint", "removable_media_location"],
+  ot_ics: ["server_room", "scada_node", "plc", "historian", "engineering_workstation", "vendor_remote_endpoint", "removable_media_location"],
   comms: ["radio_repeater", "internet_uplink", "satphone_location"],
   external_intel: ["incident_marker", "surveillance_observation"],
 };

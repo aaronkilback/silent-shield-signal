@@ -123,6 +123,15 @@ const FEATURE_FIELDS: Partial<Record<FeatureType, FieldDef[]>> = {
     { key: "access_method", label: "Access method", type: "select", options: ["vpn","jump_host","cloud","dialup"] },
     { key: "always_on", label: "Always-on", type: "boolean" },
   ],
+  server_room: [
+    { key: "door_lock", label: "Door lock", type: "select", options: ["keyed","badge","biometric","unlocked","unknown"] },
+    { key: "access_log", label: "Access log", type: "select", options: ["paper","electronic","none","unknown"] },
+    { key: "houses", label: "Houses (IT / OT / both)", type: "select", options: ["IT_only","OT_only","both","unknown"] },
+    { key: "fire_suppression", label: "Fire suppression", type: "select", options: ["fm200_inergen","sprinkler","extinguisher_only","none","unknown"] },
+    { key: "ups_backup", label: "UPS / backup power", type: "select", options: ["yes","yes_with_generator","no","unknown"] },
+    { key: "cooling", label: "Cooling", type: "select", options: ["dedicated_ac","shared_hvac","none_passive","unknown"] },
+    { key: "visible_from_exterior", label: "Visible from exterior", type: "boolean" },
+  ],
   radio_repeater: [
     { key: "band", label: "Band", type: "select", options: ["VHF","UHF","700MHz","800MHz","900MHz"] },
     { key: "range_km", label: "Range", type: "number", unit: "km" },
