@@ -856,12 +856,37 @@ Deno.serve(async (req) => {
     let bcwsFiresFetchError: string | null = null;
     let bcwsEvacsFetchOk = true;
     let bcwsEvacsFetchError: string | null = null;
+    // CWFIS upstream (NRCan) sporadically 502s. Don't let one upstream
+    // outage kill the whole monitor — BCWS active fires + evacuations
+    // are the primary signal source per task #77. Degrade gracefully.
+    let cwfisHotspotsFetchOk = true;
+    let cwfisHotspotsFetchError: string | null = null;
+    let cwfisPerimetersFetchOk = true;
+    let cwfisLightningFetchOk = true;
+    let firmsStaticFetchOk = true;
 
     const [hotspots, perimeters, lightningStrikes, firmsStaticSources, bcwsFires, bcwsEvacs] = await Promise.all([
-      fetchCWFISHotspots(),
-      fetchFirePerimeters(),
-      fetchLightningStrikes(),
-      fetchFirmsStaticSources(),
+      fetchCWFISHotspots().catch((err: any) => {
+        cwfisHotspotsFetchOk = false;
+        cwfisHotspotsFetchError = err?.message || String(err);
+        console.warn(`[Wildfires] CWFIS hotspots fetch failed: ${cwfisHotspotsFetchError}`);
+        return [] as Awaited<ReturnType<typeof fetchCWFISHotspots>>;
+      }),
+      fetchFirePerimeters().catch((err: any) => {
+        cwfisPerimetersFetchOk = false;
+        console.warn(`[Wildfires] CWFIS perimeters fetch failed: ${err?.message || err}`);
+        return [] as Awaited<ReturnType<typeof fetchFirePerimeters>>;
+      }),
+      fetchLightningStrikes().catch((err: any) => {
+        cwfisLightningFetchOk = false;
+        console.warn(`[Wildfires] CWFIS lightning fetch failed: ${err?.message || err}`);
+        return [] as Awaited<ReturnType<typeof fetchLightningStrikes>>;
+      }),
+      fetchFirmsStaticSources().catch((err: any) => {
+        firmsStaticFetchOk = false;
+        console.warn(`[Wildfires] FIRMS static-sources fetch failed: ${err?.message || err}`);
+        return [] as Awaited<ReturnType<typeof fetchFirmsStaticSources>>;
+      }),
       fetchBCWSActiveFires().catch((err: any) => {
         bcwsFiresFetchOk = false;
         bcwsFiresFetchError = err?.message || String(err);
@@ -876,7 +901,7 @@ Deno.serve(async (req) => {
       }),
     ]);
 
-    console.log(`[Wildfires] CWFIS: ${hotspots.length} hotspots, ${perimeters.length} perimeters, ${lightningStrikes.length} lightning strikes, ${firmsStaticSources.length} FIRMS static sources. BCWS: ${bcwsFires.length} active fires (fetch_ok=${bcwsFiresFetchOk}), ${bcwsEvacs.length} evacuations (fetch_ok=${bcwsEvacsFetchOk}).`);
+    console.log(`[Wildfires] CWFIS: ${hotspots.length} hotspots (ok=${cwfisHotspotsFetchOk}), ${perimeters.length} perimeters (ok=${cwfisPerimetersFetchOk}), ${lightningStrikes.length} lightning (ok=${cwfisLightningFetchOk}), ${firmsStaticSources.length} FIRMS (ok=${firmsStaticFetchOk}). BCWS: ${bcwsFires.length} active fires (fetch_ok=${bcwsFiresFetchOk}), ${bcwsEvacs.length} evacuations (fetch_ok=${bcwsEvacsFetchOk}).`);
 
     let signalsCreated = 0;
     let flaringsDetected = 0;
@@ -1417,6 +1442,11 @@ Deno.serve(async (req) => {
           bcws_evacs_fetch_ok: bcwsEvacsFetchOk,
           bcws_fires_fetch_error: bcwsFiresFetchError,
           bcws_evacs_fetch_error: bcwsEvacsFetchError,
+          cwfis_hotspots_fetch_ok: cwfisHotspotsFetchOk,
+          cwfis_hotspots_fetch_error: cwfisHotspotsFetchError,
+          cwfis_perimeters_fetch_ok: cwfisPerimetersFetchOk,
+          cwfis_lightning_fetch_ok: cwfisLightningFetchOk,
+          firms_static_fetch_ok: firmsStaticFetchOk,
           signals_created: signalsCreated,
           industrial_flaring_events: flaringsDetected,
           ambiguous_near_facility: ambiguousDetected,
