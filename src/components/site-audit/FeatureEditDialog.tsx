@@ -143,91 +143,9 @@ export function FeatureEditDialog({ feature, auditId, open, onOpenChange }: Feat
         </DialogHeader>
 
         <div className="space-y-4 pt-2 max-h-[70vh] overflow-y-auto pr-1">
-          {/* Photo section — current primary + gallery + upload */}
-          <div className="space-y-2">
-            <Label>Photo</Label>
-            {primaryPhoto?.signed_url ? (
-              <div className="space-y-1">
-                <a href={primaryPhoto.signed_url} target="_blank" rel="noopener noreferrer">
-                  <img
-                    src={primaryPhoto.signed_url}
-                    alt="Primary feature photo"
-                    className="w-full max-h-64 object-contain rounded border bg-muted"
-                  />
-                </a>
-                <div className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Star className="w-3 h-3 text-amber-500" />
-                  Primary photo
-                  {primaryPhoto.bearing_deg !== null && primaryPhoto.bearing_deg !== undefined && (
-                    <span>· bearing {primaryPhoto.bearing_deg.toFixed(0)}°</span>
-                  )}
-                  {primaryPhoto.captured_at && (
-                    <span>· {new Date(primaryPhoto.captured_at).toLocaleDateString()}</span>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="border border-dashed rounded p-4 text-center text-xs text-muted-foreground flex flex-col items-center gap-1">
-                <ImageOff className="w-5 h-5" />
-                No primary photo on this feature
-              </div>
-            )}
-
-            {/* Other linked photos — show as thumbnails with Make Primary */}
-            {otherPhotos.length > 0 && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Other photos ({otherPhotos.length})</div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {otherPhotos.map((p) => (
-                    <div key={p.id} className="relative group">
-                      <a href={p.signed_url ?? "#"} target="_blank" rel="noopener noreferrer">
-                        <img
-                          src={p.signed_url ?? ""}
-                          alt=""
-                          className="w-full aspect-square object-cover rounded border"
-                        />
-                      </a>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => handleMakePrimary(p)}
-                        disabled={update.isPending}
-                        className="absolute bottom-0.5 right-0.5 h-6 px-1.5 text-[10px]"
-                        title="Use as primary"
-                      >
-                        <Star className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Upload new */}
-            {showUploader ? (
-              <MediaUploadField
-                audit_id={auditId}
-                asset_id={feature.asset_id}
-                feature_id={feature.id}
-                kind="photo"
-                onUploaded={async ({ media_asset }) => {
-                  // Auto-promote the newly uploaded photo to primary.
-                  await handleMakePrimary(media_asset);
-                  setShowUploader(false);
-                }}
-              />
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowUploader(true)}
-                className="w-full"
-              >
-                {primaryPhoto ? "Replace / add another photo" : "Add a photo"}
-              </Button>
-            )}
-          </div>
-
+          {/* Editable fields FIRST — operator opened the dialog to edit.
+              Photo section is below so it doesn't push fields off-screen
+              on a phone. */}
           <div className="space-y-1.5">
             <Label>Label</Label>
             <Input
@@ -267,6 +185,94 @@ export function FeatureEditDialog({ feature, auditId, open, onOpenChange }: Feat
               min={0}
               max={359}
             />
+          </div>
+
+          {/* Photo section — below the edit fields so it doesn't dominate
+              the phone screen. Primary photo + gallery + upload control. */}
+          <div className="space-y-2 pt-2 border-t">
+            <Label>Photo{photos && photos.length > 0 ? ` (${photos.length})` : ""}</Label>
+            {primaryPhoto?.signed_url ? (
+              <div className="space-y-1">
+                <a href={primaryPhoto.signed_url} target="_blank" rel="noopener noreferrer">
+                  <img
+                    src={primaryPhoto.signed_url}
+                    alt="Primary feature photo"
+                    className="w-full max-h-48 object-contain rounded border bg-muted"
+                  />
+                </a>
+                <div className="text-xs text-muted-foreground flex items-center gap-1 flex-wrap">
+                  <Star className="w-3 h-3 text-amber-500" />
+                  Primary
+                  {primaryPhoto.bearing_deg !== null && primaryPhoto.bearing_deg !== undefined && (
+                    <span>· bearing {primaryPhoto.bearing_deg.toFixed(0)}°</span>
+                  )}
+                  {primaryPhoto.captured_at && (
+                    <span>· {new Date(primaryPhoto.captured_at).toLocaleDateString()}</span>
+                  )}
+                </div>
+              </div>
+            ) : photos && photos.length > 0 ? (
+              // Photos exist but none matches primary_photo_url —
+              // dangling primary or unlinked-on-original-capture. Let
+              // the operator promote one of them.
+              <div className="text-xs text-amber-700 dark:text-amber-500 border-l-2 border-amber-500 pl-2 py-0.5">
+                Primary photo reference is stale. Pick one below to set as primary.
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground italic">
+                No photos on this feature yet.
+              </div>
+            )}
+
+            {/* Other linked photos — show as thumbnails with Make Primary */}
+            {otherPhotos.length > 0 && (
+              <div className="grid grid-cols-3 gap-1.5">
+                {otherPhotos.map((p) => (
+                  <div key={p.id} className="relative">
+                    <a href={p.signed_url ?? "#"} target="_blank" rel="noopener noreferrer">
+                      <img
+                        src={p.signed_url ?? ""}
+                        alt=""
+                        className="w-full aspect-square object-cover rounded border"
+                      />
+                    </a>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => handleMakePrimary(p)}
+                      disabled={update.isPending}
+                      className="absolute bottom-0.5 right-0.5 h-6 px-1.5"
+                      title="Use as primary"
+                    >
+                      <Star className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Upload new */}
+            {showUploader ? (
+              <MediaUploadField
+                audit_id={auditId}
+                asset_id={feature.asset_id}
+                feature_id={feature.id}
+                kind="photo"
+                onUploaded={async ({ media_asset }) => {
+                  await handleMakePrimary(media_asset);
+                  setShowUploader(false);
+                }}
+              />
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowUploader(true)}
+                className="w-full"
+              >
+                {primaryPhoto ? "Replace / add another photo" : "Add a photo"}
+              </Button>
+            )}
           </div>
         </div>
 

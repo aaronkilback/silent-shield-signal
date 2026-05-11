@@ -31,6 +31,7 @@ import {
 import { useUpdateFeature } from "@/hooks/useSiteFeatures";
 import { MediaUploadField } from "./MediaUploadField";
 import { usePhotoAnalysis } from "@/hooks/useMediaAnalysis";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 interface FeatureCaptureCardProps {
@@ -201,6 +202,23 @@ export function FeatureCaptureCard({
         primary_photo_url: photoCoords?.photo_url,
         confidence: photoCoords ? 0.95 : 0.7,    // photo-evidenced = higher
       });
+      // Backfill feature_id on the uploaded photo so it appears in the
+      // feature's gallery when the operator reopens the edit dialog.
+      // The photo was uploaded before this feature existed — without
+      // this update, media_assets.feature_id stays null and the photo
+      // is orphaned from the feature even though it's set as primary.
+      if (lastPhotoMediaId) {
+        try {
+          await supabase
+            .from("media_assets")
+            .update({ feature_id: f.id })
+            .eq("id", lastPhotoMediaId);
+        } catch (linkErr) {
+          // Non-fatal — the feature is saved, photo just won't appear
+          // in the gallery view. Log so we can diagnose.
+          console.warn("Failed to link photo to feature:", linkErr);
+        }
+      }
       setSavedFeatureId(f.id);
       toast.success(`${FEATURE_TYPE_LABELS[feature_type]} captured`);
       onSaved?.();
