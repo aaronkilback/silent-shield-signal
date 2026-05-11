@@ -7,6 +7,61 @@ function isYouTubeUrl(url: string): boolean {
   return /(?:youtube\.com\/watch\?v=|youtu\.be\/)/.test(url);
 }
 
+function isRedditPostUrl(url: string): boolean {
+  return /reddit\.com\/r\/[^/]+\/comments\/[a-z0-9]+/i.test(url);
+}
+
+interface RedditComment {
+  body: string;
+  score: number;
+  author: string;
+  created_utc: number;
+  permalink: string;
+}
+
+/**
+ * Fetch top comments from a Reddit post URL. Free, no auth needed.
+ * Returns top N comments by score, body length > 30 chars. Caps the
+ * fetch to avoid hammering Reddit (one .json request per post).
+ *
+ * Returns [] on any error — comments are an enrichment, not a hard
+ * requirement, so failure should not break the post ingest.
+ */
+async function fetchRedditComments(postUrl: string, limit = 3): Promise<RedditComment[]> {
+  if (!isRedditPostUrl(postUrl)) return [];
+  // Reddit accepts the post URL + .json directly.
+  const jsonUrl = postUrl.replace(/\/?$/, "") + ".json?limit=20";
+  try {
+    const resp = await fetch(jsonUrl, {
+      headers: { "User-Agent": "FortressAI/1.0 (OSINT security monitoring; automated)" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) {
+      console.warn(`[Reddit] comment fetch ${resp.status} for ${postUrl}`);
+      return [];
+    }
+    const data = await resp.json();
+    // data[0] = post, data[1] = comment listing
+    const children = data?.[1]?.data?.children;
+    if (!Array.isArray(children)) return [];
+
+    return children
+      .filter((c: any) => c?.kind === "t1" && typeof c?.data?.body === "string" && c.data.body.length > 30)
+      .map((c: any) => ({
+        body: String(c.data.body).substring(0, 800),
+        score: Number(c.data.score ?? 0),
+        author: String(c.data.author ?? "unknown"),
+        created_utc: Number(c.data.created_utc ?? 0),
+        permalink: `https://www.reddit.com${c.data.permalink}`,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  } catch (err) {
+    console.warn(`[Reddit] comment fetch failed for ${postUrl}:`, err);
+    return [];
+  }
+}
+
 interface RSSItem {
   title: string;
   link: string;
@@ -223,6 +278,59 @@ Deno.serve(async (req) => {
                 payload: { documentId: insertedDoc.id },
                 idempotencyKey: `process-intelligence-document:${insertedDoc.id}`,
               }).catch(err => console.error('Failed to enqueue processing:', err));
+
+              // ── Reddit comment expansion ─────────────────────────
+              // For Reddit posts, fetch the top 3 comments by score and
+              // ingest each as its own document. Comments are where the
+              // real coordination happens — the post is often just a
+              // news link, the comments are the activist discussion.
+              if (item.link && isRedditPostUrl(item.link)) {
+                const comments = await fetchRedditComments(item.link, 3);
+                console.log(`[Reddit] ${source.name} post "${item.title.substring(0, 60)}" → ${comments.length} comments`);
+                for (const comment of comments) {
+                  try {
+                    const commentTitle = `Re: ${item.title} (${comment.score} pts by ${comment.author})`;
+                    const { data: existingComment } = await supabaseClient
+                      .from('ingested_documents')
+                      .select('id')
+                      .eq('metadata->>url', comment.permalink)
+                      .single();
+                    if (existingComment) continue;
+
+                    const { data: commentDoc, error: commentErr } = await supabaseClient
+                      .from('ingested_documents')
+                      .insert({
+                        title: commentTitle,
+                        raw_text: `Reddit comment by ${comment.author} (${comment.score} pts) on "${item.title}":\n\n${comment.body}`,
+                        source_id: source.id,
+                        source_url: comment.permalink,
+                        metadata: {
+                          url: comment.permalink,
+                          source_type: 'reddit_comment',
+                          source_name: source.name,
+                          parent_post_url: item.link,
+                          parent_post_title: item.title,
+                          comment_author: comment.author,
+                          comment_score: comment.score,
+                          comment_created_utc: comment.created_utc,
+                        },
+                        processing_status: 'pending',
+                      })
+                      .select()
+                      .single();
+                    if (!commentErr && commentDoc) {
+                      totalSignals++;
+                      enqueueJob(supabaseClient, {
+                        type: 'process-intelligence-document',
+                        payload: { documentId: commentDoc.id },
+                        idempotencyKey: `process-intelligence-document:${commentDoc.id}`,
+                      }).catch(err => console.error('Failed to enqueue comment processing:', err));
+                    }
+                  } catch (commentInsertErr) {
+                    console.warn(`[Reddit] comment ingest failed:`, commentInsertErr);
+                  }
+                }
+              }
             }
           } catch (error) {
             console.error(`Error ingesting RSS item:`, error);

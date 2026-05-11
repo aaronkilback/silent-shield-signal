@@ -82,6 +82,13 @@ Deno.serve(async (req) => {
 
     let signalsCreated = 0;
     let tweetsProcessed = 0;
+    let conversationsExpanded = 0;
+    let replySignals = 0;
+    // Collect high-reply tweets from each query for conversation
+    // expansion at the end. Comments are where activist coordination
+    // happens — the parent tweet is often news, replies are the plan.
+    const conversationCandidates: Tweet[] = [];
+    const expandedConversationIds = new Set<string>();
 
     // ═══ QUERY A: Person threat monitoring ═══
     // Build one OR query from all monitored person names
@@ -104,6 +111,10 @@ Deno.serve(async (req) => {
         const result = await ingestTweet(supabase, tweet, persons, null, "person_threat");
         if (result) signalsCreated++;
         tweetsProcessed++;
+        // Track high-reply candidates for conversation expansion
+        if ((tweet.public_metrics?.reply_count ?? 0) >= 3 && tweet.conversation_id) {
+          conversationCandidates.push(tweet);
+        }
       }
 
       console.log(`[TwitterMonitor] Person threat query: ${tweets.length} tweets, ${signalsCreated} signals`);
@@ -137,6 +148,9 @@ Deno.serve(async (req) => {
         const result = await ingestTweet(supabase, tweet, persons, clientList, "campaign");
         if (result) { campaignSignals++; signalsCreated++; }
         tweetsProcessed++;
+        if ((tweet.public_metrics?.reply_count ?? 0) >= 3 && tweet.conversation_id) {
+          conversationCandidates.push(tweet);
+        }
       }
 
       console.log(`[TwitterMonitor] Campaign query: ${campaignTweets.length} tweets, ${campaignSignals} signals`);
@@ -185,6 +199,9 @@ Deno.serve(async (req) => {
             const result = await ingestTweet(supabase, tweet, persons, wildfireClients, "situational");
             if (result) { sitSignals++; signalsCreated++; }
             tweetsProcessed++;
+            if ((tweet.public_metrics?.reply_count ?? 0) >= 3 && tweet.conversation_id) {
+              conversationCandidates.push(tweet);
+            }
           }
           console.log(`[TwitterMonitor] Situational query: ${sitTweets.length} tweets, ${sitSignals} signals`);
         } else {
@@ -193,11 +210,49 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[TwitterMonitor] Done. Tweets processed: ${tweetsProcessed}, signals created: ${signalsCreated}`);
+    // ═══ QUERY D: Conversation expansion ═══════════════════════════════
+    // High-reply tweets surfaced by A/B/C often have activist coordination
+    // in the replies that the parent tweet doesn't show. Pick the top
+    // candidates by reply_count, fetch each conversation, and ingest the
+    // replies as individual tweets. Cap at 3 expansions per cron run to
+    // bound API spend (each expansion = 1 request, ~50 replies returned).
+    if (conversationCandidates.length > 0) {
+      const topCandidates = conversationCandidates
+        .filter((t) => t.conversation_id && !expandedConversationIds.has(t.conversation_id))
+        .sort((a, b) =>
+          (b.public_metrics?.reply_count ?? 0) - (a.public_metrics?.reply_count ?? 0),
+        )
+        .slice(0, 3);
+
+      for (const parent of topCandidates) {
+        if (!parent.conversation_id) continue;
+        expandedConversationIds.add(parent.conversation_id);
+        console.log(`[TwitterMonitor] Expanding conversation_id=${parent.conversation_id} (parent has ${parent.public_metrics?.reply_count} replies)`);
+        await new Promise((r) => setTimeout(r, 1000));
+
+        const replies = await searchRecentTweets(
+          bearerToken,
+          `conversation_id:${parent.conversation_id} -is:retweet lang:en`,
+          50,
+        );
+        for (const reply of replies) {
+          if (reply.id === parent.id) continue;   // skip the parent itself
+          const result = await ingestTweet(supabase, reply, persons, clientList, "conversation_reply");
+          if (result) { signalsCreated++; replySignals++; }
+          tweetsProcessed++;
+        }
+        conversationsExpanded++;
+        console.log(`[TwitterMonitor] Conversation ${parent.conversation_id}: ${replies.length} replies, ${replySignals} signals so far`);
+      }
+    }
+
+    console.log(`[TwitterMonitor] Done. Tweets processed: ${tweetsProcessed}, signals created: ${signalsCreated} (conversations expanded: ${conversationsExpanded}, reply signals: ${replySignals})`);
 
     await completeHeartbeat(supabase, hb, {
       tweets_processed: tweetsProcessed,
       signals_created: signalsCreated,
+      conversations_expanded: conversationsExpanded,
+      reply_signals: replySignals,
       source: "twitter_api_v2",
     });
 
@@ -222,6 +277,8 @@ Deno.serve(async (req) => {
 interface Tweet {
   id: string;
   text: string;
+  conversation_id?: string;
+  in_reply_to_user_id?: string;
   created_at?: string;
   public_metrics?: { like_count: number; retweet_count: number; reply_count: number };
   author?: { username: string; name: string };
@@ -231,7 +288,9 @@ async function searchRecentTweets(bearerToken: string, query: string, maxResults
   const params = new URLSearchParams({
     query,
     max_results: String(Math.min(Math.max(maxResults, 10), 100)),
-    "tweet.fields": "created_at,public_metrics,text",
+    // conversation_id + in_reply_to_user_id let us identify and expand
+    // reply threads on high-engagement tweets.
+    "tweet.fields": "created_at,public_metrics,text,conversation_id,in_reply_to_user_id",
     expansions: "author_id",
     "user.fields": "username,name",
   });
@@ -272,6 +331,8 @@ async function searchRecentTweets(bearerToken: string, query: string, maxResults
     return (data.data as any[]).map((t: any) => ({
       id: t.id,
       text: t.text,
+      conversation_id: t.conversation_id,
+      in_reply_to_user_id: t.in_reply_to_user_id,
       created_at: t.created_at,
       public_metrics: t.public_metrics,
       author: usersById.get(t.author_id),
