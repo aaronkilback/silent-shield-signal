@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * Twitter/X monitor — uses Twitter API v2 recent search when
@@ -42,15 +43,23 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  const supabase = createServiceClient();
+  // Heartbeat job_name must match the cron name (monitor-twitter-30min)
+  // per CLAUDE.md naming-alignment rule.
+  const hb = await startHeartbeat(supabase, "monitor-twitter-30min");
+
   try {
     const bearerToken = Deno.env.get("TWITTER_BEARER_TOKEN");
 
     if (!bearerToken) {
       console.log("[TwitterMonitor] No TWITTER_BEARER_TOKEN configured — skipping");
+      await completeHeartbeat(supabase, hb, {
+        signals_created: 0,
+        skipped: true,
+        reason: "no_bearer_token",
+      });
       return successResponse({ success: true, message: "No bearer token configured", signals_created: 0 });
     }
-
-    const supabase = createServiceClient();
 
     // Fetch all actively monitored person entities
     const { data: personEntities, error: entErr } = await supabase
@@ -186,6 +195,12 @@ Deno.serve(async (req) => {
 
     console.log(`[TwitterMonitor] Done. Tweets processed: ${tweetsProcessed}, signals created: ${signalsCreated}`);
 
+    await completeHeartbeat(supabase, hb, {
+      tweets_processed: tweetsProcessed,
+      signals_created: signalsCreated,
+      source: "twitter_api_v2",
+    });
+
     return successResponse({
       success: true,
       tweets_processed: tweetsProcessed,
@@ -195,6 +210,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error("[TwitterMonitor] Fatal error:", error);
+    await failHeartbeat(supabase, hb, error);
     return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });
