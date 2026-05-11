@@ -122,7 +122,7 @@ export const SignalHistory = () => {
   useEffect(() => {
     // Load signals regardless of client selection - show all if none selected
     loadSignals();
-    
+
     // Subscribe to real-time updates for selected client only
     const channel = supabase
       .channel(`signal-history-${selectedClientId || 'all'}`)
@@ -140,12 +140,12 @@ export const SignalHistory = () => {
             if (payload.eventType === 'DELETE') {
               return current.filter(s => s.id !== payload.old.id);
             }
-            
+
             const exists = current.find(s => s.id === payload.new.id);
             if (exists) {
               return current.map(s => s.id === payload.new.id ? { ...s, ...payload.new } : s);
             }
-            
+
             // For new signals, refetch to get complete data with joins
             loadSignals();
             return current;
@@ -154,8 +154,26 @@ export const SignalHistory = () => {
       )
       .subscribe();
 
+    // Fallback refetches — postgres_changes can silently drop events on
+    // mobile-background, network blip, or tab-inactivity. Without these,
+    // useRealtimeNotifications (which has its own poll + visibility
+    // fallback) fires the toast on recovery but this feed stays stale
+    // because its channel missed the original INSERT. Same pattern as
+    // the toast hook so the two stay in sync.
+    const POLL_MS = 30_000;
+    const pollId = setInterval(() => { loadSignals(); }, POLL_MS);
+
+    const onVisible = () => { if (document.visibilityState === 'visible') loadSignals(); };
+    document.addEventListener('visibilitychange', onVisible);
+
+    const onOnline = () => { loadSignals(); };
+    window.addEventListener('online', onOnline);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(pollId);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
     };
   }, [selectedClientId]);
 
