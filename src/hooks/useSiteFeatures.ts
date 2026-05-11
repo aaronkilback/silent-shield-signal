@@ -257,7 +257,15 @@ export const FEATURE_TYPE_LABELS: Record<FeatureType, string> = {
 
 /** Feature types that belong to each stage. */
 export const STAGE_FEATURE_TYPES: Record<string, FeatureType[]> = {
-  perimeter: ["fence_segment", "gate", "camera", "lighting_fixture", "sightline_blind_spot", "signage", "intrusion_sensor"],
+  // Perimeter includes access-control features because at a camp / staffed
+  // gatehouse the access control IS the perimeter — operators on a walk
+  // expect to drop entry_point + access_control_reader + staffed_post next
+  // to the gate + fence_segment rather than switching stages.
+  perimeter: [
+    "fence_segment", "gate", "camera", "lighting_fixture",
+    "sightline_blind_spot", "signage", "intrusion_sensor",
+    "entry_point", "access_control_reader", "staffed_post",
+  ],
   access_personnel: ["entry_point", "access_control_reader", "visitor_log_location", "staffed_post"],
   ot_ics: ["scada_node", "plc", "historian", "engineering_workstation", "vendor_remote_endpoint", "removable_media_location"],
   comms: ["radio_repeater", "internet_uplink", "satphone_location"],

@@ -25,6 +25,10 @@ export interface PhotoAnalysisResult {
   version: string;
   image_quality: "good" | "acceptable" | "poor" | "too_dark" | "blurry" | "cropped";
   findings: PhotoFinding[];
+  // Signage photos only: OCR'd text + language. Used by FeatureCaptureCard
+  // to auto-fill the text_summary attribute on signage features.
+  extracted_text?: string | null;
+  extracted_text_language?: string | null;
   analyzed_at: string;
 }
 

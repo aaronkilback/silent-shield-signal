@@ -50,6 +50,12 @@ interface AnalysisResult {
   version: string;
   image_quality: "good" | "acceptable" | "poor" | "too_dark" | "blurry" | "cropped";
   findings: Finding[];
+  // For signage photos: the literal text the operator can see on the
+  // sign. Used to auto-fill the FeatureCaptureCard's text_summary field
+  // so the operator doesn't have to type "PRIVATE PROPERTY NO TRESPASSING".
+  // Null when feature_type != signage OR no text was readable.
+  extracted_text?: string | null;
+  extracted_text_language?: string | null;
   analyzed_at: string;
 }
 
@@ -146,6 +152,12 @@ Deno.serve(async (req) => {
       model: MODEL,
       version: "v1",
       image_quality: parsed.image_quality ?? "acceptable",
+      extracted_text: featureType === "signage" && parsed.extracted_text
+        ? String(parsed.extracted_text).substring(0, 500)
+        : null,
+      extracted_text_language: featureType === "signage" && parsed.extracted_text_language
+        ? String(parsed.extracted_text_language).substring(0, 30)
+        : null,
       findings: sanitizeFindings(parsed.findings ?? []),
       analyzed_at: new Date().toISOString(),
     };
@@ -229,7 +241,9 @@ OUTPUT FORMAT (JSON only):
       "visual_cue": "where in the frame; what specifically you can see",
       "suggested_observation_field": "snake_case field name suggesting where this could be recorded"
     }
-  ]
+  ],
+  "extracted_text": "READABLE TEXT FROM THE SIGN, verbatim, preserving line breaks as \\n. Null if no text is readable or this is not a signage photo. Keep punctuation. Do NOT paraphrase.",
+  "extracted_text_language": "ISO 639-1 code of the primary language on the sign (e.g. 'en', 'fr', 'multi' if bilingual). Null if extracted_text is null."
 }
 
 Return ONLY the JSON object, no prose.`;
@@ -310,6 +324,9 @@ function featureFocus(featureType: string | null): string {
       ].join("\n");
     case "signage":
       return [
+        "PRIMARY TASK: Read the sign's text verbatim and return it in 'extracted_text' (preserve line breaks as \\n, keep punctuation, do NOT paraphrase or shorten).",
+        "Also identify the primary language (en/fr/multi) in 'extracted_text_language'.",
+        "Additionally flag if any of these apply (these are 'findings', not the extracted_text):",
         "- Faded or unreadable text",
         "- Knocked down, missing, or damaged",
         "- Wrong language (English-only when bilingual required)",

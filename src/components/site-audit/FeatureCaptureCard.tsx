@@ -16,13 +16,13 @@
  *      media_assets.feature_id
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { X, MapPin, Loader2 } from "lucide-react";
+import { X, MapPin, Loader2, Sparkles } from "lucide-react";
 import {
   useCreateFeature,
   type FeatureType,
@@ -30,6 +30,7 @@ import {
 } from "@/hooks/useSiteFeatures";
 import { useUpdateFeature } from "@/hooks/useSiteFeatures";
 import { MediaUploadField } from "./MediaUploadField";
+import { usePhotoAnalysis } from "@/hooks/useMediaAnalysis";
 import { toast } from "sonner";
 
 interface FeatureCaptureCardProps {
@@ -156,9 +157,33 @@ export function FeatureCaptureCard({
   const [label, setLabel] = useState(initialLabel ?? "");
   const [attributes, setAttributes] = useState<Record<string, unknown>>({});
   const [photoCoords, setPhotoCoords] = useState<{ lat: number; lng: number; bearing?: number; photo_url?: string } | null>(null);
+  const [lastPhotoMediaId, setLastPhotoMediaId] = useState<string | null>(null);
   const [savedFeatureId, setSavedFeatureId] = useState<string | null>(null);
 
   const setAttr = (k: string, v: unknown) => setAttributes((prev) => ({ ...prev, [k]: v }));
+
+  // For signage photos: poll the AI vision analysis and auto-populate
+  // text_summary with the OCR'd sign text when it arrives. Only fires
+  // for the signage feature_type and only if the operator hasn't
+  // already typed something in text_summary.
+  const photoAnalysis = usePhotoAnalysis(
+    feature_type === "signage" ? lastPhotoMediaId : null,
+  );
+  useEffect(() => {
+    if (feature_type !== "signage") return;
+    const extracted = photoAnalysis.findings?.extracted_text;
+    if (!extracted) return;
+    const current = (attributes.text_summary as string | undefined) ?? "";
+    // Don't clobber operator edits — only auto-fill if empty.
+    if (current.trim().length === 0) {
+      setAttr("text_summary", extracted);
+      // Also fill language if empty.
+      const lang = photoAnalysis.findings?.extracted_text_language;
+      if (lang && !attributes.language) setAttr("language", lang);
+      toast.success("Sign text auto-filled from photo");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoAnalysis.findings?.extracted_text]);
 
   const handleSave = async () => {
     try {
@@ -220,6 +245,9 @@ export function FeatureCaptureCard({
                     photo_url: media_asset.storage_path,
                   });
                 }
+                // Track the media id so the signage OCR auto-fill can
+                // poll for the AI analysis result.
+                setLastPhotoMediaId(media_asset.id);
               }}
             />
             {photoCoords && (
