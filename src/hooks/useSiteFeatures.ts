@@ -82,8 +82,25 @@ export function useAssetFeaturesWithCoords(assetId: string | null) {
         "get_asset_features_with_coords",
         { p_asset_id: assetId } as never,
       );
-      if (error) throw error;
-      return (data as AssetFeaturesWithCoords) ?? { asset_lat: null, asset_lng: null, features: [] };
+      if (!error) {
+        return (data as AssetFeaturesWithCoords) ?? { asset_lat: null, asset_lng: null, features: [] };
+      }
+      // Fallback when the RPC isn't deployed yet (or fails) — fetch the
+      // plain feature rows without coords so the inventory still renders.
+      // Spatial grouping won't be available, type grouping will.
+      console.warn("get_asset_features_with_coords RPC unavailable, falling back to plain SELECT:", error.message);
+      const { data: rows } = await supabase
+        .from("site_features")
+        .select("*")
+        .eq("asset_id", assetId)
+        .is("deleted_at", null)
+        .order("feature_type, label");
+      const features: FeatureWithCoords[] = (rows ?? []).map((r) => ({
+        ...(r as SiteFeature),
+        lat: null,
+        lng: null,
+      }));
+      return { asset_lat: null, asset_lng: null, features };
     },
     staleTime: 30_000,
   });
