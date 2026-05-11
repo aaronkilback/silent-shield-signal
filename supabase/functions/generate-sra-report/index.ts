@@ -412,11 +412,14 @@ function renderHtml(d: RenderInput): string {
 
   <h2>Site Overview</h2>
   <p><strong>Type:</strong> ${esc(d.asset.asset_class.replace(/_/g, " "))}</p>
-  <p><strong>Assets on site (documented in this audit):</strong></p>
+  <p><strong>Assets on site (${d.features.length} feature${d.features.length === 1 ? "" : "s"} documented):</strong></p>
   <ul class="tight">
-    ${Array.from(featByType.entries()).map(([type, list]) =>
-      `<li>${esc(list.length)}&times; ${esc(type.replace(/_/g, " "))}${list.some((f) => f.label) ? `: ${list.filter((f) => f.label).map((f) => esc(f.label)).join(", ")}` : ""}</li>`,
-    ).join("\n    ")}
+    ${Array.from(featByType.entries())
+      // Counts only — readable summary, not a 22-line label dump.
+      .sort(([, a], [, b]) => b.length - a.length)
+      .map(([type, list]) =>
+        `<li>${esc(list.length)}&times; ${esc(type.replace(/_/g, " "))}</li>`,
+      ).join("\n    ")}
     ${d.features.length === 0 ? "<li><em>No features captured during this audit.</em></li>" : ""}
   </ul>
   <p>${valueText}</p>
@@ -487,16 +490,30 @@ function renderHtml(d: RenderInput): string {
   <h2>Summary</h2>
   <div class="ai-draft">${esc(d.narrative.summary)}</div>
 
-  <h2>Appendix A: Photos</h2>
-  ${d.photos.length === 0 ? "<p><em>No photos captured.</em></p>" : `
+  <h2>Appendix A: Selected Photos</h2>
+  ${(() => {
+    // Photo bloat fix: cap Appendix A at 12 representative photos.
+    // Embedding every photo turned a 24-page report into 300MB. The
+    // selection criterion: oldest photo per feature_type first (the
+    // one most likely to be the "canonical" capture), most recent
+    // last. Operator can browse the full gallery in the wizard.
+    const MAX_APPENDIX_PHOTOS = 12;
+    if (d.photos.length === 0) {
+      return "<p><em>No photos captured.</em></p>";
+    }
+    const selected = d.photos.slice(0, MAX_APPENDIX_PHOTOS);
+    const skipped = d.photos.length - selected.length;
+    return `
+  <p class="meta">${esc(selected.length)} of ${esc(d.photos.length)} photo${d.photos.length === 1 ? "" : "s"} shown${skipped > 0 ? ` (${esc(skipped)} additional available in the wizard gallery)` : ""}.</p>
   <div class="photo-grid">
-    ${d.photos.map((p) => `
+    ${selected.map((p) => `
       <figure>
         <img src="${esc(p.signed_url)}" alt="" />
         <figcaption>${p.captured_at ? esc(new Date(p.captured_at).toLocaleString()) : ""}${p.bearing_deg !== null ? ` &middot; bearing ${esc(p.bearing_deg.toFixed(0))}&deg;` : ""}</figcaption>
       </figure>
     `).join("\n    ")}
-  </div>
+  </div>`;
+  })()}
   `}
 
   ${d.documents.length > 0 ? `
