@@ -182,12 +182,48 @@ Deno.serve(async (req) => {
       // Now each keyword fires TWO scoped queries — one for direct
       // security angles, one for activist/protest angles — so the gate
       // sees more material it can plausibly admit.
+      // NGO/advocacy keywords get paired with operational asset terms
+      // instead of kinetic-verb gates. Reason: an environmental org
+      // saying "expanded LNG Canada would put climate targets out of
+      // reach" is operationally significant on its own — no protest /
+      // blockade / threat verb required. Verb-gated queries silently
+      // dropped this class of signal (discovered 2026-05-11 when a
+      // Stand.Earth / Liz McDowell quote was missing from the feed).
+      //
+      // Per-client list lives on clients.monitoring_config.ngo_keywords.
+      const ngoKeywords: string[] = Array.isArray(client.monitoring_config?.ngo_keywords)
+        ? client.monitoring_config.ngo_keywords.filter((k: any) => typeof k === 'string' && k.trim().length >= 3)
+        : [];
+      const ngoSet = new Set(ngoKeywords.map(k => k.toLowerCase()));
+
+      // Asset-style keywords: everything in monitoring_keywords that
+      // isn't an NGO. These are the operational targets we pair NGO
+      // mentions against.
+      const assetKeywords: string[] = (client.monitoring_keywords ?? [])
+        .filter((k: string) => typeof k === 'string' && !ngoSet.has(k.toLowerCase()));
+
       if (client.monitoring_keywords?.length > 0) {
         for (const keyword of client.monitoring_keywords) {
-          // Security / incident angle — threats, sabotage, regulatory action.
-          queries.push(withNeg(`"${keyword}" Canada OR "British Columbia" (threat OR incident OR sabotage OR investigation OR ruling OR injunction OR breach OR opposition)`));
-          // Activist / protest angle — direct action against the asset.
-          queries.push(withNeg(`"${keyword}" Canada OR "British Columbia" (protest OR blockade OR activist OR "land defender" OR "direct action" OR boycott OR divest)`));
+          if (ngoSet.has(keyword.toLowerCase())) {
+            // NGO/advocacy angle — fire one query that pairs the NGO
+            // name with operational assets. Captures commentary,
+            // critiques, statements, campaign launches without
+            // requiring kinetic verbiage. Cap the OR clause to the
+            // first 10 asset keywords to stay under Google CSE query
+            // length limits.
+            const assetTerms = assetKeywords.slice(0, 10).map(a => `"${a}"`).join(' OR ');
+            if (assetTerms) {
+              queries.push(withNeg(`"${keyword}" (${assetTerms})`));
+            } else {
+              // Fallback if client has no non-NGO keywords yet.
+              queries.push(withNeg(`"${keyword}" Canada OR "British Columbia"`));
+            }
+          } else {
+            // Security / incident angle — threats, sabotage, regulatory action.
+            queries.push(withNeg(`"${keyword}" Canada OR "British Columbia" (threat OR incident OR sabotage OR investigation OR ruling OR injunction OR breach OR opposition)`));
+            // Activist / protest angle — direct action against the asset.
+            queries.push(withNeg(`"${keyword}" Canada OR "British Columbia" (protest OR blockade OR activist OR "land defender" OR "direct action" OR boycott OR divest)`));
+          }
         }
       }
 
