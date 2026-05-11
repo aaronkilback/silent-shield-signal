@@ -1451,58 +1451,72 @@ Score this signal's relevance and classify the connection.`
     // Determine status based on relevance
     const signalStatus = 'new'; // low_confidence is not a valid signal_status enum value
     
-    // Extract event_date: AI-extracted date takes priority over raw metadata
+    // Extract event_date + decide historical bucketing.
+    //
+    // Two distinct things here:
+    //   (1) event_date — descriptive metadata about WHEN the underlying
+    //       event happened. AI-extracted from text. Stored on the row.
+    //   (2) surface_date — when the article/post BECAME NEWS. Used for
+    //       historical-bucket routing because operational relevance is
+    //       about when intelligence broke, not when the event itself
+    //       occurred. A fresh article ABOUT a 2024 court ruling is still
+    //       a CURRENT signal — the surge of coverage IS the operational
+    //       intel.
+    //
+    // 2026-05-11 fix: previously AI event_date alone gated historical
+    // routing, which mis-bucketed recent journalism that referenced
+    // older events (e.g. May 2026 Law360 piece on a 2024 BCSC ruling →
+    // tagged historical and buried). Now: surface_date is the gate, AI
+    // event_date is informational only.
     let eventDate: string | null = null;
-    let triageOverride: string | null = null;
-    
-    // Priority 1: AI-extracted event_date (from text analysis — most accurate)
+    let surfaceDate: Date = new Date(); // default: now (monitor just saw it)
+
     if (classResult.data?.event_date) {
       try {
         const parsed = new Date(classResult.data.event_date);
         if (!isNaN(parsed.getTime())) {
           eventDate = parsed.toISOString();
           console.log(`[EventDate] AI-extracted event_date: ${eventDate}`);
-          
-          // Auto-triage historical signals
-          const ninetyDaysAgo = new Date();
-          ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-          if (parsed < ninetyDaysAgo) {
-            triageOverride = 'historical';
-            console.log(`[EventDate] Signal is historical (${classResult.data.event_date}) — auto-triaging to historical tab`);
-          }
         }
       } catch { /* ignore */ }
     }
-    
-    // Priority 2: Raw metadata pubDate (fallback, often just the crawl date)
-    if (!eventDate) {
-      const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date || signalRaw?.published || signalRaw?.date;
-      if (rawPubDate) {
-        try {
-          const parsed = new Date(rawPubDate);
-          if (!isNaN(parsed.getTime())) {
-            eventDate = parsed.toISOString();
-          }
-        } catch { /* ignore */ }
-      }
+
+    // Surface date comes from the article's actual publish metadata if the
+    // upstream monitor passed one. RSS feeds typically have a real pubDate;
+    // Google CSE may include article:published_time in pagemap. Falls back
+    // to "now" (we just saw it) which is the right answer for monitor-side
+    // ingestion.
+    const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date
+                    || signalRaw?.published || signalRaw?.date
+                    || signalRaw?.article_published_time;
+    if (rawPubDate) {
+      try {
+        const parsed = new Date(rawPubDate);
+        if (!isNaN(parsed.getTime())) surfaceDate = parsed;
+      } catch { /* ignore */ }
     }
 
+    // Fall back to surface date if AI gave us nothing (preserves prior
+    // behaviour where event_date column was populated from rawPubDate).
+    if (!eventDate) eventDate = surfaceDate.toISOString();
+
     // ── STALENESS GATE ────────────────────────────────────────────────────────
-    // Articles older than 365 days (730 for cyber/CVE) are ingested as
-    // signal_type = 'historical', routed to the Historical tab, and skipped
-    // for incident creation. skip_relevance_gate bypasses (analyst uploads).
-    let isHistorical = triageOverride === 'historical'; // already set for >90 days
-    if (eventDate && !skip_relevance_gate) {
-      const eventParsed = new Date(eventDate);
+    // Gated on SURFACE date, not AI event_date. An article that surfaced
+    // today is operational regardless of when the underlying event happened.
+    // skip_relevance_gate bypasses (analyst uploads of historical material).
+    let isHistorical = false;
+    let triageOverride: string | null = null;
+    if (!skip_relevance_gate) {
       const cyberCategories = ['malware', 'phishing', 'intrusion', 'data_exfil', 'ddos', 'ransomware'];
       const isCyber = cyberCategories.includes(classification.category || '');
       const cutoffDays = isCyber ? 730 : 365;
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - cutoffDays);
-      if (eventParsed < cutoff) {
-        const daysOld = Math.floor((Date.now() - eventParsed.getTime()) / 86400000);
+      if (surfaceDate < cutoff) {
+        const daysOld = Math.floor((Date.now() - surfaceDate.getTime()) / 86400000);
         isHistorical = true;
-        console.log(`[Staleness] Routing to historical — event_date ${classResult.data?.event_date} is ${daysOld} days old (limit: ${cutoffDays})`);
+        triageOverride = 'historical';
+        console.log(`[Staleness] Routing to historical — surface_date ${surfaceDate.toISOString()} is ${daysOld} days old (limit: ${cutoffDays})`);
       }
     }
     // ─────────────────────────────────────────────────────────────────────────

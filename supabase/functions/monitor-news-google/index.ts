@@ -303,6 +303,18 @@ Deno.serve(async (req) => {
             // Extract OG image from article page (non-blocking)
             const imageUrl = item.link ? await extractOGImage(item.link).catch(() => null) : null;
 
+            // Pull the article's actual publish time from Google CSE
+            // pagemap.metatags. This becomes the surface_date in ingest-
+            // signal's staleness gate (replaces the brittle AI-extracted
+            // event_date that mis-tagged fresh articles about old events).
+            const meta = (item.pagemap?.metatags?.[0] ?? {}) as Record<string, string>;
+            const articlePublishedTime =
+              meta['article:published_time']
+              ?? meta['og:article:published_time']
+              ?? meta['date']
+              ?? meta['pubdate']
+              ?? null;
+
             // Route through ingest-signal for PECL classification, relevance gate, and dedup
             const ingestResult = await supabase.functions.invoke('ingest-signal', {
               body: {
@@ -318,6 +330,7 @@ Deno.serve(async (req) => {
                   display_link: item.displayLink,
                   search_query: query,
                   matched_client: client.name,
+                  article_published_time: articlePublishedTime,
                   // Provenance: capture the original title separately
                   // even when discarded, so an audit can reconstruct
                   // why the signal text doesn't match the source page.
