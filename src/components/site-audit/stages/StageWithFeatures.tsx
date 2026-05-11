@@ -16,11 +16,11 @@
  * (audit + stage + observations) so the wizard wiring is identical.
  */
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, CheckCircle, Camera, Pencil, Loader2, Clock } from "lucide-react";
+import { Plus, CheckCircle, Camera, Pencil, Loader2, Clock, ChevronDown, ChevronRight } from "lucide-react";
 import { FeatureEditDialog } from "@/components/site-audit/FeatureEditDialog";
 import {
   type AuditStage,
@@ -131,17 +131,12 @@ export function StageWithFeatures({ audit, stage, observations }: StageWithFeatu
             No {stage.replace(/_/g, " ")} features captured yet for this asset. Add the first below.
           </div>
         ) : (
-          <ul className="space-y-1.5">
-            {features.map((f) => (
-              <FeatureRow
-                key={f.id}
-                feature={f}
-                auditId={audit.id}
-                onVerify={() => handleVerify(f)}
-                isVerifying={verify.isPending}
-              />
-            ))}
-          </ul>
+          <GroupedFeatureList
+            features={features}
+            auditId={audit.id}
+            onVerify={handleVerify}
+            isVerifying={verify.isPending}
+          />
         )}
       </div>
 
@@ -267,5 +262,99 @@ function FeatureRow({ feature, auditId, onVerify, isVerifying }: FeatureRowProps
         onOpenChange={setEditOpen}
       />
     </>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// GroupedFeatureList — features grouped by feature_type, collapsible
+//
+// Operator at 22-feature inventories needs structure. A flat scroll
+// list of mixed types is hard to scan. Grouping by type lets the
+// operator see at a glance: 4 entry points, 5 fence segments, 1 gate,
+// 0 cameras. Sections default expanded so nothing is hidden — the
+// chevrons collapse on tap when the operator wants to focus on one
+// type at a time.
+//
+// Within each group, sort by:
+//   1. verified-this-audit FIRST (most recently relevant)
+//   2. label alphabetically (stable order)
+// ────────────────────────────────────────────────────────────────────
+
+interface GroupedFeatureListProps {
+  features: SiteFeature[];
+  auditId: string;
+  onVerify: (f: SiteFeature) => void;
+  isVerifying: boolean;
+}
+
+function GroupedFeatureList({ features, auditId, onVerify, isVerifying }: GroupedFeatureListProps) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const groups = useMemo(() => {
+    const m = new Map<string, SiteFeature[]>();
+    for (const f of features) {
+      const arr = m.get(f.feature_type) ?? [];
+      arr.push(f);
+      m.set(f.feature_type, arr);
+    }
+    // Sort within each group: verified-this-audit first, then by label
+    for (const arr of m.values()) {
+      arr.sort((a, b) => {
+        const aVer = a.last_verified_audit_id === auditId ? 0 : 1;
+        const bVer = b.last_verified_audit_id === auditId ? 0 : 1;
+        if (aVer !== bVer) return aVer - bVer;
+        return (a.label ?? "").localeCompare(b.label ?? "");
+      });
+    }
+    // Sort groups by count descending so the densest type is on top
+    return Array.from(m.entries()).sort(([, a], [, b]) => b.length - a.length);
+  }, [features, auditId]);
+
+  const toggle = (type: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      {groups.map(([type, list]) => {
+        const verifiedCount = list.filter((f) => f.last_verified_audit_id === auditId).length;
+        const isCollapsed = collapsed.has(type);
+        return (
+          <div key={type} className="space-y-1">
+            <button
+              type="button"
+              onClick={() => toggle(type)}
+              className="w-full flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground py-0.5"
+            >
+              {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              <span>{FEATURE_TYPE_LABELS[type as keyof typeof FEATURE_TYPE_LABELS]} · {list.length}</span>
+              {verifiedCount > 0 && (
+                <span className="text-emerald-600 normal-case font-normal">
+                  ({verifiedCount} verified this audit)
+                </span>
+              )}
+            </button>
+            {!isCollapsed && (
+              <ul className="space-y-1.5 pl-1">
+                {list.map((f) => (
+                  <FeatureRow
+                    key={f.id}
+                    feature={f}
+                    auditId={auditId}
+                    onVerify={() => onVerify(f)}
+                    isVerifying={isVerifying}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
