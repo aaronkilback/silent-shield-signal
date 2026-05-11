@@ -37,6 +37,14 @@ interface StageMatch {
   signal_type_in?: string[];
   source_substr?: string[];
   keywords?: string[];
+  // Added 2026-05-11 for the former_employee_fixation pattern:
+  // match signals where foreign-alignment scoring (deterministic, from
+  // ingest-signal) crossed a threshold. Lets a pattern stage say
+  // "this stage matches any signal with foreign_alignment >= 0.3".
+  foreign_alignment_min?: number;
+  // Match signals where one of the listed foreign_alignment_indicators
+  // tags is present (e.g. "iran_state_media", "iran_rhetoric_*").
+  foreign_alignment_indicators?: string[];
 }
 
 interface SignalRow {
@@ -49,6 +57,8 @@ interface SignalRow {
   created_at: string;
   entity_tags: string[] | null;
   composite_confidence: number | null;
+  foreign_alignment_score?: number | null;
+  foreign_alignment_indicators?: string[] | null;
 }
 
 // Min composite_confidence required to admit a signal into sequence
@@ -100,23 +110,31 @@ Deno.serve(async (req) => {
 
       const { data: rawSignals } = await supabase
         .from('signals')
-        .select('id, title, category, signal_type, severity, raw_json, created_at, entity_tags, composite_confidence')
+        .select('id, title, category, signal_type, severity, raw_json, created_at, entity_tags, composite_confidence, foreign_alignment_score, foreign_alignment_indicators')
         .eq('client_id', client.id)
         .gt('created_at', sinceISO)
         .is('deleted_at', null)
         .limit(3000);
 
-      // Two-filter pre-pass:
-      //  - Drop signals below MIN_CONFIDENCE_FOR_SEQUENCE (or null). The
-      //    relevance gate has already vetted these; admitting unscored
-      //    ones produces false escalations.
-      //  - Drop signals that read as historical references ("the 2022
-      //    attack") so they can't satisfy stages that imply current
-      //    activity. Cheap regex; semantic check is a future upgrade.
+      // Pre-pass filters — every signal in `signals` must clear ALL of:
+      //  1. composite_confidence >= MIN_CONFIDENCE_FOR_SEQUENCE (drops
+      //     unscored / low-confidence rows the relevance gate already
+      //     graded marginally).
+      //  2. Not historical — both the regex form ("in 2022") and the
+      //     structured form (raw_json.is_historical=true, or
+      //     event_details.date with a year > 12 months old). A 2022
+      //     protest ingested in 2026 must not count toward a "current"
+      //     60-day campaign sequence.
+      //  3. Not Tier-2-dismissed — when review-signal-agent has written
+      //     raw_json.agent_review.verdict='dismiss', the operator-side
+      //     gate already concluded the signal isn't actionable. Letting
+      //     it match a sequence stage rebuilds an alert from rejected
+      //     evidence.
       const signals = (rawSignals ?? []).filter(s =>
         s.composite_confidence != null
         && s.composite_confidence >= MIN_CONFIDENCE_FOR_SEQUENCE
         && !looksHistorical(s)
+        && !isTier2Dismissed(s)
       );
 
       if (signals.length === 0) continue;
@@ -127,8 +145,13 @@ Deno.serve(async (req) => {
       const clientAnchors = buildClientAnchors(client);
 
       for (const pattern of patterns as SequencePattern[]) {
-        const patternSinceISO = new Date(Date.now() - pattern.window_seconds * 1000).toISOString();
-        const inWindow = signals.filter(s => s.created_at > patternSinceISO);
+        const patternSinceMs = Date.now() - pattern.window_seconds * 1000;
+        const patternSinceISO = new Date(patternSinceMs).toISOString();
+        // Filter to the pattern's window using the real event time
+        // (event_details.date / published_at / created_at fallback).
+        // A 90-day-old event ingested today must not slip into a
+        // 60-day-window pattern just because it was created today.
+        const inWindow = signals.filter(s => eventTime(s).getTime() > patternSinceMs);
         if (inWindow.length === 0) continue;
 
         // Group by anchor — first entity_tag, matched_client, or one of
@@ -149,13 +172,19 @@ Deno.serve(async (req) => {
           const matchedSignals = anchorSignals.filter(s => allSignalIds.includes(s.id));
           if (matchedSignals.length === 0) continue;
 
+          // Prefer real event time over ingestion time. When raw_json
+          // carries an event_details.date or published_at, that's the
+          // actual moment the campaign stage occurred — using
+          // signals.created_at instead means a story ingested 6 days
+          // late looks 6 days more recent than it was, distorting
+          // window math for all sequences spanning the late ingest.
           const startedAt = matchedSignals.reduce(
-            (min, s) => (new Date(s.created_at) < min ? new Date(s.created_at) : min),
-            new Date(matchedSignals[0].created_at),
+            (min, s) => (eventTime(s) < min ? eventTime(s) : min),
+            eventTime(matchedSignals[0]),
           );
           const lastEventAt = matchedSignals.reduce(
-            (max, s) => (new Date(s.created_at) > max ? new Date(s.created_at) : max),
-            new Date(matchedSignals[0].created_at),
+            (max, s) => (eventTime(s) > max ? eventTime(s) : max),
+            eventTime(matchedSignals[0]),
           );
 
           const sequenceScore = matchedStages.length / pattern.stages.length;
@@ -322,18 +351,67 @@ function pickAnchor(sig: SignalRow, clientAnchors: string[]): string | null {
   return best;
 }
 
-// Detects signals that read as historical references rather than current
-// activity. Looks for `(in|on|since|during|back in) <year>` where the
-// referenced year is >12 months old. Crude — misses "five years ago"
-// without a literal year — but catches the common Wikipedia-style
-// retrospective pattern that was inflating false sequences.
+// Detects signals that describe a past event rather than current
+// activity. Three layers:
+//   1. Structured `raw_json.is_historical === true` — set by monitors
+//      (e.g. monitor-twitter) that explicitly know an X post or article
+//      is referencing a years-old event.
+//   2. `raw_json.event_details.date` whose parsed year is >12 months
+//      old — signals that carry a stamped event date (often from
+//      AI-summarized social media) where the event clearly predates
+//      the relevant sequence window.
+//   3. Regex fallback — `(in|on|since|during|back in|the) <year>` in
+//      title/snippet where the year is >12 months old. Crude — misses
+//      "five years ago" without a literal year — but catches the
+//      common Wikipedia-style retrospective phrasing.
 function looksHistorical(signal: SignalRow): boolean {
+  if (signal.raw_json?.is_historical === true) return true;
+
+  const eventDateStr = signal.raw_json?.event_details?.date;
+  if (typeof eventDateStr === 'string') {
+    const parsed = Date.parse(eventDateStr);
+    if (Number.isFinite(parsed)) {
+      const eventYear = new Date(parsed).getFullYear();
+      const currentYear = new Date().getFullYear();
+      if (eventYear < currentYear - 1) return true;
+    }
+  }
+
   const text = `${signal.title ?? ''} ${signal.raw_json?.snippet ?? ''}`;
   const yearMatch = text.match(/\b(?:in|on|since|during|back\s+in|the)\s+(20[0-2]\d)\b/i);
   if (!yearMatch) return false;
   const refYear = Number(yearMatch[1]);
   const currentYear = new Date().getFullYear();
   return refYear < currentYear - 1;
+}
+
+// Best estimate of when a signal's event actually happened, falling
+// back to ingestion time. Tries (in order):
+//   1. raw_json.event_details.date — stamped by AI extraction on social
+//      media, often the only authoritative date.
+//   2. raw_json.published_at — set by RSS / news monitors that capture
+//      the article publish time.
+//   3. signals.created_at — the safe fallback (ingest moment).
+function eventTime(signal: SignalRow): Date {
+  const rj = signal.raw_json ?? {};
+  const candidates = [rj?.event_details?.date, rj?.published_at];
+  for (const c of candidates) {
+    if (typeof c === 'string') {
+      const ms = Date.parse(c);
+      if (Number.isFinite(ms)) return new Date(ms);
+    }
+  }
+  return new Date(signal.created_at);
+}
+
+// Tier-2 review (review-signal-agent) writes its verdict into
+// raw_json.agent_review.verdict. When the operator-side reviewer has
+// already concluded `dismiss`, the sequence detector must not stitch
+// that signal into a multi-stage pattern — it would surface a campaign
+// alert built on evidence the gate already rejected.
+function isTier2Dismissed(signal: SignalRow): boolean {
+  const verdict = signal.raw_json?.agent_review?.verdict;
+  return typeof verdict === 'string' && verdict.toLowerCase() === 'dismiss';
 }
 
 function stageMatches(signal: SignalRow, m: StageMatch): boolean {
@@ -352,6 +430,18 @@ function stageMatches(signal: SignalRow, m: StageMatch): boolean {
   if (m.keywords && m.keywords.length > 0) {
     const hay = `${signal.title ?? ''} ${signal.raw_json?.snippet ?? ''} ${signal.raw_json?.description ?? ''}`.toLowerCase();
     if (!m.keywords.some(kw => hay.includes(kw.toLowerCase()))) return false;
+  }
+  if (typeof m.foreign_alignment_min === 'number') {
+    const sigScore = signal.foreign_alignment_score
+      ?? (signal.raw_json?.foreign_alignment?.score as number | undefined)
+      ?? 0;
+    if (sigScore < m.foreign_alignment_min) return false;
+  }
+  if (m.foreign_alignment_indicators && m.foreign_alignment_indicators.length > 0) {
+    const sigTags: string[] = signal.foreign_alignment_indicators
+      ?? (signal.raw_json?.foreign_alignment?.indicators as string[] | undefined)
+      ?? [];
+    if (!m.foreign_alignment_indicators.some(t => sigTags.includes(t))) return false;
   }
   return true;
 }

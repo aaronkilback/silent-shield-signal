@@ -5,6 +5,7 @@ import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance
 import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
 import { enqueueJob } from '../_shared/queue.ts';
+import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1231,16 +1232,26 @@ Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": nul
             messages: [
               {
                 role: 'system',
-                content: `You are a PECL (Physical, Environmental, Cyber, Legal) signal relevance scorer for a corporate protective intelligence platform.
+                content: `You are a relevance scorer for a corporate protective intelligence platform. Your job is to admit signals that change a principal-protection or asset-security analyst's situational picture — NOT only signals that name an active threat.
 
-Score how actionable this signal is for the specific client on a 0.0–1.0 scale, and classify the primary connection type.
+Score on a 0.0–1.0 scale. Classify the primary connection type.
 
 SCORE GUIDE:
-0.8–1.0  Direct naming, active threat/legal action against this client or their assets
-0.6–0.79 Strong indirect: same project, same threat actor, adjacent geography with credible spillover
-0.45–0.59 Moderate: sector-wide risk, regulatory trend, protest tactics relevant to client's industry ← INGESTION FLOOR
-0.2–0.44 Weak: tangential keyword match, distant geography, corporate PR, historical >6 months
-0.0–0.19 No connection: wrong industry, wrong region, entertainment/sports, generic content
+0.8–1.0  Direct: client or asset explicitly named in a threat, incident, legal action, or material development (M&A, project FID, pipeline approval, divestment announcement, named protest target)
+0.6–0.79 Strong indirect: same named project/partner/transporter as client, same threat actor active against client's sector, adjacent geography with credible spillover, regulatory ruling that affects client's operating posture
+0.45–0.59 Moderate: sector-wide risk, regulatory trend, activist tactic relevant to client's industry, supply-chain partner (lender, insurer, transporter, indigenous-territory counterparty) material event ← INGESTION FLOOR
+0.2–0.44 Weak: tangential keyword match, distant geography, generic corporate PR with no client nexus, historical >6 months without resurgence
+0.0–0.19 No connection: wrong industry, wrong region, sports/entertainment, generic content
+
+WHAT COUNTS AS "MATERIAL DEVELOPMENT" (admit at ≥0.45 if client or core asset is named):
+- Named M&A, finance deals, capital decisions, project approvals, FID announcements
+- First Nations / Indigenous treaty agreements, consultation outcomes, treaty rulings
+- Bank / insurer / pension fund decisions about financing the client's projects
+- Regulatory rulings, environmental review outcomes, sanctions decisions
+- Reputational events naming the client (boycotts, divestment campaigns, public letters)
+- Named supply-chain or transporter changes (e.g. TC Energy is Petronas's CGL transporter)
+
+These are NOT "security threats" in the narrow sense, but they DO change the principal-protection threat surface (capital flow, activist target prioritization, geopolitical alignment, stakeholder posture). Admit them.
 
 CONNECTION TYPES (pick one):
 - direct_naming: client or asset explicitly named
@@ -1248,18 +1259,19 @@ CONNECTION TYPES (pick one):
 - regulatory: regulation/legal ruling affecting client's industry
 - geographic: incident in client's operational area
 - tactical: activist/attack tactic relevant to client's threat model
+- material_development: M&A, capital, treaty, regulatory, reputational event affecting client's threat surface
+- supply_chain: client's transporter, lender, insurer, or named partner has a material event
 - none: no meaningful connection
 
 CATEGORICAL EXCLUSIONS — return score 0.0 regardless of location:
-- Any signal about sports leagues, teams, tryouts, tournaments, or recreational activities
-- Any signal about school events, graduations, concerts, festivals, or community social events
-- Any signal about retail sales, restaurant openings, or local business news unrelated to energy
-- Client's own positive PR, sponsorships, or community goodwill posts
+- Sports leagues, tryouts, tournaments, recreational activities
+- School events, graduations, concerts, festivals, community social events (paint nights, art classes)
+- Retail sales, restaurant openings, local lifestyle news with no client/asset/threat nexus
+- Client's own positive PR, sponsorships, community goodwill posts (UNLESS reputational pushback is present)
 - Software product announcements (non-security)
-- Generic "about us" pages, merchandise listings, or job postings
-Geographic location in BC or Alberta does NOT override these exclusions. If a signal matches any categorical exclusion, you MUST set score to 0.0 and primary_connection to "none".
+- Generic "about us" pages, merchandise listings, job postings
 
-Only score > 0.2 if there is a direct or indirect SECURITY or OPERATIONAL RISK connection beyond mere geographic proximity.
+Geographic location alone does NOT override these exclusions. If a signal matches an exclusion, set score to 0.0 and primary_connection to "none".
 ${approvedPatternBlock}${rejectedPatternBlock}
 
 Respond with JSON: {"score": 0.0-1.0, "relevant": true/false, "primary_connection": "...", "reason": "one sentence"}`
@@ -1503,6 +1515,20 @@ Score this signal's relevance and classify the connection.`
       return q;
     })();
 
+    // ─── Foreign-alignment scoring ─────────────────────────────────
+    // Score the signal content + (when available) the author handle /
+    // mentioned handles for state-media alignment indicators. Driven
+    // by the Vashouk / @NeoIntel7 case where grievance fixation was
+    // amplified by Iranian state-media interactions. Deterministic
+    // (no AI call) so cost is zero per signal and indicators are
+    // explainable.
+    const fa_text = `${signalTitle || ''} ${classification.normalized_text || signalText || ''}`;
+    const fa_author = (signalRaw as { author_handle?: string; author?: { username?: string } })?.author_handle
+      ?? (signalRaw as { author?: { username?: string } })?.author?.username
+      ?? null;
+    const fa_mentions = extractMentions(fa_text);
+    const fa = scoreForeignAlignment(fa_text, fa_mentions, fa_author ? `@${fa_author.replace(/^@/, '')}` : null);
+
     // Insert signal WITH content_hash and title from the start
     // Include match metadata for audit trail and potential re-assignment
     const { data: signal, error: insertError } = await supabase
@@ -1511,6 +1537,8 @@ Score this signal's relevance and classify the connection.`
         source_id: sourceId,
         client_id: clientId,
         title: signalTitle,
+        foreign_alignment_score: fa.score > 0 ? fa.score : null,
+        foreign_alignment_indicators: fa.indicators,
         raw_json: {
           ...signalRaw,
           matched_keywords: matchedKeywords.length > 0 ? matchedKeywords : undefined,
@@ -1518,7 +1546,13 @@ Score this signal's relevance and classify the connection.`
           match_timestamp: new Date().toISOString(),
           relevance_score: relevanceResult.score,
           relevance_patterns: relevanceResult.matchedPatterns,
-          relevance_recommendation: relevanceResult.recommendation
+          relevance_recommendation: relevanceResult.recommendation,
+          foreign_alignment: fa.score > 0 ? {
+            score: fa.score,
+            indicators: fa.indicators,
+            matched_handles: fa.matched_handles,
+            matched_phrases: fa.matched_phrases,
+          } : undefined,
         },
         normalized_text: classification.normalized_text,
         entity_tags: classification.entity_tags,
