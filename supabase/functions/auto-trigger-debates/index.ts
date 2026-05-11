@@ -34,17 +34,36 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const MAX_DEBATES_PER_RUN = 5;
-const DEBATE_COOLDOWN_HOURS = 24;
+// 2026-05-10: 24h → 72h. Persona audit showed individual incidents
+// (esp. TC Energy capex coverage) re-firing across consecutive days,
+// generating dozens of redundant claims from CHAIN-WATCH/FININT for
+// the same underlying analysis. 72h gives operators time to action
+// the first synthesis before another fires.
+const DEBATE_COOLDOWN_HOURS = 72;
 const ANALYSIS_LOOKBACK_DAYS = 7;
 // Lowered from 3 → 2 on May 6 2026 after diagnostic showed 14 of 16
 // open incidents had exactly 2 distinct specialists analyzing them
 // (only 1 had ≥3). With ≥3, the trigger never fired in practice.
 // MAX_DEBATES_PER_RUN=5 still prevents a burst when the gate widens.
-// Long-term, the upstream fix is broader specialist invocation in
-// review-signal-agent and signal-routing — only 8 distinct agents
-// are writing across 166 analyzed signals over 7 days, which is
-// narrower than the 30+ persona roster suggests should be active.
 const MIN_DISTINCT_AGENTS = 2;
+
+// 2026-05-10: skip auto-debating these signal categories unless the
+// incident has a named entity tag pointing at a client asset. NAAD
+// weather warnings and generic civil-emergency alerts pass the
+// client_id filter (the NAAD monitor assigns a client_id per
+// life-safety override), but they aren't protective-intelligence-
+// actionable for executives unless a client asset is in the affected
+// area. Without this filter, a tornado warning in London ON gets a
+// full multi-specialist debate even though Petronas has no London
+// presence — wasting agent cycles and burying real signals in the
+// audit timeline.
+const NON_ACTIONABLE_CATEGORIES = new Set([
+  'natural_disaster',
+  'flood',
+  'hazmat',
+  'civil_emergency',
+  'weather',
+]);
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -65,9 +84,22 @@ Deno.serve(async (req) => {
     //    record but no client report queries it (every report filters
     //    by client_id), so it's compute-only waste. Leave them
     //    archived in `incidents` for audit but don't auto-debate.
+    // Pull incidents joined to their signals so we can read category
+    // + entity_tags + client high_value_assets in one go for the
+    // category filter.
+    // PostgREST FK disambiguation: incidents has TWO paths to signals:
+    //   1. incidents.signal_id → signals.id (direct 1:1 FK, added Nov 2025)
+    //   2. incident_signals junction table (m2m, added Nov 2025)
+    // Without specifying which FK to traverse, PostgREST errors with
+    // "Could not embed because more than one relationship was found".
+    // Pin to the direct FK via the column name (!signal_id).
     const { data: openIncidents, error: incErr } = await supabase
       .from('incidents')
-      .select('id, signal_id, title, client_id, status, opened_at')
+      .select(`
+        id, signal_id, title, client_id, status, opened_at,
+        signals!signal_id!inner ( category, entity_tags, severity ),
+        clients!inner ( high_value_assets, monitoring_keywords )
+      `)
       .in('status', ['open', 'acknowledged'])
       .not('signal_id', 'is', null)
       .not('client_id', 'is', null)
@@ -81,30 +113,74 @@ Deno.serve(async (req) => {
       return successResponse({ success: true, eligible: 0, debates_fired: 0 });
     }
 
-    // 2. For each, count distinct agent analyses in the lookback
-    //    window AND check whether a recent debate already exists.
+    // 2. For each, run the eligibility pipeline:
+    //    a. Category filter — non-actionable categories skip unless an
+    //       entity_tag overlaps a client asset (named asset in flood
+    //       zone IS actionable; generic tornado warning is not).
+    //    b. Min-agent threshold (≥2 distinct specialists analyzed it).
+    //    c. Cooldown (72h between debates per incident).
+    //    d. New-evidence gate — only fire if at least 1 specialist has
+    //       analyzed the signal SINCE the last debate. Otherwise we'd
+    //       re-debate the same evidence base after the cooldown lapses.
     const eligible: Array<{ incident_id: string; signal_id: string; agent_count: number; title: string }> = [];
+    let skippedNonActionable = 0;
 
-    for (const inc of openIncidents) {
-      // Count distinct agents that have analyzed this incident's signal.
+    for (const inc of openIncidents as any[]) {
+      // (a) Category filter
+      const sigCategory = String(inc.signals?.category ?? '').toLowerCase();
+      const sevHighOrCritical = ['high', 'critical'].includes(String(inc.signals?.severity ?? '').toLowerCase());
+      if (NON_ACTIONABLE_CATEGORIES.has(sigCategory) && !sevHighOrCritical) {
+        const tags: string[] = Array.isArray(inc.signals?.entity_tags) ? inc.signals.entity_tags : [];
+        const clientAssets: string[] = [
+          ...(Array.isArray(inc.clients?.high_value_assets) ? inc.clients.high_value_assets : []),
+          ...(Array.isArray(inc.clients?.monitoring_keywords) ? inc.clients.monitoring_keywords : []),
+        ].filter((s: any) => typeof s === 'string' && s.length >= 4).map((s: string) => s.toLowerCase());
+        const tagText = tags.map((t) => String(t).toLowerCase()).join(' | ');
+        const assetHit = clientAssets.some((a) => a && tagText.includes(a));
+        if (!assetHit) {
+          skippedNonActionable++;
+          continue;
+        }
+      }
+
+      // (b) Count distinct agents that have analyzed this incident's signal.
       const { data: analyses } = await supabase
         .from('signal_agent_analyses')
-        .select('agent_call_sign')
+        .select('agent_call_sign, created_at')
         .eq('signal_id', inc.signal_id)
-        .gte('created_at', lookbackIso);
+        .gte('created_at', lookbackIso)
+        .order('created_at', { ascending: false });
       const distinctAgents = new Set((analyses || []).map((a: any) => a.agent_call_sign).filter(Boolean));
       if (distinctAgents.size < MIN_DISTINCT_AGENTS) continue;
 
-      // Skip if a recent debate already exists for this incident
-      // (cooldown — don't double-fire).
+      // (c) Cooldown + (d) new-evidence gate combined: if a recent
+      // debate exists, skip unless an analysis has landed since it.
       const { data: recentDebate } = await supabase
         .from('agent_debate_records')
-        .select('id')
+        .select('id, created_at')
         .eq('incident_id', inc.id)
         .gte('created_at', cooldownIso)
+        .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (recentDebate) continue;
+
+      // Even outside the cooldown window, if the *most recent* debate
+      // is post the most-recent analysis, there's no new evidence to
+      // re-adjudicate — skip.
+      const { data: anyPriorDebate } = await supabase
+        .from('agent_debate_records')
+        .select('created_at')
+        .eq('incident_id', inc.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (anyPriorDebate?.created_at && analyses && analyses.length > 0) {
+        const lastAnalysis = analyses[0].created_at as string;
+        if (new Date(lastAnalysis).getTime() <= new Date(anyPriorDebate.created_at).getTime()) {
+          continue;
+        }
+      }
 
       eligible.push({
         incident_id: inc.id,
@@ -160,6 +236,7 @@ Deno.serve(async (req) => {
       eligible: eligible.length,
       debates_fired: firedCount,
       open_incidents_scanned: openIncidents.length,
+      skipped_non_actionable: skippedNonActionable,
     });
 
     return successResponse({
@@ -167,6 +244,7 @@ Deno.serve(async (req) => {
       eligible: eligible.length,
       debates_fired: firedCount,
       open_incidents_scanned: openIncidents.length,
+      skipped_non_actionable: skippedNonActionable,
       results,
     });
   } catch (e: any) {
