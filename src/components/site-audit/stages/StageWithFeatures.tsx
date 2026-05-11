@@ -31,11 +31,13 @@ import {
 } from "@/hooks/useSiteAudit";
 import {
   useAssetFeatures,
+  useAssetFeaturesWithCoords,
   useVerifyFeature,
   STAGE_FEATURE_TYPES,
   FEATURE_TYPE_LABELS,
   type FeatureType,
   type SiteFeature,
+  type FeatureWithCoords,
 } from "@/hooks/useSiteFeatures";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { VoiceDictationInput } from "@/components/vip-deep-scan/VoiceDictationInput";
@@ -60,11 +62,15 @@ const STAGE_PROMPTS: Partial<Record<AuditStage, string>> = {
 
 export function StageWithFeatures({ audit, stage, observations }: StageWithFeaturesProps) {
   const upsert = useUpsertObservation();
-  const featuresQuery = useAssetFeatures(audit.asset?.id ?? null);
+  // Use the coords-aware RPC so we can offer spatial grouping (N/E/S/W).
+  // Falls back to type-only grouping when the asset has no centroid yet.
+  const featuresQuery = useAssetFeaturesWithCoords(audit.asset?.id ?? null);
   const verify = useVerifyFeature();
 
   const allowedTypes = STAGE_FEATURE_TYPES[stage] ?? [];
-  const features = (featuresQuery.data ?? []).filter((f) => allowedTypes.includes(f.feature_type));
+  const features = (featuresQuery.data?.features ?? []).filter((f) => allowedTypes.includes(f.feature_type));
+  const assetLat = featuresQuery.data?.asset_lat ?? null;
+  const assetLng = featuresQuery.data?.asset_lng ?? null;
 
   const [addingType, setAddingType] = useState<FeatureType | "">("");
 
@@ -133,6 +139,8 @@ export function StageWithFeatures({ audit, stage, observations }: StageWithFeatu
         ) : (
           <GroupedFeatureList
             features={features}
+            assetLat={assetLat}
+            assetLng={assetLng}
             auditId={audit.id}
             onVerify={handleVerify}
             isVerifying={verify.isPending}
@@ -266,36 +274,90 @@ function FeatureRow({ feature, auditId, onVerify, isVerifying }: FeatureRowProps
 }
 
 // ────────────────────────────────────────────────────────────────────
-// GroupedFeatureList — features grouped by feature_type, collapsible
+// GroupedFeatureList — features grouped by feature_type OR by side
 //
-// Operator at 22-feature inventories needs structure. A flat scroll
-// list of mixed types is hard to scan. Grouping by type lets the
-// operator see at a glance: 4 entry points, 5 fence segments, 1 gate,
-// 0 cameras. Sections default expanded so nothing is hidden — the
-// chevrons collapse on tap when the operator wants to focus on one
-// type at a time.
+// Operator at 22-feature inventories needs structure. Two grouping
+// modes:
 //
-// Within each group, sort by:
-//   1. verified-this-audit FIRST (most recently relevant)
-//   2. label alphabetically (stable order)
+// 1. By Type (default) — collapsible sections "Entry point · 4",
+//    "Fence segment · 5", etc. Best for "what kinds of things have
+//    I captured."
+//
+// 2. By Side — collapsible sections "North · 7", "South · 4", etc.
+//    computed from the bearing of each feature's lat/lng relative to
+//    the asset centroid. Best for "did I miss anything on the south
+//    side?" — spatial gaps become visually obvious.
+//
+// Side mode auto-disables when the asset has no centroid or the
+// features have no coords (older captures, manual GPS not set).
 // ────────────────────────────────────────────────────────────────────
 
 interface GroupedFeatureListProps {
-  features: SiteFeature[];
+  features: FeatureWithCoords[];
+  assetLat: number | null;
+  assetLng: number | null;
   auditId: string;
   onVerify: (f: SiteFeature) => void;
   isVerifying: boolean;
 }
 
-function GroupedFeatureList({ features, auditId, onVerify, isVerifying }: GroupedFeatureListProps) {
+type GroupMode = "type" | "side";
+
+const QUADRANTS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
+type Quadrant = typeof QUADRANTS[number] | "Unlocated";
+
+/** Compute compass bearing (0-360°) from one lat/lng to another. */
+function bearingFromTo(fromLat: number, fromLng: number, toLat: number, toLng: number): number {
+  const φ1 = (fromLat * Math.PI) / 180;
+  const φ2 = (toLat * Math.PI) / 180;
+  const λ1 = (fromLng * Math.PI) / 180;
+  const λ2 = (toLng * Math.PI) / 180;
+  const y = Math.sin(λ2 - λ1) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+function bearingToQuadrant(b: number): Quadrant {
+  if (b >= 337.5 || b < 22.5)  return "N";
+  if (b < 67.5)                return "NE";
+  if (b < 112.5)               return "E";
+  if (b < 157.5)               return "SE";
+  if (b < 202.5)               return "S";
+  if (b < 247.5)               return "SW";
+  if (b < 292.5)               return "W";
+  return "NW";
+}
+
+function GroupedFeatureList({ features, assetLat, assetLng, auditId, onVerify, isVerifying }: GroupedFeatureListProps) {
+  const [mode, setMode] = useState<GroupMode>("type");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
+  // Spatial grouping only viable when we have asset centroid AND at
+  // least one feature with coords.
+  const hasAssetCentroid = assetLat !== null && assetLng !== null;
+  const featuresWithCoords = features.filter((f) => f.lat !== null && f.lng !== null).length;
+  const spatialAvailable = hasAssetCentroid && featuresWithCoords > 0;
+
   const groups = useMemo(() => {
-    const m = new Map<string, SiteFeature[]>();
-    for (const f of features) {
-      const arr = m.get(f.feature_type) ?? [];
-      arr.push(f);
-      m.set(f.feature_type, arr);
+    const m = new Map<string, FeatureWithCoords[]>();
+    if (mode === "side" && spatialAvailable) {
+      for (const f of features) {
+        let q: Quadrant = "Unlocated";
+        if (f.lat !== null && f.lng !== null && assetLat !== null && assetLng !== null) {
+          const b = bearingFromTo(assetLat, assetLng, f.lat, f.lng);
+          q = bearingToQuadrant(b);
+        }
+        const arr = m.get(q) ?? [];
+        arr.push(f);
+        m.set(q, arr);
+      }
+    } else {
+      // Type grouping
+      for (const f of features) {
+        const arr = m.get(f.feature_type) ?? [];
+        arr.push(f);
+        m.set(f.feature_type, arr);
+      }
     }
     // Sort within each group: verified-this-audit first, then by label
     for (const arr of m.values()) {
@@ -306,33 +368,85 @@ function GroupedFeatureList({ features, auditId, onVerify, isVerifying }: Groupe
         return (a.label ?? "").localeCompare(b.label ?? "");
       });
     }
-    // Sort groups by count descending so the densest type is on top
+    // Sort groups
+    if (mode === "side") {
+      // Compass order N → NE → E → SE → S → SW → W → NW → Unlocated
+      const order: Record<Quadrant, number> = {
+        N: 0, NE: 1, E: 2, SE: 3, S: 4, SW: 5, W: 6, NW: 7, Unlocated: 99,
+      };
+      return Array.from(m.entries()).sort(([a], [b]) => (order[a as Quadrant] ?? 99) - (order[b as Quadrant] ?? 99));
+    }
+    // Type — densest first
     return Array.from(m.entries()).sort(([, a], [, b]) => b.length - a.length);
-  }, [features, auditId]);
+  }, [features, auditId, mode, assetLat, assetLng, spatialAvailable]);
 
-  const toggle = (type: string) => {
+  const toggle = (groupKey: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
       return next;
     });
   };
 
+  const groupLabel = (key: string): string => {
+    if (mode === "side") {
+      if (key === "Unlocated") return "Unlocated (no GPS captured)";
+      const compass: Record<string, string> = {
+        N: "North", NE: "Northeast", E: "East", SE: "Southeast",
+        S: "South", SW: "Southwest", W: "West", NW: "Northwest",
+      };
+      return compass[key] ?? key;
+    }
+    return FEATURE_TYPE_LABELS[key as keyof typeof FEATURE_TYPE_LABELS] ?? key;
+  };
+
   return (
     <div className="space-y-2">
-      {groups.map(([type, list]) => {
+      {/* Mode toggle */}
+      <div className="flex items-center gap-1 text-xs">
+        <span className="text-muted-foreground">Group by:</span>
+        <button
+          type="button"
+          onClick={() => setMode("type")}
+          className={`px-2 py-0.5 rounded ${mode === "type" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+        >
+          Type
+        </button>
+        <button
+          type="button"
+          onClick={() => spatialAvailable && setMode("side")}
+          disabled={!spatialAvailable}
+          title={!spatialAvailable ? "Needs asset GPS + at least one geo-tagged feature" : ""}
+          className={`px-2 py-0.5 rounded ${
+            mode === "side"
+              ? "bg-primary text-primary-foreground"
+              : spatialAvailable
+                ? "text-muted-foreground hover:bg-muted"
+                : "text-muted-foreground/40 cursor-not-allowed"
+          }`}
+        >
+          Side
+        </button>
+        {mode === "side" && (
+          <span className="text-muted-foreground ml-2">
+            ({featuresWithCoords}/{features.length} with coords)
+          </span>
+        )}
+      </div>
+
+      {groups.map(([key, list]) => {
         const verifiedCount = list.filter((f) => f.last_verified_audit_id === auditId).length;
-        const isCollapsed = collapsed.has(type);
+        const isCollapsed = collapsed.has(key);
         return (
-          <div key={type} className="space-y-1">
+          <div key={key} className="space-y-1">
             <button
               type="button"
-              onClick={() => toggle(type)}
+              onClick={() => toggle(key)}
               className="w-full flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground py-0.5"
             >
               {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-              <span>{FEATURE_TYPE_LABELS[type as keyof typeof FEATURE_TYPE_LABELS]} · {list.length}</span>
+              <span>{groupLabel(key)} · {list.length}</span>
               {verifiedCount > 0 && (
                 <span className="text-emerald-600 normal-case font-normal">
                   ({verifiedCount} verified this audit)

@@ -53,6 +53,42 @@ export interface SiteFeature {
 
 const FEATURES_KEY = (assetId: string) => ["site-features", assetId] as const;
 
+// ─── Coords-aware feature query ────────────────────────────────────
+// PostgREST can't decode PostGIS geom to lat/lng client-side, so we
+// use this RPC when the wizard needs spatial grouping (group features
+// by N/E/S/W relative to the asset centroid). Returns the asset's
+// centroid coords + each feature decoded into lat/lng.
+
+export interface FeatureWithCoords extends SiteFeature {
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface AssetFeaturesWithCoords {
+  asset_lat: number | null;
+  asset_lng: number | null;
+  features: FeatureWithCoords[];
+}
+
+const FEATURES_COORDS_KEY = (assetId: string) => ["site-features-coords", assetId] as const;
+
+export function useAssetFeaturesWithCoords(assetId: string | null) {
+  return useQuery({
+    queryKey: FEATURES_COORDS_KEY(assetId ?? "_none"),
+    enabled: !!assetId,
+    queryFn: async (): Promise<AssetFeaturesWithCoords> => {
+      if (!assetId) return { asset_lat: null, asset_lng: null, features: [] };
+      const { data, error } = await supabase.rpc(
+        "get_asset_features_with_coords",
+        { p_asset_id: assetId } as never,
+      );
+      if (error) throw error;
+      return (data as AssetFeaturesWithCoords) ?? { asset_lat: null, asset_lng: null, features: [] };
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useAssetFeatures(assetId: string | null) {
   return useQuery({
     queryKey: FEATURES_KEY(assetId ?? "_none"),
