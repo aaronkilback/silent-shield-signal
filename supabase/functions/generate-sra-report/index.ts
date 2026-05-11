@@ -318,7 +318,24 @@ async function draftNarrative(input: {
   const substrateLine = input.substrateContext?.summary_text
     ? `Jurisdictions: ${input.substrateContext.summary_text}`
     : "Jurisdictions: not resolved (asset has no GPS yet)";
-  const wildfireLine = `Fire centre: ${input.wildfireContext.fire_centre ?? "unresolved"}; wildfire/ambiguous-flare signals for this client in last 90d: ${input.wildfireContext.recent_signals_90d}`;
+  // BCWS dispatch geography correction (per Aaron 2026-05-11):
+  // Fire Centres are JURISDICTIONAL administrative regions.
+  // Fire Zones are OPERATIONAL dispatch bases within each centre.
+  // For NE BC sites, dispatch is the Fort St John Fire Zone, NOT
+  // "from the Prince George Fire Centre". Surface both for the AI.
+  const fireCentreName = input.wildfireContext.fire_centre;
+  const fireDispatchZone = (() => {
+    if (!fireCentreName) return null;
+    if (/prince george/i.test(fireCentreName)) {
+      // NE BC default. Coastal GasLink corridor crosses into Vanderhoof
+      // zone further west, but for camps/wellpads in Petronas operating
+      // territory (Pink Mountain / Hudson's Hope / FSJ / Dawson Creek)
+      // Fort St John is the dispatch.
+      return "Fort St John Fire Zone (within Prince George Fire Centre)";
+    }
+    return `${fireCentreName} (zone unresolved)`;
+  })();
+  const wildfireLine = `Fire Centre (jurisdictional): ${fireCentreName ?? "unresolved"}; Fire Zone (operational dispatch): ${fireDispatchZone ?? "unresolved"}; wildfire/ambiguous-flare signals for this client in last 90d: ${input.wildfireContext.recent_signals_90d}`;
   // Detect wildlife-relevant observations from captured features / labels.
   const wildlifeMentions = input.features.filter((f) =>
     /bear|wolf|moose|wildlife|tracks|den/i.test([f.label, JSON.stringify(f.attributes ?? {})].join(" "))
@@ -381,7 +398,7 @@ Vulnerabilities should include (where supported by data):
 - No fencing / damaged fencing → "No fencing or physical barrier..."
 - Lighting removed → "Loss of nighttime deterrence"
 - Shut-in / unmanned → "No designated personnel — slower response to fire ignition or wildlife encounter"
-- Remote response time → "Emergency response > 2 hrs; nearest fire crew via ${input.wildfireContext.fire_centre ?? 'regional centre'}"
+- Remote response time → reference the Fire ZONE (operational dispatch), not the Fire Centre (jurisdictional). Use the 'Fire Zone (operational dispatch)' value above verbatim. Example: "Emergency response > 2 hrs; nearest BCWS crew dispatched from Fort St John Fire Zone." NEVER write "nearest fire crew based in the Prince George Fire Centre" — that conflates jurisdictional and operational geography.
 - High wildfire signal volume → "Elevated fire-season exposure based on N signals within 90 days"
 - High-value targets → "${input.features.filter(f => f.feature_type === 'high_value_target').length} high-value targets unsecured" (only if count > 0)
 
