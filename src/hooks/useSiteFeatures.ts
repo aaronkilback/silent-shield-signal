@@ -18,6 +18,7 @@ export type FeatureType =
   // Perimeter
   | "fence_segment" | "gate" | "camera" | "lighting_fixture"
   | "sightline_blind_spot" | "signage" | "intrusion_sensor"
+  | "storage_container" | "wildlife_attractant" | "fuel_or_hazmat_storage"
   // Access & Personnel
   | "entry_point" | "access_control_reader" | "visitor_log_location" | "staffed_post"
   // OT/ICS
@@ -294,6 +295,9 @@ export const FEATURE_TYPE_LABELS: Record<FeatureType, string> = {
   sightline_blind_spot: "Sightline / blind spot",
   signage: "Signage",
   intrusion_sensor: "Intrusion sensor",
+  storage_container: "Storage container (sea can)",
+  wildlife_attractant: "Wildlife attractant",
+  fuel_or_hazmat_storage: "Fuel / hazmat storage",
   entry_point: "Entry point",
   access_control_reader: "Access control reader",
   visitor_log_location: "Visitor log location",
@@ -327,6 +331,9 @@ export const FEATURE_TYPE_DESCRIPTIONS: Record<FeatureType, string> = {
   sightline_blind_spot: "A spot where vegetation, terrain, or a structure blocks visibility.",
   signage: "Warning, no-trespass, hazard, or information sign.",
   intrusion_sensor: "PIR, microwave, fence-strain, or buried-cable sensor.",
+  storage_container: "Sea can / conex / shipping container / locker / shed used for storage. Common at remote sites for tools, hazmat, or high-value items (copper, batteries, solar). Capture lock status + contents.",
+  wildlife_attractant: "Anything drawing wildlife to the site — food waste, dumpster, rabbit burrow under buildings, bird feeder, pet food, open compost. At remote camps these draw bears/wolves/cougars (operational + safety risk).",
+  fuel_or_hazmat_storage: "Diesel/gasoline/propane tanks, fuel dispenser pumps, pressurized cylinders, drum storage. Theft target + fire/spill hazard. Capture capacity + lock + distance to ignition sources.",
   // Access & Personnel
   entry_point: "Where people enter the site — gate, door, turnstile.",
   access_control_reader: "Badge reader, keypad, biometric scanner at an entry point.",
@@ -371,6 +378,9 @@ export const STAGE_FEATURE_TYPES: Record<string, FeatureType[]> = {
     "signage",
     "intrusion_sensor",
     "sightline_blind_spot",
+    "storage_container",
+    "fuel_or_hazmat_storage",
+    "wildlife_attractant",
   ],
   // Stage 4 narrowed to procedures-not-physical: visitor logs (which
   // are a process artifact, not a perimeter object). Badge policy /

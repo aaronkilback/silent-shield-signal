@@ -91,6 +91,26 @@ const FEATURE_FIELDS: Partial<Record<FeatureType, FieldDef[]>> = {
     { key: "coverage_m", label: "Coverage radius", type: "number", unit: "m" },
     { key: "status", label: "Status", type: "select", options: ["active","disabled","unknown"] },
   ],
+  storage_container: [
+    { key: "lock_status", label: "Lock status", type: "select", options: ["locked","unlocked","damaged_hasp","no_lock","unknown"] },
+    { key: "container_type", label: "Container type", type: "select", options: ["sea_can","conex","locker","shed","other"] },
+    { key: "contents", label: "Contents", type: "select", options: ["high_value_copper_batteries_solar","tools","hazmat","empty","mixed","unknown"] },
+    { key: "visible_from_exterior", label: "Visible from outside fence", type: "boolean" },
+  ],
+  wildlife_attractant: [
+    { key: "attractant_type", label: "Attractant", type: "select", options: ["food_waste_dumpster","rabbit_burrow_under_building","bird_feeder","pet_food","compost","open_garbage","standing_water","other"] },
+    { key: "distance_to_building_m", label: "Distance to nearest building", type: "number", unit: "m" },
+    { key: "mitigation", label: "Existing mitigation", type: "select", options: ["bear_proof_bin","electric_fence","enclosure","screening","none","unknown"] },
+    { key: "predator_concern", label: "Likely predators drawn", type: "select", options: ["bear","wolf","cougar","coyote","fox","multiple","unknown"] },
+  ],
+  fuel_or_hazmat_storage: [
+    { key: "fuel_type", label: "Type", type: "select", options: ["diesel","gasoline","propane","aviation_fuel","mixed","other_hazmat"] },
+    { key: "storage_form", label: "Storage form", type: "select", options: ["above_ground_tank","below_ground_tank","drum","dispenser_pump","pressurized_cylinder","mixed"] },
+    { key: "capacity_liters", label: "Approx. capacity", type: "number", unit: "L" },
+    { key: "containment", label: "Containment", type: "select", options: ["bunded","double_wall","single_wall","none_visible","unknown"] },
+    { key: "lock_status", label: "Lock status", type: "select", options: ["locked","unlocked","damaged_hasp","no_lock","unknown"] },
+    { key: "distance_to_ignition_m", label: "Distance to nearest ignition source", type: "number", unit: "m" },
+  ],
   sightline_blind_spot: [
     { key: "cause", label: "Cause", type: "select", options: ["terrain","vegetation","structure","weather"] },
     { key: "risk_score", label: "Risk", type: "select", options: ["low","medium","high"] },
