@@ -57,6 +57,10 @@ export interface AuditRecommendation {
   related_feature_ids: string[];
   related_risk_categories: string[];
   status: "open" | "in_progress" | "complete" | "dismissed";
+  action_notes: string | null;
+  last_action_at: string | null;
+  last_action_by: string | null;
+  closed_at: string | null;
   created_at: string;
 }
 
@@ -249,6 +253,36 @@ export function useUpsertRecommendation() {
           .insert(row as never);
         if (error) throw error;
       }
+    },
+    onSuccess: (_v, vars) => {
+      qc.invalidateQueries({ queryKey: RECS_KEY(vars.audit_id) });
+    },
+  });
+}
+
+/** Update status + action_notes on a recommendation. The close_stamp
+ *  trigger auto-fills closed_at when status flips to complete/dismissed. */
+export function useUpdateRecommendationStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      audit_id: string;
+      status?: AuditRecommendation["status"];
+      action_notes?: string;
+      actor_id?: string;
+    }): Promise<void> => {
+      const patch: Record<string, unknown> = {
+        last_action_at: new Date().toISOString(),
+      };
+      if (input.status !== undefined) patch.status = input.status;
+      if (input.action_notes !== undefined) patch.action_notes = input.action_notes;
+      if (input.actor_id) patch.last_action_by = input.actor_id;
+      const { error } = await supabase
+        .from("audit_recommendations")
+        .update(patch as never)
+        .eq("id", input.id);
+      if (error) throw error;
     },
     onSuccess: (_v, vars) => {
       qc.invalidateQueries({ queryKey: RECS_KEY(vars.audit_id) });
