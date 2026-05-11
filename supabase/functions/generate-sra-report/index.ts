@@ -224,12 +224,24 @@ async function draftNarrative(input: {
   adjacentSignals: unknown[];
   substrateContext: { summary_text?: string; jurisdictions?: Array<{ name: string; layer: string }> } | null;
   wildfireContext: { active_within_50km: number; recent_signals_90d: number; fire_centre: string | null };
-}): Promise<{ threat_environment: string; vulnerabilities: string[]; summary: string }> {
+}): Promise<{
+  unauthorized_access: string;
+  previous_incidents: string;
+  potential_risks: string[];
+  community_context: string;
+  vulnerabilities: string[];
+  summary: string;
+}> {
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
   if (!OPENAI_API_KEY) {
     return {
-      threat_environment: "[AI key not configured — narrative deferred to operator edit]",
-      vulnerabilities: ["[AI narrative unavailable]"],
+      unauthorized_access: "[AI key not configured — narrative deferred to operator edit]",
+      previous_incidents: input.adjacentAudits.length === 0 && input.adjacentSignals.length === 0
+        ? "No incidents at nearby sites identified within 25km in the last 12 months."
+        : "[See adjacent-incidents section for context.]",
+      potential_risks: [],
+      community_context: "No current landowner or community concerns documented in this audit.",
+      vulnerabilities: [],
       summary: input.audit.summary_text || "[Operator summary not provided.]",
     };
   }
@@ -258,11 +270,14 @@ ${wildfireLine}
 Wildlife-tagged feature observations: ${wildlifeMentions}
 Operator's own summary: ${input.audit.summary_text || "(not provided)"}
 
-Output JSON only:
+Output JSON only. Use Aaron's operational SRA structure — four short threat-environment sub-sections (matching his Jedney b-76-C report):
 {
-  "threat_environment": "3-5 sentence narrative covering: (1) unauthorized-access risk based on operational state + perimeter features, (2) WILDFIRE risk for this site — reference the fire centre and recent fire signal volume if known; note proximity-to-facility considerations; (3) WILDLIFE risk — bear/wolf/moose encounters for remote shut-in sites where personnel patrols are limited. Derived ONLY from the captured data above.",
-  "vulnerabilities": ["bullet 1", "bullet 2", ...],
-  "summary": "1-paragraph summary in operator voice. Must explicitly mention wildfire and wildlife exposure when relevant to the operational state (e.g. shut-in sites with no personnel are more vulnerable to both)."
+  "unauthorized_access": "1-3 sentences. Geography + access ease + operational state. Example tone: 'Minimal traffic in North Jedney, especially at night. Site is remote (51 km from Hwy 97), making it inconvenient.' Concrete and specific.",
+  "previous_incidents": "1-2 sentences referencing the adjacent-incidents data IF any. If none, write exactly: 'No incidents at nearby sites identified within 25km in the last 12 months.' Do not pad.",
+  "potential_risks": ["3-6 short bullets. Each is one phrase, max 12 words. Example: 'Easy access due to lack of fencing and surveillance.' 'High-value items are unsecured.' 'No deterrents such as lighting, alarms, or physical presence.' Skip a bullet entirely if data doesn't support it; do not pad with generic risks."],
+  "community_context": "1 short sentence about Indigenous-relations / local-community posture if any is visible in the data; otherwise exactly: 'No current landowner or community concerns documented in this audit.'",
+  "vulnerabilities": ["Max 5 bullets, each one short sentence (≤18 words). Concrete missing controls. NO zero-count bullets ('0 high-value targets unsecured' is FORBIDDEN — if a thing isn't a problem, omit it). NO restating context already in unauthorized_access."],
+  "summary": "1 short paragraph (3-5 sentences) in operator voice tying it together. Mention wildfire + wildlife when the operational state warrants. Example tone from Aaron's prior reports: 'The site holds significant asset value and is vulnerable once shut in, primarily to theft and vandalism due to its remote location, removal of lighting, and lack of personnel.'"
 }
 
 Vulnerabilities should include (where supported by data):
@@ -303,14 +318,24 @@ Anti-fabrication + brevity:
     const content = apiData.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(content);
     return {
-      threat_environment: String(parsed.threat_environment ?? "").substring(0, 1500),
-      vulnerabilities: Array.isArray(parsed.vulnerabilities) ? parsed.vulnerabilities.slice(0, 6).map((v: unknown) => String(v).substring(0, 200)) : [],
+      unauthorized_access: String(parsed.unauthorized_access ?? "").substring(0, 600),
+      previous_incidents: String(parsed.previous_incidents ?? "").substring(0, 600),
+      potential_risks: Array.isArray(parsed.potential_risks)
+        ? parsed.potential_risks.slice(0, 6).map((v: unknown) => String(v).substring(0, 140))
+        : [],
+      community_context: String(parsed.community_context ?? "").substring(0, 400),
+      vulnerabilities: Array.isArray(parsed.vulnerabilities)
+        ? parsed.vulnerabilities.slice(0, 5).map((v: unknown) => String(v).substring(0, 200))
+        : [],
       summary: String(parsed.summary ?? input.audit.summary_text ?? "").substring(0, 1200),
     };
   } catch (e) {
     console.error("narrative draft failed:", e);
     return {
-      threat_environment: "[AI narrative draft failed — operator edit required]",
+      unauthorized_access: "[AI narrative draft failed — operator edit required]",
+      previous_incidents: "No incidents at nearby sites identified within 25km in the last 12 months.",
+      potential_risks: [],
+      community_context: "No current landowner or community concerns documented in this audit.",
       vulnerabilities: input.features.length === 0 ? ["No features captured during this audit"] : [],
       summary: input.audit.summary_text || "[Operator summary not provided.]",
     };
@@ -335,7 +360,14 @@ interface RenderInput {
   photos: Array<{ id: string; signed_url: string; captured_at: string | null; bearing_deg: number | null }>;
   documents: Array<{ id: string; doc_type: string | null; filename: string | null }>;
   adjacent: { audits?: Array<Record<string, unknown>>; signals?: Array<Record<string, unknown>> };
-  narrative: { threat_environment: string; vulnerabilities: string[]; summary: string };
+  narrative: {
+    unauthorized_access: string;
+    previous_incidents: string;
+    potential_risks: string[];
+    community_context: string;
+    vulnerabilities: string[];
+    summary: string;
+  };
   assetLat: number | null;
   assetLng: number | null;
   mapFeatures: Array<{ id: string; feature_type: string; label: string | null; lat: number | null; lng: number | null }>;
@@ -521,25 +553,40 @@ function renderHtml(d: RenderInput): string {
   <h2>Site Status</h2>
   <p>Operational status: <strong>${esc(d.asset.operational_status.replace(/_/g, " "))}</strong>${d.asset.criticality_tier ? `. Criticality: ${esc(d.asset.criticality_tier.replace(/_/g, " "))}` : ""}.</p>
 
-  <h2>Controls (existing, per this audit)</h2>
+  <h2>Controls</h2>
   <ul class="tight">
     ${controlBlocks.map(([k, v]) => `<li><strong>${esc(k)}:</strong> ${esc(v)}</li>`).join("\n    ")}
   </ul>
 
   <h2>Threat Environment</h2>
-  <div class="ai-draft">${esc(d.narrative.threat_environment)}</div>
 
+  <h3>Unauthorized access</h3>
+  <p>${esc(d.narrative.unauthorized_access)}</p>
+
+  <h3>Previous incident(s)</h3>
   ${(d.adjacent.audits?.length ?? 0) > 0 || (d.adjacent.signals?.length ?? 0) > 0 ? `
-  <h3>Previous incidents at nearby sites (within 25km, last 12 months)</h3>
+  <p>${esc(d.narrative.previous_incidents)}</p>
   <ul class="tight">
-    ${(d.adjacent.audits ?? []).map((a) => `<li>${esc((a as { asset_name?: string }).asset_name)} (${esc((a as { distance_km?: number }).distance_km)}km) — audit completed ${esc(new Date((a as { completed_at: string }).completed_at).toLocaleDateString("en-CA"))}.${(a as { summary_text?: string }).summary_text ? ` ${esc((a as { summary_text: string }).summary_text!.substring(0, 200))}` : ""}</li>`).join("\n    ")}
-    ${(d.adjacent.signals ?? []).map((s) => `<li>Signal: ${esc((s as { title?: string }).title)} (${esc((s as { severity?: string }).severity)}, ${esc(new Date((s as { created_at: string }).created_at).toLocaleDateString("en-CA"))})</li>`).join("\n    ")}
+    ${(d.adjacent.audits ?? []).map((a) => `<li>${esc((a as { asset_name?: string }).asset_name)} (${esc((a as { distance_km?: number }).distance_km)}km) &mdash; audit completed ${esc(new Date((a as { completed_at: string }).completed_at).toLocaleDateString("en-CA"))}.${(a as { summary_text?: string }).summary_text ? ` ${esc((a as { summary_text: string }).summary_text!.substring(0, 200))}` : ""}</li>`).join("\n    ")}
+    ${(d.adjacent.signals ?? []).map((s) => `<li>${esc((s as { title?: string }).title)} (${esc((s as { severity?: string }).severity)}, ${esc(new Date((s as { created_at: string }).created_at).toLocaleDateString("en-CA"))})</li>`).join("\n    ")}
   </ul>
-  ` : `<p><em>No incidents at nearby sites identified within 25km in the last 12 months.</em></p>`}
+  ` : `<p>${esc(d.narrative.previous_incidents)}</p>`}
+
+  ${d.narrative.potential_risks.length > 0 ? `
+  <h3>Potential risks</h3>
+  <ul class="tight">
+    ${d.narrative.potential_risks.map((r) => `<li>${esc(r)}</li>`).join("\n    ")}
+  </ul>
+  ` : ""}
+
+  <h3>Community context</h3>
+  <p>${esc(d.narrative.community_context)}</p>
 
   <h2>Site Vulnerabilities</h2>
   <ul class="tight">
-    ${d.narrative.vulnerabilities.map((v) => `<li class="ai-draft" style="margin-bottom:0.3rem">${esc(v)}</li>`).join("\n    ")}
+    ${d.narrative.vulnerabilities.length === 0
+      ? "<li><em>No additional vulnerabilities identified beyond what's covered in Threat Environment.</em></li>"
+      : d.narrative.vulnerabilities.map((v) => `<li>${esc(v)}</li>`).join("\n    ")}
   </ul>
 
   <h2>Risk Assessment</h2>
@@ -582,7 +629,7 @@ function renderHtml(d: RenderInput): string {
   </ul>
 
   <h2>Summary</h2>
-  <div class="ai-draft">${esc(d.narrative.summary)}</div>
+  <p>${esc(d.narrative.summary)}</p>
 
   <h2>Appendix A: Selected Photos</h2>
   ${(() => {
