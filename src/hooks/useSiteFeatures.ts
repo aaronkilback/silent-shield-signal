@@ -128,6 +128,7 @@ interface UpdateFeatureInput {
   asset_id: string;
   audit_id: string;
   label?: string;
+  feature_type?: FeatureType;     // allow reassignment between stages
   bearing_deg?: number | null;
   lat?: number;
   lng?: number;
@@ -144,6 +145,7 @@ export function useUpdateFeature() {
         updated_at: new Date().toISOString(),
       };
       if (input.label !== undefined) patch.label = input.label;
+      if (input.feature_type !== undefined) patch.feature_type = input.feature_type;
       if (input.bearing_deg !== undefined) patch.bearing_deg = input.bearing_deg;
       if (input.primary_photo_url !== undefined) patch.primary_photo_url = input.primary_photo_url;
       if (input.lat !== undefined && input.lng !== undefined) {

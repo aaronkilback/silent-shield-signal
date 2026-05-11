@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, CheckCircle, Camera, Pencil, Loader2, Clock } from "lucide-react";
+import { FeatureEditDialog } from "@/components/site-audit/FeatureEditDialog";
 import {
   type AuditStage,
   type SiteAudit,
@@ -200,53 +201,71 @@ interface FeatureRowProps {
 }
 
 function FeatureRow({ feature, auditId, onVerify, isVerifying }: FeatureRowProps) {
+  const [editOpen, setEditOpen] = useState(false);
   const lastVerified = feature.last_verified_at ? new Date(feature.last_verified_at) : null;
   const verifiedThisAudit = feature.last_verified_audit_id === auditId;
   const ageDays = lastVerified ? Math.floor((Date.now() - lastVerified.getTime()) / 86_400_000) : null;
   const isStale = ageDays !== null && ageDays > Math.floor(feature.half_life_days / 2);
 
   return (
-    <li className="border rounded p-2 flex items-center justify-between gap-2 bg-card">
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium flex items-center gap-2">
-          <span>{feature.label || FEATURE_TYPE_LABELS[feature.feature_type]}</span>
-          <span className="text-xs text-muted-foreground font-normal">
-            {FEATURE_TYPE_LABELS[feature.feature_type]}
-          </span>
-          {verifiedThisAudit && (
-            <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
-              <CheckCircle className="w-3 h-3" /> verified
+    <>
+      <li className="border rounded p-2 flex items-center justify-between gap-2 bg-card">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium flex items-center gap-2">
+            <span>{feature.label || FEATURE_TYPE_LABELS[feature.feature_type]}</span>
+            <span className="text-xs text-muted-foreground font-normal">
+              {FEATURE_TYPE_LABELS[feature.feature_type]}
             </span>
-          )}
+            {verifiedThisAudit && (
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                <CheckCircle className="w-3 h-3" /> verified
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap mt-0.5">
+            {lastVerified && (
+              <span className={`flex items-center gap-0.5 ${isStale ? "text-amber-600" : ""}`}>
+                <Clock className="w-3 h-3" />
+                Last verified {formatDistanceToNow(lastVerified, { addSuffix: true })}
+              </span>
+            )}
+            {feature.bearing_deg !== null && (
+              <span>📐 {feature.bearing_deg.toFixed(0)}°</span>
+            )}
+            {feature.primary_photo_url && (
+              <span><Camera className="w-3 h-3 inline" /></span>
+            )}
+          </div>
         </div>
-        <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap mt-0.5">
-          {lastVerified && (
-            <span className={`flex items-center gap-0.5 ${isStale ? "text-amber-600" : ""}`}>
-              <Clock className="w-3 h-3" />
-              Last verified {formatDistanceToNow(lastVerified, { addSuffix: true })}
-            </span>
+        <div className="flex items-center gap-1">
+          {!verifiedThisAudit && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onVerify}
+              disabled={isVerifying}
+              className="h-7 text-xs"
+            >
+              {isVerifying ? <Loader2 className="w-3 h-3 animate-spin" /> : "Verify"}
+            </Button>
           )}
-          {feature.bearing_deg !== null && (
-            <span>📐 {feature.bearing_deg.toFixed(0)}°</span>
-          )}
-          {feature.primary_photo_url && (
-            <span><Camera className="w-3 h-3 inline" /></span>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-1">
-        {!verifiedThisAudit && (
           <Button
             size="sm"
-            variant="outline"
-            onClick={onVerify}
-            disabled={isVerifying}
-            className="h-7 text-xs"
+            variant="ghost"
+            onClick={() => setEditOpen(true)}
+            className="h-7 px-2"
+            title="Edit feature (label, type, bearing, delete)"
           >
-            {isVerifying ? <Loader2 className="w-3 h-3 animate-spin" /> : "Verify"}
+            <Pencil className="w-3.5 h-3.5" />
           </Button>
-        )}
-      </div>
-    </li>
+        </div>
+      </li>
+      <FeatureEditDialog
+        feature={feature}
+        auditId={auditId}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+      />
+    </>
   );
 }
