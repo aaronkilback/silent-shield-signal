@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, ImageOff, Star } from "lucide-react";
 import {
   useUpdateFeature,
   useSoftDeleteFeature,
@@ -34,6 +34,8 @@ import {
   FEATURE_TYPE_LABELS,
   STAGE_FEATURE_TYPES,
 } from "@/hooks/useSiteFeatures";
+import { useFeatureMedia, type MediaAsset } from "@/hooks/useMediaAssets";
+import { MediaUploadField } from "./MediaUploadField";
 import { toast } from "sonner";
 
 const ALL_FEATURE_TYPES: FeatureType[] = [
@@ -74,6 +76,7 @@ interface FeatureEditDialogProps {
 export function FeatureEditDialog({ feature, auditId, open, onOpenChange }: FeatureEditDialogProps) {
   const update = useUpdateFeature();
   const del = useSoftDeleteFeature();
+  const { data: photos } = useFeatureMedia(open ? feature.id : null);
   const [label, setLabel] = useState(feature.label ?? "");
   const [featureType, setFeatureType] = useState<FeatureType>(feature.feature_type);
   const [bearing, setBearing] = useState<string>(
@@ -81,6 +84,11 @@ export function FeatureEditDialog({ feature, auditId, open, onOpenChange }: Feat
       ? String(feature.bearing_deg.toFixed(0))
       : "",
   );
+  const [showUploader, setShowUploader] = useState(false);
+
+  const primaryPhotoUrl = feature.primary_photo_url;
+  const primaryPhoto = photos?.find((p) => p.storage_path === primaryPhotoUrl) ?? null;
+  const otherPhotos = (photos ?? []).filter((p) => p.storage_path !== primaryPhotoUrl);
 
   const handleSave = async () => {
     try {
@@ -97,6 +105,20 @@ export function FeatureEditDialog({ feature, auditId, open, onOpenChange }: Feat
       onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Update failed");
+    }
+  };
+
+  const handleMakePrimary = async (photo: MediaAsset) => {
+    try {
+      await update.mutateAsync({
+        id: feature.id,
+        asset_id: feature.asset_id,
+        audit_id: auditId,
+        primary_photo_url: photo.storage_path,
+      });
+      toast.success("Primary photo updated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update primary photo");
     }
   };
 
@@ -120,7 +142,92 @@ export function FeatureEditDialog({ feature, auditId, open, onOpenChange }: Feat
           <DialogTitle>Edit feature</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 pt-2">
+        <div className="space-y-4 pt-2 max-h-[70vh] overflow-y-auto pr-1">
+          {/* Photo section — current primary + gallery + upload */}
+          <div className="space-y-2">
+            <Label>Photo</Label>
+            {primaryPhoto?.signed_url ? (
+              <div className="space-y-1">
+                <a href={primaryPhoto.signed_url} target="_blank" rel="noopener noreferrer">
+                  <img
+                    src={primaryPhoto.signed_url}
+                    alt="Primary feature photo"
+                    className="w-full max-h-64 object-contain rounded border bg-muted"
+                  />
+                </a>
+                <div className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Star className="w-3 h-3 text-amber-500" />
+                  Primary photo
+                  {primaryPhoto.bearing_deg !== null && primaryPhoto.bearing_deg !== undefined && (
+                    <span>· bearing {primaryPhoto.bearing_deg.toFixed(0)}°</span>
+                  )}
+                  {primaryPhoto.captured_at && (
+                    <span>· {new Date(primaryPhoto.captured_at).toLocaleDateString()}</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="border border-dashed rounded p-4 text-center text-xs text-muted-foreground flex flex-col items-center gap-1">
+                <ImageOff className="w-5 h-5" />
+                No primary photo on this feature
+              </div>
+            )}
+
+            {/* Other linked photos — show as thumbnails with Make Primary */}
+            {otherPhotos.length > 0 && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">Other photos ({otherPhotos.length})</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {otherPhotos.map((p) => (
+                    <div key={p.id} className="relative group">
+                      <a href={p.signed_url ?? "#"} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={p.signed_url ?? ""}
+                          alt=""
+                          className="w-full aspect-square object-cover rounded border"
+                        />
+                      </a>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => handleMakePrimary(p)}
+                        disabled={update.isPending}
+                        className="absolute bottom-0.5 right-0.5 h-6 px-1.5 text-[10px]"
+                        title="Use as primary"
+                      >
+                        <Star className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Upload new */}
+            {showUploader ? (
+              <MediaUploadField
+                audit_id={auditId}
+                asset_id={feature.asset_id}
+                feature_id={feature.id}
+                kind="photo"
+                onUploaded={async ({ media_asset }) => {
+                  // Auto-promote the newly uploaded photo to primary.
+                  await handleMakePrimary(media_asset);
+                  setShowUploader(false);
+                }}
+              />
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowUploader(true)}
+                className="w-full"
+              >
+                {primaryPhoto ? "Replace / add another photo" : "Add a photo"}
+              </Button>
+            )}
+          </div>
+
           <div className="space-y-1.5">
             <Label>Label</Label>
             <Input
