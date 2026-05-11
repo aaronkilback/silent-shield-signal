@@ -608,7 +608,6 @@ function renderHtml(d: RenderInput): string {
     `).join("\n    ")}
   </div>`;
   })()}
-  `}
 
   ${d.documents.length > 0 ? `
   <h3>Supporting documents</h3>
