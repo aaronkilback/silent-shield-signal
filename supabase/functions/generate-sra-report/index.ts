@@ -105,9 +105,16 @@ Deno.serve(async (req) => {
     const fwc = (featuresWithCoords as {
       asset_lat: number | null;
       asset_lng: number | null;
-      features: Array<{ id: string; feature_type: string; label: string | null; lat: number | null; lng: number | null }>;
+      features: Array<{ id: string; feature_type: string; label: string | null; primary_photo_url: string | null; lat: number | null; lng: number | null }>;
     } | null) ?? { asset_lat: null, asset_lng: null, features: [] };
-    const mapFeatures = fwc.features.filter((f) => f.lat !== null && f.lng !== null);
+    const mapFeaturesRaw = fwc.features.filter((f) => f.lat !== null && f.lng !== null);
+    // Sign each feature's primary photo so the map popup can render it.
+    const mapFeatures = await Promise.all(mapFeaturesRaw.map(async (f) => ({
+      ...f,
+      photo_signed_url: f.primary_photo_url
+        ? await getSignedUrl(supabase, SITE_AUDIT_MEDIA_BUCKET as never, f.primary_photo_url, 60 * 60 * 24 * 30)
+        : null,
+    })));
 
     // Pull substrate context (regional district, fire centre, health
     // authority, nearby features) if the asset has a geom. Used in
@@ -172,10 +179,57 @@ Deno.serve(async (req) => {
       substrateContext, wildfireContext,
     });
 
+    // ─── Persist AI-proposed ratings + recommendations ────────────
+    // When the operator hasn't filled in risk ratings or recommendations
+    // at Stage 9, the AI's proposals become the starting point. Saved
+    // with derived_by/source='ai' so they appear in the wizard UI for
+    // the operator to review + edit (calibration loop). The audit's
+    // next-generated report uses the (possibly-edited) DB rows.
+    let finalRatings = ratings;
+    let finalRecs = recs;
+    if (ratings.length === 0 && narrative.proposed_ratings.length > 0) {
+      const rows = narrative.proposed_ratings.map((r) => {
+        const impactNum = ({ A: 1, B: 2, C: 3, D: 4, E: 5 } as Record<string, number>)[r.impact] ?? 1;
+        const score = r.likelihood * impactNum;
+        const band = score <= 3 ? "low" : score <= 7 ? "medium" : score <= 12 ? "high" : score <= 19 ? "severe" : "catastrophic";
+        const bandTitle = band[0].toUpperCase() + band.slice(1);
+        return {
+          audit_id: audit.id,
+          risk_category: r.risk_category,
+          likelihood: r.likelihood,
+          impact: r.impact,
+          rating_label: `${bandTitle} ${r.likelihood}${r.impact}`,
+          rating_band: band,
+          rationale: r.rationale,
+          derived_by: "ai",
+        };
+      });
+      const { data: inserted } = await supabase
+        .from("audit_risk_ratings")
+        .upsert(rows as never, { onConflict: "audit_id,risk_category" })
+        .select("*");
+      finalRatings = (inserted as typeof ratings) ?? rows as typeof ratings;
+    }
+    if (recs.length === 0 && narrative.proposed_recommendations.length > 0) {
+      const rows = narrative.proposed_recommendations.map((r, i) => ({
+        audit_id: audit.id,
+        bucket: r.bucket,
+        description: r.description,
+        rationale: r.rationale ?? null,
+        source: "ai",
+        priority: 100 - i,
+      }));
+      const { data: inserted } = await supabase
+        .from("audit_recommendations")
+        .insert(rows as never)
+        .select("*");
+      finalRecs = (inserted as typeof recs) ?? rows as typeof recs;
+    }
+
     // ─── Render HTML ───────────────────────────────────────────────
     const html = renderHtml({
       audit, asset: audit.asset, client: audit.client,
-      operatorName, features, ratings, recs, photos: signedPhotos, documents,
+      operatorName, features, ratings: finalRatings, recs: finalRecs, photos: signedPhotos, documents,
       adjacent: (adjacent as { audits?: Array<Record<string, unknown>>; signals?: Array<Record<string, unknown>> } | null) ?? { audits: [], signals: [] },
       narrative,
       assetLat: fwc.asset_lat,
@@ -231,6 +285,17 @@ async function draftNarrative(input: {
   community_context: string;
   vulnerabilities: string[];
   summary: string;
+  proposed_ratings: Array<{
+    risk_category: string;
+    likelihood: number;
+    impact: string;       // A-E
+    rationale: string;
+  }>;
+  proposed_recommendations: Array<{
+    bucket: "short_term" | "medium_term" | "long_term";
+    description: string;
+    rationale?: string;
+  }>;
 }> {
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
   if (!OPENAI_API_KEY) {
@@ -243,6 +308,8 @@ async function draftNarrative(input: {
       community_context: "No current landowner or community concerns documented in this audit.",
       vulnerabilities: [],
       summary: input.audit.summary_text || "[Operator summary not provided.]",
+      proposed_ratings: [],
+      proposed_recommendations: [],
     };
   }
 
@@ -277,8 +344,38 @@ Output JSON only. Use Aaron's operational SRA structure — four short threat-en
   "potential_risks": ["3-6 short bullets. Each is one phrase, max 12 words. Example: 'Easy access due to lack of fencing and surveillance.' 'High-value items are unsecured.' 'No deterrents such as lighting, alarms, or physical presence.' Skip a bullet entirely if data doesn't support it; do not pad with generic risks."],
   "community_context": "1 short sentence about Indigenous-relations / local-community posture if any is visible in the data; otherwise exactly: 'No current landowner or community concerns documented in this audit.'",
   "vulnerabilities": ["Max 5 bullets, each one short sentence (≤18 words). Concrete missing controls. NO zero-count bullets ('0 high-value targets unsecured' is FORBIDDEN — if a thing isn't a problem, omit it). NO restating context already in unauthorized_access."],
-  "summary": "1 short paragraph (3-5 sentences) in operator voice tying it together. Mention wildfire + wildlife when the operational state warrants. Example tone from Aaron's prior reports: 'The site holds significant asset value and is vulnerable once shut in, primarily to theft and vandalism due to its remote location, removal of lighting, and lack of personnel.'"
+  "summary": "1 short paragraph (3-5 sentences) in operator voice tying it together. Mention wildfire + wildlife when the operational state warrants. Example tone from Aaron's prior reports: 'The site holds significant asset value and is vulnerable once shut in, primarily to theft and vandalism due to its remote location, removal of lighting, and lack of personnel.'",
+
+  "proposed_ratings": [
+    {
+      "risk_category": "ONE of: theft_vandalism, sabotage, environmental_damage, insider_threat, tampering_supply_chain, physical_intrusion, cyber_ot_compromise, protest_disruption, wildlife_force_majeure, wildfire_exposure",
+      "likelihood": "integer 1-5 (1=Rare, 2=Unlikely, 3=Possible, 4=Likely, 5=Almost Certain)",
+      "impact": "single letter A-E (A=Insignificant, B=Minor, C=Moderate, D=Major, E=Catastrophic)",
+      "rationale": "1 short sentence citing specific captured features or threat context"
+    }
+  ],
+  "proposed_recommendations": [
+    {
+      "bucket": "ONE of: short_term, medium_term, long_term",
+      "description": "1 short sentence, action-oriented. Examples: 'Install trail cameras and appropriate signage at all unstaffed entry points.' 'Bear-proof the food-waste dumpster within 30 days.' 'Replace damaged hasp on MCC door.'",
+      "rationale": "Optional 1-phrase tie-back to the vulnerability it addresses"
+    }
+  ]
 }
+
+RULES for proposed_ratings:
+- Output ratings for EVERY risk category in the list above (10 total). Skip none.
+- Likelihood + impact must be grounded in captured features. A site with no fencing + remote location + high-value assets = theft_vandalism Likelihood 3-4, Impact C-D. A camp with rabbit warrens + no bear-proof bins = wildlife_force_majeure Likelihood 4, Impact C-D.
+- If data is sparse for a category, still output a rating but use lower likelihood (1-2) and note 'limited data captured for this category' in rationale.
+- Rationale must reference SPECIFIC captured features by type. Generic language is forbidden.
+
+RULES for proposed_recommendations:
+- 6-10 total recommendations spread across the three buckets.
+- Each is an ACTION the operator can take. Verbs first ('Install', 'Replace', 'Add', 'Bear-proof', 'Lock', 'Inspect', 'Schedule').
+- Short term = 0-3 months (low-cost, quick fixes). Medium term = 3-6 months (procurement-required). Long term = >6 months (capital projects, re-commissioning).
+- Tie each recommendation to a captured vulnerability or rating. Do not invent issues that weren't observed.
+- If wildfire exposure is elevated, include at least one wildfire-related recommendation (fuel-load reduction, evacuation drill, comms backup).
+- If wildlife attractants were captured, include at least one bear-proofing or attractant-removal recommendation.
 
 Vulnerabilities should include (where supported by data):
 - No fencing / damaged fencing → "No fencing or physical barrier..."
@@ -317,6 +414,39 @@ Anti-fabrication + brevity:
     const apiData = await apiResp.json();
     const content = apiData.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(content);
+    // Validate proposed ratings against the actual DB enum + bands.
+    const VALID_RISK_CATS = new Set([
+      "theft_vandalism","sabotage","environmental_damage","insider_threat",
+      "tampering_supply_chain","physical_intrusion","cyber_ot_compromise",
+      "protest_disruption","wildlife_force_majeure","wildfire_exposure",
+    ]);
+    const VALID_IMPACT = new Set(["A","B","C","D","E"]);
+    const proposed_ratings: Array<{ risk_category: string; likelihood: number; impact: string; rationale: string }> =
+      Array.isArray(parsed.proposed_ratings)
+        ? parsed.proposed_ratings
+            .map((r: any) => ({
+              risk_category: String(r?.risk_category ?? "").trim(),
+              likelihood: Math.max(1, Math.min(5, Math.round(Number(r?.likelihood) || 0))),
+              impact: String(r?.impact ?? "").trim().toUpperCase(),
+              rationale: String(r?.rationale ?? "").substring(0, 300),
+            }))
+            .filter((r: { risk_category: string; likelihood: number; impact: string }) =>
+              VALID_RISK_CATS.has(r.risk_category) && r.likelihood >= 1 && VALID_IMPACT.has(r.impact))
+        : [];
+
+    const VALID_BUCKETS = new Set(["short_term","medium_term","long_term"]);
+    const proposed_recommendations: Array<{ bucket: "short_term"|"medium_term"|"long_term"; description: string; rationale?: string }> =
+      Array.isArray(parsed.proposed_recommendations)
+        ? parsed.proposed_recommendations
+            .map((r: any) => ({
+              bucket: String(r?.bucket ?? "").trim() as "short_term"|"medium_term"|"long_term",
+              description: String(r?.description ?? "").substring(0, 500),
+              rationale: r?.rationale ? String(r.rationale).substring(0, 300) : undefined,
+            }))
+            .filter((r: { bucket: string; description: string }) =>
+              VALID_BUCKETS.has(r.bucket) && r.description.length > 8)
+        : [];
+
     return {
       unauthorized_access: String(parsed.unauthorized_access ?? "").substring(0, 600),
       previous_incidents: String(parsed.previous_incidents ?? "").substring(0, 600),
@@ -328,6 +458,8 @@ Anti-fabrication + brevity:
         ? parsed.vulnerabilities.slice(0, 5).map((v: unknown) => String(v).substring(0, 200))
         : [],
       summary: String(parsed.summary ?? input.audit.summary_text ?? "").substring(0, 1200),
+      proposed_ratings,
+      proposed_recommendations,
     };
   } catch (e) {
     console.error("narrative draft failed:", e);
@@ -338,6 +470,8 @@ Anti-fabrication + brevity:
       community_context: "No current landowner or community concerns documented in this audit.",
       vulnerabilities: input.features.length === 0 ? ["No features captured during this audit"] : [],
       summary: input.audit.summary_text || "[Operator summary not provided.]",
+      proposed_ratings: [],
+      proposed_recommendations: [],
     };
   }
 }
@@ -370,7 +504,7 @@ interface RenderInput {
   };
   assetLat: number | null;
   assetLng: number | null;
-  mapFeatures: Array<{ id: string; feature_type: string; label: string | null; lat: number | null; lng: number | null }>;
+  mapFeatures: Array<{ id: string; feature_type: string; label: string | null; lat: number | null; lng: number | null; photo_signed_url: string | null }>;
 }
 
 function renderHtml(d: RenderInput): string {
@@ -531,15 +665,21 @@ function renderHtml(d: RenderInput): string {
       .bindPopup('<strong>${esc(d.asset.name)}</strong><br><small>Asset centroid</small>');
 
     var features = ${JSON.stringify(d.mapFeatures.map(f => ({
-      type: f.feature_type, label: f.label ?? '', lat: f.lat, lng: f.lng,
+      type: f.feature_type, label: f.label ?? '', lat: f.lat, lng: f.lng, photo: f.photo_signed_url ?? null,
     })))};
     var bounds = L.latLngBounds([[${d.assetLat}, ${d.assetLng}]]);
     features.forEach(function(f) {
       var col = typeColors[f.type] || '#525252';
+      var photoHtml = f.photo
+        ? '<div style="margin-top:4px"><img src="' + f.photo + '" alt="" style="max-width:240px; max-height:160px; border:1px solid #999; border-radius:3px" /></div>'
+        : '';
       L.circleMarker([f.lat, f.lng], {
         radius: 7, color: col, fillColor: col, fillOpacity: 0.85, weight: 1.5
       }).addTo(map).bindPopup(
-        '<strong>' + (f.label || f.type) + '</strong><br><small>' + f.type.replace(/_/g, ' ') + '</small>'
+        '<div style="min-width:180px"><strong>' + (f.label || f.type) + '</strong>' +
+        '<br><small style="color:#666">' + f.type.replace(/_/g, ' ') + '</small>' +
+        photoHtml + '</div>',
+        { maxWidth: 280 }
       );
       bounds.extend([f.lat, f.lng]);
     });
