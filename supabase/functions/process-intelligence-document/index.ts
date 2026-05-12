@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
     // Fetch all active clients and their keywords
     const { data: clients } = await supabase
       .from('clients')
-      .select('id, name, monitoring_keywords, competitor_names, high_value_assets')
+      .select('id, name, industry, monitoring_keywords, competitor_names, high_value_assets')
       .eq('status', 'active');
 
     // IMPROVED: Match document against client keywords with weighted scoring
@@ -208,15 +208,27 @@ Deno.serve(async (req) => {
     // downstream decides whether to admit.
     const INDUSTRY_TIER_KEYWORDS: Record<string, string[]> = {
       energy: [
+        // Fossil-fuel / midstream
         'pipeline', 'lng', 'natural gas', 'crude oil', 'oil sands', 'oilsands',
         'petrochemical', 'midstream', 'upstream', 'oil and gas', 'fossil fuel',
+        'oil & gas', 'refinery', 'compressor station', 'gas plant',
+        // Sector / policy
         'energy sector', 'energy industry', 'energy transition', 'decarbonization',
         'carbon tax', 'carbon pricing', 'emissions reduction', 'net zero',
-        'climate policy', 'first nations consultation', 'indigenous rights',
-        'land defender', 'pipeline protest', 'pipeline blockade',
-        'energy regulator', 'wildfire', 'evacuation alert',
+        'climate policy', 'energy regulator', 'energy market',
+        // Renewables / transition (Narwhal/Tyee coverage often centers here)
+        'solar', 'wind power', 'hydroelectric', 'hydro power', 'renewable',
+        'renewables', 'grid', 'electrification', 'diesel', 'biomass', 'geothermal',
+        'storage battery', 'green energy', 'clean energy', 'energy storage',
+        // Indigenous / consultation context
+        'first nations consultation', 'indigenous rights', 'indigenous nation',
+        'land defender', 'indigenous title', 'aboriginal title', 'reconciliation',
+        // Protest / activism context
+        'pipeline protest', 'pipeline blockade', 'land back', 'climate action',
+        'protest camp', 'direct action',
+        // Operational
+        'wildfire', 'evacuation alert', 'evacuation order',
       ],
-      // other industries can be added when new clients onboard
     };
     const REGIONAL_ANCHORS = [
       'canada', 'british columbia', 'bc ', ' bc\\.', 'alberta', 'saskatchewan',
