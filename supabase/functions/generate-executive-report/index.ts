@@ -8,6 +8,33 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+/**
+ * Clean Google CSE / RSS snippet artifacts before showing a signal excerpt
+ * to AI or to a human reader. Google's customsearch API returns snippets
+ * full of "1 day ago ... ... protest in Ottawa. DND said the U.S.-registered
+ * aircraft was doing ... LNG Canada Phase 2..." style artifacts — the
+ * truncation ellipses, the relative timestamps, and trailing source
+ * attributions ("- Facebook") leak through to executive briefs and make
+ * the prose read like raw search results instead of curated intel.
+ *
+ * 2026-05-12 hardening pass — surfaced during BC Place / FIFA demo prep.
+ */
+function cleanSignalExcerpt(text: string | null | undefined): string {
+  if (!text) return '';
+  let t = text;
+  // Strip leading "N day(s)/hour(s)/minute(s) ago ..." preludes
+  t = t.replace(/^\s*\d+\s*(day|hour|minute|month|week)s?\s+ago\s*\.{2,}\s*/i, '');
+  // Strip trailing source attributions like " - Facebook", " - Reddit", " - Twitter"
+  t = t.replace(/\s*[-–—]\s*(Facebook|Reddit|Twitter|X|LinkedIn|Instagram|YouTube|TikTok|Telegram)\s*$/i, '');
+  // Collapse "... ..." style multi-ellipsis chains to a single unicode ellipsis
+  t = t.replace(/(?:\.{2,}\s*){2,}/g, '… ');
+  // Collapse remaining 3-or-more-dot sequences to a single unicode ellipsis
+  t = t.replace(/\.{3,}/g, '…');
+  // Normalize internal whitespace
+  t = t.replace(/\s{2,}/g, ' ').trim();
+  return t;
+}
+
 // Interface for evidence source tracking
 interface EvidenceSource {
   claim: string;
@@ -469,7 +496,7 @@ ${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h):\n${newIncidentsLas
 ${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (>7 days old, require review):\n${staleOpenIncidents.slice(0, 3).map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]}`).join('\n')}` : ''}
 
 Top 3 signals:
-${criticalSignals.slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${s.normalized_text?.substring(0, 150)}`).join('\n')}
+${criticalSignals.slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${cleanSignalExcerpt(s.normalized_text).substring(0, 150)}`).join('\n')}
 
 Provide a JSON response with exactly this structure:
 {
@@ -544,7 +571,7 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
     const impactPrompt = `As a security strategist, create impact ladders for the top 3 threats facing ${client.name}.
 
 Current threat landscape:
-${criticalSignals.slice(0, 5).map((s, i) => `${i + 1}. ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
+${criticalSignals.slice(0, 5).map((s, i) => `${i + 1}. ${s.category}: ${cleanSignalExcerpt(s.normalized_text).substring(0, 200)}`).join('\n')}
 
 For each major threat, provide a JSON array with this structure:
 [
@@ -602,7 +629,7 @@ ${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h) - THESE ARE THE CUR
 ${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (opened >7 days ago, still unresolved):\n${staleOpenIncidents.map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]} (${Math.floor((reportGeneratedAt.getTime() - new Date(i.opened_at).getTime()) / (24*60*60*1000))} days old)`).join('\n')}` : ''}
 
 Top 5 Signals:
-${freshSignals.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${s.normalized_text?.substring(0, 200)}`).join('\n')}
+${freshSignals.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${cleanSignalExcerpt(s.normalized_text).substring(0, 200)}`).join('\n')}
 
 MULTI-AGENT DEBATE SYNTHESES (last ${period_days}d, ${(periodDebates ?? []).length}):
 These are AEGIS-CMD-judged syntheses authored by specialist agents under structured debate. They are the platform's primary analytical output for incidents in this period. Use them as the interpretive backbone of the executive summary — distill their judgments into the BLUF and summary paragraphs. Do NOT regenerate analysis the agents already produced.
@@ -644,20 +671,53 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     });
     if (summaryResult.content) executiveSummary = applyToneTransformation(summaryResult.content);
 
-    // Generate action items with ownership suggestions
-    const actionsPrompt = `As a security operations advisor, create 3-5 actionable recommendations for ${client.name}.
+    // Generate action items grounded in actual signal evidence.
+    //
+    // 2026-05-12 hardening: the previous prompt fed only signal counts +
+    // overall risk level, so the model produced templated boilerplate
+    // ("schedule cybersecurity training", "develop cross-departmental
+    // incident response plan") that any Fortune 500 already has. A
+    // FIFA-tier reader spots LLM filler in 5 seconds. Now feeds the
+    // actual top signals so each recommendation must trace to a
+    // specific observed event/entity.
+    const actionSignalContext = (() => {
+      const tier1 = [...criticalSignals, ...highSignals];
+      const widened = tier1.length >= 3
+        ? tier1.slice(0, 8)
+        : [...tier1, ...reportableSignals.filter((s: any) => !['critical', 'high'].includes(s.severity))].slice(0, 8);
+      if (widened.length === 0) return '(No reportable signals in this period.)';
+      return widened.map((s: any, i: number) => {
+        const sigId = s.signal_number || `SIG-${(s.id || '').substring(0, 8).toUpperCase()}`;
+        const ents = Array.isArray(s.entity_tags) && s.entity_tags.length ? ` [entities: ${s.entity_tags.slice(0, 3).join(', ')}]` : '';
+        return `${i + 1}. ${sigId} [${(s.severity || 'medium').toUpperCase()}] ${s.category}: ${cleanSignalExcerpt(s.normalized_text)}${ents}`;
+      }).join('\n');
+    })();
 
-Current situation:
-- ${criticalSignals.length} critical signals requiring attention
+    const actionsPrompt = `As a security operations advisor for ${client.name}, write 3-5 actionable recommendations that are DIRECTLY tied to the signals below. This is a FIFA-tier executive brief — generic boilerplate that any Fortune 500 already has (e.g. "schedule cybersecurity training", "develop incident response plan", "implement regular security audits") will be rejected.
+
+Current period summary:
+- ${criticalSignals.length} critical signals
+- ${(highSignals ?? []).length} high signals
 - ${p1p2Incidents.length} P1/P2 incidents
 - Overall risk: ${overallRiskLevel}
 
+Signals to ground recommendations in:
+${actionSignalContext}
+
+MANDATORY RULES:
+1. Every recommendation MUST begin by citing at least one signal ID from the list above (format: "[SIG-XXX]") and reference the specific observed event/entity. A reader must be able to point to the signal that triggered each action.
+2. NO generic, evergreen recommendations. If the action would apply to any company on any day with no signals at all, drop it.
+3. NO recommendations along the lines of "develop a plan", "conduct training", "implement audits", "enhance sharing" unless the signal evidence specifically warrants it.
+4. Be operationally specific — name the asset, location, entity, or incident the action addresses.
+5. If signals don't support 5 recommendations, return fewer. 2 specific recommendations beat 5 templated ones.
+6. If there are zero reportable signals, return an empty array [].
+
 Available team roles: Security Operations, Physical Security Lead, Cyber Security Lead, Intelligence Analyst, Executive Team, Legal/Compliance
 
-For each recommendation, provide JSON:
+Output JSON only (no markdown, no commentary):
 [
   {
-    "description": "Specific action to take",
+    "description": "[SIG-XXX] <specific action that references the signal's observed event/entity>",
     "ownerRole": "Most appropriate team role",
     "priority": "critical|high|medium",
     "deadlineDays": 1|3|7|14,
@@ -665,7 +725,7 @@ For each recommendation, provide JSON:
   }
 ]
 
-Be specific and actionable. Max 5 items.`;
+Max 5 items.`;
 
     console.log('Generating action items...');
     let actionItems: ActionItem[] = [];
@@ -757,7 +817,7 @@ ${(() => {
     ? tier1.slice(0, 10)
     : [...tier1, ...reportableSignals.filter((s: any) => !['critical', 'high'].includes(s.severity))].slice(0, 10);
   return widened.length > 0
-    ? widened.map((s: any, i: number) => `${i + 1}. [${(s.severity || 'medium').toUpperCase()}] ${s.category}: ${s.normalized_text}`).join('\n')
+    ? widened.map((s: any, i: number) => `${i + 1}. [${(s.severity || 'medium').toUpperCase()}] ${s.category}: ${cleanSignalExcerpt(s.normalized_text)}`).join('\n')
     : '(No reportable signals in this period.)';
 })()}
 ${(() => {
@@ -836,9 +896,10 @@ MANDATORY TRADECRAFT RULES:
 - If no significant activity occurred in this category during the reporting period, state clearly: "No significant ${category} activity detected in the reporting period." Do not pad with generic content.
 - STRICT SOURCE DISCIPLINE: every factual claim must trace to one of the signals listed above — never introduce events, statistics, or context from your training data
 - If a signal references a historical event for context, you may mention it was historical — but do not expand on it with details not in the signal
+- RELEVANCE FILTER: if any signal in the list above is NOT actually relevant to ${client.name} on closer reading — wrong sector, wrong geography, different company, tangential industry news — exclude it from the narrative entirely. Do NOT mention it just to dismiss it ("noted but not directly relevant" / "while this reflects broader dynamics it does not concern us") — that is exactly the filler a sophisticated executive reader will reject. Silent exclusion only.
 
 Signals to analyze:
-${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${s.normalized_text} (Source: ${getHostname(s.source_url)}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
+${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${cleanSignalExcerpt(s.normalized_text)} (Source: ${getHostname(s.source_url)}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
 ${topSignals.some((s: any) => {
   const eventDate = s.event_date ? new Date(s.event_date) : null;
   return eventDate && (Date.now() - eventDate.getTime()) > 365 * 24 * 60 * 60 * 1000;
@@ -1456,7 +1517,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
               <span style="font-family: monospace; font-size: 7.5pt; color: #666;">${new Date(signal.received_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</span>
             </div>
             <p style="margin: 0 0 4pt; line-height: 1.5;">
-              <strong>${getCategoryDisplay(signal.category || 'signal')}:</strong> ${signal.normalized_text?.substring(0, 250) || 'No details available'}
+              <strong>${getCategoryDisplay(signal.category || 'signal')}:</strong> ${cleanSignalExcerpt(signal.normalized_text).substring(0, 250) || 'No details available'}
             </p>
             <div style="font-size: 8pt; color: #666;">
               ID: ${signal.signal_number || `SIG-${signal.id.substring(0, 8).toUpperCase()}`}${signal.source_url ? ` — <a href="${signal.source_url}" target="_blank" rel="noopener noreferrer" style="color: #333; text-decoration: underline;">Original Source</a>` : ''}
