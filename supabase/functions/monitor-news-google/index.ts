@@ -1,6 +1,7 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { extractOGImage } from "../_shared/og-image.ts";
 import { recordHeartbeat } from "../_shared/heartbeat.ts";
+import { cleanSignalExcerpt } from "../_shared/signal-text.ts";
 
 // A truncated headline ending in a stray initial — "for the B.",
 // "criticized U.", "the U." — signals the source title was clipped
@@ -298,8 +299,12 @@ Deno.serve(async (req) => {
           itemsScanned += data.items?.length || 0;
 
           for (const item of data.items || []) {
-            // Skip results with no meaningful snippet
-            const snippet = (item.snippet || '').trim();
+            // Skip results with no meaningful snippet. cleanSignalExcerpt
+            // strips Google CSE artefacts (relative-time preludes like
+            // "1 day ago …", chained ellipses, trailing "- Facebook"
+            // attributions) so downstream — including the auto-generated
+            // signal title — sees clean prose, not raw search previews.
+            const snippet = cleanSignalExcerpt(item.snippet);
             if (snippet.length < 40) continue;
 
             // 2026-05-08 source-fidelity guard: require title or snippet to
@@ -340,7 +345,8 @@ Deno.serve(async (req) => {
             if (titleSuspicious) {
               console.log(`[news-google] title-suspicious; ingesting snippet only: ${(item.title || '').substring(0, 80)} | url=${item.link}`);
             }
-            const signalText = titleSuspicious ? snippet : `${item.title}\n\n${snippet}`;
+            const cleanTitle = cleanSignalExcerpt(item.title);
+            const signalText = titleSuspicious ? snippet : `${cleanTitle}\n\n${snippet}`;
 
             // Extract OG image from article page (non-blocking)
             const imageUrl = item.link ? await extractOGImage(item.link).catch(() => null) : null;
