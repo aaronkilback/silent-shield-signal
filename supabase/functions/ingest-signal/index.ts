@@ -1312,9 +1312,17 @@ Score this signal's relevance and classify the connection.`
 
           // Phase 3C: Per-source threshold adjustment
           // Low-credibility sources face a higher bar; proven sources get more slack.
-          // Bounded ±0.15 from base (floor 0.35, ceiling 0.65) to prevent runaway suppression.
-          // Also applies learned threshold adjustment from analyst feedback patterns.
-          let relevanceThreshold = Math.min(0.65, Math.max(0.35, 0.40 + learnedThresholdAdjustment));
+          //
+          // 2026-05-12 tuning — pipeline audit showed AI gate was rejecting
+          // 80-95% of candidates (admit rate 7-17%/day) including signals the
+          // AI itself reasoned were "directly related to Petronas Canada's
+          // key asset" (score 0.45 → rejected against threshold 0.50). Base
+          // lowered from 0.40 → 0.30 to admit borderline content the relevance
+          // gate is being over-conservative on. Floor lowered to 0.25 so
+          // proven-credible sources can get even more slack. Ceiling reduced
+          // to 0.55 — even low-credibility sources shouldn't be punished into
+          // ~zero admit rate.
+          let relevanceThreshold = Math.min(0.55, Math.max(0.25, 0.30 + learnedThresholdAdjustment));
           if (learnedThresholdAdjustment !== 0) {
             console.log(`[Learning] Threshold adjusted by analyst patterns: ${learnedThresholdAdjustment > 0 ? '+' : ''}${learnedThresholdAdjustment.toFixed(2)} → ${relevanceThreshold.toFixed(2)}`);
           }
@@ -1326,9 +1334,9 @@ Score this signal's relevance and classify the connection.`
               .maybeSingle();
             // Only adjust if we have enough signal history (thin data protection)
             if (credScore?.current_credibility && (credScore.total_signals ?? 0) >= 5) {
-              const adjustment = (0.65 - credScore.current_credibility) * 0.40;
-              relevanceThreshold = Math.min(0.65, Math.max(0.35, 0.40 + adjustment));
-              if (Math.abs(relevanceThreshold - 0.40) > 0.005) {
+              const adjustment = (0.55 - credScore.current_credibility) * 0.40;
+              relevanceThreshold = Math.min(0.55, Math.max(0.25, 0.30 + adjustment));
+              if (Math.abs(relevanceThreshold - 0.30) > 0.005) {
                 console.log(`[Phase3C] ${source_key} threshold adjusted: ${relevanceThreshold.toFixed(2)} (credibility: ${credScore.current_credibility.toFixed(3)}, signals: ${credScore.total_signals})`);
               }
             }
