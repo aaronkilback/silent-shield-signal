@@ -54,7 +54,13 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
   const [showRelated, setShowRelated] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
-  const [showReasoning, setShowReasoning] = useState(false);
+  // 2026-05-10: open by default. Reasoning trail is the operator-facing
+  // proof that an AI decision happened — collapsing it by default
+  // hides the platform's most differentiating output behind a click,
+  // and operators reported they never expanded it. The panel handles
+  // the empty case gracefully ("No reasoning trail yet…") so opening
+  // it costs nothing when no data exists.
+  const [showReasoning, setShowReasoning] = useState(true);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!signal?.id) return;
@@ -398,17 +404,25 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
                 Event: {new Date(signal.event_date).toLocaleDateString('en-CA')}
               </span>
             )}
-            {sourceUrl && (
-              <a
-                href={sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 hover:text-primary"
-              >
-                <ExternalLink className="w-3 h-3" />
-                View source
-              </a>
-            )}
+            {sourceUrl && (() => {
+              // Facebook (especially group posts) require login to view the
+              // original — show the operator that the link wall-blocks
+              // rather than rendering a bare "View source" they'll keep
+              // clicking only to land on a Facebook login page.
+              const isFacebook = /(?:^|\.)facebook\.com/i.test(sourceUrl);
+              return (
+                <a
+                  href={sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 hover:text-primary"
+                  title={isFacebook ? 'Facebook may require a logged-in account to view this post.' : sourceUrl}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  {isFacebook ? 'View source (Facebook — login may be required)' : 'View source'}
+                </a>
+              );
+            })()}
           </div>
 
           {/* Stale content warning */}

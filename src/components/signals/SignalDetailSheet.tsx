@@ -547,15 +547,29 @@ export function SignalDetailSheet({
                 <Separator />
                 <div>
                   <h4 className="text-sm font-medium mb-2">Original Source</h4>
-                  <a 
-                    href={sourceUrl} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-sm text-primary hover:underline"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    <span className="truncate">{sourceUrl}</span>
-                  </a>
+                  {(() => {
+                    const isFacebook = /(?:^|\.)facebook\.com/i.test(sourceUrl);
+                    return (
+                      <>
+                        <a
+                          href={sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-sm text-primary hover:underline"
+                          title={isFacebook ? 'Facebook may require a logged-in account to view this post.' : sourceUrl}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          <span className="truncate">{sourceUrl}</span>
+                        </a>
+                        {isFacebook && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Facebook may require a logged-in account to view this post.
+                            The snippet captured below is the canonical evidence.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </>
             )}
