@@ -131,7 +131,7 @@ Create a professional security briefing with location overview, risk rating, key
     }];
 
     const aiResult = await callAiGateway({
-      model: "google/gpt-4o-mini",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: "You are an expert security analyst who produces professional security briefings in the style of International SOS and Control Risks." },
         { role: "user", content: prompt }

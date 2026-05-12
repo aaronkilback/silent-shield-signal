@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { attenuateConfidence } from "../_shared/calibration.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -551,11 +552,24 @@ Deno.serve(async (req) => {
                   const content: string | null = (resp?.data as any)?.response ?? null;
                   if (!content) return;
 
+                  // Stated confidence is the legacy flat 0.7 — kept for
+                  // continuity but pulled toward 0.5 by the agent's own
+                  // calibration history before persisting. Agents that
+                  // have been chronically over-confident on this domain
+                  // (per agent_calibration_scores) write a lower number;
+                  // well-calibrated agents pass through unchanged.
+                  const { attenuated } = await attenuateConfidence(
+                    supabase,
+                    callSign,
+                    String(sig.category ?? 'unknown'),
+                    0.7,
+                  );
+
                   await supabase.from('signal_agent_analyses').insert({
                     signal_id: sig.id,
                     agent_call_sign: callSign,
                     analysis: content.slice(0, 6000),
-                    confidence_score: 0.7,
+                    confidence_score: attenuated,
                     trigger_reason: triggerReason,
                     analysis_tier: 'entity_mention',
                   });

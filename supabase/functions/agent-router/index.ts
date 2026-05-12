@@ -29,19 +29,26 @@ Deno.serve(async (req) => {
     const routeResults = await routeToAgents(supabase, question, openAiApiKey, top_k);
 
     if (routeResults.length > 0) {
-      // Load full agent records for matched call_signs
+      // Load full agent records for matched call_signs.
+      // Filter by is_active so deactivated agents (whose embeddings
+      // haven't been pruned from agent_specialty_embeddings yet) drop
+      // out instead of getting routed to. agent_specialty_embeddings is
+      // append-only by design; the active-fleet truth lives in ai_agents.
       const callSigns = routeResults.map((r) => r.call_sign);
       const { data: agentRows, error: agentsErr } = await supabase
         .from('ai_agents')
         .select('call_sign, codename, specialty, avatar_color')
-        .in('call_sign', callSigns);
+        .in('call_sign', callSigns)
+        .eq('is_active', true);
 
       if (agentsErr) {
         console.error('[agent-router] Failed to load agent records:', agentsErr);
         return errorResponse('Failed to load agents', 500);
       }
 
-      // Merge similarity scores into agent records, preserving ranking order
+      // Merge similarity scores into agent records, preserving ranking order.
+      // routeResults that map to deactivated agents are silently dropped —
+      // the next-most-similar active agent takes their slot.
       const agentMap = new Map((agentRows || []).map((a: any) => [a.call_sign, a]));
       const agents = routeResults
         .filter((r) => agentMap.has(r.call_sign))

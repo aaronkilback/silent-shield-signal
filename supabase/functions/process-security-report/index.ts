@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip@3.10.1";
+import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 
 function normalizeExtractedText(input: string): string {
   return input
@@ -491,7 +492,9 @@ Deno.serve(async (req) => {
         messages: [
           {
             role: 'system',
-            content: `You are an expert security intelligence analyst. Extract structured intelligence from security reports.
+            content: `${getUniversalGuardrails()}
+
+You are an expert security intelligence analyst. Extract structured intelligence from security reports.
 
 KNOWN ENTITIES IN DATABASE:
 ${entityContext}

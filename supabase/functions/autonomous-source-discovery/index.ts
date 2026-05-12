@@ -155,7 +155,7 @@ Respond ONLY with a JSON array. Each element must have exactly these fields:
 Return ONLY the JSON array, no other text.`;
 
       const aiResult = await callAiGatewayJson<SuggestedSource[]>({
-        model: "google/gpt-4o-mini",
+        model: "gpt-4o-mini",
         functionName: "autonomous-source-discovery",
         messages: [{ role: "user", content: prompt }],
         skipGuardrails: true,

@@ -1544,12 +1544,12 @@ CRITICAL ANTI-FABRICATION RULES FOR BULLETINS:
     type: "function",
     function: {
       name: "dispatch_agent_investigation",
-      description: `Dispatch a specialist AI agent to investigate an incident. The orchestrator auto-selects the best agent if not specified.`,
+      description: `Dispatch a specialist AI agent to investigate an incident. If agent_call_sign is omitted, the orchestrator semantic-matches the incident against the active fleet (42 specialists across activism, cyber, financial, wildfire, executive protection, legal, insider threat, and more) and picks the best fit. To target a specific agent, pass its call_sign — any active agent in ai_agents is valid.`,
       parameters: {
         type: "object",
         properties: {
           incident_id: { type: "string", description: "UUID of the incident" },
-          agent_call_sign: { type: "string", enum: ["BIRD-DOG", "GLOBE-SAGE", "LEX-MAGNA", "LOCUS-INTEL", "TIME-WARP", "PATTERN-SEEKER", "AEGIS-CMD"], description: "Optional agent call sign" },
+          agent_call_sign: { type: "string", description: "Optional agent call sign; any active specialist in ai_agents (e.g. WILDFIRE, GUARDIAN, FININT, PEARSON, ECHO-WATCH, ORACLE, MCGRAW, INSIDE-EYE). Omit to let the orchestrator auto-select." },
           prompt: { type: "string", description: "Optional custom investigation prompt" },
         },
         required: ["incident_id"],

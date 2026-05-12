@@ -338,139 +338,66 @@ You MUST use the submit_synthesis tool.`;
       throw new Error(`Incident not found: ${incErr?.message || 'no data returned'}`);
     }
 
-    // ── Specialty routing (Day 2 of plan) ─────────────────────────
-    // Domain-specific routing map, keyed off signal.category and
-    // keyword patterns in signal text + entity_tags. Replaces the
-    // earlier word-overlap selector which fell back to generic
-    // THREAT/PATTERN/STRATEGIC analysts for any signal not matching
-    // an agent's specialty by literal word — which was almost every
-    // signal because corporate intelligence terminology rarely
-    // overlaps verbatim with persona specialty descriptions.
+    // ── Specialty routing — semantic via agent-router ─────────────
+    // 2026-05-10: replaced the hardcoded 9-route SPECIALTY_ROUTES regex
+    // table (which only ever surfaced ~13 of the 42 active specialists)
+    // with a call to agent-router. agent-router does pgvector cosine
+    // similarity over agent_specialty_embeddings — embeddings cover
+    // 100% of the active fleet, so any specialist whose specialty text
+    // semantically matches the signal is reachable. The previous regex
+    // table had to be hand-curated whenever a new agent or signal
+    // category appeared, and it silently locked out specialists who
+    // would have been the right pick (DR-HOUSE for ACH, ORACLE for
+    // forecasting, MCGRAW for human-factor analysis, etc.).
     //
-    // The map below routes by signal type:
-    //   - financial / corporate / capex → FININT, CHAIN-WATCH, MERIDIAN
-    //   - wildfire / fire → WILDFIRE, GUARDIAN
-    //   - cyber → NEO, VECTOR
-    //   - activism / protest → ECHO-WATCH, INSIDE-EYE
-    //   - etc.
-    //
-    // Each route picks 3 specialists. AEGIS-CMD is the judge (set via
-    // command_synthesis debate_type), so 3 specialists + AEGIS = a
-    // 4-agent analysis with specialty-curated participants. Falls
-    // back to generic analysts only when no route matches AND no
-    // active agents have any relevance score — that's the genuinely-
-    // unclassifiable case.
-    const SPECIALTY_ROUTES: Array<{
-      label: string;
-      categoryMatch?: RegExp;
-      keywordMatch?: RegExp;
-      entityMatch?: RegExp;
-      agents: string[];
-    }> = [
-      // Wildfire / fire
-      { label: 'wildfire',
-        categoryMatch: /^(wildfire|natural_disaster)$/i,
-        keywordMatch: /\b(wildfire|hotspot|thermal anomaly|VIIRS|FBP|FWI|fire perimeter|BCWS)\b/i,
-        agents: ['WILDFIRE', 'GUARDIAN', 'CHAIN-WATCH'],
-      },
-      // Cyber threats
-      { label: 'cyber',
-        categoryMatch: /^(malware|phishing|intrusion|data_exfil|ddos|ransomware)$/i,
-        keywordMatch: /\b(CVE-|exploit|payload|C2|backdoor|credential dump|TTP|MITRE|APT|IOC)\b/i,
-        agents: ['NEO', 'VECTOR', 'GUARDIAN'],
-      },
-      // Activism / protest / Indigenous land defense
-      { label: 'activism',
-        categoryMatch: /^(activism|protest)$/i,
-        keywordMatch: /\b(blockade|protest|land defender|encampment|direct action|Wet'suwet'en|Coastal GasLink|Stand\.earth|pipeline opposition)\b/i,
-        agents: ['ECHO-WATCH', 'INSIDE-EYE', 'MERIDIAN'],
-      },
-      // Insider threat / counterintel
-      { label: 'insider',
-        categoryMatch: /^(insider_threat|surveillance)$/i,
-        keywordMatch: /\b(insider|employee|contractor|privileged access|data exfil|HUMINT|counterintel)\b/i,
-        agents: ['INSIDE-EYE', 'SPECTER', 'GUARDIAN'],
-      },
-      // Active / physical threat
-      { label: 'physical_threat',
-        categoryMatch: /^(active_threat|physical_threat|sabotage|crime)$/i,
-        keywordMatch: /\b(weapon|active shooter|kidnap|bomb|sabotage|breach attempt|prowler|trespass)\b/i,
-        agents: ['GUARDIAN', 'INSIDE-EYE', 'VERIDIAN-TANGO'],
-      },
-      // Regulatory / litigation / legal
-      { label: 'legal_regulatory',
-        categoryMatch: /^(regulatory|litigation|compliance|injunction)$/i,
-        keywordMatch: /\b(regulator|injunction|FINTRAC|sanctions|treaty|consultation duty|environmental review)\b/i,
-        agents: ['PEARSON', 'MERIDIAN', 'CERBERUS'],
-      },
-      // Financial / corporate intelligence — covers TC Energy capex,
-      // earnings, M&A, investor relations, capital allocation news.
-      // The TC Energy Columbia Gas signal that exposed this gap fits
-      // here. Keyword match catches corporate signals that arrive
-      // categorized as 'other'.
-      { label: 'financial_corporate',
-        categoryMatch: /^(other|social_sentiment)$/i,
-        keywordMatch: /\b(TC Energy|Coastal GasLink|CGL|Petronas|LNG Canada|capital decision|capex|investment decision|earnings|FID|approved\s+the\s+\$|billion project|acquisition|M&A|FINTRAC|beneficial owner|sanction)\b/i,
-        agents: ['FININT', 'CHAIN-WATCH', 'MERIDIAN'],
-      },
-      // Hazmat / environmental incident
-      { label: 'hazmat_environmental',
-        categoryMatch: /^(hazmat|flood)$/i,
-        keywordMatch: /\b(hazmat|spill|release|toxic|contamination|flood|storm surge)\b/i,
-        agents: ['WILDFIRE', 'GUARDIAN', 'PEARSON'],
-      },
-      // Civil emergency — broad category covering NAAD alerts that
-      // don't cleanly fit weather/wildfire/flood: missing persons,
-      // RCMP operations, evacuation orders, ice jams, civil unrest.
-      // GUARDIAN handles protective intel, MERIDIAN handles regional
-      // policy/jurisdictional context, MCM-ICS handles incident
-      // command for evacuation/response coordination.
-      { label: 'civil_emergency',
-        categoryMatch: /^civil_emergency$/i,
-        keywordMatch: /\b(NAAD|emergency alert|evacuation|missing person|RCMP|ice jam|amber alert|civil unrest)\b/i,
-        agents: ['GUARDIAN', 'MERIDIAN', 'MCM-ICS'],
-      },
-    ];
+    // One sentinel kept as override: wildfire signals force WILDFIRE
+    // into the top-3. Wildfire vocabulary (hotspot, FRP, FWI, BCWS) is
+    // narrow enough that the embedding occasionally outranks WILDFIRE
+    // on adjacent specialists, but WILDFIRE is the only agent with the
+    // FBP/FWI interpretation depth. Cheap insurance.
+
+    const sigCategory = String(incident.signals?.category || '').toLowerCase();
+    const sigText = String(incident.signals?.normalized_text || '');
+    const sigEntityTags = Array.isArray(incident.signals?.entity_tags)
+      ? incident.signals.entity_tags.join(' ')
+      : '';
 
     let selectedAgents: string[];
-    let routeLabel = 'unrouted';
+    let routeLabel: string;
     if (agents) {
       selectedAgents = agents;
       routeLabel = 'caller-supplied';
     } else {
-      const sigCategory = String(incident.signals?.category || '').toLowerCase();
-      const sigText = String(incident.signals?.normalized_text || '');
-      const sigEntityTags = Array.isArray(incident.signals?.entity_tags)
-        ? incident.signals.entity_tags.join(' ')
-        : '';
-      const matchSurface = `${sigText} ${sigEntityTags}`;
+      const routerQuestion = `${sigCategory} signal: ${sigText} ${sigEntityTags}`.trim();
+      const routerResp = await supabase.functions.invoke('agent-router', {
+        body: { question: routerQuestion, top_k: 5 },
+      });
+      const routedAgents: Array<{ call_sign: string; similarity_score: number | null }> =
+        (routerResp?.data as any)?.agents ?? [];
 
-      // Find first matching route. Order matters — more specific
-      // matches (cyber, insider) come before broader ones
-      // (financial_corporate, which can match category='other').
-      let route: typeof SPECIALTY_ROUTES[number] | null = null;
-      for (const r of SPECIALTY_ROUTES) {
-        const catHit = r.categoryMatch ? r.categoryMatch.test(sigCategory) : false;
-        const kwHit = r.keywordMatch ? r.keywordMatch.test(matchSurface) : false;
-        // Route fires if EITHER category matches OR keyword fires.
-        // Both is stronger but either is sufficient — keywords often
-        // catch signals miscategorized as 'other'.
-        if (catHit || kwHit) {
-          route = r;
-          break;
-        }
+      // Wildfire sentinel — force WILDFIRE in if the category or
+      // keywords clearly say wildfire and the router missed it.
+      const wildfireHit =
+        /^(wildfire|natural_disaster)$/i.test(sigCategory) ||
+        /\b(wildfire|hotspot|thermal anomaly|VIIRS|FBP|FWI|fire perimeter|BCWS)\b/i.test(sigText);
+
+      const top = routedAgents.slice(0, 3).map((a) => a.call_sign);
+      if (wildfireHit && !top.includes('WILDFIRE')) {
+        top.unshift('WILDFIRE');
+        top.length = 3;
       }
 
-      if (route) {
-        selectedAgents = route.agents;
-        routeLabel = route.label;
-        console.log(`[Debate] Routed signal to specialty: ${route.label} → ${route.agents.join(', ')}`);
+      if (top.length >= 2) {
+        selectedAgents = top;
+        routeLabel = wildfireHit ? 'semantic+wildfire-sentinel' : 'semantic';
+        console.log(`[Debate] Semantic route (${routeLabel}) → ${selectedAgents.join(', ')}`);
       } else {
-        // No specialty route matched — fall back to generic. This
-        // should be rare after the routing table is tuned for the
-        // operator's actual signal mix.
+        // agent-router returned nothing — embeddings unavailable or
+        // signal text too thin to match. Fall back to generic analyst
+        // trio so the debate still produces output.
         selectedAgents = ['THREAT-ANALYST', 'PATTERN-ANALYST', 'STRATEGIC-ANALYST'];
-        console.log(`[Debate] No specialty route matched (category=${sigCategory}); falling back to generic analysts`);
+        routeLabel = 'fallback-generic';
+        console.log(`[Debate] agent-router empty (category=${sigCategory}); falling back to generic analysts`);
       }
     }
     const incidentAge = calculateIncidentAge({ id: incident.id, opened_at: incident.opened_at });

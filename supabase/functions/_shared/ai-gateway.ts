@@ -88,6 +88,19 @@ function getGuardrailsPrompt(): string {
 }
 
 /**
+ * Public accessor for the universal anti-hallucination block. Use this
+ * when you must call an LLM directly (e.g. via raw fetch to OpenAI for
+ * features the gateway doesn't yet support, like vision-tool flows or
+ * custom multipart streaming) and so cannot benefit from
+ * `callAiGateway*`'s automatic guardrail injection. Prepend the
+ * returned string to your system prompt — the gateway equivalent does
+ * exactly this for you.
+ */
+export function getUniversalGuardrails(): string {
+  return getGuardrailsPrompt();
+}
+
+/**
  * Inject anti-hallucination guardrails into the message array.
  * Prepends to existing system message or adds a new one.
  */

@@ -578,7 +578,7 @@ async function generateThreatAssessment(
 
   try {
     const aiResult = await callAiGateway({
-      model: 'google/gpt-4o-mini',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',

@@ -8,6 +8,7 @@
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { attenuateConfidence } from "../_shared/calibration.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -83,14 +84,28 @@ Deno.serve(async (req) => {
       })
     );
 
-    // 4. Store each analysis in signal_agent_analyses
+    // 4. Store each analysis in signal_agent_analyses, attenuating
+    //    the agent's stated confidence by its own calibration history
+    //    on this category (Brier-weighted; pulls overconfident agents
+    //    toward 0.5, leaves well-calibrated agents alone).
     for (const result of analyses) {
       if (result.status === 'fulfilled' && result.value.analysis) {
+        const stated = Number(result.value.confidence_score);
+        let toPersist: number | null = Number.isFinite(stated) ? stated : null;
+        if (toPersist != null) {
+          const { attenuated } = await attenuateConfidence(
+            supabase,
+            result.value.call_sign,
+            String(category ?? 'unknown'),
+            toPersist,
+          );
+          toPersist = attenuated;
+        }
         await supabase.from('signal_agent_analyses').insert({
           signal_id,
           agent_call_sign: result.value.call_sign,
           analysis: result.value.analysis,
-          confidence_score: result.value.confidence_score,
+          confidence_score: toPersist,
           trigger_reason: trigger_reason || null,
         });
       }

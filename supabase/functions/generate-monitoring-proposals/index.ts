@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 
 /**
  * Generate Monitoring Proposals
@@ -166,7 +167,7 @@ STRICT RULES — VIOLATIONS WILL BE REJECTED:
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: 'You are a security intelligence analyst. Return structured proposals only. Quality over quantity — an empty proposal list is better than noisy suggestions.' },
+            { role: 'system', content: `${getUniversalGuardrails()}\n\nYou are a security intelligence analyst. Return structured proposals only. Quality over quantity — an empty proposal list is better than noisy suggestions.` },
             { role: 'user', content: prompt }
           ],
           tools: [{

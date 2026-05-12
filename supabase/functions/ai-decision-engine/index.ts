@@ -549,6 +549,45 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       }
     }
 
+    // ═══ SELF-HEDGED ANALYSIS GUARDRAIL ═══
+    // The AI's own reasoning sometimes contains explicit "this might
+    // be noise" hedging — e.g. the BCCH GitHub finding (incident
+    // fa36000c-…) where the analysis read "specific file path
+    // suggests it may be a TLD list rather than a credential store"
+    // but we still escalated to P2. Verified manually as a 100%
+    // false positive (a Northeastern University networking course
+    // project's plain-text .ca-domain list — bcchildrens.ca and
+    // 1password.ca both appearing as one-line domain entries with
+    // no context). This guardrail catches the class: when the AI
+    // itself flags noise risk, suppress incident creation and force
+    // the signal to remain analyst-triage instead of auto-promoting.
+    {
+      const reasoningText = String(decision.reasoning ?? '');
+      const strategicText = String(decision.strategic_context ?? '');
+      const correlationText = String(decision.threat_correlation ?? '');
+      const hedgeSurface = `${reasoningText} ${strategicText} ${correlationText}`.toLowerCase();
+      const HEDGE_PATTERNS: RegExp[] = [
+        /\bmay be (?:a |an )?(?:tld list|word list|domain list|test fixture|sample file|public dataset|dictionary|wordlist)\b/i,
+        /\bappears to be (?:a |an )?(?:tld|test|sample|public|dictionary|wordlist|tutorial|coursework)\b/i,
+        /\blikely (?:a |an )?(?:false[- ]positive|test|sample|tutorial|coursework|noise)\b/i,
+        /\bkeyword[- ]?(?:noise|hit|match)\b.*\b(?:noisy|false|coincid|may not)/i,
+        /\b(?:may|could|might) (?:be|represent) (?:keyword[- ]?noise|coincidental|coincidence)\b/i,
+        /\bfalse[- ]positive(?:\s+risk|\s+possibility)?\b/i,
+        /\bnot watchlisted (?:in|on)\b/i,
+        /\bcoursework\b|\bclass(?:\s+|-)project\b|\bcourse\s+(?:final\s+)?project\b/i,
+      ];
+      const matchedHedge = HEDGE_PATTERNS.find((re) => re.test(hedgeSurface));
+      if (matchedHedge && decision.should_create_incident) {
+        console.log(`[HEDGE GUARDRAIL] Signal ${signal_id}: AI's own analysis hedges ("${(hedgeSurface.match(matchedHedge) || [''])[0].slice(0, 60)}") — downgrading to P4 / suppressing incident creation. Analyst can manually escalate if confirmed.`);
+        decision.should_create_incident = false;
+        decision.incident_priority = 'p4';
+        decision.alert_recipients = [];
+        if (!decision.reasoning.includes('[HEDGE-DOWNGRADE]')) {
+          decision.reasoning = `[HEDGE-DOWNGRADE — AI flagged false-positive risk in its own analysis] ${decision.reasoning}`;
+        }
+      }
+    }
+
     // ═══ CISA KEV / GENERIC CYBER ADVISORY GUARDRAIL ═══
     // CISA's Known Exploited Vulnerabilities feed is a global cybersec
     // bulletin, not a per-client threat. Each entry was creating a P2
@@ -741,9 +780,12 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
     //     deeper agent read.)
     const severityLabel = String(signal.severity || '').toLowerCase();
     const isHighSeverityLabel = severityLabel === 'high' || severityLabel === 'critical';
-    const isAmbiguousTier_pre = compositeScore >= 0.60 && compositeScore < 0.75;
-    const isHighValueSignal_pre = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
-    if (isAmbiguousTier_pre || isHighValueSignal_pre || isHighSeverityLabel) {
+    // Same band logic as Phase 2C below — every admitted signal in the
+    // 0.45–0.75 reviewable band, plus any composite ≥0.75 (severity_score
+    // sub-gate dropped May 10 2026), plus any high/critical label.
+    const isReviewableBand_pre = compositeScore >= 0.45 && compositeScore < 0.75;
+    const isHighValueSignal_pre = compositeScore >= 0.75;
+    if (isReviewableBand_pre || isHighValueSignal_pre || isHighSeverityLabel) {
       const supabaseUrlPre = Deno.env.get('SUPABASE_URL');
       // 2026-05-08: env var holds the legacy JWT (no `sub` claim) which
       // gets rejected by the new auth layer with 401 — symptom: Tier-2
@@ -1112,16 +1154,28 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         } // end confidence threshold else
 
         // ═══ PHASE 2C: TIER 2 ASYNC AGENT REVIEW ═══
-        // Fires review-signal-agent for three cases:
-        //   1. Ambiguous tier (0.60–0.75)
-        //   2. High-value signals (≥0.75, severity_score ≥50)
-        //   3. severity label = 'high' or 'critical' regardless of composite
-        //      (matches the watchdog's coverage expectation)
+        // Every admitted signal gets a tier-2 reasoning pass. Three
+        // implicit bands inside review-signal-agent:
+        //   • 0.45–0.59  sub-threshold review — promote-or-dismiss
+        //                judgment with broader context (was previously
+        //                skipped here, leaving 27% of low-band signals
+        //                with no reasoning trail at all).
+        //   • 0.60–0.74  ambiguous tier — enrichment + low-confidence
+        //                flag judgment.
+        //   • ≥0.75      high-confidence enrichment — dropped the
+        //                severity_score ≥50 sub-gate (May 10 2026)
+        //                that was suppressing review on 93% of these.
+        // Plus high/critical severity labels always trigger.
+        // The reasoning panel needs to render something for every
+        // signal, not just the borderline ones — operators read the
+        // trail to build trust in the AI's decisions.
         // Never blocks — fire-and-forget fetch.
         const severityLabel = String(signal.severity || '').toLowerCase();
         const isHighSeverityLabel = severityLabel === 'high' || severityLabel === 'critical';
-        const isAmbiguousTier = compositeScore >= 0.60 && compositeScore < 0.75;
-        const isHighValueSignal = compositeScore >= 0.75 && (signal.severity_score ?? 0) >= 50;
+        const isReviewableBand = compositeScore >= 0.45 && compositeScore < 0.75;
+        const isHighValueSignal = compositeScore >= 0.75;
+        // Backward-compat alias used in the log line below.
+        const isAmbiguousTier = isReviewableBand;
         if (!tier2_promotion && (isAmbiguousTier || isHighValueSignal || isHighSeverityLabel)) {
           const supabaseUrlT2 = Deno.env.get('SUPABASE_URL');
           // Same legacy-JWT fix as above — vault-resolved key.

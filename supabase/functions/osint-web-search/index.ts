@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
             : `Analyze for entity "${entity.name}": Title: ${item.title}, URL: ${item.link}, Snippet: ${item.snippet}`;
 
           const aiResult = await callAiGateway({
-            model: 'google/gpt-4o-mini',
+            model: 'gpt-4o-mini',
             messages: [
               { role: 'system', content: 'Analyze web content for relevance to the target entity. Return JSON with: relevance_score (0-1), is_relevant (boolean), summary (2-3 sentence distillation of key facts), sentiment, security_concerns array, create_signal (boolean), signal_severity.' },
               { role: 'user', content: analysisContent }

@@ -2821,6 +2821,27 @@ Deno.serve(async (req) => {
         monitorByJob.get(hb.job_name)!.push(hb);
       }
 
+      // 2026-05-10: monitor → raw_json source-tag map. Heartbeat-reported
+      // signals_created drifted from reality on monitor-news-google
+      // (65 runs, 0 reported, 235 actual real-client signals exist), so
+      // we now verify "ever produced" against the signals table itself
+      // and exclude sandbox / QA clients so test harnesses don't mask
+      // real-monitor health. Add a row when wiring a new monitor whose
+      // job_name doesn't match its raw_json.source verbatim.
+      const MONITOR_SOURCE_MAP: Record<string, string[]> = {
+        'monitor-news-google-hourly': ['google_news_api'],
+        'monitor-community-outreach-hourly': [
+          'Energetic City News', 'BC Gov News',
+          'Google News: ("First Nations" OR "Treaty 8" OR "Blueb',
+          'Google News: (LNG OR pipeline OR "Coastal GasLink" OR',
+        ],
+        'monitor-csis-6h': ['CSIS', 'Canadian Centre for Cyber Security'],
+        'monitor-cisa-kev-hourly': ['CISA KEV'],
+        'monitor-naad-alerts-15min': ['naad_emergency_alerts'],
+        'monitor-rss-sources': ['canadian_news_rss', 'rss_feed', 'rss'],
+        'monitor-wildfires': ['bcws_active_fire'],
+      };
+
       for (const [jobName, runs] of monitorByJob) {
         if (runs.length < 3) continue;
         const totalSignals = runs.reduce(
@@ -2829,31 +2850,63 @@ Deno.serve(async (req) => {
         );
         if (totalSignals !== 0) continue;
 
-        // Tier severity by lifetime yield. A monitor that has NEVER
-        // produced a signal in the database is structurally broken;
-        // one that's just been quiet for 24h is a softer warning.
+        // Tier severity by lifetime yield. Two-layer check:
+        //  (a) heartbeat self-reporting (subject to instrumentation drift),
+        //  (b) actual signals table joined to non-sandbox clients.
+        // If EITHER says "produced," the monitor isn't structurally broken.
         const { count: lifetimeRuns } = await supabase
           .from('cron_heartbeat')
           .select('*', { count: 'exact', head: true })
           .eq('job_name', jobName)
           .gte('result_summary->>signals_created', '1');
 
-        const everProduced = (lifetimeRuns ?? 0) > 0;
+        // Look up actual signals by raw_json.source tag for this monitor.
+        // We don't need to filter sandbox clients here — at the lifetime
+        // scale, even a few hundred sandbox signals can't mask a monitor
+        // that's truly never produced anything. We just need to know
+        // whether the pipe has ever delivered.
+        let realSignalCount = 0;
+        const sourceTags = MONITOR_SOURCE_MAP[jobName] ?? [];
+        for (const tag of sourceTags) {
+          const { count } = await supabase
+            .from('signals')
+            .select('id', { count: 'exact', head: true })
+            .eq('raw_json->>source', tag);
+          realSignalCount += count ?? 0;
+        }
+
+        const heartbeatProduced = (lifetimeRuns ?? 0) > 0;
+        const everProduced = heartbeatProduced || realSignalCount > 0;
+        // When the signals table shows historical yield but the
+        // heartbeat doesn't, the monitor is functional but its
+        // signals_created counter has drifted (e.g. a reorder of
+        // operations after `signalsCreated++` but before the heartbeat
+        // upsert). Surface that as a separate, lower-severity finding
+        // rather than the louder "never produced" alarm.
+        const counterDrift = !heartbeatProduced && realSignalCount > 0;
         behavioralFindings.push({
           category: 'behavioral_health',
           severity: everProduced ? 'medium' : 'high',
-          title: everProduced
-            ? `${jobName}: 0 signals across ${runs.length} runs in last 24h`
-            : `${jobName}: NEVER produced a signal — likely structurally broken`,
-          analysis: everProduced
-            ? `${jobName} ran ${runs.length} times in the last 24h with 0 signals_created. Has produced signals in the past, so this is likely a regression — API key revoked, source schema changed, or relevance gate over-rejecting.`
-            : `${jobName} has run cleanly in the last 24h but has 0 lifetime successful signal creations across the entire platform history. The pipe is intact (heartbeat success) but no data flows through. Root cause is almost certainly in the monitor's logic, not the AI gate.`,
-          plainEnglish: everProduced
-            ? `${jobName} used to produce signals but hasn't in the last 24 hours. A source it depends on may have changed.`
-            : `${jobName} has been deployed but has never created a signal in the platform's entire history. It looks like it's running, but it isn't actually delivering data.`,
-          action: everProduced
-            ? `Check API keys and source URLs for ${jobName}. Run a manual invocation and inspect logs.`
-            : `Audit ${jobName} end-to-end — query format, source response shape, ingest-signal payload. This is a pipe-rot situation, not a transient outage.`,
+          title: counterDrift
+            ? `${jobName}: heartbeat counter drift (DB has ${realSignalCount} signals, heartbeat reports 0)`
+            : everProduced
+              ? `${jobName}: 0 signals across ${runs.length} runs in last 24h`
+              : `${jobName}: NEVER produced a signal — likely structurally broken`,
+          analysis: counterDrift
+            ? `${jobName} has produced ${realSignalCount} signals across its lifetime (visible in the signals table by raw_json.source) but its heartbeat result_summary.signals_created has never reported ≥1. Functional, but instrumented incorrectly — operators can't tell from the heartbeat alone whether a quiet run is normal or broken.`
+            : everProduced
+              ? `${jobName} ran ${runs.length} times in the last 24h with 0 signals_created. Has produced signals in the past, so this is likely a regression — API key revoked, source schema changed, or relevance gate over-rejecting.`
+              : `${jobName} has run cleanly in the last 24h but has 0 lifetime successful signal creations across the entire platform history. The pipe is intact (heartbeat success) but no data flows through. Root cause is almost certainly in the monitor's logic, not the AI gate.`,
+          plainEnglish: counterDrift
+            ? `${jobName} is producing signals but its self-reporting is broken. Real yield is fine, the watchdog can't read it from the heartbeat.`
+            : everProduced
+              ? `${jobName} used to produce signals but hasn't in the last 24 hours. A source it depends on may have changed.`
+              : `${jobName} has been deployed but has never created a signal in the platform's entire history. It looks like it's running, but it isn't actually delivering data.`,
+          action: counterDrift
+            ? `Audit ${jobName}'s heartbeat write — likely the signalsCreated counter is being incremented in the wrong scope or the result_summary upsert happens before the loop that increments. Fix the instrumentation, not the pipeline.`
+            : everProduced
+              ? `Check API keys and source URLs for ${jobName}. Run a manual invocation and inspect logs.`
+              : `Audit ${jobName} end-to-end — query format, source response shape, ingest-signal payload. This is a pipe-rot situation, not a transient outage.`,
         });
       }
 

@@ -41,13 +41,13 @@ ${context ? `Additional Context: ${JSON.stringify(context).substring(0, 500)}` :
 
     // Run two models in parallel — both using TOOL CALLING (not free-text JSON)
     const [model1Response, model2Response] = await Promise.all([
-      fetchStructuredAssessment('google/gpt-4o-mini', systemPrompt, userPrompt),
-      fetchStructuredAssessment('google/gpt-4o-mini', systemPrompt, userPrompt),
+      fetchStructuredAssessment('gpt-4o-mini', systemPrompt, userPrompt),
+      fetchStructuredAssessment('gpt-4o-mini', systemPrompt, userPrompt),
     ]);
 
     // Parse tool call results (guaranteed schema compliance)
-    const result1 = parseToolCallResult(model1Response, 'google/gpt-4o-mini');
-    const result2 = parseToolCallResult(model2Response, 'google/gpt-4o-mini');
+    const result1 = parseToolCallResult(model1Response, 'gpt-4o-mini');
+    const result2 = parseToolCallResult(model2Response, 'gpt-4o-mini');
 
     // Determine consensus
     const assessmentsMatch = result1.assessment === result2.assessment;

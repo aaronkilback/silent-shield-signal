@@ -132,11 +132,15 @@ Deno.serve(async (req) => {
             : `https://www.cyber.gc.ca/en/alerts-advisories?nid=${item.nid}`;
 
           // CCCS cyber advisories are client-agnostic — fan out to
-          // every active client, same pattern as monitor-cisa-kev.
-          // Original implementation only created the signal against
-          // clients[0], hiding cyber alerts from every other client.
-          for (const client of clients) {
-            const { error } = await supabaseClient.functions.invoke('ingest-signal', {
+          // every active client. 2026-05-10: parallelized the inner
+          // loop. Sequential 8 items × 5 clients × ~5s each = 200s,
+          // exceeding the 150s edge-function idle timeout. The function
+          // would die mid-fanout, never reach completeHeartbeat, and
+          // heartbeat would report signals_created=0 for the run even
+          // when partial work succeeded. Per-item parallel fanout caps
+          // at ~max(client_call_time) ≈ 5-8s per item × 8 items ≈ 60s.
+          const fanouts = await Promise.allSettled(clients.map((client: any) =>
+            supabaseClient.functions.invoke('ingest-signal', {
               body: {
                 text: `[CCCS Cyber Alert] ${item.title}\n\n${bodyText}`,
                 source_url: sourceUrl,
@@ -154,8 +158,12 @@ Deno.serve(async (req) => {
                   date_created: item.date_created,
                 },
               },
-            });
-            if (!error) signalsCreated++;
+            })
+          ));
+          for (const result of fanouts) {
+            if (result.status === 'fulfilled' && !result.value.error) {
+              signalsCreated++;
+            }
           }
         }
         sources.push('Canadian Cyber Centre');

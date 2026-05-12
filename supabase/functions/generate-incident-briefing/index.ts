@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -300,7 +301,7 @@ Include specific technical details, TTPs, and actionable steps. Use security ter
         messages: [
           {
             role: "system",
-            content: `You are an expert security analyst and communicator. Generate clear, actionable incident briefings tailored to the target audience. ${format === 'executive' ? 'Focus on business impact, decisions needed, and strategic implications.' : 'Focus on technical details, tactical actions, and operational coordination.'}`
+            content: `${getUniversalGuardrails()}\n\nYou are an expert security analyst and communicator. Generate clear, actionable incident briefings tailored to the target audience. ${format === 'executive' ? 'Focus on business impact, decisions needed, and strategic implications.' : 'Focus on technical details, tactical actions, and operational coordination.'}`
           },
           {
             role: "user",

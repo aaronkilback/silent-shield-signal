@@ -406,9 +406,15 @@ ${JSON.stringify(rejectedPatterns?.features || {}, null, 2)}
 ${feedbackRejectionContext}
 `;
 
-    // Call AI for extraction via resilient gateway
+    // Call AI for extraction via resilient gateway.
+    // 2026-05-12 fix: model was 'gpt-4o-mini' — the 'google/' prefix
+    // routes to Gemini's OpenAI-compatible endpoint, but 'gpt-4o-mini' is an
+    // OpenAI-only model name, so Gemini returned 404 on every call. That
+    // failure was the silent killer of Instagram intake (and all other
+    // monitor-instagram / process-intelligence-document paths). Routed
+    // directly to OpenAI now.
     const aiResult = await callAiGateway({
-      model: 'google/gpt-4o-mini',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',

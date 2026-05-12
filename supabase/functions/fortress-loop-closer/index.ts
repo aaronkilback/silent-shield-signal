@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
           evidenceContext,
           incident.id,
           incident.signal_id || null,
-          'google/gpt-4o-mini'
+          'gpt-4o-mini'
         );
 
         if (tree.treeId) treesGenerated++;

@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
+import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 // NOTE: pdfjs-dist is loaded dynamically inside the PDF extraction block to avoid
 // crashing the entire function on cold start if the CDN import is slow or fails.
 
@@ -890,7 +891,9 @@ Return the full extracted text and/or description.`
         messages: [
           {
             role: 'system',
-            content: `You are an elite intelligence analyst conducting comprehensive entity extraction and strategic analysis. Your mission is to extract EVERY relevant intelligence element with full context, relationships, and strategic significance.
+            content: `${getUniversalGuardrails()}
+
+You are an elite intelligence analyst conducting comprehensive entity extraction and strategic analysis. Your mission is to extract EVERY relevant intelligence element with full context, relationships, and strategic significance.
 
 🎯 CONFIDENCE THRESHOLD: ${adjustedThreshold.toFixed(2)} — only include entities with strong, explicit evidence. Err on the side of precision, not inclusion. When uncertain, omit.
 
@@ -1390,7 +1393,7 @@ Think like a professional intelligence analyst reading an opposition research do
             messages: [
               {
                 role: 'system',
-                content: 'You are a security intelligence analyst. Extract 3-5 key findings from a document for a corporate security knowledge base. Return ONLY a valid JSON array, no markdown.',
+                content: `${getUniversalGuardrails()}\n\nYou are a security intelligence analyst. Extract 3-5 key findings from a document for a corporate security knowledge base. Return ONLY a valid JSON array, no markdown.`,
               },
               {
                 role: 'user',
@@ -1745,7 +1748,7 @@ Deno.serve(async (req) => {
               body: JSON.stringify({
                 model: 'gpt-4o-mini',
                 messages: [
-                  { role: 'system', content: 'You are a security intelligence analyst. Extract 3-5 key findings from a document for a corporate security knowledge base. Return ONLY a valid JSON array, no markdown.' },
+                  { role: 'system', content: `${getUniversalGuardrails()}\n\nYou are a security intelligence analyst. Extract 3-5 key findings from a document for a corporate security knowledge base. Return ONLY a valid JSON array, no markdown.` },
                   { role: 'user', content: `Extract 3-5 key intelligence findings from this document.\n\nDOCUMENT: "${doc.filename}"\nCONTENT:\n${textContent.substring(0, 8000)}\n\nReturn a JSON array. Each object:\n{\n  "title": "Concise finding title (under 120 chars)",\n  "content": "Detailed finding with context (200-500 chars)",\n  "domain": "one of: physical_security|cyber|executive_protection|crisis_management|threat_intelligence|geopolitical|financial_crime|compliance|general",\n  "subdomain": "specific subtopic",\n  "tags": ["tag1", "tag2"]\n}\n\nOnly extract genuinely valuable intelligence insights. Skip boilerplate.` },
                 ],
                 max_tokens: 2000,
