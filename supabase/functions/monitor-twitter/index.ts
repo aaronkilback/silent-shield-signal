@@ -70,10 +70,12 @@ Deno.serve(async (req) => {
 
     if (entErr) throw entErr;
 
-    // Fetch clients for campaign monitoring
+    // Fetch clients for campaign monitoring (status='active' only — matches
+    // the 2026-05-11 sweep across keyword-driven monitors).
     const { data: clients, error: clientErr } = await supabase
       .from("clients")
-      .select("id, name, monitoring_keywords");
+      .select("id, name, monitoring_keywords")
+      .eq("status", "active");
 
     if (clientErr) throw clientErr;
 
@@ -91,11 +93,45 @@ Deno.serve(async (req) => {
     const expandedConversationIds = new Set<string>();
 
     // ═══ QUERY A: Person threat monitoring ═══
-    // Build one OR query from all monitored person names
-    if (persons.length > 0) {
-      const nameTerms = persons
-        .map((p: any) => `"${p.name}"`)
-        .join(" OR ");
+    // Build one OR query from all monitored person names.
+    //
+    // 2026-05-12 hardening — Twitter API v2 rejected the query with HTTP 400
+    // when an entity name contained punctuation like "-" or "(" (e.g.
+    // "François Poirier - TC Energy President and CEO"). Same name was
+    // also stored 3x as separate entity records, causing redundant OR
+    // terms. Both inflated the query past 1024 chars OR triggered a parse
+    // error that the function silently swallowed.
+    //
+    // Sanitisation now:
+    //   1. Strip characters Twitter's query parser doesn't accept inside
+    //      quoted phrases (hyphens, parens, brackets, slashes, etc.).
+    //   2. Drop names > 50 chars — those are role descriptors, not names.
+    //   3. Dedupe (case-insensitive) within the OR list.
+    const sanitizeName = (name: string): string | null => {
+      if (!name || typeof name !== "string") return null;
+      // Allow letters, digits, spaces, apostrophes, accented chars. Drop everything else.
+      const cleaned = name
+        .replace(/[-()\[\]{}\/\\<>@#$%&*+=|;:,.!?_]/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      if (cleaned.length < 2 || cleaned.length > 50) return null;
+      return cleaned;
+    };
+    const sanitisedNames = (() => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const p of persons as any[]) {
+        const c = sanitizeName(p.name);
+        if (!c) continue;
+        const key = c.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(c);
+      }
+      return out;
+    })();
+    if (sanitisedNames.length > 0) {
+      const nameTerms = sanitisedNames.map(n => `"${n}"`).join(" OR ");
 
       const threatOR = PERSON_THREAT_TERMS.slice(0, 8).join(" OR ");
 
