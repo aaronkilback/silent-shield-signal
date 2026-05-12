@@ -191,29 +191,61 @@ Deno.serve(async (req) => {
 
     // IMPROVED: Match document against client keywords with weighted scoring
     // Returns only the BEST matching client to avoid cross-contamination
+    // 2026-05-12 pipeline audit found this keyword-match prefilter was the
+    // #2 silent killer of valuable signals (after the AI-gate threshold):
+    // a Narwhal article "Will Canada's carbon tax rules kill its pipeline
+    // romance with Alberta?" was dropped with error_message="No client
+    // matches" because it doesn't literally contain "Petronas Canada" or
+    // "LNG Canada". Same pattern killed every Stand.earth, Tyee, Wilderness
+    // Committee, etc. article that discussed energy sector content without
+    // naming the client by name.
+    //
+    // Fix: add tier-2 fuzzy match using industry-broad + region anchor.
+    // If text contains an industry-tier keyword (pipeline, LNG, oil sands,
+    // carbon tax, etc.) AND a regional anchor (Canada / BC / Alberta), the
+    // document gets attached to industry-matching client(s) at LOW
+    // confidence (score=10, well below the 50-point keyword bar). AI gate
+    // downstream decides whether to admit.
+    const INDUSTRY_TIER_KEYWORDS: Record<string, string[]> = {
+      energy: [
+        'pipeline', 'lng', 'natural gas', 'crude oil', 'oil sands', 'oilsands',
+        'petrochemical', 'midstream', 'upstream', 'oil and gas', 'fossil fuel',
+        'energy sector', 'energy industry', 'energy transition', 'decarbonization',
+        'carbon tax', 'carbon pricing', 'emissions reduction', 'net zero',
+        'climate policy', 'first nations consultation', 'indigenous rights',
+        'land defender', 'pipeline protest', 'pipeline blockade',
+        'energy regulator', 'wildfire', 'evacuation alert',
+      ],
+      // other industries can be added when new clients onboard
+    };
+    const REGIONAL_ANCHORS = [
+      'canada', 'british columbia', 'bc ', ' bc\\.', 'alberta', 'saskatchewan',
+      'northwest territories', 'yukon', 'kitimat', 'fort st. john', 'fort st john',
+      'prince rupert', 'haida gwaii', 'peace river', 'montney', 'duvernay',
+      'wet\'suwet\'en', 'first nation', 'first nations',
+    ];
+
     function matchClientKeywords(text: string, clients: any[]) {
       const lowerText = text.toLowerCase();
-      
+
       interface ClientScore {
         clientId: string;
         clientName: string;
         matchedKeywords: string[];
         score: number;
       }
-      
+
       const clientScores: ClientScore[] = [];
-      
+
       for (const client of clients || []) {
         let score = 0;
         const matchedKeywords: string[] = [];
-        
-        // Check client name (highest priority - 1000 points base + length bonus)
+
         if (lowerText.includes(client.name.toLowerCase())) {
           score += 1000 + client.name.length;
           matchedKeywords.push(`client_name:${client.name}`);
         }
-        
-        // Check monitoring keywords - score by specificity (length) and word count
+
         for (const keyword of (client.monitoring_keywords || [])) {
           if (keyword && lowerText.includes(keyword.toLowerCase())) {
             const wordCount = keyword.split(/\s+/).length;
@@ -222,23 +254,35 @@ Deno.serve(async (req) => {
             matchedKeywords.push(keyword);
           }
         }
-        
-        // Check competitor names (slightly lower priority)
+
         for (const competitor of (client.competitor_names || [])) {
           if (competitor && lowerText.includes(competitor.toLowerCase())) {
             score += competitor.length + 5;
             matchedKeywords.push(`competitor:${competitor}`);
           }
         }
-        
-        // Check high value assets
+
         for (const asset of (client.high_value_assets || [])) {
           if (asset && lowerText.includes(asset.toLowerCase())) {
             score += asset.length + 5;
             matchedKeywords.push(`asset:${asset}`);
           }
         }
-        
+
+        // TIER-2 FUZZY MATCH — only applied if no direct keyword hit so it
+        // can't drown out a real match.
+        if (score === 0) {
+          const industry = (client.industry || '').toLowerCase();
+          const tierKeywords = INDUSTRY_TIER_KEYWORDS[industry] || [];
+          const tierHits = tierKeywords.filter(k => lowerText.includes(k));
+          const anchorHits = REGIONAL_ANCHORS.filter(a => lowerText.includes(a));
+          if (tierHits.length > 0 && anchorHits.length > 0) {
+            // Low-confidence match — pass to AI gate to make the call.
+            score = 10;
+            matchedKeywords.push(`tier2:${tierHits.slice(0,3).join(',')}+${anchorHits[0]}`);
+          }
+        }
+
         if (score > 0) {
           clientScores.push({
             clientId: client.id,
@@ -248,23 +292,21 @@ Deno.serve(async (req) => {
           });
         }
       }
-      
-      // Sort by score descending and return only the best match
+
       clientScores.sort((a, b) => b.score - a.score);
-      
+
       if (clientScores.length > 0) {
         const best = clientScores[0];
         console.log(`✓ BEST CLIENT MATCH: ${best.clientName} (score: ${best.score})`);
         console.log(`  Keywords: ${best.matchedKeywords.join(', ')}`);
-        
+
         if (clientScores.length > 1) {
           console.log(`  Runner-up: ${clientScores[1].clientName} (score: ${clientScores[1].score})`);
         }
-        
-        // Return only the best match to avoid creating signals for wrong clients
+
         return [{ clientId: best.clientId, clientName: best.clientName, matchedKeywords: best.matchedKeywords }];
       }
-      
+
       return [];
     }
 
