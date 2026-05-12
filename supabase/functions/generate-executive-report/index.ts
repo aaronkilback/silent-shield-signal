@@ -650,6 +650,8 @@ Write a professional 2-3 paragraph executive summary that:
 5. Reports EXACT counts from verified data only — never round or estimate
 6. Closes with one specific sentence on what ${client.name} leadership should prioritize in the next 24 hours
 
+RELEVANCE FILTER: if any signal in the data above is NOT actually relevant to ${client.name} on closer reading — wrong sector, wrong geography, different company, tangential industry news — exclude it from the summary entirely. Do NOT mention it just to dismiss it ("noted but not directly impacting" / "while this reflects broader trends it does not concern us" / "not directly relevant to operations at this time") — that filler is exactly what a sophisticated FIFA-tier executive reader will spot as LLM padding. Silent exclusion only. If a signal is worth mentioning, state why it matters. If it isn't, drop it.
+
 CRITICAL: Do NOT claim incidents "appeared" or "emerged" on dates other than their actual opened_at dates. Do NOT fabricate clusters or groups.
 
 NUMBER RECONCILIATION RULE: A separate Risk Assessment table appears below the summary, showing threat-factor categories (Surveillance / Protest / Work Interruption / Sabotage / Critical Threats) with risk ratings and counts. Those counts are factor-grouped — not severity-tier counts. To prevent reader confusion when reading the summary alongside the table:
