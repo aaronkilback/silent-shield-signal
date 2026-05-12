@@ -405,21 +405,29 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
               </span>
             )}
             {sourceUrl && (() => {
-              // Facebook (especially group posts) require login to view the
-              // original — show the operator that the link wall-blocks
-              // rather than rendering a bare "View source" they'll keep
-              // clicking only to land on a Facebook login page.
+              // Facebook source URLs frequently fail in ways the operator
+              // can't fix: private groups, deleted posts, restricted-
+              // audience sharing, expired share-links. Don't imply "log
+              // in to fix it" — be honest about the failure mode and
+              // anchor the operator on the captured snippet as evidence.
               const isFacebook = /(?:^|\.)facebook\.com/i.test(sourceUrl);
+              const isGroup = /facebook\.com\/groups\//i.test(sourceUrl);
+              const isShare = /facebook\.com\/share\//i.test(sourceUrl);
+              const fbHint = isGroup
+                ? 'Facebook group post — usually visible only to group members.'
+                : isShare
+                  ? 'Facebook share link — often expires or is deleted.'
+                  : 'Facebook post — may be private, deleted, or restricted.';
               return (
                 <a
                   href={sourceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1 hover:text-primary"
-                  title={isFacebook ? 'Facebook may require a logged-in account to view this post.' : sourceUrl}
+                  title={isFacebook ? fbHint : sourceUrl}
                 >
                   <ExternalLink className="w-3 h-3" />
-                  {isFacebook ? 'View source (Facebook — login may be required)' : 'View source'}
+                  {isFacebook ? 'View source (Facebook — may not be publicly viewable)' : 'View source'}
                 </a>
               );
             })()}
