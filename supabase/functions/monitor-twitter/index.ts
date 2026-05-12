@@ -131,12 +131,15 @@ Deno.serve(async (req) => {
       return out;
     })();
     if (sanitisedNames.length > 0) {
+      // Names stay quoted (exact-phrase match — names need precision).
       const nameTerms = sanitisedNames.map(n => `"${n}"`).join(" OR ");
-
       const threatOR = PERSON_THREAT_TERMS.slice(0, 8).join(" OR ");
 
-      // Twitter API v2 query — max 1024 chars
-      const query = `(${nameTerms}) (${threatOR}) -is:retweet lang:en`;
+      // 2026-05-12 tuning: dropped `lang:en` because Quebec / Acadian /
+      // Indigenous-language activist communities tweet in French and
+      // partial-French — the AI relevance gate at ingest filters out
+      // genuinely-irrelevant non-English content downstream.
+      const query = `(${nameTerms}) (${threatOR}) -is:retweet`;
       const truncated = query.length > 1000 ? query.substring(0, 1000) + ")" : query;
 
       console.log(`[TwitterMonitor] Person threat query (${truncated.length} chars): ${truncated.substring(0, 120)}...`);
@@ -157,20 +160,50 @@ Deno.serve(async (req) => {
     }
 
     // ═══ QUERY B: Client campaign monitoring ═══
-    // Combine monitoring keywords from all clients into one query
+    //
+    // 2026-05-12 tuning: previous version wrapped every keyword in quotes,
+    // which forced exact-phrase match and missed the way activism actually
+    // shows up on X — hashtags (#LNGCanada, #StopCGL) and looser word
+    // co-occurrence ("Coastal" + "GasLink" in a sentence, not the verbatim
+    // phrase). Now we mix three forms:
+    //   - Multi-word entity names → keep quoted (e.g. "Coastal GasLink")
+    //   - Short keywords / single words → unquoted (broader match)
+    //   - Common protest hashtags → explicit (Twitter indexes these)
+    // Also dropped `lang:en` so French + Indigenous-language activism
+    // reaches the AI relevance gate downstream.
     const allClientKeywords: string[] = [];
     for (const client of clientList) {
       const kws: string[] = client.monitoring_keywords || [];
-      // Pick up to 5 most specific keywords per client (skip very short ones)
       const filtered = kws.filter((k: string) => k.length > 6).slice(0, 5);
       allClientKeywords.push(...filtered);
     }
 
     if (allClientKeywords.length > 0) {
-      // Deduplicate and cap at 10 terms to stay under query length limit
       const uniqueKws = [...new Set(allClientKeywords)].slice(0, 10);
-      const kwOR = uniqueKws.map((k: string) => `"${k}"`).join(" OR ");
-      const campaignQuery = `(${kwOR}) (protest OR blockade OR threat OR sabotage OR activist OR boycott) -is:retweet lang:en`;
+      const kwTerms = uniqueKws.map((k: string) => {
+        // Multi-word phrases stay quoted only if they're clearly entity
+        // names (≥2 capitalised words). Otherwise drop the quotes so
+        // Twitter does word-co-occurrence matching, which is more
+        // forgiving for activist hashtags + paraphrases.
+        const words = k.trim().split(/\s+/);
+        const isEntityPhrase = words.length >= 2 &&
+          words.filter(w => /^[A-Z]/.test(w)).length >= 2;
+        return isEntityPhrase ? `"${k}"` : k;
+      });
+
+      // Static hashtag set — the most common activism tags for Canadian
+      // energy infrastructure. Updated occasionally as new campaigns
+      // pick up tags. Kept short to leave room under the 1024-char cap.
+      const protestHashtags = [
+        '#LNGCanada', '#StopLNG', '#NoLNG',
+        '#CGL', '#StopCGL', '#NoCGL',
+        '#LandBack', '#Wetsuweten', '#Wetsuwet',
+        '#PRGT', '#NoPRGT',
+        '#BoycottLNG',
+      ];
+
+      const kwOR = [...kwTerms, ...protestHashtags].join(" OR ");
+      const campaignQuery = `(${kwOR}) (protest OR blockade OR threat OR sabotage OR activist OR boycott OR rally OR direct action OR land defender) -is:retweet`;
 
       console.log(`[TwitterMonitor] Campaign query (${campaignQuery.length} chars): ${campaignQuery.substring(0, 120)}...`);
 
@@ -224,7 +257,7 @@ Deno.serve(async (req) => {
       if (uniqueLocs.length > 0) {
         const locOR = uniqueLocs.map(l => `"${l}"`).join(' OR ');
         const sitOR = SITUATIONAL_TERMS.join(' OR ');
-        const sitQuery = `(${locOR}) (${sitOR}) -is:retweet lang:en`;
+        const sitQuery = `(${locOR}) (${sitOR}) -is:retweet`;
 
         if (sitQuery.length < 1000) {
           console.log(`[TwitterMonitor] Situational query (${sitQuery.length} chars): ${sitQuery.substring(0, 120)}...`);
@@ -268,7 +301,7 @@ Deno.serve(async (req) => {
 
         const replies = await searchRecentTweets(
           bearerToken,
-          `conversation_id:${parent.conversation_id} -is:retweet lang:en`,
+          `conversation_id:${parent.conversation_id} -is:retweet`,
           50,
         );
         for (const reply of replies) {
