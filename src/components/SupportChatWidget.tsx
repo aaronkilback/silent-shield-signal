@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MessageCircle, X, Send, Loader2, Bug, CheckCircle } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
@@ -326,7 +326,7 @@ export default function SupportChatWidget() {
 
       {/* Chat window */}
       {isOpen && (
-        <Card className="fixed bottom-6 right-6 w-96 h-[600px] shadow-xl z-50 flex flex-col">
+        <Card className="fixed bottom-6 right-6 w-[28rem] max-w-[calc(100vw-3rem)] h-[min(80vh,720px)] shadow-xl z-50 flex flex-col">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <div>
               <CardTitle className="text-lg">Support Chat</CardTitle>
@@ -353,13 +353,18 @@ export default function SupportChatWidget() {
                     }`}
                   >
                     <div
-                      className={`max-w-[85%] rounded-lg px-4 py-2 overflow-hidden ${
+                      className={`max-w-[85%] min-w-0 rounded-lg px-4 py-2 ${
                         message.role === 'user'
                           ? 'bg-primary text-primary-foreground'
                           : 'bg-muted'
                       }`}
                     >
-                      <p className="text-sm whitespace-pre-wrap break-words overflow-wrap-anywhere">{message.content}</p>
+                      <p
+                        className="text-sm whitespace-pre-wrap"
+                        style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                      >
+                        {message.content}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -401,13 +406,20 @@ export default function SupportChatWidget() {
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <Input
+              <div className="flex gap-2 items-end">
+                <Textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Type your question or describe an issue..."
+                  placeholder="Type your question or paste a signal ID, URL, or screenshot description…"
                   disabled={isLoading}
-                  className="flex-1"
+                  rows={3}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmit(e as unknown as React.FormEvent);
+                    }
+                  }}
+                  className="flex-1 min-h-[64px] max-h-[180px] resize-y text-sm leading-relaxed"
                 />
                 <Button type="submit" size="icon" disabled={isLoading || !input.trim()}>
                   {isLoading ? (
@@ -419,7 +431,7 @@ export default function SupportChatWidget() {
               </div>
               
               <p className="text-xs text-muted-foreground text-center">
-                Describe bugs naturally - I'll track them automatically
+                Enter to send · Shift+Enter for newline · paste signal IDs, URLs, or descriptions
               </p>
             </form>
           </CardContent>
