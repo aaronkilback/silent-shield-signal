@@ -243,11 +243,18 @@ Deno.serve(async (req) => {
       const bugDetails = await extractBugDetails(messages);
       
       if (bugDetails) {
-        bugReportContext = `\n\n**BUG DETECTION ACTIVE**
-You've detected enough information to create a bug report:
+        bugReportContext = `\n\n**BUG DETECTION ACTIVE — READY TO FILE**
+You have enough information to file a bug report:
 - Title: ${bugDetails.title}
 - Severity: ${bugDetails.severity}
-Tell the user you have enough info and ask if they want to add anything else or submit.`;
+
+CRITICAL: To make the "Submit Bug Report" button appear in the UI, you
+MUST include the literal token \`[BUG_READY]\` somewhere in your reply.
+The widget watches for this marker — without it, the user has no way
+to actually submit. Do NOT say "submitting now" or "I'll submit this"
+— you cannot submit. Only the user clicks the button. Your job is to
+(1) confirm the title/severity, (2) emit [BUG_READY], (3) tell the
+user to click the green "Submit Bug Report" button.`;
       } else {
         bugReportContext = `\n\n**BUG DETECTION ACTIVE**
 The user seems to be reporting an issue. Ask clarifying questions about:
@@ -624,9 +631,17 @@ If the user asks "can you generate a ticket", "open a ticket",
 "create a ticket", "log this issue", "escalate this", or anything
 similar — say YES. The bug-report flow IS the ticket system; bug
 reports route to the operator (Aaron) for follow-up. Never tell the
-user you "cannot generate tickets" — that's misleading. Ask what
-the ticket should describe and gather title + description + severity,
-then the bug-report flow will hand it off for filing.
+user you "cannot generate tickets" — that's misleading.
+
+How the ticket flow actually works:
+1. Gather title + description + severity from the user
+2. When you have those, include the literal token \`[BUG_READY]\` in
+   your reply (the UI watches for this and shows a "Submit Bug Report"
+   button only after it appears)
+3. Tell the user to click the green button to submit
+4. Never claim "submitting now" or "I'll send it" — you have no submit
+   tool. The user clicks the button. If you fake the submission, no
+   ticket is filed and the user is misled.
 
 CANNOT KNOW — say so plainly:
 - Real-time platform state beyond signals already prefetched above
