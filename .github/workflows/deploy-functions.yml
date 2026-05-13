@@ -177,3 +177,92 @@ jobs:
             printf '  - %s\n' "${FAILED[@]}"
             exit 1
           fi
+
+  # F-012 (2026-05-13): Auto-regression check via the labeled benchmark.
+  # Runs after deploys land. If decision accuracy drops more than 5 points
+  # vs. the previous CI-triggered run, this job FAILS — the deploy is
+  # already live but the regression is loudly visible. Operator can revert.
+  # Setting this up first because every other audit fix's safety claim
+  # depends on it.
+  benchmark-regression-check:
+    name: Post-deploy benchmark
+    needs: deploy-functions
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy-functions.result == 'success'
+    env:
+      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - name: Trigger run-benchmark
+        id: trigger
+        run: |
+          set -euo pipefail
+          echo "Triggering benchmark for commit ${COMMIT_SHA:0:8}"
+          # run-benchmark accepts triggered_by; tag with the SHA so we
+          # can correlate runs to deploys later.
+          RESPONSE=$(curl -sS --max-time 30 -X POST \
+            -H "Authorization: Bearer ${SERVICE_KEY}" \
+            -H "Content-Type: application/json" \
+            "${SUPABASE_URL}/functions/v1/run-benchmark" \
+            -d "{\"triggered_by\":\"ci_deploy:${COMMIT_SHA:0:8}\"}")
+          echo "Initial response: $RESPONSE"
+          # The function inserts the run row itself; we just need to wait.
+
+      - name: Poll for completion
+        id: poll
+        run: |
+          set -euo pipefail
+          # Most runs complete in 2-3 minutes; poll up to 8 minutes.
+          for i in $(seq 1 48); do
+            sleep 10
+            ROW=$(curl -sS "${SUPABASE_URL}/rest/v1/benchmark_runs?triggered_by=eq.ci_deploy:${COMMIT_SHA:0:8}&order=triggered_at.desc&limit=1" \
+              -H "apikey: ${SERVICE_KEY}" -H "Authorization: Bearer ${SERVICE_KEY}")
+            COMPLETED=$(echo "$ROW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0].get('completed_at') if d else 'none')")
+            if [[ "$COMPLETED" != "None" && "$COMPLETED" != "none" && -n "$COMPLETED" ]]; then
+              echo "Run completed at $COMPLETED"
+              echo "$ROW" > /tmp/run.json
+              break
+            fi
+            echo "[$i/48] still running…"
+          done
+          if [[ ! -f /tmp/run.json ]]; then
+            echo "::error::Benchmark did not complete within 8 minutes"
+            exit 1
+          fi
+
+      - name: Compare against previous green run
+        run: |
+          set -euo pipefail
+          NEW_ACC=$(python3 -c "import json; d=json.load(open('/tmp/run.json')); print(d[0].get('signal_creation_accuracy') or 0)")
+          NEW_PASS=$(python3 -c "import json; d=json.load(open('/tmp/run.json')); print(d[0].get('examples_passed') or 0)")
+          NEW_FAIL=$(python3 -c "import json; d=json.load(open('/tmp/run.json')); print(d[0].get('examples_failed') or 0)")
+          echo "This run: accuracy=${NEW_ACC} passed=${NEW_PASS} failed=${NEW_FAIL}"
+
+          # Previous CI-deploy run (offset 1 = the one before this)
+          PREV=$(curl -sS "${SUPABASE_URL}/rest/v1/benchmark_runs?triggered_by=like.ci_deploy:*&order=triggered_at.desc&offset=1&limit=1&select=signal_creation_accuracy,examples_passed,triggered_at" \
+            -H "apikey: ${SERVICE_KEY}" -H "Authorization: Bearer ${SERVICE_KEY}")
+          PREV_ACC=$(echo "$PREV" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0].get('signal_creation_accuracy') if d else None)")
+
+          if [[ "$PREV_ACC" == "None" || -z "$PREV_ACC" ]]; then
+            echo "No previous CI benchmark run found. Establishing baseline."
+            echo "::notice::Baseline established: accuracy=${NEW_ACC}"
+            exit 0
+          fi
+
+          echo "Previous CI run: accuracy=${PREV_ACC}"
+
+          # Fail if drop >5 percentage points (0.05).
+          # Improvements always pass. Equal-or-better passes.
+          python3 - <<PY
+          new = float("${NEW_ACC}")
+          prev = float("${PREV_ACC}")
+          drop = prev - new
+          print(f"NEW={new:.4f}  PREV={prev:.4f}  DROP={drop:+.4f}")
+          if drop > 0.05:
+              print(f"::error::Benchmark regression: accuracy dropped {drop:.4f} (>0.05 threshold)")
+              print(f"::error::This deploy degraded signal_creation_accuracy from {prev:.2%} to {new:.2%}.")
+              print(f"::error::Revert commit ${COMMIT_SHA:0:8} or investigate before next deploy.")
+              import sys; sys.exit(1)
+          print(f"::notice::Benchmark OK ({new:.2%}, change {(-drop):+.2%} vs previous)")
+          PY
