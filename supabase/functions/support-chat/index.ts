@@ -280,39 +280,70 @@ The user seems to be reporting an issue. Ask clarifying questions about:
       return typeof last?.content === 'string' ? last.content : '';
     })();
 
-    // Signal number pattern: SIG-2026-001543 (8-char hex prefix also tolerated)
+    // Three lookup strategies in priority order: signal ID → URL → title prefix
     const sigNumbers = Array.from(new Set((lastUserText.match(/SIG-\d{4}-\d{6}/gi) || []).map((s: string) => s.toUpperCase())));
-    // Tenant scoping will be added when CRT-as-tenant lands. For now any
-    // authenticated user (or service-role test call) can see any signal.
+    const urlMatches = Array.from(new Set(lastUserText.match(/https?:\/\/[^\s<>"\)\]]+/g) || [])).slice(0, 3);
+
+    const formatSig = (s: any) => {
+      let block = `\n### ${s.signal_number} — ${(s.title || '').slice(0, 100)}\n`;
+      block += `- client: ${(s.clients as any)?.name || 'unassigned'}\n`;
+      block += `- severity: ${s.severity} (${s.category})\n`;
+      block += `- relevance_score: ${s.relevance_score}; confidence: ${s.confidence}\n`;
+      block += `- created: ${s.created_at}; event_date: ${s.event_date}\n`;
+      block += `- source: ${s.raw_json?.source || '(unknown)'}\n`;
+      block += `- source_url: ${s.source_url || '(none)'}\n`;
+      block += `- body (truncated): ${(s.normalized_text || '').slice(0, 500)}\n`;
+      return block;
+    };
+
+    let matchedSigs: any[] = [];
+    let lookupAttempted: 'sig_number' | 'url' | 'title_prefix' | null = null;
+
+    // 1. SIG-YYYY-NNNNNN pattern
     if (sigNumbers.length > 0) {
+      lookupAttempted = 'sig_number';
       const { data: sigs } = await supabase
         .from('signals')
         .select('id, signal_number, title, normalized_text, severity, category, relevance_score, confidence, source_url, created_at, event_date, client_id, raw_json, clients(name)')
         .in('signal_number', sigNumbers.slice(0, 3));
-      if (sigs && sigs.length) {
-        liveContext += '\n\n## LIVE SIGNAL CONTEXT (verified from platform state)\n';
-        for (const s of sigs as any[]) {
-          // Also pull the filter log if this signal was ever rejected
-          const { data: filters } = await supabase
-            .from('filtered_signals')
-            .select('filter_reason, relevance_score, relevance_reason')
-            .or(`source_url.eq.${s.source_url || 'none'}`)
-            .limit(2);
-          liveContext += `\n### ${s.signal_number} — ${(s.title || '').slice(0, 100)}\n`;
-          liveContext += `- client: ${(s.clients as any)?.name || 'unassigned'}\n`;
-          liveContext += `- severity: ${s.severity} (${s.category})\n`;
-          liveContext += `- relevance_score: ${s.relevance_score}; confidence: ${s.confidence}\n`;
-          liveContext += `- created: ${s.created_at}; event_date: ${s.event_date}\n`;
-          liveContext += `- source: ${s.raw_json?.source || '(unknown)'}\n`;
-          liveContext += `- source_url: ${s.source_url || '(none)'}\n`;
-          liveContext += `- body (truncated): ${(s.normalized_text || '').slice(0, 500)}\n`;
-          if (filters && filters.length) {
-            liveContext += `- related-content filter history: ${filters.map((f: any) => `[${f.filter_reason}@${f.relevance_score}] ${f.relevance_reason}`).join(' | ')}\n`;
-          }
-        }
-      } else if (sigNumbers.length > 0) {
-        liveContext += `\n\n## LIVE SIGNAL LOOKUP\nUser referenced ${sigNumbers.join(', ')} but no signals matched in the database. Note this for them — the ID may be wrong, OR the signal may have been deleted, OR it may belong to a different tenant.\n`;
+      if (sigs) matchedSigs = sigs;
+    }
+
+    // 2. URL pattern — only if no signal matched by ID
+    if (matchedSigs.length === 0 && urlMatches.length > 0) {
+      lookupAttempted = 'url';
+      const { data: sigs } = await supabase
+        .from('signals')
+        .select('id, signal_number, title, normalized_text, severity, category, relevance_score, confidence, source_url, created_at, event_date, client_id, raw_json, clients(name)')
+        .in('source_url', urlMatches);
+      if (sigs) matchedSigs = sigs;
+    }
+
+    // 3. Title prefix — fall back to first 40 chars of the user message
+    if (matchedSigs.length === 0 && sigNumbers.length === 0 && urlMatches.length === 0 && lastUserText.length >= 15) {
+      lookupAttempted = 'title_prefix';
+      // Strip leading question prefixes that aren't part of a real title
+      const prefixStripped = lastUserText
+        .replace(/^(why|what|how|where|when|tell me about|look up|find|i see|i'm seeing|i am seeing|can you|please|i think|i don't)\b[^A-Z0-9]*/i, '')
+        .trim();
+      const titleGuess = prefixStripped.slice(0, 40).trim();
+      if (titleGuess.length >= 10) {
+        const { data: sigs } = await supabase
+          .from('signals')
+          .select('id, signal_number, title, normalized_text, severity, category, relevance_score, confidence, source_url, created_at, event_date, client_id, raw_json, clients(name)')
+          .ilike('title', `%${titleGuess}%`)
+          .order('created_at', { ascending: false })
+          .limit(3);
+        if (sigs) matchedSigs = sigs;
       }
+    }
+
+    if (matchedSigs.length > 0) {
+      liveContext += '\n\n## LIVE SIGNAL CONTEXT (verified from platform state)\n';
+      liveContext += `Looked up via: ${lookupAttempted}\n`;
+      for (const s of matchedSigs) liveContext += formatSig(s);
+    } else if (lookupAttempted) {
+      liveContext += `\n\n## SIGNAL LOOKUP — NO MATCH\nAttempted lookup via ${lookupAttempted} but no signals matched. Tell the user plainly that you couldn't find the specific signal in the database, and ask them for the signal ID (looks like SIG-2026-XXXXXX), the source URL, or the exact title text. Do NOT offer to "check further" or "look into this" — you have no other tool to find it.\n`;
     }
 
     const systemPrompt = `You are the FORTRESS platform's support assistant. FORTRESS is an AI-powered protective-intelligence platform that monitors OSINT sources, produces signals + incidents + briefs, and helps security teams detect and respond to threats against their clients.
@@ -472,28 +503,50 @@ ${liveContext}
 ${bugReportContext}
 
 ═══════════════════════════════════════════════════════════════════
-YOUR RULES OF ENGAGEMENT
+YOUR RULES OF ENGAGEMENT — STRICT
 ═══════════════════════════════════════════════════════════════════
 
-1. Be concise. Most answers are 2-4 sentences. Bullet points only when
-   the user is comparing options or you're walking through a flow.
-2. Cite specific data when LIVE SIGNAL CONTEXT is provided above.
-   Quote the signal's own relevance_reason / category / severity when
-   explaining its disposition.
-3. If you don't know — say so. Never fabricate signal IDs, severities,
-   thresholds, or platform behaviors. Offer to file a ticket for the
-   operator (Aaron) to investigate.
-4. NEVER claim to make changes you can't make. You cannot deploy code,
-   change config, adjust thresholds, edit signals, or modify agent
-   behavior. Your only writable action is filing a bug/issue/ticket.
-5. If the user explicitly wants a human, file a bug with severity
-   matching urgency and tell them the operator has been pinged.
-6. Be honest about platform state. If the audit shows monitor-news-google
-   had stuck heartbeats, say so when asked. Pretending it's fine erodes
-   trust.
+LENGTH:
+- Default: **2-3 sentences**. Crisp answer, no preamble, no "Great question!"
+- Lists/bullets only when explicitly walking a multi-step procedure or
+  comparing 3+ concrete options. Never use bullets for a 2-sentence answer.
+- No markdown headers (no "**Source Inclusion:**" / "## Steps") in normal
+  replies. Save structured formatting for actual procedures.
 
-Tone: professional, direct, friendly. Like a senior SRE who knows the
-system inside out and wants to help the user understand it.`;
+LOOKUP DISCIPLINE — REQUIRED:
+- If a LIVE SIGNAL CONTEXT block appears above, ANSWER FROM IT directly.
+  Quote the signal's actual severity/relevance_score/source/category in
+  your answer.
+- If a SIGNAL LOOKUP — NO MATCH block appears, tell the user plainly that
+  you couldn't find the specific signal, and ask for ONE of:
+    1. the signal ID (SIG-2026-XXXXXX)
+    2. the source URL
+    3. the exact title text
+  Do NOT say "let me check further" or "I'll look into this" — you have
+  no tool to check beyond what was already attempted. Asking the user for
+  more input is the only forward move.
+- If neither block appears, the user hasn't given you a referenceable
+  artifact. If their question is general (how-to, troubleshooting,
+  concept), answer normally. If they're asking about a specific signal,
+  ask for the ID/URL/title.
+
+CANNOT DO — say so plainly:
+- Modify any signal, brief, incident, agent, or config
+- Deploy code, run migrations, change cron schedules
+- Override the AI gate, adjust thresholds, or unblock signals
+- Approve or reject items in any queue
+Your only writable action is filing a bug via the bug-report flow.
+
+CANNOT KNOW — say so plainly:
+- Real-time platform state beyond signals already prefetched above
+- Other tenants' data
+- The user's UI state (what page they're on, what they clicked)
+
+If the user wants the operator (Aaron), trigger the bug-report flow with
+a clear severity. Don't try to handle escalations yourself.
+
+Tone: professional, direct, friendly. Senior SRE who's seen this
+system fifty times — short answer, real specifics, no fluff.`;
 
     const streamResult = await callAiGatewayStream({
       model: "gpt-4o-mini",
