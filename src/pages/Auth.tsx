@@ -15,6 +15,12 @@ import { MFAVerification } from "@/components/MFAVerification";
 import { SMSMFAVerification } from "@/components/SMSMFAVerification";
 import { MandatoryMFAEnrollment } from "@/components/MandatoryMFAEnrollment";
 
+// Staging detection: skip mandatory MFA enrollment/verification on the
+// staging environment so operators can iterate without Twilio dependency.
+// Detection is on the Supabase URL injected at build time — production
+// uses kpuqukppbmwebiptqmog, staging uses lkvyrvuakzguszbpwnfz.
+const IS_STAGING = !!import.meta.env.VITE_SUPABASE_URL?.includes('lkvyrvuakzguszbpwnfz');
+
 const USER_AGREEMENT_CONTENT = [
   {
     title: "1. Professionalism & Respect",
@@ -282,7 +288,7 @@ const Auth = () => {
             .eq('user_id', data.user!.id)
             .maybeSingle();
           
-          if (mfaSettings?.mfa_enabled && mfaSettings?.phone_number) {
+          if (mfaSettings?.mfa_enabled && mfaSettings?.phone_number && !IS_STAGING) {
             // SMS MFA is enabled - show SMS verification screen
             setSmsMFAPhone(mfaSettings.phone_number);
             setShowSMSMFA(true);
@@ -290,7 +296,16 @@ const Auth = () => {
             return;
           }
 
-          // No MFA enrolled — enforce for all users
+          // Staging bypass: skip mandatory MFA so operators can iterate
+          // without depending on Twilio. Production always enforces.
+          if (IS_STAGING) {
+            toast.success("Welcome to Fortress AI (Staging — MFA bypassed)");
+            navigate(intendedPath);
+            setLoading(false);
+            return;
+          }
+
+          // No MFA enrolled — enforce for all users (production)
           setPendingUserId(data.user!.id);
           setShowMandatoryMFA(true);
           toast.warning("Two-factor authentication is required to access Fortress.");
@@ -324,12 +339,17 @@ const Auth = () => {
         const { data: { user } } = await supabase.auth.getUser();
         
         if (user) {
-          // Store user ID for MFA enrollment
-          setPendingUserId(user.id);
-          
-          // Show mandatory MFA enrollment for all new signups
-          setShowMandatoryMFA(true);
-          toast.success("Account created! Please set up two-factor authentication.");
+          if (IS_STAGING) {
+            // Staging: skip MFA enrollment, land directly in the app
+            toast.success("Staging account created — MFA bypassed");
+            navigate(intendedPath);
+          } else {
+            // Store user ID for MFA enrollment
+            setPendingUserId(user.id);
+            // Show mandatory MFA enrollment for all new signups (production)
+            setShowMandatoryMFA(true);
+            toast.success("Account created! Please set up two-factor authentication.");
+          }
         }
       }
     } catch (error: any) {
