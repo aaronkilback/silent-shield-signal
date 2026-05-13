@@ -1,0 +1,65 @@
+name: Deploy Frontend Staging (Cloudflare Worker)
+
+# Staging counterpart of deploy-frontend.yml. Triggered on `staging`
+# branch pushes. Builds with staging Vite env vars (pointing at staging
+# Supabase) and deploys to the silent-shield-signal-staging worker
+# bound to aegis-staging.silentshieldsecurity.com.
+#
+# Required GitHub Secrets (operator must add):
+#   STAGING_VITE_SUPABASE_URL              https://<staging-ref>.supabase.co
+#   STAGING_VITE_SUPABASE_PUBLISHABLE_KEY  staging publishable (anon) key
+# Reused:
+#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'wrangler.toml'
+      - 'tailwind.config.ts'
+      - 'tsconfig*.json'
+      - 'postcss.config.js'
+      - '.env'
+      - '.github/workflows/deploy-frontend-staging.yml'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    name: Build and Deploy (Staging)
+    runs-on: ubuntu-latest
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.STAGING_VITE_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Guard — require staging secrets
+        run: |
+          if [[ -z "$VITE_SUPABASE_URL" || -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]]; then
+            echo "::error::Missing STAGING_VITE_SUPABASE_URL or STAGING_VITE_SUPABASE_PUBLISHABLE_KEY"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (staging vars)
+        run: npm run build
+
+      - name: Deploy to Cloudflare Workers (staging env)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env staging

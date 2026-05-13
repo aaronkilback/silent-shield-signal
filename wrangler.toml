@@ -10,3 +10,21 @@ command = "npm install && npm run build"
 [assets]
 directory = "./dist"
 not_found_handling = "single-page-application"
+
+# Staging environment — separate worker bound to a staging subdomain.
+# Deploy via: wrangler deploy --env staging
+# Build step injects different Vite env vars (VITE_SUPABASE_URL pointing
+# at the staging Supabase project) via the deploy-frontend-staging
+# workflow's env block.
+[env.staging]
+name = "silent-shield-signal-staging"
+routes = [
+  { pattern = "aegis-staging.silentshieldsecurity.com/*", zone_name = "silentshieldsecurity.com" }
+]
+
+[env.staging.build]
+command = "npm install && npm run build"
+
+[env.staging.assets]
+directory = "./dist"
+not_found_handling = "single-page-application"

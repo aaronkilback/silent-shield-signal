@@ -1,0 +1,194 @@
+name: Deploy Edge Functions (Staging)
+
+# Staging counterpart of deploy-functions.yml. Same change-detection +
+# deploy logic, but targets the staging Supabase project. Runs only when
+# commits land on the `staging` branch.
+#
+# Required GitHub Secrets (operator must add after creating staging project):
+#   STAGING_PROJECT_REF                  e.g. "abcdefghij..."
+#   STAGING_VITE_SUPABASE_URL            https://<ref>.supabase.co
+#   STAGING_SUPABASE_SERVICE_ROLE_KEY    new staging service-role key
+# Reused (same operator access token works across projects):
+#   SUPABASE_ACCESS_TOKEN
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - 'supabase/functions/**'
+      - 'supabase/config.toml'
+      - '.github/workflows/deploy-functions-staging.yml'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Function name, "all", or blank for changed-only'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-functions-staging-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-functions:
+    name: Deploy Edge Functions (Staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Determine functions to deploy
+        id: detect
+        run: |
+          set -euo pipefail
+          MODE="changed"
+          TARGET_INPUT='${{ github.event.inputs.target }}'
+
+          list_all_functions() {
+            find supabase/functions -mindepth 1 -maxdepth 1 -type d \
+              | awk -F/ '{print $NF}' \
+              | grep -v '^_' \
+              | while read -r dir; do
+                  if [[ -f "supabase/functions/$dir/index.ts" ]]; then
+                    echo "$dir"
+                  fi
+                done \
+              | sort
+          }
+
+          if [[ -n "$TARGET_INPUT" ]]; then
+            if [[ "$TARGET_INPUT" == "all" ]]; then
+              MODE="all"
+              FUNCTIONS=$(list_all_functions)
+            else
+              MODE="manual"
+              FUNCTIONS="$TARGET_INPUT"
+            fi
+          else
+            CHANGED=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- supabase/functions/ supabase/config.toml \
+              | awk -F/ '/^supabase\/functions\// {print $3}; /^supabase\/config\.toml$/ {print "_config_toml_"}' \
+              | sort -u | grep -v '^$' || true)
+            if echo "$CHANGED" | grep -qE '^_shared$|^_config_toml_$'; then
+              MODE="redeploy_all"
+              FUNCTIONS=$(list_all_functions)
+            else
+              FUNCTIONS=$(echo "$CHANGED" | grep -v '^_' || true)
+            fi
+          fi
+
+          if [[ -z "$FUNCTIONS" ]]; then
+            echo "No functions to deploy."
+            echo "mode=noop" >> "$GITHUB_OUTPUT"
+            echo "functions=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "mode=$MODE"
+            echo "functions<<EOF"
+            echo "$FUNCTIONS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Mode: $MODE"
+          echo "Functions to deploy:"
+          echo "$FUNCTIONS"
+
+      - name: Deploy to staging
+        if: steps.detect.outputs.mode != 'noop'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ secrets.STAGING_PROJECT_REF }}
+        run: |
+          if [[ -z "$PROJECT_REF" ]]; then
+            echo "::error::STAGING_PROJECT_REF secret is not set. Add it in GitHub repo settings."
+            exit 1
+          fi
+          FAILED=()
+          DEPLOYED=()
+          while IFS= read -r fn; do
+            [[ -z "$fn" ]] && continue
+            echo "::group::Deploy $fn (staging)"
+            if supabase functions deploy "$fn" --project-ref "$PROJECT_REF"; then
+              DEPLOYED+=("$fn")
+              echo "::endgroup::"
+            else
+              FAILED+=("$fn")
+              echo "::endgroup::"
+              echo "::error title=Staging deploy failed::$fn"
+            fi
+          done <<< "${{ steps.detect.outputs.functions }}"
+          echo "─── Summary (staging) ───"
+          echo "Deployed: ${#DEPLOYED[@]}"
+          echo "Failed:   ${#FAILED[@]}"
+          if [ ${#FAILED[@]} -gt 0 ]; then
+            printf '  - %s\n' "${FAILED[@]}"
+            exit 1
+          fi
+
+  benchmark-regression-check-staging:
+    name: Post-deploy benchmark (staging)
+    needs: deploy-functions
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging' && needs.deploy-functions.result == 'success'
+    env:
+      SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
+      SERVICE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - name: Guard — require staging secrets
+        run: |
+          if [[ -z "$SUPABASE_URL" || -z "$SERVICE_KEY" ]]; then
+            echo "::error::Missing STAGING_VITE_SUPABASE_URL or STAGING_SUPABASE_SERVICE_ROLE_KEY"
+            exit 1
+          fi
+
+      - name: Trigger run-benchmark on staging
+        run: |
+          set -euo pipefail
+          echo "Triggering benchmark on staging for commit ${COMMIT_SHA:0:8}"
+          curl -sS --max-time 30 -X POST \
+            -H "Authorization: Bearer ${SERVICE_KEY}" \
+            -H "Content-Type: application/json" \
+            "${SUPABASE_URL}/functions/v1/run-benchmark" \
+            -d "{\"triggered_by\":\"ci_staging:${COMMIT_SHA:0:8}\"}"
+
+      - name: Poll + compare
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 48); do
+            sleep 10
+            ROW=$(curl -sS "${SUPABASE_URL}/rest/v1/benchmark_runs?triggered_by=eq.ci_staging:${COMMIT_SHA:0:8}&order=triggered_at.desc&limit=1" \
+              -H "apikey: ${SERVICE_KEY}" -H "Authorization: Bearer ${SERVICE_KEY}")
+            COMPLETED=$(echo "$ROW" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0].get('completed_at') if d else 'none')")
+            if [[ "$COMPLETED" != "None" && "$COMPLETED" != "none" && -n "$COMPLETED" ]]; then
+              echo "$ROW" > /tmp/run.json
+              break
+            fi
+          done
+          if [[ ! -f /tmp/run.json ]]; then
+            echo "::error::Staging benchmark did not complete in 8 minutes"
+            exit 1
+          fi
+          NEW_ACC=$(python3 -c "import json; d=json.load(open('/tmp/run.json')); print(d[0].get('signal_creation_accuracy') or 0)")
+          PREV=$(curl -sS "${SUPABASE_URL}/rest/v1/benchmark_runs?triggered_by=like.ci_staging:*&order=triggered_at.desc&offset=1&limit=1&select=signal_creation_accuracy" \
+            -H "apikey: ${SERVICE_KEY}" -H "Authorization: Bearer ${SERVICE_KEY}")
+          PREV_ACC=$(echo "$PREV" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0].get('signal_creation_accuracy') if d else None)")
+          if [[ "$PREV_ACC" == "None" || -z "$PREV_ACC" ]]; then
+            echo "::notice::Staging baseline established: accuracy=${NEW_ACC}"
+            exit 0
+          fi
+          python3 - <<PY
+          new = float("${NEW_ACC}"); prev = float("${PREV_ACC}"); drop = prev - new
+          print(f"STAGING NEW={new:.4f} PREV={prev:.4f} DROP={drop:+.4f}")
+          if drop > 0.05:
+              print(f"::error::Staging regression: drop {drop:.4f} > 0.05. DO NOT promote this commit to main.")
+              import sys; sys.exit(1)
+          print(f"::notice::Staging benchmark OK ({new:.2%}, {(-drop):+.2%} vs previous)")
+          PY
