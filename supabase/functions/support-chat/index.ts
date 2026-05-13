@@ -282,6 +282,99 @@ The user seems to be reporting an issue. Ask clarifying questions about:
     // from real data rather than guess. The user never has to copy-paste
     // signal text — pasting the ID is enough.
     let liveContext = '';
+
+    // ── Platform pulse — always injected so the bot can answer
+    //    operational questions ("why no signals?") with real numbers
+    //    instead of generic advice. Pulled in parallel to keep latency
+    //    low. Hard cap at 50 rows per query.
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const since1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    let pulseContext = '';
+    try {
+      const [
+        signals24h,
+        filtered24h,
+        heartbeats,
+        sources,
+      ] = await Promise.all([
+        supabase.from('signals')
+          .select('client_id, severity, raw_json, clients(name)', { count: 'exact', head: false })
+          .gte('created_at', since24h)
+          .neq('is_test', true)
+          .limit(2000),
+        supabase.from('filtered_signals')
+          .select('filter_reason', { count: 'exact', head: false })
+          .gte('created_at', since24h)
+          .limit(2000),
+        supabase.from('cron_heartbeat')
+          .select('job_name, status, completed_at, started_at')
+          .gte('started_at', since1h)
+          .order('started_at', { ascending: false })
+          .limit(50),
+        supabase.from('sources')
+          .select('name, status, last_ingested_at, monitor_type')
+          .eq('status', 'active')
+          .order('last_ingested_at', { ascending: false, nullsFirst: false })
+          .limit(50),
+      ]);
+
+      const totalSignals = signals24h.data?.length || 0;
+      const byClient: Record<string, number> = {};
+      const bySource: Record<string, number> = {};
+      for (const s of (signals24h.data as any[]) || []) {
+        const c = s.clients?.name || 'unassigned';
+        byClient[c] = (byClient[c] || 0) + 1;
+        const src = s.raw_json?.source || s.raw_json?.monitor || 'unknown';
+        bySource[src] = (bySource[src] || 0) + 1;
+      }
+
+      const totalFiltered = filtered24h.data?.length || 0;
+      const filterReasons: Record<string, number> = {};
+      for (const f of (filtered24h.data as any[]) || []) {
+        const r = (f.filter_reason || 'unspecified').slice(0, 60);
+        filterReasons[r] = (filterReasons[r] || 0) + 1;
+      }
+      const topFilterReasons = Object.entries(filterReasons)
+        .sort(([, a], [, b]) => b - a).slice(0, 5);
+
+      const heartbeatsRecent = (heartbeats.data as any[]) || [];
+      const heartbeatFails = heartbeatsRecent.filter((h) => h.status === 'failed').length;
+      const heartbeatOk = heartbeatsRecent.filter((h) => h.status === 'completed').length;
+
+      const sourcesData = (sources.data as any[]) || [];
+      const staleSources = sourcesData.filter((s) =>
+        !s.last_ingested_at || new Date(s.last_ingested_at).getTime() < Date.now() - 6 * 60 * 60 * 1000
+      );
+
+      pulseContext = `
+
+═══════════════════════════════════════════════════════════════════
+LIVE PLATFORM PULSE (auto-injected — quote these numbers when the
+user asks operational questions like "why no signals" or "is X working")
+═══════════════════════════════════════════════════════════════════
+
+SIGNALS (last 24h, excluding test):
+- Total admitted: ${totalSignals}
+- By client: ${Object.entries(byClient).map(([k, v]) => `${k}=${v}`).join(', ') || '(none)'}
+- By source: ${Object.entries(bySource).slice(0, 6).map(([k, v]) => `${k}=${v}`).join(', ') || '(none)'}
+
+FILTER GATE (last 24h):
+- Total rejected: ${totalFiltered}
+- Admit ratio: ${totalSignals + totalFiltered > 0 ? Math.round(100 * totalSignals / (totalSignals + totalFiltered)) + '%' : 'n/a'}
+- Top rejection reasons: ${topFilterReasons.map(([r, c]) => `"${r}" (${c})`).join('; ') || '(none)'}
+
+CRON HEARTBEATS (last 1h):
+- Completed: ${heartbeatOk}, Failed: ${heartbeatFails}
+${heartbeatFails > 0 ? '- Failed jobs: ' + heartbeatsRecent.filter((h) => h.status === 'failed').slice(0, 5).map((h) => h.job_name).join(', ') : ''}
+
+ACTIVE SOURCES (${sourcesData.length} total active):
+- Stale (>6h since last_ingested_at): ${staleSources.length}
+${staleSources.length > 0 ? '- Stale source names: ' + staleSources.slice(0, 8).map((s) => s.name).join(', ') : ''}
+`;
+    } catch (e) {
+      console.error('[support-chat] pulse fetch failed', e);
+      pulseContext = '\n(Platform pulse fetch failed — answer from general knowledge.)\n';
+    }
     const lastUserText = (() => {
       const last = messages?.slice().reverse().find((m: any) => m.role === 'user');
       return typeof last?.content === 'string' ? last.content : '';
@@ -583,6 +676,7 @@ TUNING — most behavior is driven by config:
 KNOWLEDGE BASE (published articles)
 ═══════════════════════════════════════════════════════════════════
 ${kbContext}
+${pulseContext}
 ${liveContext}
 ${bugReportContext}
 
@@ -596,6 +690,17 @@ LENGTH:
   comparing 3+ concrete options. Never use bullets for a 2-sentence answer.
 - No markdown headers (no "**Source Inclusion:**" / "## Steps") in normal
   replies. Save structured formatting for actual procedures.
+
+OPERATIONAL QUESTIONS — REQUIRED:
+When the user asks ANY operational question ("why no signals", "is X
+working", "are monitors running", "what's broken", "I'm not seeing X",
+source/client/cron health, volume questions) — ANSWER FROM THE LIVE
+PLATFORM PULSE block above. Quote the actual numbers (signal count
+last 24h, admit ratio, failed heartbeat job names, stale source names).
+NEVER respond with generic platitudes like "check sources.status" or
+"verify your keywords" when the data is right there. If the pulse
+shows 5 signals in 24h with 70 filter rejections and a stale Twitter
+source, SAY THAT.
 
 LOOKUP DISCIPLINE — REQUIRED:
 - If a LIVE SIGNAL CONTEXT block appears above, ANSWER FROM IT directly.
