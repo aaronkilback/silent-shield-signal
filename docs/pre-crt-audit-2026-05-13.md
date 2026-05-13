@@ -77,6 +77,7 @@ Query: `SELECT counts FROM core tables` at 2026-05-13 ~17:35 UTC.
 | F-019 | SERIOUS | data-integrity | 17 deactivated agents (not 6 as initially reported). Includes literal test agent `WATCH-ALPHA-2` with `specialty='test specialty'`, `persona='test persona'` still sitting in production table. |
 | F-020 | UNVERIFIED | DR / backup | Cannot confirm backup retention or PITR enablement via MCP. Needs operator verification in Supabase dashboard. No tested restore procedure documented in repo. |
 | F-021 | POSITIVE | ai-behavior | Agent system_prompts are high-quality. Sampled 7 active agents — all cite correct domain frameworks (CSIS Threat Assessment, RCMP INSET, CARVER, CFFDRS/FWI, OSFI/PIPEDA/NEB Act, NIST SP 800-161, MITRE ATT&CK, PTES, CPTED). This is NOT the source of the F-010/F-011 quality issues. |
+| F-022 | SERIOUS | reproducibility | Production has schema artifacts NOT in migrations. Discovered during staging stand-up: `get_user_accessible_client_ids()` function (used by every tenant-scoped RLS policy) was created via SQL editor, never tracked in a migration file. A fresh prod rebuild from the migrations directory would have broken RLS silently. Plus duplicate-versioned migrations (two files named `20260503000002_*`), several data-seed migrations hardcoding production-only UUIDs, and at least one migration referencing a table not yet created. |
 
 ---
 
