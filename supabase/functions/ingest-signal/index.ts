@@ -2014,25 +2014,51 @@ Score this signal's relevance and classify the connection.`
       );
     }
 
-    // Apply AI decision engine for rule-based categorization and analysis
-    console.log('Invoking AI decision engine for signal categorization...');
+    // Apply AI decision engine for rule-based categorization and analysis.
+    //
+    // Fire-and-forget via EdgeRuntime.waitUntil — the previous `await` chained
+    // monitor-news-google → ingest-signal → ai-decision-engine → review-signal-
+    // agent into a single ~150s budget, and when the parent monitor timed out
+    // mid-loop the downstream analyses never landed. Tier-2 review gap watchdog
+    // finding (2026-05-13) traced ~40% of google_news_api signals missing
+    // AI-DECISION-ENGINE rows because of this.
+    //
+    // The result was already only used inside `if (false && ...)` dead code, so
+    // there's nothing to lose by not awaiting. EdgeRuntime.waitUntil keeps the
+    // runtime alive after the HTTP response so the analysis completes.
+    console.log('Invoking AI decision engine for signal categorization (async)...');
     try {
-      const aiDecisionResult = await supabase.functions.invoke('ai-decision-engine', {
+      const aiDecisionPromise = supabase.functions.invoke('ai-decision-engine', {
         body: {
           signal_id: signal.id,
           force_ai: rulesResult.priority === 'p1' || rulesResult.priority === 'p2'
         }
+      }).then((aiDecisionResult: any) => {
+        if (aiDecisionResult?.error) {
+          console.error('AI decision engine error:', aiDecisionResult.error);
+        } else {
+          console.log('AI decision engine result:', aiDecisionResult?.data);
+        }
+      }).catch((e: unknown) => {
+        console.error('AI decision engine async error:', e);
       });
 
-      if (aiDecisionResult.error) {
-        console.error('AI decision engine error:', aiDecisionResult.error);
-      } else {
-        console.log('AI decision engine result:', aiDecisionResult.data);
+      // Edge-runtime extension: keep the worker alive until the analysis
+      // finishes, even after this function's response is sent.
+      try {
+        // @ts-ignore — EdgeRuntime is a Supabase Deno extension
+        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime?.waitUntil) {
+          // @ts-ignore
+          EdgeRuntime.waitUntil(aiDecisionPromise);
+        }
+      } catch {}
 
-        // AI-based incident creation is DISABLED — incidents must be created manually by analysts.
-        // Auto-created incidents from wildfire/regulatory/social signals are noise, not actionable.
-        // Only rules-based P1 keyword matches (active shooter, bomb, weapon, kidnap) create incidents.
-        if (false && !isCyberAdvisory && !isQaTest && !isHistorical && aiDecisionResult.data?.decision?.should_create_incident) {
+      // Dead-code legacy incident-creation block kept structurally to keep
+      // git diff minimal. The aiDecisionResult is never available here under
+      // the fire-and-forget pattern; the `if (false && ...)` guard means the
+      // body never executes anyway.
+      const aiDecisionResult: any = null;
+      if (false && !isCyberAdvisory && !isQaTest && !isHistorical && aiDecisionResult?.data?.decision?.should_create_incident) {
           const { error: incidentError } = await supabase
             .from('incidents')
             .insert({
@@ -2060,7 +2086,6 @@ Score this signal's relevance and classify the connection.`
             console.log('Incident auto-opened by AI decision for signal:', signal.id);
           }
         }
-      }
     } catch (error) {
       console.error('Failed to invoke AI decision engine:', error);
       // Don't fail the main request if AI decision fails
