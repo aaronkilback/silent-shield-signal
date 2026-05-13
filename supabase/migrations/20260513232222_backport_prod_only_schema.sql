@@ -12,6 +12,22 @@
 -- to fresh staging (creates the objects).
 -- ============================================================
 
+-- 0. cron_heartbeat — exists in prod via SQL editor, but not in any
+--    migration. Required by every monitor function + the new alert
+--    functions. Backport before anything else references it.
+CREATE TABLE IF NOT EXISTS public.cron_heartbeat (
+  id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  job_name text NOT NULL,
+  started_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  status text NOT NULL DEFAULT 'running',
+  result_summary jsonb,
+  error_message text,
+  duration_ms integer
+);
+CREATE INDEX IF NOT EXISTS idx_cron_heartbeat_job_name
+  ON public.cron_heartbeat(job_name, started_at DESC);
+
 -- 1. get_user_accessible_client_ids() — the function every tenant-scoped
 --    RLS policy depends on. Created via SQL editor pre-2026-05-13.
 CREATE OR REPLACE FUNCTION public.get_user_accessible_client_ids()

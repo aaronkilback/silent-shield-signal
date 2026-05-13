@@ -19,18 +19,21 @@
 -- without an extra DB round-trip per call.
 -- ============================================================
 
+-- Postgres doesn't allow function calls (COALESCE) in PRIMARY KEY constraint.
+-- Use NOT NULL DEFAULT '' on the optional columns + unique index instead.
 CREATE TABLE IF NOT EXISTS public.llm_daily_cost (
+  id bigserial PRIMARY KEY,
   day date NOT NULL,
-  scope text NOT NULL,                  -- 'global' for now; future: 'tenant:<id>' or 'function:<name>'
-  function_name text,
-  ai_model text,
+  scope text NOT NULL,
+  function_name text NOT NULL DEFAULT '',
+  ai_model text NOT NULL DEFAULT '',
   calls integer NOT NULL DEFAULT 0,
   tokens_in bigint NOT NULL DEFAULT 0,
   tokens_out bigint NOT NULL DEFAULT 0,
   est_usd numeric(10,2) NOT NULL DEFAULT 0,
-  computed_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (day, scope, COALESCE(function_name, ''), COALESCE(ai_model, ''))
+  computed_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_daily_cost_dim ON public.llm_daily_cost(day, scope, function_name, ai_model);
 CREATE INDEX IF NOT EXISTS idx_llm_daily_cost_day ON public.llm_daily_cost(day DESC);
 
 CREATE TABLE IF NOT EXISTS public.llm_budget_caps (
@@ -71,7 +74,7 @@ CREATE OR REPLACE FUNCTION public.compute_llm_daily_cost()
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path TO 'public'
+ SET search_path TO 'public,pg_temp'
 AS $$
 DECLARE
   hb_started timestamptz := NOW();
@@ -80,13 +83,10 @@ DECLARE
   hard_cap numeric;
   alert_fired boolean := false;
 BEGIN
-  -- Recompute today's aggregate, broken down by function + model
-  INSERT INTO llm_daily_cost (day, scope, function_name, ai_model, calls, tokens_in, tokens_out, est_usd, computed_at)
+  -- Per-(function,model) breakdown for today
+  INSERT INTO public.llm_daily_cost (day, scope, function_name, ai_model, calls, tokens_in, tokens_out, est_usd, computed_at)
   SELECT
-    CURRENT_DATE,
-    'global',
-    ft.function_name,
-    ft.ai_model,
+    CURRENT_DATE, 'global', ft.function_name, ft.ai_model,
     COUNT(*),
     SUM(COALESCE(ft.tokens_in, 0)),
     SUM(COALESCE(ft.tokens_out, 0)),
@@ -95,13 +95,13 @@ BEGIN
       COALESCE(ft.tokens_out, 0)::numeric / 1000000 * COALESCE(p.out_per_1m, 1.5)
     )::numeric, 2),
     NOW()
-  FROM function_telemetry ft
-  LEFT JOIN llm_model_pricing p ON p.ai_model = ft.ai_model
+  FROM public.function_telemetry ft
+  LEFT JOIN public.llm_model_pricing p ON p.ai_model = ft.ai_model
   WHERE ft.started_at >= CURRENT_DATE
     AND ft.status = 'success'
     AND ft.tokens_in IS NOT NULL
   GROUP BY ft.function_name, ft.ai_model
-  ON CONFLICT (day, scope, COALESCE(function_name, ''), COALESCE(ai_model, ''))
+  ON CONFLICT (day, scope, function_name, ai_model)
   DO UPDATE SET
     calls = EXCLUDED.calls,
     tokens_in = EXCLUDED.tokens_in,
@@ -109,14 +109,18 @@ BEGIN
     est_usd = EXCLUDED.est_usd,
     computed_at = EXCLUDED.computed_at;
 
-  -- Also upsert the 'global' rollup row (function_name=NULL, ai_model=NULL)
-  INSERT INTO llm_daily_cost (day, scope, function_name, ai_model, calls, tokens_in, tokens_out, est_usd, computed_at)
+  -- Rollup row uses '' as the sentinel for "all"
+  INSERT INTO public.llm_daily_cost (day, scope, function_name, ai_model, calls, tokens_in, tokens_out, est_usd, computed_at)
   SELECT
-    CURRENT_DATE, 'global', NULL, NULL,
-    SUM(calls), SUM(tokens_in), SUM(tokens_out), SUM(est_usd), NOW()
-  FROM llm_daily_cost
-  WHERE day = CURRENT_DATE AND scope = 'global' AND function_name IS NOT NULL
-  ON CONFLICT (day, scope, COALESCE(function_name, ''), COALESCE(ai_model, ''))
+    CURRENT_DATE, 'global', '', '',
+    COALESCE(SUM(calls), 0),
+    COALESCE(SUM(tokens_in), 0),
+    COALESCE(SUM(tokens_out), 0),
+    COALESCE(SUM(est_usd), 0),
+    NOW()
+  FROM public.llm_daily_cost
+  WHERE day = CURRENT_DATE AND scope = 'global' AND function_name != ''
+  ON CONFLICT (day, scope, function_name, ai_model)
   DO UPDATE SET
     calls = EXCLUDED.calls,
     tokens_in = EXCLUDED.tokens_in,
@@ -124,16 +128,16 @@ BEGIN
     est_usd = EXCLUDED.est_usd,
     computed_at = EXCLUDED.computed_at;
 
-  -- Check alert threshold
-  SELECT est_usd INTO total_usd FROM llm_daily_cost
-  WHERE day = CURRENT_DATE AND scope = 'global' AND function_name IS NULL AND ai_model IS NULL;
+  SELECT est_usd INTO total_usd FROM public.llm_daily_cost
+  WHERE day = CURRENT_DATE AND scope = 'global' AND function_name = '' AND ai_model = '';
+  total_usd := COALESCE(total_usd, 0);
 
   SELECT daily_usd_alert, daily_usd_hard_cap INTO alert_threshold, hard_cap
-  FROM llm_budget_caps WHERE scope = 'global';
+  FROM public.llm_budget_caps WHERE scope = 'global';
 
   IF total_usd >= alert_threshold THEN
     alert_fired := true;
-    INSERT INTO platform_findings (
+    INSERT INTO public.platform_findings (
       fingerprint, category, severity, title, plain_english, action, metadata,
       first_seen_at, last_seen_at, occurrence_count
     )
@@ -141,21 +145,19 @@ BEGIN
       'llm_budget_alert:' || to_char(CURRENT_DATE, 'YYYY-MM-DD'),
       'cost',
       CASE WHEN total_usd >= hard_cap * 0.8 THEN 'critical' ELSE 'high' END,
-      'LLM spend $' || total_usd || ' on ' || CURRENT_DATE || ' (alert threshold $' || alert_threshold || ')',
-      'Daily LLM cost exceeded the alert threshold. Hard cap is $' || hard_cap || '. If spend hits the cap, all LLM calls will be rejected via ai-gateway.ts circuit breaker.',
-      'Review the per-function breakdown in llm_daily_cost. Identify the function with the largest spike vs yesterday. Likely culprit: a retry storm or an infinite-loop in an agent prompt.',
-      jsonb_build_object('day', CURRENT_DATE, 'est_usd', total_usd, 'alert_threshold', alert_threshold, 'hard_cap', hard_cap),
+      'LLM spend $' || total_usd || ' on ' || CURRENT_DATE || ' (alert $' || alert_threshold || ', cap $' || hard_cap || ')',
+      'Daily LLM cost exceeded alert threshold. If spend hits cap, ai-gateway returns LLM_BUDGET_EXCEEDED.',
+      'Review the per-function breakdown in llm_daily_cost. Identify the largest spike vs yesterday — likely a retry storm or an infinite-loop in an agent prompt.',
+      jsonb_build_object('day', CURRENT_DATE, 'est_usd', total_usd, 'alert', alert_threshold, 'cap', hard_cap),
       NOW(), NOW(), 1
     )
     ON CONFLICT (fingerprint) DO UPDATE SET
       last_seen_at = NOW(),
-      occurrence_count = platform_findings.occurrence_count + 1,
-      severity = CASE WHEN total_usd >= hard_cap * 0.8 THEN 'critical' ELSE 'high' END,
-      title = 'LLM spend $' || total_usd || ' on ' || CURRENT_DATE || ' (alert threshold $' || alert_threshold || ')',
-      metadata = jsonb_build_object('day', CURRENT_DATE, 'est_usd', total_usd, 'alert_threshold', alert_threshold, 'hard_cap', hard_cap);
+      occurrence_count = public.platform_findings.occurrence_count + 1,
+      severity = CASE WHEN total_usd >= hard_cap * 0.8 THEN 'critical' ELSE 'high' END;
   END IF;
 
-  INSERT INTO cron_heartbeat (job_name, started_at, completed_at, status, duration_ms, result_summary)
+  INSERT INTO public.cron_heartbeat (job_name, started_at, completed_at, status, duration_ms, result_summary)
   VALUES (
     'compute-llm-daily-cost-30min', hb_started, NOW(), 'succeeded',
     EXTRACT(EPOCH FROM (NOW() - hb_started)) * 1000,
