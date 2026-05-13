@@ -176,6 +176,25 @@ Deno.serve(async (req) => {
         );
       }
 
+      // F-006 (2026-05-13): Symmetric guard — block PRODUCTION signals
+      // (is_test=false, no benchmark_run_id) from landing on INACTIVE
+      // sandbox clients. Audit found 4 real CCCS advisories on
+      // _qa_test_client + _benchmark_petronas in May 2026; they should
+      // have gone to Petronas Canada. Counterpart to the is_test guard
+      // above — closes the bidirectional leak.
+      const isBenchmarkRun = !!(rawBody?.benchmark_run_id) || !!(raw_json?.benchmark_run_id);
+      if (is_test !== true && !isBenchmarkRun && clientCheck.status !== 'active') {
+        console.error(`⚠ PRODUCTION SIGNAL BLOCKED: client ${clientCheck.name} status=${clientCheck.status} — only test/benchmark signals allowed on non-active clients`);
+        return new Response(
+          JSON.stringify({
+            status: 'rejected',
+            reason: 'production_signal_inactive_client',
+            detail: `Client ${clientCheck.name} status='${clientCheck.status}'. Production signals must target an active client. Use is_test=true or set benchmark_run_id for sandbox traffic.`,
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       validatedExplicitClientId = clientCheck.id;
       console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id}) status=${clientCheck.status}`);
     }
@@ -1345,11 +1364,20 @@ Score this signal's relevance and classify the connection.`
           if (gateScore < relevanceThreshold) {
             console.log(`[AI Relevance Gate] REJECTED (score ${gateScore.toFixed(2)}): ${gateReason}`);
 
-            // Audit trail — write to filtered_signals
+            // Audit trail — write to filtered_signals.
+            // F-004 (2026-05-13): source_name must NEVER be null. Audit found
+            // 19% of rejections had null source_name making cross-source
+            // debugging impossible. Use a 3-step fallback before defaulting
+            // to a labeled 'unknown:<caller>' marker.
+            const resolvedSourceName = source_key
+              || signalRaw?.source_name
+              || signalRaw?.source
+              || signalRaw?.monitor
+              || `unknown:ingest-signal:relevance-gate`;
             supabase.from('filtered_signals').insert({
               raw_text: (classification.normalized_text || signalText).substring(0, 2000),
               source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
-              source_name: source_key || signalRaw?.source_name || null,
+              source_name: resolvedSourceName,
               client_id: clientId,
               filter_reason: 'ai_relevance_gate',
               relevance_score: gateScore,
@@ -1401,10 +1429,16 @@ Score this signal's relevance and classify the connection.`
           // OpenAI 429s caused gate failures; monitor-news-google scanned
           // 49 items and created 0 signals, with filtered_signals empty —
           // operators saw symptoms but no diagnostic trail).
+          // F-004: source_name fallback chain — never null
+          const resolvedSourceName2 = source_key
+            || signalRaw?.source_name
+            || signalRaw?.source
+            || signalRaw?.monitor
+            || `unknown:ingest-signal:gate-error`;
           supabase.from('filtered_signals').insert({
             raw_text: signalText.substring(0, 2000),
             source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
-            source_name: source_key || signalRaw?.source_name || null,
+            source_name: resolvedSourceName2,
             client_id: clientId,
             filter_reason: 'ai_relevance_gate_error',
             relevance_score: null,

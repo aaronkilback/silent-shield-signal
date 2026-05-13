@@ -45,15 +45,17 @@ Deno.serve(async (req) => {
       ? routedAgents.slice(0, 3).map((a) => a.call_sign)
       : ['ORACLE', 'INSIDE-EYE', 'GUARDIAN'];
 
-    // 2. Resolve call_signs → UUIDs (agent-chat requires agent_id as UUID)
+    // 2. Resolve call_signs → UUIDs (agent-chat requires agent_id as UUID).
+    // F-018: filter is_active so deactivated specialists never dispatched.
     const { data: agentRows } = await supabase
       .from('ai_agents')
       .select('id, call_sign')
-      .in('call_sign', callSigns);
+      .in('call_sign', callSigns)
+      .eq('is_active', true);
 
     if (!agentRows || agentRows.length === 0) {
-      console.warn('[speculative-dispatch] No agents resolved for call_signs:', callSigns);
-      return errorResponse('No matching agents found', 404);
+      console.warn('[speculative-dispatch] No ACTIVE agents resolved for call_signs:', callSigns);
+      return errorResponse('No matching active agents found', 404);
     }
 
     const userMessage =

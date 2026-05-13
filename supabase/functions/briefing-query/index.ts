@@ -155,8 +155,9 @@ PREVIOUS ANSWER: ${parentQuery.ai_response || parentQuery.human_response || "No 
   if (target_agent_id) {
     const { data: agent } = await supabase
       .from("ai_agents")
-      .select("codename, call_sign, specialty, persona, system_prompt")
+      .select("codename, call_sign, specialty, persona, system_prompt, is_active")
       .eq("id", target_agent_id)
+      .eq("is_active", true)
       .single();
     
     if (agent) {
@@ -397,13 +398,15 @@ async function handleAgentFollowup(
     askingAgent = data;
   }
 
-  // Get target agent details
+  // Get target agent details. F-018: filter by is_active so deactivated
+  // agents can't be invoked even via direct briefing-query.
   let targetAgent: any = null;
   if (target_agent_id) {
     const { data } = await supabase
       .from("ai_agents")
-      .select("id, codename, call_sign, specialty, persona, system_prompt")
+      .select("id, codename, call_sign, specialty, persona, system_prompt, is_active")
       .eq("id", target_agent_id)
+      .eq("is_active", true)
       .single();
     targetAgent = data;
   }

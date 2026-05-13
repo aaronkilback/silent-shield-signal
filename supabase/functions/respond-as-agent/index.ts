@@ -158,14 +158,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Agent metadata
+    // Agent metadata. F-018 (2026-05-13): filter by is_active so deactivated
+    // agents cannot be dispatched even via direct ID lookup. Scout (deactivated
+    // 2026-05-10) fired twice afterward through some path that bypassed the
+    // flag — this is the most likely entry point.
     const { data: agent, error: agentErr } = await admin
       .from("ai_agents")
-      .select("id, call_sign, codename, persona, specialty, mission_scope, system_prompt")
+      .select("id, call_sign, codename, persona, specialty, mission_scope, system_prompt, is_active")
       .eq("id", targetAgentId)
+      .eq("is_active", true)
       .maybeSingle();
     if (agentErr || !agent) {
-      return new Response(JSON.stringify({ error: "agent not found" }), {
+      return new Response(JSON.stringify({ error: "agent not found or not active" }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
