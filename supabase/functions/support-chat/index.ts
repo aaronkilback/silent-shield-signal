@@ -264,14 +264,36 @@ The user seems to be reporting an issue. Ask clarifying questions about:
       }
     }
 
-    // Fetch knowledge base
-    const { data: kbArticles } = await supabase
-      .from('knowledge_base_articles')
-      .select('title, summary, tags')
-      .eq('is_published', true)
-      .limit(30);
+    // Fetch knowledge base. Core articles (tag='core') always come first
+    // so the seeded platform documentation is never dropped when the KB
+    // grows past 30 entries. Falls back to other published articles for
+    // the rest of the 30-row budget.
+    const [{ data: coreArticles }, { data: otherArticles }] = await Promise.all([
+      supabase
+        .from('knowledge_base_articles')
+        .select('title, summary, tags')
+        .eq('is_published', true)
+        .contains('tags', ['core'])
+        .order('created_at', { ascending: false })
+        .limit(20),
+      supabase
+        .from('knowledge_base_articles')
+        .select('title, summary, tags')
+        .eq('is_published', true)
+        .order('view_count', { ascending: false })
+        .limit(20),
+    ]);
 
-    const kbContext = kbArticles?.map(article =>
+    const seenTitles = new Set<string>();
+    const kbCombined: any[] = [];
+    for (const a of [...(coreArticles || []), ...(otherArticles || [])]) {
+      if (seenTitles.has(a.title)) continue;
+      seenTitles.add(a.title);
+      kbCombined.push(a);
+      if (kbCombined.length >= 30) break;
+    }
+
+    const kbContext = kbCombined.map(article =>
       `## ${article.title}\n${article.summary}`
     ).join('\n\n') || '';
 
