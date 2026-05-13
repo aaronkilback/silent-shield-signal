@@ -1,6 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { extractOGImage } from "../_shared/og-image.ts";
-import { recordHeartbeat } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 import { cleanSignalExcerpt } from "../_shared/signal-text.ts";
 
 // A truncated headline ending in a stray initial — "for the B.",
@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
     // function actually firing every hour — heartbeat was the missing
     // signal. Writing 'running' here gives operators visibility even if
     // the run gets cut short.
-    await recordHeartbeat(supabase, 'monitor-news-google-hourly', 'running', { phase: 'started' });
+    const hb = await startHeartbeat(supabase, 'monitor-news-google-hourly');
 
     if (!googleApiKey || !googleEngineId) {
       console.warn('Google Search API not configured - using fallback RSS method');
@@ -425,6 +425,20 @@ Deno.serve(async (req) => {
           console.error(`Error processing query "${query}":`, queryError);
         }
       }
+
+      // Progress checkpoint: write incremental counts after each client.
+      // The function frequently exceeds the 150s edge runtime limit and
+      // gets killed before reaching the final completeHeartbeat at line
+      // 447. Without this checkpoint the heartbeat row stays in 'running'
+      // state with signals_created=0 even though signals are real (see
+      // watchdog finding 2026-05-13 — "DB has 267 signals, heartbeat
+      // reports 0"). Writing progress per-client keeps the row in sync
+      // with reality up to the last completed client.
+      if (hb.id) {
+        await supabase.from('cron_heartbeat')
+          .update({ result_summary: { items_scanned: itemsScanned, signals_created: signalsCreated, phase: 'in_progress' } })
+          .eq('id', hb.id);
+      }
     }
 
     // Update monitoring history
@@ -443,8 +457,9 @@ Deno.serve(async (req) => {
       })
       .eq('id', historyEntry?.id);
 
-    // Heartbeat
-  await recordHeartbeat(supabase, 'monitor-news-google-hourly', 'completed', { items_scanned: itemsScanned, signals_created: signalsCreated });
+    // Heartbeat — updates the row started at top of function so signals_created
+    // reflects real yield (not stuck at 0 from the initial 'running' write).
+    await completeHeartbeat(supabase, hb, { items_scanned: itemsScanned, signals_created: signalsCreated });
 
   console.log(`Google News monitoring complete. Scanned ${itemsScanned} items, created ${signalsCreated} signals.`);
 
