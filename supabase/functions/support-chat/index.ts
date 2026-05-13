@@ -326,21 +326,56 @@ The user seems to be reporting an issue. Ask clarifying questions about:
 
     // 1b. SIG-XXXXXXXX UI display format (first 8 hex chars of signals.id)
     //     PostgREST can't ilike a uuid column, so fetch a recent window and
-    //     match the prefix client-side. The UI display is always recent.
+    //     match the prefix client-side. Falls back to filtered_signals if
+    //     the AI gate rejected it.
     if (matchedSigs.length === 0 && sigUuidPrefixes.length > 0) {
       lookupAttempted = 'sig_uuid_prefix';
-      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const { data: sigs } = await supabase
+      const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: sigs, error: sigErr } = await supabase
         .from('signals')
         .select(SIG_COLS)
         .gte('created_at', since)
         .order('created_at', { ascending: false })
-        .limit(2000);
+        .limit(5000);
+      console.log('[support-chat] sig_uuid_prefix lookup', {
+        prefixes: sigUuidPrefixes,
+        rowsFetched: sigs?.length || 0,
+        error: sigErr?.message,
+      });
       if (sigs) {
         const matched = (sigs as any[]).filter((s) =>
           sigUuidPrefixes.some((p: string) => String(s.id).toLowerCase().startsWith(p))
         ).slice(0, 5);
         matchedSigs.push(...matched);
+        console.log('[support-chat] sig_uuid_prefix matched', { count: matched.length, ids: matched.map((m: any) => m.id) });
+      }
+
+      // Fallback to filtered_signals if the AI gate rejected this signal
+      if (matchedSigs.length === 0) {
+        const { data: filtered } = await supabase
+          .from('filtered_signals')
+          .select('id, title, normalized_text, source_url, created_at, filter_reason, relevance_score, raw_json')
+          .gte('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(5000);
+        if (filtered) {
+          const matchedFiltered = (filtered as any[]).filter((s) =>
+            sigUuidPrefixes.some((p: string) => String(s.id).toLowerCase().startsWith(p))
+          ).slice(0, 3);
+          if (matchedFiltered.length > 0) {
+            liveContext += '\n\n## FILTERED SIGNAL MATCH (rejected by AI relevance gate)\n';
+            for (const f of matchedFiltered) {
+              liveContext += `\n### ${String(f.id).slice(0, 8)} — ${(f.title || '').slice(0, 100)}\n`;
+              liveContext += `- filter_reason: ${f.filter_reason || '(unknown)'}\n`;
+              liveContext += `- relevance_score: ${f.relevance_score}\n`;
+              liveContext += `- created: ${f.created_at}\n`;
+              liveContext += `- source_url: ${f.source_url || '(none)'}\n`;
+              liveContext += `- body (truncated): ${(f.normalized_text || '').slice(0, 400)}\n`;
+            }
+            liveContext += '\nTell the user this signal was REJECTED by the AI relevance gate (lives in filtered_signals, not the live feed). Cite the filter_reason and relevance_score.\n';
+            lookupAttempted = null; // suppress the NO MATCH block below since we did find context
+          }
+        }
       }
     }
 
@@ -354,6 +389,7 @@ The user seems to be reporting an issue. Ask clarifying questions about:
           .select(SIG_COLS)
           .ilike('source_url', `${u}%`)
           .limit(3);
+        console.log('[support-chat] url lookup', { url: u, rows: sigs?.length || 0 });
         if (sigs) matchedSigs.push(...sigs);
       }
     }
