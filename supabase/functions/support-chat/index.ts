@@ -281,8 +281,18 @@ The user seems to be reporting an issue. Ask clarifying questions about:
     })();
 
     // Three lookup strategies in priority order: signal ID → URL → title prefix
+    // Two ID formats:
+    //   - signal_number form: SIG-2026-001543 (database canonical)
+    //   - UUID-prefix form: SIG-b4e5df91 (what the awaiting-review UI shows)
     const sigNumbers = Array.from(new Set((lastUserText.match(/SIG-\d{4}-\d{6}/gi) || []).map((s: string) => s.toUpperCase())));
-    const urlMatches = Array.from(new Set(lastUserText.match(/https?:\/\/[^\s<>"\)\]]+/g) || [])).slice(0, 3);
+    const sigUuidPrefixes = Array.from(new Set(
+      (lastUserText.match(/SIG-[a-f0-9]{8}\b/gi) || []).map((s: string) => s.slice(4).toLowerCase())
+    ));
+
+    // URL detection: capture full URL but also strip query params for
+    // prefix matching, since stored source_url may differ in query strings.
+    const urlFull = Array.from(new Set(lastUserText.match(/https?:\/\/[^\s<>"\)\]]+/g) || [])).slice(0, 3);
+    const urlPrefixes = urlFull.map((u: string) => u.split('?')[0].split('#')[0]).filter((u: string) => u.length > 12);
 
     const formatSig = (s: any) => {
       let block = `\n### ${s.signal_number} — ${(s.title || '').slice(0, 100)}\n`;
@@ -297,30 +307,61 @@ The user seems to be reporting an issue. Ask clarifying questions about:
     };
 
     let matchedSigs: any[] = [];
-    let lookupAttempted: 'sig_number' | 'url' | 'title_prefix' | null = null;
+    let lookupAttempted: 'sig_number' | 'sig_uuid_prefix' | 'url' | 'title_prefix' | null = null;
+    const SIG_COLS = 'id, signal_number, title, normalized_text, severity, category, relevance_score, confidence, source_url, created_at, event_date, client_id, raw_json, clients(name)';
+    const dedupeIds = (arr: any[]) => {
+      const seen = new Set<string>();
+      return arr.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
+    };
 
-    // 1. SIG-YYYY-NNNNNN pattern
+    // 1. SIG-YYYY-NNNNNN canonical signal_number
     if (sigNumbers.length > 0) {
       lookupAttempted = 'sig_number';
       const { data: sigs } = await supabase
         .from('signals')
-        .select('id, signal_number, title, normalized_text, severity, category, relevance_score, confidence, source_url, created_at, event_date, client_id, raw_json, clients(name)')
+        .select(SIG_COLS)
         .in('signal_number', sigNumbers.slice(0, 3));
-      if (sigs) matchedSigs = sigs;
+      if (sigs) matchedSigs.push(...sigs);
     }
 
-    // 2. URL pattern — only if no signal matched by ID
-    if (matchedSigs.length === 0 && urlMatches.length > 0) {
-      lookupAttempted = 'url';
+    // 1b. SIG-XXXXXXXX UI display format (first 8 hex chars of signals.id)
+    //     PostgREST can't ilike a uuid column, so fetch a recent window and
+    //     match the prefix client-side. The UI display is always recent.
+    if (matchedSigs.length === 0 && sigUuidPrefixes.length > 0) {
+      lookupAttempted = 'sig_uuid_prefix';
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const { data: sigs } = await supabase
         .from('signals')
-        .select('id, signal_number, title, normalized_text, severity, category, relevance_score, confidence, source_url, created_at, event_date, client_id, raw_json, clients(name)')
-        .in('source_url', urlMatches);
-      if (sigs) matchedSigs = sigs;
+        .select(SIG_COLS)
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(2000);
+      if (sigs) {
+        const matched = (sigs as any[]).filter((s) =>
+          sigUuidPrefixes.some((p: string) => String(s.id).toLowerCase().startsWith(p))
+        ).slice(0, 5);
+        matchedSigs.push(...matched);
+      }
     }
 
+    // 2. URL — match by prefix (everything before ? or #) since stored URLs
+    //    may have different query params than what the user pasted.
+    if (matchedSigs.length === 0 && urlPrefixes.length > 0) {
+      lookupAttempted = 'url';
+      for (const u of urlPrefixes.slice(0, 3)) {
+        const { data: sigs } = await supabase
+          .from('signals')
+          .select(SIG_COLS)
+          .ilike('source_url', `${u}%`)
+          .limit(3);
+        if (sigs) matchedSigs.push(...sigs);
+      }
+    }
+
+    matchedSigs = dedupeIds(matchedSigs);
+
     // 3. Title prefix — fall back to first 40 chars of the user message
-    if (matchedSigs.length === 0 && sigNumbers.length === 0 && urlMatches.length === 0 && lastUserText.length >= 15) {
+    if (matchedSigs.length === 0 && sigNumbers.length === 0 && sigUuidPrefixes.length === 0 && urlPrefixes.length === 0 && lastUserText.length >= 15) {
       lookupAttempted = 'title_prefix';
       // Strip leading question prefixes that aren't part of a real title
       const prefixStripped = lastUserText
@@ -330,7 +371,7 @@ The user seems to be reporting an issue. Ask clarifying questions about:
       if (titleGuess.length >= 10) {
         const { data: sigs } = await supabase
           .from('signals')
-          .select('id, signal_number, title, normalized_text, severity, category, relevance_score, confidence, source_url, created_at, event_date, client_id, raw_json, clients(name)')
+          .select(SIG_COLS)
           .ilike('title', `%${titleGuess}%`)
           .order('created_at', { ascending: false })
           .limit(3);
