@@ -46,6 +46,7 @@ const cleanSignalText = (text: string): string => {
 
 interface Signal {
   id: string;
+  signal_number?: string | null;
   status: string;
   severity: string;
   category: string;
@@ -207,6 +208,7 @@ export const SignalHistory = () => {
         .from('signals')
         .select(`
           id,
+          signal_number,
           status,
           severity,
           category,
