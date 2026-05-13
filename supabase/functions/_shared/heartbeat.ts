@@ -142,3 +142,4 @@ export async function recordHeartbeat(
     console.error(`[heartbeat] recordHeartbeat failed for ${jobName}:`, e);
   }
 }
+// Trigger staging deploy 2026-05-13 — touches _shared so deploy-functions-staging.yml redeploys all functions
