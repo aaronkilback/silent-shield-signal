@@ -224,12 +224,78 @@ function getProviderConfig(model: string): ProviderConfig {
   };
 }
 
+// ────────────────────────────────────────────────────────────
+// F-016 budget cap — module-level cache to avoid per-call DB round-trip.
+// Refreshes every 5 min from llm_daily_cost + llm_budget_caps.
+// 5-min staleness is fine for a budget cap — if we briefly let a few
+// extra calls through after a spike, that's an acceptable miss vs the
+// alternative of querying the DB on every single LLM invocation.
+// ────────────────────────────────────────────────────────────
+const BUDGET_CACHE_TTL_MS = 5 * 60 * 1000;
+let _budgetCache: { hardCapUsd: number; spentToday: number; refreshedAt: number } | null = null;
+
+async function isBudgetOk(supabase: any): Promise<{ ok: boolean; spent: number; cap: number }> {
+  const now = Date.now();
+  if (!_budgetCache || now - _budgetCache.refreshedAt > BUDGET_CACHE_TTL_MS) {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: spendRow } = await supabase
+        .from('llm_daily_cost')
+        .select('est_usd')
+        .eq('day', today).eq('scope', 'global')
+        .is('function_name', null).is('ai_model', null)
+        .maybeSingle();
+      const { data: capRow } = await supabase
+        .from('llm_budget_caps')
+        .select('daily_usd_hard_cap')
+        .eq('scope', 'global')
+        .maybeSingle();
+      _budgetCache = {
+        hardCapUsd: Number(capRow?.daily_usd_hard_cap ?? 200),
+        spentToday: Number(spendRow?.est_usd ?? 0),
+        refreshedAt: now,
+      };
+    } catch {
+      // If we can't read the budget, fail open (don't starve real traffic
+      // because of a DB hiccup). The cron job will catch the alert.
+      _budgetCache = { hardCapUsd: 9999, spentToday: 0, refreshedAt: now };
+    }
+  }
+  return {
+    ok: _budgetCache.spentToday < _budgetCache.hardCapUsd,
+    spent: _budgetCache.spentToday,
+    cap: _budgetCache.hardCapUsd,
+  };
+}
+
 /**
  * Call the AI provider directly with full resilience stack + anti-hallucination guardrails.
  * Returns { content, raw, error, circuitOpen, hallucinationWarnings } — never throws.
  */
 export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewayResponse> {
   const provider = getProviderConfig(request.model);
+
+  // Budget cap: hard-fail if today's spend exceeds the global cap. Cached
+  // 5 min to avoid DB round-trip on every call. Skipped if disabled via env.
+  if (Deno.env.get('LLM_BUDGET_CAP_ENABLED') !== 'false') {
+    try {
+      const supabaseForBudget = createServiceClient();
+      const budget = await isBudgetOk(supabaseForBudget);
+      if (!budget.ok) {
+        console.warn(`[ai-gateway] LLM_BUDGET_EXCEEDED for ${request.functionName} — spent=$${budget.spent}, cap=$${budget.cap}`);
+        return {
+          content: null,
+          raw: null,
+          error: `LLM_BUDGET_EXCEEDED (spent=$${budget.spent}/$${budget.cap} today)`,
+          circuitOpen: true,
+          hallucinationWarnings: [],
+        };
+      }
+    } catch {
+      // Fail open if budget check itself errors
+    }
+  }
+
   // Provider for telemetry: derive from URL since the keyName has historical drift
   const aiProvider: 'openai' | 'gemini' | 'perplexity' =
     provider.url.includes('googleapis.com') ? 'gemini' :
