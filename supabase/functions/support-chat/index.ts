@@ -37,7 +37,7 @@ function detectBugReport(messages: any[]): boolean {
 async function extractBugDetails(messages: any[]): Promise<BugReport | null> {
   try {
     const result = await callAiGateway({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -216,7 +216,7 @@ Deno.serve(async (req) => {
 
     if (isSimpleAcknowledgment(messages)) {
       const ackResult = await callAiGatewayStream({
-        model: "gemini-2.5-flash",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -496,7 +496,7 @@ Tone: professional, direct, friendly. Like a senior SRE who knows the
 system inside out and wants to help the user understand it.`;
 
     const streamResult = await callAiGatewayStream({
-      model: "gemini-2.5-flash",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         ...messages.slice(-20),
