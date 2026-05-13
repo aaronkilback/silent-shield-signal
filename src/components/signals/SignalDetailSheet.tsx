@@ -8,6 +8,7 @@ import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, 
 import { AskAegisButton } from "@/components/AskAegisButton";
 import { SignalManualOverride } from "./SignalManualOverride";
 import { formatSignalRef } from "@/lib/signal-ref";
+import { CopyableSignalRef } from "@/components/signals/CopyableSignalRef";
 import { format, differenceInDays } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
@@ -198,17 +199,7 @@ export function SignalDetailSheet({
             <div>
               <SheetTitle className="flex items-center gap-2">
                 <span>Signal Details</span>
-                <button
-                  type="button"
-                  className="text-[11px] font-mono px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition-colors"
-                  title="Click to copy — quote this in chat with AEGIS"
-                  onClick={() => {
-                    const ref = formatSignalRef(signal);
-                    navigator.clipboard?.writeText(ref);
-                  }}
-                >
-                  {formatSignalRef(signal)}
-                </button>
+                <CopyableSignalRef signal={signal} />
               </SheetTitle>
               <SheetDescription>
                 Review the signal details and decide how to handle it

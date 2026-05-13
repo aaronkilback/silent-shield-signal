@@ -8,6 +8,7 @@ import { SignalUpdatesTimeline } from "@/components/signals/SignalUpdatesTimelin
 import { SignalReasoningPanel } from "@/components/signals/SignalReasoningPanel";
 import { ArcGISExperienceLink } from "@/components/signals/ArcGISExperienceLink";
 import { formatSignalRef } from "@/lib/signal-ref";
+import { CopyableSignalRef } from "@/components/signals/CopyableSignalRef";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "@/components/signals/FacebookVideoEmbed";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useEffect } from "react";
@@ -351,17 +352,7 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         <div className="px-6 pt-5 pb-4 border-b shrink-0">
           {/* Row 1: SIG-ID + severity + category + status select */}
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              className="text-[11px] font-mono px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 transition-colors"
-              title="Click to copy — paste into AEGIS chat to run analyses"
-              onClick={() => {
-                const ref = formatSignalRef(signal);
-                navigator.clipboard?.writeText(ref);
-              }}
-            >
-              {formatSignalRef(signal)}
-            </button>
+            <CopyableSignalRef signal={signal} />
             <Badge variant={getSeverityColor(signal.severity) as any}>
               {signal.severity?.toUpperCase()}
             </Badge>
