@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 import { 
   extractMediaUrls, 
   downloadAndStoreMedia, 
@@ -45,9 +46,10 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
-  try {
-    const supabase = createServiceClient();
+  const supabase = createServiceClient();
+  const hb = await startHeartbeat(supabase, 'monitor-instagram-2h');
 
+  try {
     console.log('Starting Instagram monitoring scan...');
 
     // Fetch clients with their monitoring keywords
@@ -159,6 +161,14 @@ Deno.serve(async (req) => {
 
     console.log(`Instagram monitoring complete. Ran ${totalSearches} searches. Created ${signalsCreated} signals. Downloaded ${mediaDownloaded} media files.`);
 
+    await completeHeartbeat(supabase, hb, {
+      clients_scanned: clients?.length || 0,
+      entities_scanned: watchedEntities?.length || 0,
+      searches_executed: totalSearches,
+      signals_created: signalsCreated,
+      media_downloaded: mediaDownloaded,
+    });
+
     return successResponse({
       success: true,
       clients_scanned: clients?.length || 0,
@@ -171,6 +181,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Error in Instagram monitoring:', error);
+    await failHeartbeat(supabase, hb, error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
