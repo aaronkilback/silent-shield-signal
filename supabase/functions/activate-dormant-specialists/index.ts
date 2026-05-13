@@ -179,8 +179,16 @@ Deno.serve(async (req) => {
           `Acknowledge if it isn't operationally actionable for your lane — saying "no direct nexus" with one-sentence reasoning is a valid output.\n\n` +
           `END YOUR RESPONSE WITH A LINE EXACTLY IN THIS FORMAT:\n` +
           `CONFIDENCE: 0.X\n` +
-          `where 0.X is your probability estimate (0.0–1.0) that this signal will resolve as a real, actionable threat for the client. ` +
-          `Without this line your analysis cannot be graded by calibration — your confidence is the input the learning loop uses to improve you.`;
+          `where 0.X is your probability estimate (0.0–1.0) that this signal will resolve as a real, actionable threat for the client.\n\n` +
+          `IMPORTANT — choose a meaningful value:\n` +
+          `  0.5 = genuinely uncertain, could go either way\n` +
+          `  0.1 = probably not actionable, but not impossible\n` +
+          `  0.3 = leans not-actionable but watchable\n` +
+          `  0.7 = leans actionable — worth analyst attention\n` +
+          `  0.9 = very likely real and worth acting on\n` +
+          `DO NOT output CONFIDENCE: 0 — that's the "I refuse to answer" value. If your assessment is "no nexus to my lane",\n` +
+          `say so in the body and still output CONFIDENCE: 0.1 (low but not refusing).\n` +
+          `Without a meaningful 0.0–1.0 value your analysis cannot be graded by calibration. Your confidence is the input the learning loop uses to improve you.`;
 
         const resp = await supabase.functions.invoke("agent-chat", {
           body: {

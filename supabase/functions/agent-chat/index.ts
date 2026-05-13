@@ -1604,11 +1604,32 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
       return result.raw;
     };
 
-    // Non-streaming JSON path for internal callers (e.g. speculative-dispatch)
+    // Non-streaming JSON path for internal callers (e.g. speculative-dispatch).
+    // F-009 (2026-05-13): parse the trailing `CONFIDENCE: 0.X` line from the
+    // LLM output. Internal callers (speculative-dispatch, briefing-query,
+    // multi-agent-debate) expect responseData.confidence to be the parsed
+    // probability. Without this parse step the field is always undefined →
+    // signal_agent_analyses.confidence_score gets stored as null/0 →
+    // calibration loop runs on poisoned data (88% null/zero across 7 days
+    // of analyses per audit F-009).
     if (body.stream === false) {
       const raw = await makeAICall(messages, false);
       const content = raw?.choices?.[0]?.message?.content || '';
-      return new Response(JSON.stringify({ response: content }), {
+      // Parse trailing CONFIDENCE line. Tolerates whitespace, markdown
+      // bolding, and 0-100% percent shorthand.
+      let confidence: number | null = null;
+      const m = content.match(/CONFIDENCE\s*[:=]?\s*\**\s*(0?\.\d+|[01](?:\.0+)?|\d{1,3})\s*%?\s*$/im);
+      if (m) {
+        let v = parseFloat(m[1]);
+        if (Number.isFinite(v)) {
+          if (v > 1) v = v / 100; // accept "85" -> 0.85
+          if (v >= 0 && v <= 1) confidence = Math.round(v * 1000) / 1000;
+        }
+      }
+      // Strip the CONFIDENCE: line from the user-visible response so it
+      // doesn't appear as plain text in briefs/incidents.
+      const responseText = content.replace(/\n*CONFIDENCE\s*[:=]?\s*\**\s*(0?\.\d+|[01](?:\.0+)?|\d{1,3})\s*%?\s*$/im, '').trim();
+      return new Response(JSON.stringify({ response: responseText, confidence }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
