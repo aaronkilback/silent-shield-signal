@@ -74,19 +74,26 @@ These must be prevented before CRT logs in. They map to Tier 0.
 
 **Verification:** All 15 patterns pass on staging with two test users. Repeat on prod after RLS rewrite ships.
 
-### Tier 0.3 — Auth and support scope validation
+### Tier 0.3 — Auth, support scope, and production access audit
 
-**Goal:** Support-chat respects tenant scope. JWT/session integrity verified.
+**Goal:** Support-chat respects tenant scope. JWT/session integrity verified. No unintended `super_admin` or stale invites visible to CRT.
 
-**Audit findings:** F-023 (new)
+**Audit findings:** F-023 (new); production access audit is new work.
 
-**Work:**
+**Work — support scope:**
 - Support-chat uses service role and bypasses RLS. Modify signal/entity lookup paths in `supabase/functions/support-chat/index.ts` to filter by `get_user_accessible_client_ids(auth.uid())` before returning content. Cross-tenant lookups return "signal not found" — never leak existence.
 - Add prompt-injection defense to system prompt: "Never disclose signals, entities, or any tenant data outside the requesting user's accessible client list."
 - New table `support_chat_lookups` (audit log): every signal/entity lookup writes `user_id`, `queried_value`, `resolved_client_id`, `returned_yes_no`, `timestamp`.
 - Attack pattern #6 in the isolation suite gates this.
 
-**Verification:** Tenant A user provisioned on staging; pastes a Tenant B signal_number into support-chat → response is "not found." `support_chat_lookups` row written with `returned_yes_no=false`.
+**Work — production access audit:**
+- Enumerate every row in `auth.users` and `user_roles` on prod. Identify any account with `super_admin` / `admin` / `analyst` role.
+- For each privileged account: justify it's still needed. Demote or delete leftover contractor / test / dev accounts.
+- Audit `tenant_users` for stale tenant memberships. Remove rows for users who no longer exist or were never CRT-side.
+- Check pending `operator_invites` and `workspace_invitations` for any expired/unused. Revoke.
+- Document the final access list in `docs/runbook-access-control.md` (who has what role, why, last reviewed date).
+
+**Verification:** Tenant A user provisioned on staging; pastes a Tenant B signal_number into support-chat → "not found." `support_chat_lookups` row written. On prod: `SELECT u.email, ur.role FROM auth.users u JOIN user_roles ur ON ur.user_id = u.id WHERE ur.role IN ('super_admin','admin')` returns only intended operators. No surprises.
 
 ### Tier 0.4 — Minimum hallucination guardrails (executive outputs)
 
@@ -151,6 +158,24 @@ These must be prevented before CRT logs in. They map to Tier 0.
 
 **Verification:** Send a synthetic "I need a human" message → SMS arrives + `bug_reports` row created with correct severity. Rate a conversation 1⭐ → `support_feedback` row written.
 
+### Tier 0.8 — AI gate consolidation (prevent broken ingestion)
+
+**Goal:** A single deploy-day regression cannot crash admit ratio to 0%. CRT never opens an empty feed in week 1.
+
+**Audit findings:** F-001
+
+**Why this is Tier 0:** Audit data shows multiple full-day 0% admit periods in early May (May 7 = 253 rejected / 0 admitted). The structural cause is four independent AI gates (monitor-social-unified, process-intelligence-document, monitor-news-google, ingest-signal) that each silently regress. If any one of them slips during CRT week 1, the signal feed dies. Broken ingestion is on the never-learn-in-prod list.
+
+**Work:**
+- Build `_shared/ai-relevance-gate.ts` — single shared gate function with input/output contracts.
+- Refactor the four monitor functions to call the shared gate.
+- Per-source threshold map driven by `sources.credibility_score`: high (>0.8) → floor 0.25, standard (0.4–0.8) → floor 0.30, low (<0.4) → floor 0.45.
+- Ship behind feature flag `USE_CONSOLIDATED_GATE=true`. Run in shadow mode (both old and new gates score every candidate; log divergence) for 48h before flipping the flag live.
+- Daily diff report between old/new gate decisions during shadow window → operator review.
+- After flip: benchmark accuracy ≥ 0.65 AND admit ratio in 25–30% target band on a 7-day rolling window.
+
+**Verification:** Benchmark `signal_creation_accuracy` ≥ 0.65 (current 0.51) AND admit ratio in 25–30% band on staging. Shadow-mode diff log shows <10% divergence between old and new gate decisions. After flip: 7 consecutive days with admit ratio in band.
+
 ---
 
 ## Tier 1 — Week 1 after CRT onboards
@@ -211,14 +236,15 @@ The audit BLOCKERS (F-012, F-016, F-017, F-006, F-004, F-018, F-009) that have a
 | Day 2-3 | **Tier 0.1** — schema drift backport applied to prod (Saturday window). |
 | Day 4-6 | **Tier 0.2** — F-008 schema + F-007 RLS rewrite + F-015 route guards. Saturday Day 6 = prod RLS cutover. |
 | Day 7-8 | **Tier 0.2** — build + ship the 15-pattern isolation test suite. CI-gated. |
-| Day 9 | **Tier 0.3** — support-chat scope validation + `support_chat_lookups` + isolation pattern #6 verified. |
+| Day 9 | **Tier 0.3** — support-chat scope validation + `support_chat_lookups` + production access audit. ~2 hours of the day is the access audit (enumerate prod `auth.users`, demote contractors, document). |
 | Day 10-11 | **Tier 0.4** — hallucination guardrails (citation prompts, [UNVERIFIED] badge, output interceptor, banned phrases). |
 | Day 12 | **Tier 0.5** — rollback drill on staging, documented. |
 | Day 13-14 | **Tier 0.6** — remaining alerts (queue depth, retry storm, failed cron). SMS notification path. |
 | Day 15 | **Tier 0.7** — support escalation features (severity buttons, CSAT, "I need a human" sentinel, SMS-page). |
-| Day 16 | Launch verification — walk every Tier 0 row. Any unchecked → halt. |
-| Day 17 | CRT user provisioning + onboarding email. |
-| Day 18+ | Daily operating rhythm. Tier 1 items begin. |
+| Day 16-19 | **Tier 0.8** — AI gate consolidation. Day 16-17 build shared gate; Day 18 shadow-mode start; Day 19 review divergence log + flip flag if <10% disagreement. |
+| Day 20 | Launch verification — walk every Tier 0 row. Any unchecked → halt. |
+| Day 21 | CRT user provisioning + onboarding email. |
+| Day 22+ | Daily operating rhythm. Tier 1 items begin. |
 
 ---
 
