@@ -70,6 +70,13 @@ Query: `SELECT counts FROM core tables` at 2026-05-13 ~17:35 UTC.
 | F-012 | BLOCKER | monitoring | Benchmark is NEVER auto-run on deploy. Regression detection is manual-only. `loop-diagnostics.yml` is workflow_dispatch (manual). No alert pipeline for critical platform_findings rows — they sit in DB until an operator notices. |
 | F-013 | SERIOUS | support-path | `bug_reports.user_id` exists but no `tenant_id`. CRT analyst files a bug → operator inbox shows it with no tenant attribution. Will collide when multiple tenants file similar bugs. |
 | F-014 | NICE | observability | Heartbeat counter drift on multiple monitors (see F-001 context — partially fixed today in commit b9ce0e31). Other monitors still untested for the same pattern. |
+| F-015 | BLOCKER | security / frontend | **`ProtectedRoute` has NO role-based access control.** Any authenticated user can navigate directly to `/super-admin`, `/user-management`, `/tenant-admin`, `/integrations`, `/rule-approvals`. CRT analyst URL-bars into operator pages. |
+| F-016 | SERIOUS | observability / cost | No LLM cost alerting or budget cap. Token usage trending up ($3/day early May → $17/day today). No alarm if a runaway loop 10x's the bill. |
+| F-017 | SERIOUS | security | LLM provider API keys (OpenAI, Gemini, Anthropic, Perplexity) untouched in 69+ days. No rotation cadence. No alert on stale keys. |
+| F-018 | SERIOUS | data-integrity | `is_active=false` on `ai_agents` is not enforced consistently — `Scout` (deactivated 2026-05-10) fired twice afterwards. Some routing path ignores the flag. |
+| F-019 | SERIOUS | data-integrity | 17 deactivated agents (not 6 as initially reported). Includes literal test agent `WATCH-ALPHA-2` with `specialty='test specialty'`, `persona='test persona'` still sitting in production table. |
+| F-020 | UNVERIFIED | DR / backup | Cannot confirm backup retention or PITR enablement via MCP. Needs operator verification in Supabase dashboard. No tested restore procedure documented in repo. |
+| F-021 | POSITIVE | ai-behavior | Agent system_prompts are high-quality. Sampled 7 active agents — all cite correct domain frameworks (CSIS Threat Assessment, RCMP INSET, CARVER, CFFDRS/FWI, OSFI/PIPEDA/NEB Act, NIST SP 800-161, MITRE ATT&CK, PTES, CPTED). This is NOT the source of the F-010/F-011 quality issues. |
 
 ---
 
@@ -654,12 +661,13 @@ CREATE TABLE bug_reports (
 
 1. **F-007 — Cross-tenant RLS leak.** Single biggest issue. Until the role-only and wildcard policies are dropped, CRT cannot be safely given any role. Largest fix (L) but highest impact.
 2. **F-008 — Tenant-sensitive tables without scoping columns.** Companion to F-007. Schema migration + RLS rewrite (L).
-3. **F-012 — Benchmark not in CI.** Smallest of the blockers (S). Prevents future regressions from being silent. **Do this first** — it shrinks the risk of every subsequent fix.
-4. **F-006 — Production signals leaking to inactive sandbox clients.** Easy fix (S) but data integrity precondition.
-5. **F-001 — AI gate admit ratio chronically low.** Today's tuning helped (16% → 28% on May 12) but still under target. M.
-6. **F-004 — Filtered_signals source_name still 19% null.** Observability requirement (S).
-7. **F-002 / F-005 — 12 active agents have never fired; dormancy loop dispatches 0.** Routing rewrite (M).
-8. **F-009 — Calibration loop poisoned by zero confidences.** Parser + prompt fix (M).
+3. **F-015 — Frontend ProtectedRoute has no role check.** Companion to F-007 — even if RLS is fixed, the UI lets analysts hit operator pages by URL. Fix this same window as F-007. Small fix (S) but security-relevant.
+4. **F-012 — Benchmark not in CI.** Smallest of the blockers (S). Prevents future regressions from being silent. **Do this first** — it shrinks the risk of every subsequent fix.
+5. **F-006 — Production signals leaking to inactive sandbox clients.** Easy fix (S) but data integrity precondition.
+6. **F-001 — AI gate admit ratio chronically low.** Today's tuning helped (16% → 28% on May 12) but still under target. M.
+7. **F-004 — Filtered_signals source_name still 19% null.** Observability requirement (S).
+8. **F-002 / F-005 — 12 active agents have never fired; dormancy loop dispatches 0.** Routing rewrite (M).
+9. **F-009 — Calibration loop poisoned by zero confidences.** Parser + prompt fix (M).
 
 **SERIOUS — fix soon after onboard:**
 
@@ -701,15 +709,254 @@ Until that bar is met, every CRT-visible regression is one curious analyst away 
 ### Things the audit did NOT cover (deferred or out of scope)
 
 - `aegis.silentshieldsecurity.com` frontend stability — deferred per operator instruction.
-- Performance / cost auditing of LLM token usage.
 - External API health (Twitter, Google CSE, NAAD). Heartbeats prove the calls fired; not that the upstream feeds are healthy.
-- Agent prompt content review for accuracy on energy/security domain knowledge.
-- Frontend route guards for `is_super_admin` vs analyst views.
-- Database backup / restore / DR procedures.
-- Secret rotation cadence beyond the JWT rotation completed May 9.
-- The 6 deactivated agents (status='inactive' but in `ai_agents` table) — why deactivated, are any still referenced?
 
-These remain open. None are CRT-blocking on their own but each deserves attention before scaling beyond CRT.
+These remain open. The deferred items from the first pass (LLM cost, prompt accuracy, route guards, DR, secret rotation, deactivated agents) are now covered as F-015 through F-021 in the second-pass section below.
+
+---
+
+# Second-pass investigation (deferred items)
+
+## F-015 — Frontend `ProtectedRoute` has NO role check
+
+**Severity:** BLOCKER (equal to F-007 — same security domain)
+**Category:** security / frontend
+**Discovered:** Phase 2-extension (second-pass)
+
+**Claim:** `src/components/ProtectedRoute.tsx` is **27 lines total** and contains exactly one access check: `if (!user) redirect to /auth`. It does **not** check role. Every protected route in `App.tsx` — including the most sensitive operator-only routes — wraps the page in just `<ProtectedRoute>`, no role parameter.
+
+**Evidence (code):**
+
+`src/components/ProtectedRoute.tsx`:
+```tsx
+export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user, loading } = useAuth();
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/auth" replace state={{ from: intended }} />;
+  return <>{children}</>;
+};
+```
+
+`src/App.tsx` route definitions (selected):
+```tsx
+<Route path="/super-admin" element={<ProtectedRoute><SuperAdminDashboard /></ProtectedRoute>} />
+<Route path="/tenant-admin" element={<ProtectedRoute><TenantAdmin /></ProtectedRoute>} />
+<Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+<Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
+<Route path="/rule-approvals" element={<ProtectedRoute><RuleApprovals /></ProtectedRoute>} />
+<Route path="/agents" element={<ProtectedRoute><Agents /></ProtectedRoute>} />
+<Route path="/agent-actions" element={<ProtectedRoute><AgentActions /></ProtectedRoute>} />
+<Route path="/bug-reports" element={<ProtectedRoute><BugReports /></ProtectedRoute>} />
+<Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+```
+
+When a CRT analyst logs in and gets `role=analyst`, they can paste `/super-admin` into the URL bar and the route renders. Whatever the underlying page does is the only defense — and Supabase RLS (already broken per F-007) is supposed to be that defense. The frontend itself does not gate.
+
+**Why this is a BLOCKER for CRT:**
+The `/super-admin` page shows operator-only telemetry. `/user-management` lets the user invite new users and set roles. `/integrations` configures API keys. `/rule-approvals` mutates rule thresholds. All currently reachable by any signed-in user via URL. Combined with F-007 (the RLS leak), the surface for a CRT analyst to discover and exploit is wide.
+
+**Fix scope:** S. Extend `ProtectedRoute` with `requireRole?: AppRole | AppRole[]` prop. Update App.tsx route definitions for sensitive routes. Pattern:
+```tsx
+<Route path="/super-admin" element={
+  <ProtectedRoute requireRole="super_admin"><SuperAdminDashboard /></ProtectedRoute>
+} />
+```
+
+---
+
+## F-016 — No LLM cost alerting or budget cap
+
+**Severity:** SERIOUS
+**Category:** observability / cost
+**Discovered:** Second-pass
+
+**Claim:** `function_telemetry` correctly records `tokens_in`, `tokens_out`, `ai_model` per call. The plumbing is there. **There is no cost-aggregation job, no daily/weekly cost summary, no alert when a function spikes, no budget cap.** A runaway loop or a buggy prompt that 10x's token consumption would only become visible after the LLM provider bill arrives.
+
+**Evidence (DB query — 14-day cost trend):**
+```sql
+-- Approximated using model pricing ($/1M tokens):
+--   gpt-4o-mini  in=$0.15 out=$0.60
+--   gpt-5.2      in=$3.00 out=$9.00
+--   gemini-2.5-flash in=$0.075 out=$0.30
+```
+
+| Day | Estimated USD | Tokens in | Tokens out |
+|---|---|---|---|
+| 2026-05-13 | $16.95 | 18.1M | 0.87M |
+| 2026-05-12 | $11.33 | 14.6M | 0.86M |
+| 2026-05-11 | $10.55 | 10.3M | 0.54M |
+| 2026-05-10 | $9.02 | 9.7M | 0.66M |
+| 2026-05-09 | $2.18 | 2.5M | 0.13M |
+| 2026-05-08 | $16.91 | 14.5M | 0.65M |
+| ...earlier days $2–6/day... | | | |
+| 2026-04-30 | $0.10 | minimal | (telemetry just starting) |
+
+Top spend by function (7 days):
+- `ingest-signal` gpt-4o-mini — 13,227 calls, 21.8M tokens in → ~$3.27/wk
+- `agent-chat` gpt-4o-mini — 1,043 calls, 18.6M tokens in (avg ~18K tokens/call — large context) → ~$2.79/wk
+- `ai-decision-engine:investigation` gpt-5.2 — 1,409 calls, 7.7M tokens → **~$23/wk** (most expensive line item)
+- `review-signal-agent:investigation` gpt-5.2 — 1,255 calls, 7.5M tokens → **~$22.50/wk**
+- `monitor-social-unified` gpt-4o-mini — 6,703 calls, 5.5M tokens
+
+**Rough monthly burn at current load: ~$300–450/mo.** Linear scaling with tenants → $1,500–2,500/mo at 5 paying tenants.
+
+**Why SERIOUS for CRT:**
+A regression in a tight loop (e.g. agent-chat sending its 18K-token context to every chat message in an infinite retry) would silently 10–50x the daily bill before the operator notices. The platform self-improves and self-tunes — those loops can easily go runaway.
+
+**Fix scope:** S-M.
+1. Daily cron: `compute-llm-daily-cost` summarizes `function_telemetry` into a small table.
+2. Alert if daily cost > $X (configurable per environment).
+3. Hard cap at $Y/day — if breached, switch all AI calls to a hard-fail path. Prevents bill blow-up.
+4. Cost-attribution by tenant (when F-007/F-008 land) so per-tenant invoicing is possible.
+
+---
+
+## F-017 — LLM provider API keys not rotated in 69+ days
+
+**Severity:** SERIOUS
+**Category:** security / secrets
+**Discovered:** Second-pass
+
+**Claim:** The four LLM provider keys in `vault.secrets` are 69 days old (unchanged since 2026-03-05). No rotation cadence, no alert.
+
+**Evidence:**
+```sql
+SELECT name, created_at, updated_at,
+  EXTRACT(EPOCH FROM (NOW() - updated_at))/86400 AS days_since_rotation
+FROM vault.secrets ORDER BY updated_at DESC;
+```
+
+```
+service_role_key    rotated 4 days ago (May 9 — per memory)
+SUPABASE_URL        13 days (URL, not a secret)
+ANTHROPIC_API_KEY   69 days   ← stale
+GEMINI_API_KEY      69 days   ← stale
+OPENAI_API_KEY      69 days   ← stale
+PERPLEXITY_API_KEY  69 days   ← stale
+```
+
+Standard security practice for production keys with elevated billing access is 90-day max rotation. These are within tolerance but rapidly approaching it. There's no automated tracking — if Aaron forgets, they'll silently stale-out.
+
+**Why SERIOUS:**
+Before onboarding CRT, secret hygiene needs to be visible/auditable. CRT-equivalent security teams will ask "when were the keys last rotated and how do you know?" The honest answer today is "we have to check the vault manually each time."
+
+**Fix scope:** S.
+1. Add a `secret_age_alert` view: `SELECT name, days_old FROM vault.secrets WHERE updated_at < NOW() - INTERVAL '60 days'`.
+2. Wire into watchdog: any row in that view → `platform_findings` entry with severity=`medium`.
+3. Document rotation procedure in `docs/runbook-secret-rotation.md`.
+
+---
+
+## F-018 — `is_active=false` on ai_agents not enforced consistently
+
+**Severity:** SERIOUS
+**Category:** data-integrity / agent-network
+**Discovered:** Second-pass
+
+**Claim:** Agent `Scout` (codename EMBER, wildfire specialty) was deactivated `2026-05-10 14:16:52`. **It then produced 2 `signal_agent_analyses` rows AFTER deactivation**, last on `2026-05-12 01:38:08`. Some dispatch path ignores the `is_active` flag.
+
+**Evidence:**
+```sql
+SELECT a.call_sign, a.is_active, a.updated_at AS deactivated_at,
+  (SELECT COUNT(*) FROM signal_agent_analyses WHERE agent_call_sign = a.call_sign AND created_at > a.updated_at) AS analyses_after_deactivation,
+  (SELECT MAX(created_at) FROM signal_agent_analyses WHERE agent_call_sign = a.call_sign) AS last_fired
+FROM ai_agents a WHERE a.is_active = false
+  AND EXISTS (SELECT 1 FROM signal_agent_analyses s WHERE s.agent_call_sign = a.call_sign AND s.created_at > a.updated_at);
+
+-- Result:
+-- Scout | false | 2026-05-10 14:16:52 | analyses_after_deactivation=2 | last_fired=2026-05-12 01:38
+```
+
+**Why SERIOUS:**
+The operator cannot reliably take an agent out of service. Deactivation is supposed to be an "off switch" — currently it's a "hint". For CRT tenancy, an analyst who deactivates a specialist (because they don't want that lens applied) must be able to trust it stays off. Multi-tenant context makes this worse: a deactivation in one tenant should scope to that tenant, but `is_active` is global today.
+
+**Fix scope:** S. Audit all agent-dispatch call sites for `is_active` filtering: `multi-agent-debate`, `agent-router`, `auto-trigger-debates`, `activate-dormant-specialists`, `review-signal-agent`. Find the path that ignores the flag and fix.
+
+---
+
+## F-019 — 17 deactivated agents (not 6), includes literal test agent
+
+**Severity:** SERIOUS
+**Category:** data-integrity
+**Discovered:** Second-pass (corrected from initial audit)
+
+**Claim:** The initial audit reported "6 deactivated agents" — wrong. Actual count is **17**, including:
+- **`WATCH-ALPHA-2`** (codename `Sentinel-2`) — `specialty='test specialty'`, `persona='test persona'`. Literal test row left in production.
+- **Codename collisions** (multiple agents per codename, one active + one deactivated):
+  - `VICODIN/House` (deactivated) ↔ `DR-HOUSE` (active)
+  - `0DAY/Wraith` ↔ `WRAITH`
+  - `ARGUS/The Sentinel` ↔ `THE-SENTINEL`
+  - `WARDEN/The Guardian` ↔ `GUARDIAN`
+  - `GLOBE-SAGE/Oracle` ↔ `ORACLE`
+  - `ECHO-ALPHA/Spartan` ↔ `JOCKO` (similar persona)
+- **Bulk-deactivated on 2026-05-10 14:16:52** — matches memory entry `project_agent_alignment_audit_pending.md` ("Fixed 7 broken prompts, 5 codename collisions, 6 deactivations.")
+- **6 client-facing agents are deactivated**: SIM-COMMAND, ECHO-ALPHA, GLOBE-SAGE, MERIDIAN (geopolitical), VERITAS (disinformation), SENT-CON (client onboarding — CRT-relevant!), 0DAY.
+
+**Why SERIOUS:**
+- `WATCH-ALPHA-2` test agent in production is a data-hygiene cleanup miss.
+- SENT-CON specifically — its purpose was "Client Onboarding, Task and Progress Tracking, Configuration Guidance, Platform Orientation" — exactly what CRT analysts will need on day one. It was deactivated April 25. Either someone needs to reactivate it, or there's a replacement (none obvious in the active set).
+
+**Fix scope:** S.
+1. DELETE `WATCH-ALPHA-2` row entirely. Verify no foreign keys point to it.
+2. Decide on SENT-CON: reactivate, or formally delete (and document the replacement).
+3. Audit the other 16 deactivated rows: archive vs. delete vs. reactivate decision per row.
+
+---
+
+## F-020 — Backup retention and PITR unverified
+
+**Severity:** UNVERIFIED (cannot confirm via MCP)
+**Category:** DR / backup
+**Discovered:** Second-pass
+
+**Claim:** The Supabase MCP `get_project` call returns project status, region, Postgres version (17.6.1.063) — but **does not expose backup retention, PITR enablement, or restore procedure**. The repo contains no DR runbook (`grep -rn 'backup\|restore\|disaster' docs/` returns nothing relevant).
+
+**Operator action required:**
+1. Open Supabase Dashboard → Project Settings → Database → Backups. Confirm:
+   - Backup retention period (Free: 7d, Pro: 14d, Team: 28d w/ PITR, Enterprise: configurable)
+   - PITR enablement status
+   - Latest backup timestamp
+2. Document in `docs/runbook-dr.md`:
+   - Backup schedule
+   - Restore procedure (with the exact command/dashboard path)
+   - RTO target / RPO target
+3. **Test a restore.** Untested restore procedures are not restore procedures. Spin up a development branch via `mcp__plugin_supabase_supabase__create_branch`, apply a known migration, restore to a prior point, verify the migration's effect was rolled back.
+
+**Why SERIOUS-when-confirmed for CRT:**
+A paying tenant will reasonably ask about backup retention and DR. "We're on Supabase Pro with 14d backups" is acceptable; "we're not sure" is not.
+
+**Fix scope:** S (verification + documentation). Possibly M if the current tier lacks PITR and an upgrade is decided.
+
+---
+
+## F-021 — POSITIVE: Agent system_prompts are high-quality and domain-accurate
+
+**Severity:** POSITIVE (no fix needed)
+**Category:** AI behavior / prompt quality
+**Discovered:** Second-pass
+
+**Claim:** Sampled 7 active agents (VERIDIAN-TANGO, WILDFIRE, CHAIN-WATCH, PEARSON, INSIDE-EYE, WRAITH, JARVIS). All system_prompts cite **correct, real domain frameworks**:
+
+| Agent | Domain | Frameworks cited (all real and accurate) |
+|---|---|---|
+| VERIDIAN-TANGO | Counterterrorism, energy infra | CSIS Threat Assessment (Capability+Intent+Targeting), RCMP INSET radicalization pathway, CARVER, Charter caveat distinguishing lawful activism from criminal extremism |
+| WILDFIRE | Wildfire | CFFDRS (FFMC/DMC/DC/ISI/BUI/FWI), BCWS classification, CWFIS (VIIRS/MODIS hotspot, m3 polygons, lightning), 5/15/30km risk rings |
+| PEARSON | Legal | OSFI, PIPEDA/Bill C-27, NEB Act, Criminal Code, Charter, "but for" causation test, Regulatory Risk Mapping |
+| INSIDE-EYE | Insider threat / CI | FBI Counterintelligence Division Behavioral Indicators, MICE+TES motivational diagnostic, CI Red Flag Matrix |
+| CHAIN-WATCH | Supply chain | NIST SP 800-161, C-TPAT, CISA Supply Chain RMF, TPRM tiering |
+| JARVIS | Tech infra | TOGAF, OWASP Top 10, Zero-Trust principles, ICS/SCADA security, MITRE ATT&CK |
+| WRAITH | Offensive security | PTES phases, CPTED reverse, MITRE ATT&CK (Enterprise + ICS + Physical) |
+
+These are senior-analyst-level domain references. Lengths range 4144–4632 chars — substantive, not boilerplate. The "TOOL DIRECTIVES" sections in each prompt route to real Fortress tools (`query_fortress_data`, `cross_reference_entities`, `trigger_osint_scan`, `perform_external_web_search`).
+
+**Implication:** The poor AI behavior findings (F-009, F-010, F-011) are NOT caused by bad prompts. The prompts give specialists the right framework. The failures are at the structural layer:
+- F-009 (confidence parsing) — the prompts don't enforce the `CONFIDENCE: 0.X` format strongly enough
+- F-010 (hallucination acceptance) — no fact-verification layer between gate and specialist
+- F-011 (drift) — prompts allow "no direct nexus" responses but specialists don't use that escape hatch
+
+Fixing F-009/F-010/F-011 means strengthening the framing around the prompts, not rewriting them.
+
+---
 
 
 
