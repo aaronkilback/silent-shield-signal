@@ -966,6 +966,9 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
     if (!investigation) return;
 
     setIsDownloading(true);
+    // Declared outside the try so the catch + finally can dismiss this
+    // exact toast even if the body throws before the loader was created.
+    let loadingId: string | number | undefined;
     try {
       const currentDate = format(new Date(), "MMMM dd, yyyy");
       
@@ -1148,7 +1151,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       container.innerHTML = sanitizeHtml(reportHtml);
       document.body.appendChild(container);
 
-      toast.loading("Generating PDF...");
+      loadingId = toast.loading("Generating PDF...");
 
       const canvas = await html2canvas(container, {
         scale: 2,
@@ -1178,14 +1181,13 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
 
       pdf.save(`${investigation.file_number}_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
       document.body.removeChild(container);
-      
-      toast.dismiss();
+
       toast.success("Investigation report downloaded");
     } catch (error) {
       console.error("Error generating PDF:", error);
-      toast.dismiss();
       toast.error("Failed to generate PDF");
     } finally {
+      toast.dismiss(loadingId);
       setIsDownloading(false);
     }
   };

@@ -133,12 +133,85 @@ export async function getUserFromRequest(req: Request): Promise<AuthResult> {
  */
 export async function requireAuth(req: Request): Promise<{ userId: string; user: any }> {
   const { userId, user, error } = await getUserFromRequest(req);
-  
+
   if (!userId || !user) {
     throw errorResponse(error || 'Authentication required', 401);
   }
-  
+
   return { userId, user };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//   F-025 caller-identity gate (service-role aware) + tenant access check
+//   Used by functions with verify_jwt=false that must distinguish trusted
+//   internal callers (service role) from user JWT callers (must bind tenant).
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type CallerIdentity =
+  | { kind: 'service_role' }
+  | { kind: 'user'; userId: string; user: any }
+  | { kind: 'unauthorized'; error: string; status: number };
+
+export async function getCallerIdentity(req: Request): Promise<CallerIdentity> {
+  const authHeader = req.headers.get('Authorization') ?? req.headers.get('authorization');
+  if (!authHeader || !/^Bearer\s+/i.test(authHeader)) {
+    return { kind: 'unauthorized', error: 'authentication required', status: 401 };
+  }
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (!token) {
+    return { kind: 'unauthorized', error: 'authentication required', status: 401 };
+  }
+
+  // Service-role check covers two real paths the codebase actually uses:
+  //   (a) callers that read Deno.env.SUPABASE_SERVICE_ROLE_KEY directly
+  //       (scheduled-report-delivery, dashboard-ai-assistant report tool)
+  //   (b) callers that use the rotated vault key via resolveServiceRoleKey()
+  //       (see _shared/current-service-key.ts — May 6 2026 rotation pattern)
+  // Either must be accepted; the env and vault values can diverge during
+  // a rotation window, and rejecting one would 401 legitimate inter-function calls.
+  const envKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  if (envKey.length > 0 && token === envKey) {
+    return { kind: 'service_role' };
+  }
+  try {
+    const probe = createServiceClient();
+    const { data: vaultKey } = await probe.rpc('get_current_service_role_key');
+    if (typeof vaultKey === 'string' && vaultKey.length > 0 && token === vaultKey) {
+      return { kind: 'service_role' };
+    }
+  } catch (_) {
+    // Vault probe failed — fall through to user-JWT path.
+  }
+
+  try {
+    const supabase = createServiceClient();
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+      return { kind: 'unauthorized', error: error?.message || 'invalid or expired token', status: 401 };
+    }
+    return { kind: 'user', userId: user.id, user };
+  } catch (err) {
+    console.error('[getCallerIdentity] token validation threw:', err);
+    return { kind: 'unauthorized', error: 'token validation failed', status: 401 };
+  }
+}
+
+export async function userCanAccessClient(
+  supabase: SupabaseClient,
+  userId: string,
+  clientId: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('id, tenant_id, tenant_users!inner(user_id)')
+    .eq('id', clientId)
+    .eq('tenant_users.user_id', userId)
+    .limit(1);
+  if (error) {
+    console.error('[userCanAccessClient] lookup error:', error);
+    return false;
+  }
+  return Array.isArray(data) && data.length > 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

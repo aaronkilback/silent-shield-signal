@@ -302,15 +302,15 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
 
   const downloadPDF = async () => {
     if (!generatedBulletin) return;
+    const loadingId = toast.loading("Generating PDF...");
     try {
-      toast.loading("Generating PDF...");
       const pdf = await generatePdfFromHtml(generatedBulletin, { backgroundColor: "#ffffff" });
       pdf.save(`security_bulletin_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
-      toast.dismiss();
       toast.success("PDF downloaded");
     } catch (error) {
-      toast.dismiss();
       toast.error("Failed to generate PDF");
+    } finally {
+      toast.dismiss(loadingId);
     }
   };
 

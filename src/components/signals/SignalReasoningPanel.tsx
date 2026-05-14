@@ -58,6 +58,20 @@ interface PredictionRow {
   created_at: string;
 }
 
+/** Tier-2 verdict written by review-signal-agent into signals.raw_json.
+ * Surfaced even when the corresponding signal_agent_analyses row is
+ * missing — historically that row wasn't always persisted (the function
+ * returned before the await landed) so a verdict can exist in raw_json
+ * with no analysis row to anchor it. Render direct from raw_json so the
+ * operator never sees an empty trail when a verdict exists. */
+interface AgentReviewJson {
+  verdict?: string;
+  reasoning?: string;
+  reviewed_at?: string;
+  confidence_delta?: number;
+  cyber_advisory_path?: boolean;
+}
+
 const TOOL_ICONS: Record<string, typeof Search> = {
   lookup_historical_signals: History,
   query_entity_relationships: Network,
@@ -77,6 +91,7 @@ const TOOL_LABELS: Record<string, string> = {
 export function SignalReasoningPanel({ signalId }: { signalId: string }) {
   const [analyses, setAnalyses] = useState<AnalysisRow[]>([]);
   const [predictions, setPredictions] = useState<PredictionRow[]>([]);
+  const [agentReview, setAgentReview] = useState<AgentReviewJson | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -84,7 +99,7 @@ export function SignalReasoningPanel({ signalId }: { signalId: string }) {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [{ data: analysisRows }, { data: predRows }] = await Promise.all([
+      const [{ data: analysisRows }, { data: predRows }, { data: signalRow }] = await Promise.all([
         supabase
           .from('signal_agent_analyses')
           .select('id, agent_call_sign, analysis, confidence_score, trigger_reason, analysis_tier, reasoning_log, created_at')
@@ -95,10 +110,16 @@ export function SignalReasoningPanel({ signalId }: { signalId: string }) {
           .select('id, agent_call_sign, prediction_text, confidence_probability, status, expected_by, confirmed_at, refuted_at, created_at')
           .eq('related_signal_id', signalId)
           .order('created_at', { ascending: true }),
+        supabase
+          .from('signals')
+          .select('raw_json')
+          .eq('id', signalId)
+          .maybeSingle(),
       ]);
       if (cancelled) return;
       setAnalyses((analysisRows as AnalysisRow[]) ?? []);
       setPredictions((predRows as PredictionRow[]) ?? []);
+      setAgentReview(((signalRow as any)?.raw_json?.agent_review as AgentReviewJson) ?? null);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -107,7 +128,16 @@ export function SignalReasoningPanel({ signalId }: { signalId: string }) {
   if (loading) {
     return <div className="text-sm text-muted-foreground py-4">Loading reasoning trail…</div>;
   }
-  if (analyses.length === 0 && predictions.length === 0) {
+  // Tier-2 verdict surfaces when no signal_agent_analyses row exists for
+  // it. Historically the analyses-row write was inconsistent on
+  // review-signal-agent, so an operator could have a verdict in
+  // raw_json with no panel row to anchor it. This dedup avoids
+  // double-rendering when both exist.
+  const tier2AnalysisAlreadyRendered = analyses.some(
+    (a) => a.agent_call_sign === 'TIER2-REVIEW',
+  );
+  const showStandaloneReview = agentReview && !tier2AnalysisAlreadyRendered;
+  if (analyses.length === 0 && predictions.length === 0 && !showStandaloneReview) {
     return (
       <div className="text-sm text-muted-foreground py-4">
         No reasoning trail yet. The AI either hasn't processed this signal, or processed it before reasoning capture was enabled.
@@ -125,6 +155,43 @@ export function SignalReasoningPanel({ signalId }: { signalId: string }) {
 
   return (
     <div className="space-y-4">
+      {/* Tier-2 verdict from raw_json — only renders when there's no
+          matching TIER2-REVIEW analyses row. Same shape as the full
+          card below but without investigation tools, since the verdict
+          stored in raw_json is the compact form. */}
+      {showStandaloneReview && (
+        <div className="rounded-md border border-border bg-card/50 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-blue-400" />
+              <span className="font-medium text-sm">TIER2-REVIEW</span>
+              <Badge variant="outline" className="text-xs">tier2</Badge>
+              {agentReview?.verdict && (
+                <Badge variant="secondary" className="text-xs">
+                  verdict: {agentReview.verdict}
+                </Badge>
+              )}
+              {agentReview?.confidence_delta != null && (
+                <Badge variant="outline" className="text-xs">
+                  Δ {agentReview.confidence_delta >= 0 ? '+' : ''}
+                  {agentReview.confidence_delta.toFixed(2)}
+                </Badge>
+              )}
+            </div>
+            {agentReview?.reviewed_at && (
+              <span className="text-xs text-muted-foreground">
+                {formatDistanceToNow(new Date(agentReview.reviewed_at), { addSuffix: true })}
+              </span>
+            )}
+          </div>
+          {agentReview?.reasoning && (
+            <p className="text-sm text-foreground/90 whitespace-pre-wrap">
+              {agentReview.reasoning}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Per-agent verdicts */}
       {analyses.map((a) => {
         const investigation = a.reasoning_log?.investigation;

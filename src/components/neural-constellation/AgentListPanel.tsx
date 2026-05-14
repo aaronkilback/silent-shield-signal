@@ -2,7 +2,38 @@ import { useMemo, useState } from "react";
 import { GripHorizontal, Cpu, ClipboardCheck } from "lucide-react";
 import { DraggablePanel } from "./DraggablePanel";
 import { FleetAuditSheet } from "./FleetAuditSheet";
-import type { AgentActivityMetrics } from "@/hooks/useConstellationData";
+import { MIN_PREDICTIONS_FOR_CALIBRATION, type AgentActivityMetrics } from "@/hooks/useConstellationData";
+
+/** Brier-score chip surfaced next to scan counts. Honest about
+ * uncertainty: shows "calibrating…" when there are some predictions
+ * but not enough to commit to a number. Brier ranges 0 (perfect) to
+ * 1 (worst); thresholds picked from typical operator-grade triage:
+ * <0.15 = sharp, 0.15–0.30 = workable, >0.30 = miscalibrated. */
+function CalibrationPill({ brierScore, n }: { brierScore: number | null; n: number }) {
+  if (brierScore == null) {
+    return (
+      <span
+        className="text-[8px] font-mono px-1 py-px rounded border border-border/40 text-muted-foreground"
+        title={`Brier score will surface after ${MIN_PREDICTIONS_FOR_CALIBRATION} graded predictions on resolved signals (currently ${n}).`}
+      >
+        calibrating · {n}
+      </span>
+    );
+  }
+  const color =
+    brierScore < 0.15 ? "#10b981" :
+    brierScore < 0.30 ? "#f59e0b" :
+    "#ef4444";
+  return (
+    <span
+      className="text-[8px] font-mono px-1 py-px rounded border"
+      style={{ borderColor: color, color }}
+      title={`Brier ${brierScore.toFixed(3)} over ${n} resolved signals. Lower is better — measures how well this agent's confidence numbers track real outcomes.`}
+    >
+      Brier {brierScore.toFixed(2)} · {n}
+    </span>
+  );
+}
 
 interface AgentEntry {
   id: string;
@@ -186,12 +217,20 @@ export function AgentListPanel({ agents, activityMetrics, onSelectAgent }: Agent
                   </div>
                 </div>
 
-                {/* Scan count if active */}
-                {(metrics?.scanCount ?? 0) > 0 && (
+                {/* Scan count + calibration pill if active */}
+                {((metrics?.scanCount ?? 0) > 0 || (metrics?.calibrationN ?? 0) > 0) && (
                   <div className="flex items-center gap-1.5 mt-1 pl-5">
-                    <span className="text-[8px] text-muted-foreground">
-                      {metrics!.scanCount} scans · {metrics!.totalAlertsGenerated} alerts
-                    </span>
+                    {(metrics?.scanCount ?? 0) > 0 && (
+                      <span className="text-[8px] text-muted-foreground">
+                        {metrics!.scanCount} scans · {metrics!.totalAlertsGenerated} alerts
+                      </span>
+                    )}
+                    {(metrics?.calibrationN ?? 0) > 0 && (
+                      <CalibrationPill
+                        brierScore={metrics!.brierScore}
+                        n={metrics!.calibrationN}
+                      />
+                    )}
                   </div>
                 )}
               </button>

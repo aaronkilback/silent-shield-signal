@@ -41,8 +41,16 @@ These must be prevented before CRT logs in. They map to Tier 0.
 - Apply to staging (already done — `20260513232222_backport_prod_only_schema.sql`).
 - Apply to prod during Saturday window.
 - Schedule daily `detect_schema_drift()` cron that diffs current schema vs the fingerprint baseline; alerts on drift.
+- **Extend `detect_schema_drift()` to column-level tracking** — snapshot `(table, column)` pairs into `schema_fingerprint` alongside table + function names; compare each run and surface column additions/drops in the same `platform_findings` alert. Bundled here (not split into a separate fix) because the column-level extension and the F-022 prod backport are the same change set, and we want one verification pass on staging covering both before any production promotion.
 
-**Verification:** `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'` matches between staging and prod.
+**Verification:**
+- `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'` matches between staging and prod.
+- Synthetic column drop/add on staging fires `schema_drift` finding with the column name in `added_columns` / `removed_columns`. Must pass before prod promotion.
+
+**Accepted temporary limitation (recorded 2026-05-13, demo eve):**
+The current `detect_schema_drift()` shipped to staging only tracks `information_schema.tables` and `information_schema.routines` — table + function names, not columns. Phase 0 verification confirmed table-level detection works (synthetic table → `drift=true`), and confirmed the column-level gap (synthetic column → `drift=false`). Most of F-022's actual production drift (`monitored_domains`, `tech_stack`, `tactic_keywords` on `clients`) was column-level, so the watchdog as-shipped would not have caught the original problem.
+
+This is an **accepted temporary limitation, not an ignored issue.** Rationale for deferral: (1) Phase 0 core controls all passed; (2) the watchdog still catches new tables added directly to prod; (3) column-level drift is a known gap rather than an active pre-demo incident; (4) bundling the watchdog extension with the F-022 prod backport keeps the change set coherent; (5) a single staging verification pass will cover both before any prod promotion. Tier 0.1 does not clear until the column-level synthetic test above passes on staging.
 
 ### Tier 0.2 — Tenant isolation test suite (15 patterns, CI-gated)
 

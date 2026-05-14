@@ -1,0 +1,20 @@
+=== POST-PATCH REPEAT attacker tests (expect 401) ===
+----- Mode A: anon key -----
+{"error":"invalid JWT: unable to parse or verify signature, token is malformed: token contains an invalid number of segments"}
+HTTP 401
+----- Mode B: no auth -----
+{"error":"authentication required"}
+HTTP 401
+----- Mode C: fake bearer -----
+{"error":"invalid JWT: unable to parse or verify signature, token is malformed: could not JSON decode header: unexpected end of JSON input"}
+HTTP 401
+----- Bonus: same 3 modes against generate-executive-report (must also 401) -----
+  -- exec-report mode=anon --
+{"error":"invalid JWT: unable to parse or verify signature, token is malformed: token contains an invalid number of segments"}
+HTTP 401
+  -- exec-report mode=none --
+{"error":"authentication required"}
+HTTP 401
+  -- exec-report mode=fake --
+{"error":"invalid JWT: unable to parse or verify signature, token is malformed: token contains an invalid number of segments"}
+HTTP 401

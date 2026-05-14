@@ -1,0 +1,10 @@
+=== POST-PATCH attacker tests (expect 401) ===
+----- Mode A: anon publishable key -----
+{"error":"invalid JWT: unable to parse or verify signature, token is malformed: token contains an invalid number of segments"}
+HTTP 401 | bytes=126
+----- Mode B: NO auth header -----
+{"error":"authentication required"}
+HTTP 401 | bytes=35
+----- Mode C: fake Bearer token -----
+{"error":"invalid JWT: unable to parse or verify signature, token is malformed: could not JSON decode header: unexpected end of JSON input"}
+HTTP 401 | bytes=140

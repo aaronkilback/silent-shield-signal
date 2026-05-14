@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
 import { runEvidenceGate, getReliabilityFirstPrompt, DEFAULT_RELIABILITY_SETTINGS } from "../_shared/reliability-first.ts";
+import { getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,9 +75,19 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // F-025 caller-tenant gate. The prior assumption that "having a valid
+    // Supabase key" was authentication was false — anon key is public, and
+    // staging verification showed no-auth/fake-bearer calls also returned
+    // client data. See docs/audit-evidence/f-025-validation-2026-05-13/.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === 'unauthorized') {
+      return new Response(
+        JSON.stringify({ error: caller.error }),
+        { status: caller.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Use service role client for all data operations.
-    // Authentication at the Supabase gateway layer (verify_jwt = false in config.toml)
-    // means callers must have a valid Supabase key (anon, service role, or user JWT).
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -85,6 +96,22 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const client_id = body.clientId || body.client_id || null;
     const period_days = body.period_days || body.periodDays || 7;
+
+    if (caller.kind === 'user') {
+      if (!client_id) {
+        return new Response(
+          JSON.stringify({ error: 'client_id is required' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const ok = await userCanAccessClient(supabase, caller.userId, client_id);
+      if (!ok) {
+        return new Response(
+          JSON.stringify({ error: 'forbidden: client_id outside caller tenant' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
 
     console.log(`[generate-executive-report] body keys: ${Object.keys(body).join(',')}, client_id resolved: ${client_id}`);
     

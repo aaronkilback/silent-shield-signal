@@ -1,0 +1,4 @@
+----- MODE C: fake Bearer token, generate-daily-briefing test mode -----
+{"success":true,"test":true,"clientId":"0f5c809d-60ec-4252-b94b-1f4b6c8ac95d","clientName":"Petronas Canada","message":"Daily briefing function healthy","generatedAt":"2026-05-14T01:29:44.119Z"}
+---
+HTTP 200 | bytes_recv=194 | time=0.402370s

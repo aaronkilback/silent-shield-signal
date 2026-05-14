@@ -7,7 +7,7 @@
  * without triggering a full AI generation cycle.
  */
 
-import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
@@ -15,6 +15,16 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    // F-025 caller-tenant gate. Function has verify_jwt=false at the gateway
+    // (needed for inter-function service-role calls under the May-2026 sb_secret
+    // auth pattern). The in-function gate must therefore enforce both caller
+    // identity and tenant binding. Without this, anon-key / no-auth / fake-bearer
+    // calls all return client data — confirmed in audit-evidence/f-025-validation-2026-05-13.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === 'unauthorized') {
+      return errorResponse(caller.error, caller.status);
+    }
+
     const body = await req.json();
     const clientId = body.clientId ?? body.client_id;
     const isTest = !!body.test;
@@ -24,6 +34,13 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createServiceClient();
+
+    if (caller.kind === 'user') {
+      const ok = await userCanAccessClient(supabase, caller.userId, clientId);
+      if (!ok) {
+        return errorResponse('forbidden: client_id outside caller tenant', 403);
+      }
+    }
 
     // Lightweight test / health-check path — no AI call needed
     if (isTest) {

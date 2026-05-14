@@ -4,6 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 
 export const ACTIVITY_METRICS_VERSION = "2.0.0-absolute-thresholds"; // f08c87c
 
+/** Minimum predictions on resolved signals before an agent's Brier
+ * score is meaningful enough to surface. Below this, the panel shows
+ * "calibrating…" instead. Threshold matches the score-agent-calibration
+ * job's expected per-agent volume after ~3 weeks of operator throughput. */
+export const MIN_PREDICTIONS_FOR_CALIBRATION = 20;
+
 export interface AgentCommLink {
   sourceCallSign: string;
   targetCallSign: string;
@@ -39,6 +45,13 @@ export interface AgentActivityMetrics {
   lastActive: string | null;
   /** 0-1 normalized activity score */
   activityScore: number;
+  /** Mean Brier score across all (call_sign, domain) buckets, weighted
+   * by predictions per bucket. Null until the agent has at least
+   * `MIN_PREDICTIONS_FOR_CALIBRATION` predictions on resolved signals. */
+  brierScore: number | null;
+  /** Total predictions on resolved signals — the sample size behind
+   * brierScore. Used to gate display ("calibrating…" until threshold). */
+  calibrationN: number;
 }
 
 export interface KnowledgeGraphEdge {
@@ -317,6 +330,30 @@ export function useAgentActivityMetrics(enabled: boolean) {
         .not("delivered_at", "is", null)
         .gte("created_at", sevenDaysAgo);
 
+      // 6. Get calibration scores (per (call_sign, domain) row).
+      //    Aggregated below into one Brier per agent weighted by
+      //    predictions-per-bucket, so an agent that's well-calibrated
+      //    on protests but miscalibrated on regulatory shows the
+      //    blended truth.
+      const { data: calibration } = await supabase
+        .from("agent_calibration_scores")
+        .select("call_sign, total_predictions, brier_score");
+
+      const calibByAgent = new Map<string, { sumWeightedBrier: number; totalN: number }>();
+      (calibration ?? []).forEach((c: any) => {
+        const cs = c.call_sign;
+        const n = Number(c.total_predictions) || 0;
+        const b = Number(c.brier_score) || 0;
+        if (!cs || n <= 0) return;
+        const cur = calibByAgent.get(cs);
+        if (cur) {
+          cur.sumWeightedBrier += b * n;
+          cur.totalN += n;
+        } else {
+          calibByAgent.set(cs, { sumWeightedBrier: b * n, totalN: n });
+        }
+      });
+
       // --- Build per-agent metrics ---
       const agentData = new Map<string, {
         scanCount: number; recentScanCount: number; veryRecentScanCount: number;
@@ -421,6 +458,13 @@ export function useAgentActivityMetrics(enabled: boolean) {
         // idle, not standby. The fleet panel needs to show real-time
         // engagement, not lifetime accumulation.
 
+        const calib = calibByAgent.get(cs);
+        const calibrationN = calib?.totalN ?? 0;
+        const brierScore =
+          calib && calibrationN >= MIN_PREDICTIONS_FOR_CALIBRATION
+            ? calib.sumWeightedBrier / calibrationN
+            : null;
+
         return {
           callSign: cs,
           messageCount: d.msgCount,
@@ -432,6 +476,8 @@ export function useAgentActivityMetrics(enabled: boolean) {
             : 0,
           lastActive: d.lastActive,
           activityScore: Math.min(1, score),
+          brierScore,
+          calibrationN,
         };
       }) as AgentActivityMetrics[];
     },
