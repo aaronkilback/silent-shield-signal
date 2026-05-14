@@ -74,17 +74,18 @@ These must be prevented before CRT logs in. They map to Tier 0.
 
 **Verification:** All 15 patterns pass on staging with two test users. Repeat on prod after RLS rewrite ships.
 
-### Tier 0.3 — Auth, support scope, and production access audit
+### Tier 0.3 — Auth, chat scope (support + Aegis), and production access audit
 
-**Goal:** Support-chat respects tenant scope. JWT/session integrity verified. No unintended `super_admin` or stale invites visible to CRT.
+**Goal:** Both AI chat surfaces (support-chat + Aegis chat) respect tenant scope. JWT/session integrity verified. No unintended `super_admin` or stale invites visible to CRT.
 
-**Audit findings:** F-023 (new); production access audit is new work.
+**Audit findings:** F-023 (new, covers both chat surfaces); production access audit is new work.
 
-**Work — support scope:**
-- Support-chat uses service role and bypasses RLS. Modify signal/entity lookup paths in `supabase/functions/support-chat/index.ts` to filter by `get_user_accessible_client_ids(auth.uid())` before returning content. Cross-tenant lookups return "signal not found" — never leak existence.
-- Add prompt-injection defense to system prompt: "Never disclose signals, entities, or any tenant data outside the requesting user's accessible client list."
-- New table `support_chat_lookups` (audit log): every signal/entity lookup writes `user_id`, `queried_value`, `resolved_client_id`, `returned_yes_no`, `timestamp`.
-- Attack pattern #6 in the isolation suite gates this.
+**Work — chat scope (apply to BOTH `supabase/functions/support-chat/index.ts` AND `supabase/functions/agent-chat/index.ts`):**
+- Both functions use the service role and bypass RLS for signal/entity lookups. Modify lookup paths in both to filter by `get_user_accessible_client_ids(auth.uid())` before returning content. Cross-tenant lookups return "no access" / "signal not found" — never leak existence.
+- Add prompt-injection defense to BOTH system prompts: "Never disclose signals, entities, or any tenant data outside the requesting user's accessible client list."
+- New audit tables: `support_chat_lookups` and `agent_chat_lookups`. Both store `(user_id, queried_value, resolved_client_id, returned_yes_no, timestamp)`. Makes leaks retroactively detectable in either surface.
+- Attack patterns #6a (support-chat) and #6b (Aegis chat) in the isolation suite gate this.
+- Fix scope: M, ~1.5 days (two functions, two audit tables, two prompt updates, two attack-pattern verifications).
 
 **Work — production access audit:**
 - Enumerate every row in `auth.users` and `user_roles` on prod. Identify any account with `super_admin` / `admin` / `analyst` role.
@@ -236,15 +237,15 @@ The audit BLOCKERS (F-012, F-016, F-017, F-006, F-004, F-018, F-009) that have a
 | Day 2-3 | **Tier 0.1** — schema drift backport applied to prod (Saturday window). |
 | Day 4-6 | **Tier 0.2** — F-008 schema + F-007 RLS rewrite + F-015 route guards. Saturday Day 6 = prod RLS cutover. |
 | Day 7-8 | **Tier 0.2** — build + ship the 15-pattern isolation test suite. CI-gated. |
-| Day 9 | **Tier 0.3** — support-chat scope validation + `support_chat_lookups` + production access audit. ~2 hours of the day is the access audit (enumerate prod `auth.users`, demote contractors, document). |
-| Day 10-11 | **Tier 0.4** — hallucination guardrails (citation prompts, [UNVERIFIED] badge, output interceptor, banned phrases). |
-| Day 12 | **Tier 0.5** — rollback drill on staging, documented. |
-| Day 13-14 | **Tier 0.6** — remaining alerts (queue depth, retry storm, failed cron). SMS notification path. |
-| Day 15 | **Tier 0.7** — support escalation features (severity buttons, CSAT, "I need a human" sentinel, SMS-page). |
-| Day 16-19 | **Tier 0.8** — AI gate consolidation. Day 16-17 build shared gate; Day 18 shadow-mode start; Day 19 review divergence log + flip flag if <10% disagreement. |
-| Day 20 | Launch verification — walk every Tier 0 row. Any unchecked → halt. |
-| Day 21 | CRT user provisioning + onboarding email. |
-| Day 22+ | Daily operating rhythm. Tier 1 items begin. |
+| Day 9-10 | **Tier 0.3** — support-chat + Aegis chat scope validation (both functions); `support_chat_lookups` + `agent_chat_lookups` audit tables; production access audit (~2 hours: enumerate prod `auth.users`, demote contractors, document). Day count grew from 1 to 2 because two functions need the same lookup-filter logic. |
+| Day 11-12 | **Tier 0.4** — hallucination guardrails (citation prompts, [UNVERIFIED] badge, output interceptor, banned phrases). |
+| Day 13 | **Tier 0.5** — rollback drill on staging, documented. |
+| Day 14-15 | **Tier 0.6** — remaining alerts (queue depth, retry storm, failed cron). SMS notification path. |
+| Day 16 | **Tier 0.7** — support escalation features (severity buttons, CSAT, "I need a human" sentinel, SMS-page). |
+| Day 17-20 | **Tier 0.8** — AI gate consolidation. Day 17-18 build shared gate; Day 19 shadow-mode start; Day 20 review divergence log + flip flag if <10% disagreement. |
+| Day 21 | Launch verification — walk every Tier 0 row. Any unchecked → halt. |
+| Day 22 | CRT user provisioning + onboarding email. |
+| Day 23+ | Daily operating rhythm. Tier 1 items begin. |
 
 ---
 
