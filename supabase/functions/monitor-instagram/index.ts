@@ -263,10 +263,21 @@ async function processSearch(
           continue;
         }
 
-        // Check for relevance
+        // Check for relevance. Tenant-aware overlay: union the global ACTIVISM_KEYWORDS
+        // (Petronas-tuned baseline) with the current client's
+        // monitoring_config.activism_keywords (e.g. BC Place: 'perimeter breach',
+        // 'crowd surge', 'gate breach', 'fan violence'). Petronas keywords are
+        // preserved — adding venue-security terms does not weaken activism detection.
         const lowerCaption = urlContext.toLowerCase();
-        const isRelevant = 
-          ACTIVISM_KEYWORDS.some(k => lowerCaption.includes(k.toLowerCase())) ||
+        const perClientActivismExtras: string[] = Array.isArray(
+          (client as any)?.monitoring_config?.activism_keywords
+        ) ? (client as any).monitoring_config.activism_keywords : [];
+        const effectiveActivismKeywords = Array.from(new Set([
+          ...ACTIVISM_KEYWORDS,
+          ...perClientActivismExtras,
+        ]));
+        const isRelevant =
+          effectiveActivismKeywords.some(k => lowerCaption.includes(k.toLowerCase())) ||
           ACTIVIST_ORGANIZATIONS.some(org => lowerCaption.includes(org.toLowerCase())) ||
           lowerCaption.includes(sourceName.toLowerCase());
 
@@ -298,7 +309,7 @@ async function processSearch(
         let category = 'social_media';
         if (lowerCaption.includes('protest') || lowerCaption.includes('blockade') || lowerCaption.includes('demonstration')) {
           category = 'protest_activity';
-        } else if (ACTIVISM_KEYWORDS.some(k => lowerCaption.includes(k.toLowerCase()))) {
+        } else if (effectiveActivismKeywords.some(k => lowerCaption.includes(k.toLowerCase()))) {
           category = 'activism';
         }
 
@@ -325,7 +336,7 @@ async function processSearch(
               category: category,
               is_high_priority: isHighPriority,
               event_details: eventDetails,
-              detected_keywords: ACTIVISM_KEYWORDS.filter(k => lowerCaption.includes(k.toLowerCase())),
+              detected_keywords: effectiveActivismKeywords.filter(k => lowerCaption.includes(k.toLowerCase())),
               detected_organizations: ACTIVIST_ORGANIZATIONS.filter(org => lowerCaption.includes(org.toLowerCase())),
               mentioned_accounts: mentions,
               hashtag_count: hashtags.length
