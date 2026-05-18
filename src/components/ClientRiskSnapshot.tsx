@@ -6,6 +6,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { AlertCircle, Building2, MapPin, Shield, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenant } from "@/hooks/useTenant";
+import { getClientNoun } from "@/lib/ui-profile";
 
 interface Client {
   id: string;
@@ -22,6 +24,8 @@ interface Client {
 export const ClientRiskSnapshot = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { currentTenant } = useTenant();
+  const noun = getClientNoun(currentTenant?.settings);
 
   const { data: clients = [], isLoading: loading } = useQuery({
     queryKey: ["clients-risk-snapshot"],
@@ -63,9 +67,9 @@ export const ClientRiskSnapshot = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold mb-2">Client Vulnerability Snapshots</h2>
+        <h2 className="text-2xl font-bold mb-2">{noun.singular} Vulnerability Snapshots</h2>
         <p className="text-muted-foreground">
-          Overview of all onboarded clients and their risk profiles
+          Overview of all onboarded {noun.pluralLower} and their risk profiles
         </p>
       </div>
 
@@ -143,7 +147,7 @@ export const ClientRiskSnapshot = () => {
           <Card className="col-span-full">
             <CardContent className="flex flex-col items-center justify-center py-12">
               <Building2 className="w-12 h-12 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No clients onboarded yet</p>
+              <p className="text-muted-foreground">No {noun.pluralLower} onboarded yet</p>
             </CardContent>
           </Card>
         )}

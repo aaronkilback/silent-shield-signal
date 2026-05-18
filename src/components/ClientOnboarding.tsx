@@ -9,8 +9,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useState } from "react";
+import { useTenant } from "@/hooks/useTenant";
+import { getClientNoun } from "@/lib/ui-profile";
 
 export const ClientOnboarding = () => {
+  const { currentTenant } = useTenant();
+  const noun = getClientNoun(currentTenant?.settings);
   const [loading, setLoading] = useState(false);
   const [manualData, setManualData] = useState({
     name: "",
@@ -39,7 +43,7 @@ export const ClientOnboarding = () => {
       }
 
       await processClientData(parsedData);
-      toast.success("Client data uploaded successfully");
+      toast.success(`${noun.singular} data uploaded successfully`);
     } catch (error) {
       console.error("Error uploading file:", error);
       toast.error("Failed to upload file");
@@ -82,7 +86,7 @@ export const ClientOnboarding = () => {
 
     try {
       await processClientData([manualData]);
-      toast.success("Client onboarded successfully");
+      toast.success(`${noun.singular} onboarded successfully`);
       setManualData({
         name: "",
         organization: "",
@@ -93,7 +97,7 @@ export const ClientOnboarding = () => {
       });
     } catch (error) {
       console.error("Error:", error);
-      toast.error("Failed to onboard client");
+      toast.error(`Failed to onboard ${noun.singularLower}`);
     } finally {
       setLoading(false);
     }
@@ -104,7 +108,7 @@ export const ClientOnboarding = () => {
       <TabsList className="grid w-full grid-cols-3">
         <TabsTrigger value="qualification">
           <UserPlus className="h-4 w-4 mr-2" />
-          Client Qualification
+          {noun.singular} Qualification
         </TabsTrigger>
         <TabsTrigger value="bulk">
           <FileSpreadsheet className="h-4 w-4 mr-2" />
@@ -174,14 +178,14 @@ export const ClientOnboarding = () => {
           <CardHeader>
             <CardTitle>Quick Entry</CardTitle>
             <CardDescription>
-              Manually enter basic client information
+              Manually enter basic {noun.singularLower} information
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleManualSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="name">Client Name *</Label>
+                  <Label htmlFor="name">{noun.singular} Name *</Label>
                   <Input
                     id="name"
                     value={manualData.name}

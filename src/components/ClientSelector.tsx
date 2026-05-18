@@ -11,6 +11,8 @@ import {
 import { Building2, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
+import { getClientNoun } from "@/lib/ui-profile";
 
 interface Client {
   id: string;
@@ -137,11 +139,13 @@ export const ClientSelector = ({
     }
   };
 
-  const displayTitle = title || (mode === 'navigate' ? 'Select Client' : 'Client Filter');
+  const { currentTenant } = useTenant();
+  const noun = getClientNoun(currentTenant?.settings);
+  const displayTitle = title || (mode === 'navigate' ? `Select ${noun.singular}` : `${noun.singular} Filter`);
   const displayDescription = description || (
-    mode === 'navigate' 
-      ? 'Choose a client to view their details and reports'
-      : 'View signals and data for selected client'
+    mode === 'navigate'
+      ? `Choose ${/^[aeiou]/i.test(noun.singularLower) ? 'an' : 'a'} ${noun.singularLower} to view their details and reports`
+      : `View signals and data for selected ${noun.singularLower}`
   );
 
   const selectElement = (
@@ -150,7 +154,7 @@ export const ClientSelector = ({
       onValueChange={handleValueChange}
     >
       <SelectTrigger className="w-full">
-        <SelectValue placeholder="Select a client..." />
+        <SelectValue placeholder={`Select ${/^[aeiou]/i.test(noun.singularLower) ? 'an' : 'a'} ${noun.singularLower}...`} />
       </SelectTrigger>
       <SelectContent>
         {clients.map((client) => (
