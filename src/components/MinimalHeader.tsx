@@ -11,7 +11,7 @@ import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useTenant } from "@/hooks/useTenant";
-import { getNavVisibility, getUiProfile } from "@/lib/ui-profile";
+import { getNavVisibility, getUiProfile, getClientNoun } from "@/lib/ui-profile";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,7 @@ export const MinimalHeader = () => {
   const { isSuperAdmin, isAdmin } = useUserRole();
   const { currentTenant } = useTenant();
   const uiProfile = getUiProfile(currentTenant?.settings);
+  const clientNoun = getClientNoun(currentTenant?.settings);
 
   const allNavItems = [
     { path: "/signals", label: "Signals" },
@@ -45,7 +46,7 @@ export const MinimalHeader = () => {
     { path: "/sources", label: "Sources" },
     { path: "/reports", label: "Reports" },
     { path: "/travel", label: "Travel" },
-    { path: "/clients", label: "Clients" },
+    { path: "/clients", label: clientNoun.plural },
     { path: "/security-advisor", label: "Security Advisor" },
     { path: "/consortia", label: "Intel Sharing" },
     ...(isSuperAdmin ? [

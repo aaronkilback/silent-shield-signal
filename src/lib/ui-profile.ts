@@ -47,3 +47,38 @@ export function getNavVisibility(profile: UiProfile, path: string): NavVisibilit
   if (CRT_GREYED_PATHS.has(path)) return 'greyed';
   return 'hidden';
 }
+
+/**
+ * Tenant-noun terminology. CRT pilots think of their workspace as containing
+ * "monitored environments" (BC Place is one environment, future end-clients
+ * would each be another environment). Silent Shield operators still see
+ * "Clients" — they manage paying clients directly. Pure presentation layer:
+ * the DB column is still `client_id`, the route is still `/clients`.
+ */
+export interface ClientNounSet {
+  /** Singular, title case (e.g., "Client" or "Environment") */
+  singular: string;
+  /** Plural, title case (e.g., "Clients" or "Environments") */
+  plural: string;
+  /** Singular, lower case (e.g., "client" or "environment") */
+  singularLower: string;
+  /** Plural, lower case (e.g., "clients" or "environments") */
+  pluralLower: string;
+}
+
+export function getClientNoun(settings?: Record<string, unknown> | null): ClientNounSet {
+  if (getUiProfile(settings) === 'crt') {
+    return {
+      singular: 'Environment',
+      plural: 'Environments',
+      singularLower: 'environment',
+      pluralLower: 'environments',
+    };
+  }
+  return {
+    singular: 'Client',
+    plural: 'Clients',
+    singularLower: 'client',
+    pluralLower: 'clients',
+  };
+}

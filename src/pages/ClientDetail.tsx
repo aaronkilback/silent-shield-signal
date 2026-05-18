@@ -25,6 +25,8 @@ import {
 import { toast } from "sonner";
 import { DeleteClientDialog } from "@/components/DeleteClientDialog";
 import { ClientMonitoringConfig } from "@/components/ClientMonitoringConfig";
+import { useTenant } from "@/hooks/useTenant";
+import { getClientNoun } from "@/lib/ui-profile";
 
 interface Client {
   id: string;
@@ -71,6 +73,8 @@ interface Incident {
 }
 
 const ClientDetail = () => {
+  const { currentTenant } = useTenant();
+  const noun = getClientNoun(currentTenant?.settings);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
@@ -105,7 +109,7 @@ const ClientDetail = () => {
 
       if (clientError) throw clientError;
       if (!clientData) {
-        toast.error("Client not found");
+        toast.error(`${noun.singular} not found`);
         navigate("/clients");
         return;
       }
@@ -166,7 +170,7 @@ const ClientDetail = () => {
         <div className="flex items-center gap-4">
           <Button variant="outline" size="sm" onClick={() => navigate("/clients")}>
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Clients
+            Back to {noun.plural}
           </Button>
         </div>
 
@@ -207,7 +211,7 @@ const ClientDetail = () => {
                   className="gap-2"
                 >
                   <Trash2 className="w-4 h-4" />
-                  Delete Client
+                  Delete {noun.singular}
                 </Button>
               </div>
             </div>
