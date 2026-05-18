@@ -10,6 +10,8 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserRole } from "@/hooks/useUserRole";
+import { useTenant } from "@/hooks/useTenant";
+import { getNavVisibility, getUiProfile } from "@/lib/ui-profile";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,8 +31,10 @@ export const MinimalHeader = () => {
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { isSuperAdmin, isAdmin } = useUserRole();
+  const { currentTenant } = useTenant();
+  const uiProfile = getUiProfile(currentTenant?.settings);
 
-  const quickNavItems = [
+  const allNavItems = [
     { path: "/signals", label: "Signals" },
     { path: "/incidents", label: "Incidents" },
     { path: "/intelligence-hub", label: "Intel Hub" },
@@ -55,6 +59,12 @@ export const MinimalHeader = () => {
     { path: "/bug-reports", label: "Bug Reports" },
     { path: "/integrations", label: "Integrations" },
   ];
+
+  // Tenant UI profile gate (Phase 3). CRT tenants see ACTIVE + GREYED items only;
+  // HIDE items are dropped. Operator tenants see everything (default).
+  const quickNavItems = allNavItems
+    .map((item) => ({ ...item, visibility: getNavVisibility(uiProfile, item.path) }))
+    .filter((item) => item.visibility !== 'hidden');
 
   return (
     <header className="border-b border-border/50 bg-card/30 backdrop-blur-sm sticky top-0 z-50">
@@ -102,10 +112,19 @@ export const MinimalHeader = () => {
                 {quickNavItems.map((item) => (
                   <DropdownMenuItem
                     key={item.path}
-                    onClick={() => navigate(item.path)}
-                    className="cursor-pointer text-sm"
+                    onClick={() => item.visibility === 'active' && navigate(item.path)}
+                    disabled={item.visibility === 'greyed'}
+                    className={
+                      item.visibility === 'greyed'
+                        ? 'text-sm text-muted-foreground/50 cursor-not-allowed'
+                        : 'cursor-pointer text-sm'
+                    }
+                    title={item.visibility === 'greyed' ? 'Not in current pilot scope' : undefined}
                   >
                     {item.label}
+                    {item.visibility === 'greyed' && (
+                      <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground/60">soon</span>
+                    )}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -123,12 +142,25 @@ export const MinimalHeader = () => {
                   {quickNavItems.map((item) => (
                     <Button
                       key={item.path}
-                      onClick={() => { navigate(item.path); setMobileMenuOpen(false); }}
+                      onClick={() => {
+                        if (item.visibility !== 'active') return;
+                        navigate(item.path);
+                        setMobileMenuOpen(false);
+                      }}
+                      disabled={item.visibility === 'greyed'}
                       variant="ghost"
-                      className="justify-start text-sm"
+                      className={
+                        item.visibility === 'greyed'
+                          ? 'justify-start text-sm text-muted-foreground/50'
+                          : 'justify-start text-sm'
+                      }
                       size="sm"
+                      title={item.visibility === 'greyed' ? 'Not in current pilot scope' : undefined}
                     >
                       {item.label}
+                      {item.visibility === 'greyed' && (
+                        <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground/60">soon</span>
+                      )}
                     </Button>
                   ))}
                   <div className="pt-4 border-t border-border mt-2">
