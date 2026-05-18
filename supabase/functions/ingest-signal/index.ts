@@ -6,6 +6,8 @@ import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
 import { enqueueJob } from '../_shared/queue.ts';
 import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
+import { getCallerIdentity, getAccessibleClientIds } from '../_shared/supabase-client.ts';
+import { upsertHostileHandleOnSignal, extractHandleFromRawJson } from '../_shared/hostile-attribution.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -34,6 +36,11 @@ const SignalInputSchema = z.object({
   // outage doesn't collapse the entire feed to category=unknown / sev=medium.
   fallback_category: z.string().optional(),
   fallback_severity: z.enum(['critical', 'high', 'medium', 'low']).optional(),
+  // F-CRT (2026-05-15) — source platform tag. Used by downstream
+  // attribution (hostile_handles uniqueness, dispatch guardrails,
+  // platform-scoped analysis). Optional; when present, written to
+  // signals.platform on insert.
+  platform: z.enum(['x','reddit','instagram','facebook','telegram_public','youtube','rss','other']).optional(),
 }).refine(data => data.text || data.event || data.url, {
   message: "Either 'text', 'event', or 'url' must be provided"
 });
@@ -94,25 +101,61 @@ function applyRules(text: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
+    // CORS preflight is unauthenticated by browser-protocol design. Only
+    // justified pre-auth exception. Everything else runs behind the gate.
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // F-026 (2026-05-14) — auth gate at true handler entry. Locked rules:
+    //   anonymous (no auth / anon publishable key) → 401
+    //   unauthorized (malformed/fake bearer)        → 401 (explicit reject, no downgrade)
+    //   service_role                                 → bypass tenant check
+    //                                                  (compensating control: caller
+    //                                                  inventory documented all 22 of 26
+    //                                                  service-role callers in the
+    //                                                  F-026 evidence file)
+    //   user JWT                                     → must verify body client_id ∈
+    //                                                  accessibleClientIds; reject 403 if not
+    // Replaces the prior posture (`verify_jwt = false` + no in-function auth),
+    // which allowed anonymous cross-tenant signal injection if the attacker
+    // knew a target client_id. See docs/audit-evidence/f-026-iteration-6/.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === 'unauthorized') {
+      return new Response(
+        JSON.stringify({ error: caller.error }),
+        { status: caller.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    if (caller.kind === 'anonymous') {
+      return new Response(
+        JSON.stringify({ error: 'authentication required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
+    // F-026 — resolve caller's accessible client_ids if user-tier. Service-role
+    // bypasses the per-client check (trusted internal caller; locked compensating
+    // control). null = no filter; non-null array = enforce client_id ∈ set.
+    const accessibleClientIds: string[] | null =
+      caller.kind === 'user' ? await getAccessibleClientIds(supabase, caller.userId) : null;
+
     // Validate input
     const rawBody = await req.json();
-    
-    // Health check endpoint for pipeline tests
+
+    // Health check endpoint for pipeline tests. Now gated behind auth — no
+    // legitimate unauth caller was identified during the F-026 inventory.
     if (rawBody.health_check) {
       return new Response(
-        JSON.stringify({ 
-          status: 'healthy', 
+        JSON.stringify({
+          status: 'healthy',
           function: 'ingest-signal',
-          timestamp: new Date().toISOString() 
+          timestamp: new Date().toISOString()
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -131,7 +174,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity, platform } = validationResult.data;
     // Auto-flag any signal whose source URL points at example.com / qa.test / localhost
     // as is_test=true, regardless of caller. These domains are always test fixtures and
     // must never appear in the production live feed (operators have mistaken them for
@@ -197,10 +240,162 @@ Deno.serve(async (req) => {
 
       validatedExplicitClientId = clientCheck.id;
       console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id}) status=${clientCheck.status}`);
+
+      // F-026 — user-tier callers must own the explicit client_id. Service-role
+      // is exempt (trusted internal caller list documented in evidence file).
+      // Rejection is 403 (not 404) here because the client_id existence was
+      // already confirmed above — at this point hiding existence is moot.
+      if (caller.kind === 'user' && accessibleClientIds !== null
+          && !accessibleClientIds.includes(clientCheck.id)) {
+        console.error(`⚠ FORBIDDEN: user ${caller.userId} attempted ingest into client ${clientCheck.name} outside accessible scope`);
+        return new Response(
+          JSON.stringify({
+            error: 'forbidden: client_id outside accessible scope',
+          }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
     
     let signalText = text || JSON.stringify(event);
-    
+
+    // ════════════════════════════════════════════════════════════════════
+    // F-034 (2026-05-14) — TRUSTWORTHINESS GOVERNANCE AT INGEST
+    // Driven by Phase 1 source-fidelity audit (3/20 PASS pre-remediation).
+    // Each rejection here is a structural CRT trust-killer caught at admit.
+    // ════════════════════════════════════════════════════════════════════
+    const effectiveUrl: string | null = (source_url || url || null) as string | null;
+    const effectiveTitle: string = (raw_json?.title || event?.title || (text ? text.slice(0, 200) : '')) as string;
+
+    // F-034.1 — Reject NULL / blank source_url unless it's an inherently-internal
+    // signal type. CCCS, NAAD, BCWS, wildfire feeds carry synthesized internal
+    // URLs from the monitor — skip_relevance_gate is the signal that the upstream
+    // monitor has already vetted provenance. Everything else MUST carry a URL.
+    if (!effectiveUrl && !skip_relevance_gate) {
+      console.log(`[F-034.1] Reject — null source_url, not pre-vetted: "${signalText.slice(0, 80)}"`);
+      return new Response(
+        JSON.stringify({ status: 'rejected', reason: 'null_source_url',
+          message: 'source_url required for auditable signal provenance' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // F-034.2 — Reject MSN aggregator URLs (paragraph-merger chimeras observed
+    // in Phase 1 sample). Future-proof: any aggregator-style host where snippets
+    // from unrelated stories share one page.
+    if (effectiveUrl && /^https?:\/\/(www\.)?msn\.com\//i.test(effectiveUrl)) {
+      console.log(`[F-034.2] Reject — MSN aggregator (paragraph-merger risk): ${effectiveUrl}`);
+      return new Response(
+        JSON.stringify({ status: 'rejected', reason: 'aggregator_url_not_canonical',
+          message: 'aggregator-hosted URLs produce chimeric signals; follow to publisher URL or drop' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // F-034.3 — Reject titles that are paragraph fragments (leading ellipsis,
+    // mid-sentence start). 13 such signals in prod before remediation.
+    if (effectiveTitle && (effectiveTitle.startsWith('…') || effectiveTitle.startsWith('...'))) {
+      console.log(`[F-034.3] Reject — paragraph-fragment title: "${effectiveTitle.slice(0, 80)}"`);
+      return new Response(
+        JSON.stringify({ status: 'rejected', reason: 'paragraph_fragment_title',
+          message: 'title is a mid-sentence snippet, not a coherent headline' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // F-034.4 — Opinion-piece URL patterns cannot carry severity ≥ medium.
+    // op-ed columns / letters / editorials are commentary, not operational
+    // threats. Phase 1: 4 such signals at severity=high/medium were trust-killers.
+    if (effectiveUrl && /\/(opinion|letters|columnists?|editorial)\//i.test(effectiveUrl)) {
+      // Force-cap to low rather than reject — opinion content may still have
+      // monitoring value at low severity (sentiment tracking).
+      if (rawBody.fallback_severity && ['medium','high','critical'].includes(rawBody.fallback_severity)) {
+        rawBody.fallback_severity = 'low';
+      }
+      if (raw_json) {
+        (raw_json as any).severity_capped_by_governance = true;
+      }
+      console.log(`[F-034.4] Severity capped to 'low' (opinion URL): ${effectiveUrl}`);
+    }
+
+    // F-034.5 — Source-class consistency by URL host.
+    // Phase 1 re-run found that the original twitter-only fix left reddit + threads
+    // mislabeled under "google_news_api". Generalize: every recognized social host
+    // canonicalizes the source class so attribution doesn't lie.
+    if (effectiveUrl && raw_json) {
+      const HOST_TO_CLASS: Array<[RegExp, string]> = [
+        [/^https?:\/\/(www\.)?(twitter\.com|x\.com)\//i, 'twitter'],
+        [/^https?:\/\/(www\.|old\.|new\.)?reddit\.com\//i, 'reddit'],
+        [/^https?:\/\/(www\.)?threads\.com\//i, 'threads'],
+        [/^https?:\/\/(www\.)?instagram\.com\//i, 'instagram'],
+        [/^https?:\/\/(www\.|m\.|web\.)?facebook\.com\//i, 'facebook'],
+        [/^https?:\/\/(www\.)?(t\.me|telegram\.org)\//i, 'telegram'],
+        [/^https?:\/\/(www\.)?bsky\.app\//i, 'bluesky'],
+        [/^https?:\/\/(www\.)?(tiktok\.com)\//i, 'tiktok'],
+      ];
+      const claimedSource = (raw_json.source || raw_json.monitor || '').toString().toLowerCase();
+      for (const [re, canonical] of HOST_TO_CLASS) {
+        if (re.test(effectiveUrl) && !claimedSource.includes(canonical)) {
+          (raw_json as any).source = canonical;
+          (raw_json as any).source_class_corrected_by_governance = true;
+          break;
+        }
+      }
+    }
+
+    // F-034.8 — Reject stale advisories. CCCS feed has re-emitted 10-year-old
+    // CVEs (CVE-2016-3714 surfaced as "current" threat intel). Heuristic:
+    //   if title or body mentions CVE-YYYY-NNNN and YYYY is ≥ 5 years before
+    //   the current year, reject as stale unless skip_relevance_gate is set
+    //   (skip path is for analyst-uploaded historical material).
+    const STALE_CVE_THRESHOLD_YEARS = 5;
+    const cveMatch = (effectiveTitle + ' ' + (signalText ?? '')).match(/CVE-(\d{4})-\d+/i);
+    if (cveMatch && !skip_relevance_gate) {
+      const cveYear = parseInt(cveMatch[1], 10);
+      const currentYear = new Date().getUTCFullYear();
+      if (Number.isFinite(cveYear) && (currentYear - cveYear) >= STALE_CVE_THRESHOLD_YEARS) {
+        console.log(`[F-034.8] Reject stale CVE — ${cveMatch[0]} (${currentYear - cveYear}y old): "${effectiveTitle.slice(0, 80)}"`);
+        return new Response(
+          JSON.stringify({ status: 'rejected', reason: 'stale_advisory',
+            message: `${cveMatch[0]} is ${currentYear - cveYear} years old; refusing to surface as current threat intel` }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // F-034.9 — Reject "no results found" signals. multi_platform_search has
+    // admitted signals where the content itself reports the search returned
+    // nothing actionable. These are platform-state metadata, not intel.
+    const NULL_RESULT_PATTERNS = [
+      /search\s+results?\s+indicate\s+no\s+(recent\s+)?(information|results?|signals?|news|data)/i,
+      /no\s+(recent\s+)?(information|results?|signals?|news|data)\s+(found|available)/i,
+      /search\s+found\s+nothing\s+(actionable|relevant)/i,
+    ];
+    const fullContentForNullCheck = `${effectiveTitle}\n${signalText ?? ''}`;
+    if (!skip_relevance_gate && NULL_RESULT_PATTERNS.some((re) => re.test(fullContentForNullCheck))) {
+      console.log(`[F-034.9] Reject — null-result signal (search reported nothing actionable): "${effectiveTitle.slice(0, 80)}"`);
+      return new Response(
+        JSON.stringify({ status: 'rejected', reason: 'null_result_signal',
+          message: 'signal content reports the search itself found nothing; not actionable intelligence' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // F-034.7 — Relevance score scale normalization. Phase 1 found 222 rows
+    // in 0-1 range and 85 rows in 0-N integer range mixed in the same feed,
+    // produced by monitors that pass keyword-matcher raw integer scores
+    // (e.g. monitor-canadian-sources → match.score is keyword-length-sum).
+    // Canonical scale is 0-1. Anything above 1.0 is normalized via
+    // min(score / 100, 1.0); the original raw value is preserved for audit.
+    if (raw_json && typeof (raw_json as any).relevance_score === 'number') {
+      const orig = (raw_json as any).relevance_score as number;
+      if (orig > 1.0) {
+        (raw_json as any).relevance_score_raw = orig;
+        (raw_json as any).relevance_score = Math.min(orig / 100, 1.0);
+        (raw_json as any).relevance_score_normalized_by_governance = true;
+      }
+    }
+
     // EARLY REJECTION: Check for false positive content patterns
     if (isFalsePositiveContent(signalText)) {
       console.log(`[FP Filter] Rejecting false positive signal: ${signalText.substring(0, 100)}...`);
@@ -1640,6 +1835,10 @@ Score this signal's relevance and classify the connection.`
         signal_type: isHistorical ? 'historical' : null,
         source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
         image_url: image_url || signalRaw?.image_url || signalRaw?.og_image || signalRaw?.thumbnail || null,
+        // F-CRT (2026-05-15) — source platform tag, set by monitor-* callers.
+        // Powers downstream hostile_handles attribution + platform-scoped
+        // analyst views. Null when caller omits (legacy callers).
+        platform: platform ?? null,
       })
       .select()
       .single();
@@ -1650,6 +1849,70 @@ Score this signal's relevance and classify the connection.`
     }
 
     console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
+
+    // F-CRT-XQ (2026-05-15) — X quota/spend telemetry.
+    // When a signal originates from the X filtered stream, record one
+    // tweet-read against x_quota_consumption. Source-class buckets enable
+    // burn-rate dashboards per Annex A v3.1 operating constraint 1.
+    // Fire-and-forget; failure is logged, never blocks ingest.
+    if (signal?.id && platform === 'x' && raw_json && (raw_json as Record<string, unknown>).source === 'x_filtered_stream') {
+      const ruleTags = (raw_json as { matching_rules?: Array<{ kind?: string }> })?.matching_rules ?? [];
+      const sourceClass = ruleTags.some((r) => r?.kind === 'entity') ? 'entity'
+        : ruleTags.some((r) => r?.kind === 'handle') ? 'handle'
+        : 'keyword';
+      supabase.from('x_quota_consumption').insert({
+        source_class: sourceClass,
+        client_id: clientId,
+        reads: 1,
+        query_text: ruleTags.map((r: { label?: string }) => r?.label).filter(Boolean).join(', ').slice(0, 500) || null,
+        metadata: {
+          signal_id: signal.id,
+          tweet_id: (raw_json as Record<string, unknown>).tweet_id ?? null,
+          rule_count: ruleTags.length,
+        },
+      }).then((res) => {
+        if (res.error) console.warn(`[ingest-signal] x_quota_consumption insert error: ${res.error.message}`);
+      });
+    }
+
+    // F-CRT-HH (2026-05-15) — hostile-handle continuity upsert.
+    // Skip on test signals or when platform / client_id / handle is missing.
+    // Failure is logged but non-fatal — the signal is already persisted,
+    // and the hostile_handles memory is a derived artifact.
+    //
+    // F-CRT-HH-2 (2026-05-18) — read from the LOCAL `raw_json` (input body)
+    // instead of `signal.raw_json` (post-insert). The URL-fetcher rewrites
+    // the persisted raw_json (replacing it with the fetched content + error
+    // metadata), which drops the author/username fields the upsert helper
+    // needs. The local raw_json still has the original X-stream Worker
+    // payload with handle data intact. Discovered during 2026-05-18
+    // source-readiness check.
+    if (signal?.id && clientId && platform && !is_test) {
+      try {
+        const inputRaw = (raw_json as Record<string, unknown> | null | undefined) ?? null;
+        const sigRaw = (signal as { raw_json?: Record<string, unknown> })?.raw_json ?? null;
+        // Prefer the local input body; fall back to the persisted row in case
+        // the input was already URL-fetched form.
+        const handleInfo = extractHandleFromRawJson(inputRaw, platform)
+                       ?? extractHandleFromRawJson(sigRaw, platform);
+        if (handleInfo) {
+          const result = await upsertHostileHandleOnSignal(supabase, {
+            signal_id: signal.id,
+            client_id: clientId,
+            platform,
+            handle: handleInfo.handle,
+            author_id: handleInfo.author_id,
+          });
+          if (result.outcome === 'error') {
+            console.warn(`[ingest-signal] hostile-handle upsert error for signal=${signal.id}: ${result.reason}`);
+          } else if (result.outcome === 'inserted') {
+            console.log(`[ingest-signal] new hostile_handle ${result.hostile_handle_id} on platform=${platform} handle=${handleInfo.handle}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[ingest-signal] hostile-handle upsert threw for signal=${signal.id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
 
     // Fire-and-forget: generate and store content_embedding for pgvector semantic dedup.
     // Embeddings accumulate over time — detect-duplicates will use find_similar_signals_by_embedding
