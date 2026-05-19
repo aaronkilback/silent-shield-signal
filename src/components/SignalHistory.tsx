@@ -268,16 +268,22 @@ export const SignalHistory = () => {
         .limit(50);
 
       // Filter scope cascade:
-      //  1. If a specific client is selected, narrow to that client.
-      //  2. Else if a tenant is selected (and not the super_admin
-      //     "All Tenants" view), narrow to that tenant. Without this
-      //     fallback, a super_admin with no client selected would see
-      //     ALL signals across ALL tenants (RLS bypass), making a
-      //     tenant switch look like nothing changed.
-      //  3. Else (no tenant, or All Tenants view), apply no scope filter
-      //     and let RLS handle it.
+      //  1. If a specific client is selected AND a tenant is in scope:
+      //     filter by BOTH. Defense-in-depth — a stale cross-tenant
+      //     selectedClientId (e.g. Petronas value lingering after a
+      //     switch to CRT, before useClientSelection's validation
+      //     effect runs) returns 0 rows instead of leaking data.
+      //  2. Else if only client is selected (no tenant in scope, e.g.
+      //     All Tenants view): filter by client only.
+      //  3. Else if a tenant is selected (and not All Tenants view):
+      //     filter by tenant. Without this fallback, super_admin RLS
+      //     bypass would return ALL signals across ALL tenants.
+      //  4. Else (no tenant, All Tenants view): no scope filter, RLS handles it.
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
+        if (currentTenant?.id && !isAllTenantsView) {
+          query = query.eq('tenant_id', currentTenant.id);
+        }
       } else if (currentTenant?.id && !isAllTenantsView) {
         query = query.eq('tenant_id', currentTenant.id);
       }
