@@ -24,6 +24,7 @@ import { AutopilotPanel } from "@/components/investigations/AutopilotPanel";
 import { WorkspaceButton } from "@/components/workspace";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenant } from "@/hooks/useTenant";
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { LocationsMap } from "@/components/LocationsMap";
@@ -48,6 +49,7 @@ const InvestigationDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const queryClient = useQueryClient();
   const [isSaving, setIsSaving] = useState(false);
   const [isAiGenerating, setIsAiGenerating] = useState(false);
@@ -101,17 +103,41 @@ const InvestigationDetail = () => {
   const { data: investigation, isLoading } = useQuery({
     queryKey: ['investigation', id],
     queryFn: async () => {
+      // Include the linked client's tenant_id so we can cross-check
+      // tenant scope on load. investigations has no tenant_id column
+      // of its own; tenant identity lives on clients.tenant_id via
+      // the client_id FK.
       const { data, error } = await supabase
         .from('investigations')
-        .select('*')
+        .select('*, clients(tenant_id)')
         .eq('id', id)
         .single();
-      
+
       if (error) throw error;
       return data;
     },
     enabled: !!id
   });
+
+  // Cross-tenant guard: when observing a specific tenant, do not
+  // render an investigation whose client belongs to a different
+  // tenant — even for super_admin. Use Exit Tenant View to inspect
+  // cross-tenant records. Skipped in All-Tenants view.
+  useEffect(() => {
+    if (!investigation) return;
+    const linkedTenantId =
+      (investigation as unknown as { clients?: { tenant_id?: string | null } | null })
+        .clients?.tenant_id ?? null;
+    if (
+      currentTenant?.id &&
+      !isAllTenantsView &&
+      linkedTenantId &&
+      linkedTenantId !== currentTenant.id
+    ) {
+      toast.error('Investigation belongs to a different tenant');
+      navigate('/investigations');
+    }
+  }, [investigation, currentTenant?.id, isAllTenantsView, navigate]);
 
   // Initialize local state when investigation data loads
   useEffect(() => {

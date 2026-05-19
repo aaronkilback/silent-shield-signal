@@ -10,6 +10,8 @@ import { Plus, FileText, Loader2, Sparkles, AlertTriangle, LayoutTemplate } from
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +39,8 @@ const Investigations = () => {
   const navigate = useNavigate();
   const [isCreating, setIsCreating] = useState(false);
   const { selectedClientId, isContextReady } = useClientSelection();
+  const { isAllTenantsView } = useTenant();
+  const { clientIds: tenantClientIds } = useTenantScopedClientIds();
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
   const [templates, setTemplates] = useState<InvestigationTemplate[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
@@ -45,14 +49,29 @@ const Investigations = () => {
   const [pendingTemplate, setPendingTemplate] = useState<InvestigationTemplate | null>(null);
 
   const { data: investigations = [], isLoading } = useQuery({
-    queryKey: ['investigations'],
+    queryKey: ['investigations', selectedClientId, tenantClientIds, isAllTenantsView],
     queryFn: async () => {
       console.log('[Investigations] Fetching investigations...');
-      const { data, error } = await supabase
+      let query = supabase
         .from('investigations')
         .select('*')
         .order('created_at', { ascending: false });
-      
+
+      // investigations has client_id only (no tenant_id column),
+      // so tenant scope is enforced via the set of client_ids that
+      // belong to currentTenant. Without this, super_admin RLS
+      // bypass returns every investigation across every tenant.
+      if (selectedClientId) {
+        query = query.eq('client_id', selectedClientId);
+      } else if (tenantClientIds !== null && tenantClientIds !== undefined) {
+        // tenantClientIds === null  → All Tenants view, no scope
+        // tenantClientIds === undefined → still loading; the
+        //   `enabled` gate below blocks the query so we never run unscoped.
+        if (tenantClientIds.length === 0) return [];
+        query = query.in('client_id', tenantClientIds);
+      }
+
+      const { data, error } = await query;
       if (error) {
         console.error('[Investigations] Error fetching:', error);
         throw error;
@@ -60,7 +79,14 @@ const Investigations = () => {
       console.log('[Investigations] Fetched count:', data?.length || 0);
       return data;
     },
-    enabled: !!user && isContextReady
+    enabled:
+      !!user &&
+      isContextReady &&
+      // Wait for tenantClientIds to settle (null in All-Tenants view,
+      // string[] when scoped) before firing the query. Without this,
+      // a brief render with tenantClientIds=undefined would skip the
+      // .in filter and leak data on the first frame.
+      (isAllTenantsView || tenantClientIds !== undefined),
   });
 
   const fetchTemplates = async () => {

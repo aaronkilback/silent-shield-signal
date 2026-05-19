@@ -9,6 +9,8 @@ import { SettingsSheet } from "@/components/SettingsSheet";
 import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 import { PlatformAdminBanner } from "@/components/PlatformAdminBanner";
 import { PlatformAdminEscape } from "@/components/PlatformAdminEscape";
+import { useTenant } from "@/hooks/useTenant";
+import { getNavVisibility, getUiProfile } from "@/lib/ui-profile";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -32,6 +34,19 @@ export const Header = () => {
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { isSuperAdmin, isAdmin } = useUserRole();
+  const { currentTenant } = useTenant();
+  const uiProfile = getUiProfile(currentTenant?.settings);
+  // Super_admin sees the full nav (cosmetic gate is bypassed for them
+  // so they can do support work in any tenant). Non-super_admin tenant
+  // users get UI profile filtering: hidden items disappear, greyed
+  // items render disabled.
+  const filterNavByProfile = <T extends { path: string }>(items: T[]): Array<T & { _visibility: 'active' | 'greyed' }> => {
+    if (isSuperAdmin) return items.map((i) => ({ ...i, _visibility: 'active' as const }));
+    return items
+      .map((i) => ({ ...i, _visibility: getNavVisibility(uiProfile, i.path) }))
+      .filter((i) => i._visibility !== 'hidden')
+      .map((i) => ({ ...i, _visibility: i._visibility as 'active' | 'greyed' }));
+  };
 
   // Get pending entity suggestions count — only for admins
   const { data: pendingSuggestions } = useQuery({
@@ -135,12 +150,20 @@ export const Header = () => {
     ] : []),
   ];
 
+  // Apply tenant UI profile filtering so a CRT analyst doesn't see
+  // /vip-deep-scan, /travel, /site-audits etc. in any dropdown.
+  // Super_admin sees everything (filterNavByProfile short-circuits).
+  const visiblePrimary = filterNavByProfile(primaryItems);
+  const visibleIntelligence = filterNavByProfile(intelligenceItems);
+  const visibleOperations = filterNavByProfile(operationsItems);
+  const visibleAdmin = filterNavByProfile(adminItems);
+
   // All items for mobile
   const allNavItems = [
-    ...primaryItems,
-    ...intelligenceItems,
-    ...operationsItems,
-    ...adminItems,
+    ...visiblePrimary,
+    ...visibleIntelligence,
+    ...visibleOperations,
+    ...visibleAdmin,
   ];
 
   const handleNavClick = (path: string) => {
@@ -239,7 +262,7 @@ export const Header = () => {
             <div className="flex items-center gap-1 lg:gap-2 flex-wrap justify-end">
               <nav className="flex items-center gap-0.5 lg:gap-1">
                 {/* Primary items - icons only on medium screens */}
-                {primaryItems.map((item) => (
+                {visiblePrimary.map((item) => (
                   <Button
                     key={item.path}
                     onClick={() => navigate(item.path)}
@@ -253,9 +276,9 @@ export const Header = () => {
                 ))}
                 
                 {/* Grouped dropdowns */}
-                <NavDropdown label="Intel" icon={ClipboardList} items={intelligenceItems} />
-                <NavDropdown label="Ops" icon={Bot} items={operationsItems} />
-                <NavDropdown label="Admin" icon={Settings} items={adminItems} />
+                <NavDropdown label="Intel" icon={ClipboardList} items={visibleIntelligence} />
+                <NavDropdown label="Ops" icon={Bot} items={visibleOperations} />
+                <NavDropdown label="Admin" icon={Settings} items={visibleAdmin} />
               </nav>
 
               <div className="flex items-center gap-1 lg:gap-2 ml-1 lg:ml-2 pl-1 lg:pl-2 border-l border-border">
@@ -299,7 +322,7 @@ export const Header = () => {
 
                     <nav className="flex flex-col gap-1">
                       <p className="text-xs text-muted-foreground font-medium px-3 pt-2">Main</p>
-                      {primaryItems.map((item) => (
+                      {visiblePrimary.map((item) => (
                         <Button
                           key={item.path}
                           onClick={() => handleNavClick(item.path)}
@@ -313,7 +336,7 @@ export const Header = () => {
                       ))}
 
                       <p className="text-xs text-muted-foreground font-medium px-3 pt-4">Intelligence</p>
-                      {intelligenceItems.map((item) => (
+                      {visibleIntelligence.map((item) => (
                         <Button
                           key={item.path}
                           onClick={() => handleNavClick(item.path)}
@@ -332,7 +355,7 @@ export const Header = () => {
                       ))}
 
                       <p className="text-xs text-muted-foreground font-medium px-3 pt-4">Operations</p>
-                      {operationsItems.map((item) => (
+                      {visibleOperations.map((item) => (
                         <Button
                           key={item.path}
                           onClick={() => handleNavClick(item.path)}
@@ -346,7 +369,7 @@ export const Header = () => {
                       ))}
 
                       <p className="text-xs text-muted-foreground font-medium px-3 pt-4">Admin</p>
-                      {adminItems.map((item) => (
+                      {visibleAdmin.map((item) => (
                         <Button
                           key={item.path}
                           onClick={() => handleNavClick(item.path)}

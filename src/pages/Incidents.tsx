@@ -17,6 +17,7 @@ import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { DeleteIncidentDialog } from "@/components/DeleteIncidentDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 import { DashboardClientSelector } from "@/components/ClientSelector";
 
 
@@ -45,7 +46,8 @@ const Incidents = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { selectedClientId } = useClientSelection();
-  
+  const { currentTenant, isAllTenantsView } = useTenant();
+
   const [searchParams, setSearchParams] = useSearchParams();
   
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -80,8 +82,18 @@ const Incidents = () => {
           .neq("is_test", true) // Hide synthetic QA-test incidents from operators
           .order("opened_at", { ascending: false });
 
+        // Tenant scope cascade (defense-in-depth): when both a client
+        // and a tenant are in scope, AND them so a stale cross-tenant
+        // selectedClientId returns 0 rows. When only tenant is in
+        // scope, narrow to tenant. Without this fallback, super_admin
+        // RLS bypass returns all incidents across all tenants.
         if (selectedClientId) {
           query = query.eq("client_id", selectedClientId);
+          if (currentTenant?.id && !isAllTenantsView) {
+            query = query.eq("tenant_id", currentTenant.id);
+          }
+        } else if (currentTenant?.id && !isAllTenantsView) {
+          query = query.eq("tenant_id", currentTenant.id);
         }
         if (statusFilter !== "all") {
           query = query.eq("status", statusFilter as any);
@@ -128,7 +140,7 @@ const Incidents = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, selectedClientId, statusFilter, priorityFilter, toast, reloadTrigger]);
+  }, [user, selectedClientId, statusFilter, priorityFilter, toast, reloadTrigger, currentTenant?.id, isAllTenantsView]);
 
   // Auto-open incident from URL parameter (e.g., from investigation page)
   useEffect(() => {
