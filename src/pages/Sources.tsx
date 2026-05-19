@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenant } from "@/hooks/useTenant";
+import { useTenantRelevantSourceIds } from "@/hooks/useTenantRelevantSourceIds";
 import { toast } from "sonner";
 import { AddSourceDialog } from "@/components/AddSourceDialog";
 import { EditSourceDialog } from "@/components/EditSourceDialog";
@@ -48,6 +50,8 @@ const Sources = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { isAllTenantsView } = useTenant();
+  const { sourceIds: tenantRelevantSourceIds } = useTenantRelevantSourceIds();
   const [searchParams, setSearchParams] = useSearchParams();
   
   const initialTab = searchParams.get('tab') || 'sources';
@@ -83,16 +87,35 @@ const Sources = () => {
   };
 
   const { data: sources, isLoading, refetch } = useQuery({
-    queryKey: ["sources"],
+    queryKey: ["sources", tenantRelevantSourceIds, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("sources")
         .select("*")
         .order("created_at", { ascending: false });
 
+      // Tenant relevance gate (Option B, 2026-05-19): when observing
+      // a specific tenant, narrow the displayed source inventory to
+      // sources that have produced signals for THIS tenant's clients
+      // in the recent activity window (see useTenantRelevantSourceIds).
+      // Sources are platform-wide infrastructure; this is purely an
+      // access-layer view filter, not an ingestion change.
+      //
+      //   null      → All Tenants view, no filter
+      //   undefined → still loading; `enabled` gate below holds the query
+      //   string[]  → restrict to these source IDs (empty array → no rows)
+      if (tenantRelevantSourceIds !== null && tenantRelevantSourceIds !== undefined) {
+        if (tenantRelevantSourceIds.length === 0) return [];
+        query = query.in("id", tenantRelevantSourceIds);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    // Wait for relevance state to settle so we never briefly show every
+    // source on first paint while the tenant scope is still loading.
+    enabled: isAllTenantsView || tenantRelevantSourceIds !== undefined,
   });
 
   const toggleActiveMutation = useMutation({
