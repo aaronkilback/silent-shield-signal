@@ -1,6 +1,22 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+// Returns the tenants a caller may select in the UI. Separates tenant membership
+// authority (tenant_role) from platform-admin authority (platform_access) so the
+// UI can gate tenant-action buttons strictly on membership while still letting a
+// super_admin observe / impersonate every active tenant.
+//
+// Per-tenant shape:
+//   tenant_role:      'owner' | 'admin' | 'analyst' | 'viewer' | null
+//   role:             back-compat alias of tenant_role (deprecated, still emitted)
+//   platform_access:  true iff caller has user_roles.role='super_admin'
+//   access_mode:      'tenant_member' | 'platform_admin' | 'tenant_member_plus_platform_admin'
+//   can_impersonate:  true iff platform_access (split field reserved for future RBAC)
+//
+// Non-super_admin callers only see tenants they have a tenant_users row for.
+// Super_admin callers see every active tenant; access_mode reflects whether they
+// also hold an explicit tenant_users row.
+
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
@@ -9,40 +25,36 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-    // Get user from auth header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return errorResponse('Authorization required', 401);
     }
 
-    // Extract token and create client
     const token = authHeader.replace('Bearer ', '');
     const userClient = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } }
     });
 
-    // CRITICAL: Must pass token explicitly when verify_jwt=false
     const { data: { user }, error: userError } = await userClient.auth.getUser(token);
     if (userError || !user) {
       return errorResponse('Invalid authentication', 401);
     }
 
-    // Use service role client to get tenant memberships
     const adminClient = createServiceClient();
 
+    // Platform-level super_admin check (user_roles table, NOT tenant_users)
+    const { data: superAdminRow } = await adminClient
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('role', 'super_admin')
+      .maybeSingle();
+    const isSuperAdmin = !!superAdminRow;
+
+    // Always load explicit memberships — they drive tenant_role + joined_at
     const { data: memberships, error: membershipsError } = await adminClient
       .from('tenant_users')
-      .select(`
-        id,
-        role,
-        created_at,
-        tenants (
-          id,
-          name,
-          status,
-          settings
-        )
-      `)
+      .select('tenant_id, role, created_at')
       .eq('user_id', user.id);
 
     if (membershipsError) {
@@ -50,19 +62,59 @@ Deno.serve(async (req) => {
       return errorResponse('Failed to fetch tenants', 500);
     }
 
-    // Transform the data - tenants is an object (single record from join), cast through unknown
-    const tenants = memberships?.map(m => {
-      // deno-lint-ignore no-explicit-any
-      const tenant = m.tenants as any;
+    const explicit = new Map<string, { role: string; created_at: string }>();
+    for (const m of memberships ?? []) {
+      if (m.tenant_id) explicit.set(m.tenant_id, { role: m.role, created_at: m.created_at });
+    }
+
+    // Candidate tenants: all active when super_admin, otherwise only the user's memberships
+    type TenantRow = { id: string; name: string; status: string; settings: unknown; created_at: string };
+    let candidates: TenantRow[] = [];
+
+    if (isSuperAdmin) {
+      const { data, error } = await adminClient
+        .from('tenants')
+        .select('id, name, status, settings, created_at')
+        .eq('status', 'active');
+      if (error) {
+        console.error('Tenants fetch error (super_admin path):', error);
+        return errorResponse('Failed to fetch tenants', 500);
+      }
+      candidates = (data ?? []) as TenantRow[];
+    } else if (explicit.size > 0) {
+      const { data, error } = await adminClient
+        .from('tenants')
+        .select('id, name, status, settings, created_at')
+        .in('id', [...explicit.keys()])
+        .eq('status', 'active');
+      if (error) {
+        console.error('Tenants fetch error (membership path):', error);
+        return errorResponse('Failed to fetch tenants', 500);
+      }
+      candidates = (data ?? []) as TenantRow[];
+    }
+
+    const tenants = candidates.map((t) => {
+      const m = explicit.get(t.id);
+      const tenant_role = (m?.role ?? null) as 'owner' | 'admin' | 'analyst' | 'viewer' | null;
+      const platform_access = isSuperAdmin;
+      const access_mode =
+        m && platform_access ? 'tenant_member_plus_platform_admin' :
+        m                    ? 'tenant_member' :
+                                'platform_admin';
       return {
-        id: tenant?.id as string | undefined,
-        name: tenant?.name as string | undefined,
-        status: tenant?.status as string | undefined,
-        settings: tenant?.settings,
-        role: m.role,
-        joined_at: m.created_at
+        id: t.id,
+        name: t.name,
+        status: t.status,
+        settings: t.settings,
+        tenant_role,
+        role: tenant_role, // @deprecated back-compat alias of tenant_role
+        platform_access,
+        access_mode,
+        can_impersonate: platform_access,
+        joined_at: m?.created_at ?? t.created_at,
       };
-    }).filter(t => t.id && t.status === 'active') || [];
+    });
 
     return successResponse({
       tenants,
