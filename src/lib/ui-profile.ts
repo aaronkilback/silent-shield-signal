@@ -48,6 +48,32 @@ export function getNavVisibility(profile: UiProfile, path: string): NavVisibilit
   return 'hidden';
 }
 
+// Sub-route prefixes that should be accessible whenever the parent
+// list view is in CRT_ACTIVE_PATHS. The dashboard uses singular detail
+// routes (/client/:id, /investigation/:id) and a nested config route
+// (/clients/:id/arcgis) that don't match the plural list paths via
+// strict Set.has() comparison.
+const CRT_ACTIVE_PREFIXES: string[] = [
+  '/client/',         // detail for an item from /clients
+  '/clients/',        // sub-config under /clients/:id/...
+  '/investigation/',  // detail for an item from /investigations
+];
+
+/**
+ * Route-level access check. Returns true if a user on this UI profile
+ * may load the given path (direct URL or programmatic navigation).
+ *
+ * Used by ProtectedRoute as the source-of-truth gate so direct URL
+ * access to a route that is hidden/greyed in the CRT nav is blocked.
+ * Without this gate, hiding an item in the dropdown is only cosmetic.
+ */
+export function canAccessRoute(profile: UiProfile, path: string): boolean {
+  if (profile === 'operator') return true;
+  if (CRT_ACTIVE_PATHS.has(path)) return true;
+  if (CRT_ACTIVE_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
+  return false;
+}
+
 /**
  * Tenant-noun terminology. CRT pilots think of their workspace as containing
  * "monitored environments" (BC Place is one environment, future end-clients
