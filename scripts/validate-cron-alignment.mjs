@@ -137,9 +137,15 @@ const HEARTBEAT_NO_CRON_ALLOWLIST = new Set([
   // Deprecated per project_cyber_pipeline memory; pastebin source dropped.
   // Heartbeat call should be removed once the function itself is deleted.
   'monitor-pastebin',
-  // Active development (commit 616ba1c5 added tenant-aware activism overlay).
-  // Cron schedule pending operator decision on cadence.
-  'monitor-instagram',
+  // Paused under Phase X-1 budget controls (May 2026 — X API cost runaway).
+  // Replaced by per-tenant monitor-x-single under event-flag gating. Function
+  // code still writes a heartbeat but the cron is intentionally absent.
+  'monitor-twitter',
+  // Function logic was consolidated into self-improvement-orchestrator. The
+  // orchestrator now writes the 'self-improvement-nightly' heartbeat itself
+  // via its own scheduled job. The legacy heartbeat call remains in this
+  // function's body for now but no cron drives it.
+  'self-improvement-orchestrator',
 ]);
 
 // ── Check 1: Heartbeat name matches a cron job name ────────────────────────
