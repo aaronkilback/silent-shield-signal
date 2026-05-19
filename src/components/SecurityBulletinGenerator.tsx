@@ -188,7 +188,11 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
   const toggleEntityPhoto = (photoId: string) => {
     setSelectedEntityPhotoIds(prev => {
       const n = new Set(prev);
-      n.has(photoId) ? n.delete(photoId) : n.add(photoId);
+      if (n.has(photoId)) {
+        n.delete(photoId);
+      } else {
+        n.add(photoId);
+      }
       return n;
     });
   };
