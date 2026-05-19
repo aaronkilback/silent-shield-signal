@@ -1,7 +1,10 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useIsSuperAdmin } from "@/hooks/useIsSuperAdmin";
+import { useTenant } from "@/hooks/useTenant";
+import { useClientSelection } from "@/hooks/useClientSelection";
 import { PageLayout } from "@/components/PageLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -70,7 +73,10 @@ interface RecentActivity {
 
 export default function SuperAdminDashboard() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { isSuperAdmin, isLoading: loadingAdmin } = useIsSuperAdmin();
+  const { tenants: accessibleTenants, setCurrentTenant } = useTenant();
+  const { setSelectedClientId } = useClientSelection();
   const [tenants, setTenants] = useState<TenantStats[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
@@ -302,7 +308,33 @@ export default function SuperAdminDashboard() {
   };
 
   const switchToTenant = (tenantId: string, tenantName: string) => {
-    localStorage.setItem("selectedTenantId", tenantId);
+    // Look up the full Tenant from get-user-tenants. Super_admin sees every
+    // active tenant, so this should always resolve; the guard handles the
+    // narrow window before useTenant's query has populated.
+    const target = accessibleTenants.find((t) => t.id === tenantId);
+    if (!target) {
+      toast.error(`Tenant "${tenantName}" is not in your accessible list yet — try refreshing`);
+      return;
+    }
+
+    // Drop the stale client filter BEFORE updating the tenant so the
+    // post-switch query refetch can't briefly hit the wrong client.
+    // setSelectedClientId(null) triggers `set_current_client('')` RPC
+    // + queryClient.invalidateQueries() inside useClientSelection.
+    setSelectedClientId(null);
+
+    // Update TenantContext. Persists fortress_current_tenant_id and
+    // invalidates all queries via queryClient.invalidateQueries().
+    setCurrentTenant(target);
+
+    // Belt-and-suspenders invalidation in case either context misses
+    // anything: ensure every query refetches against the new scope.
+    queryClient.invalidateQueries();
+
+    // Clean up the legacy dead-end key written by the previous
+    // implementation so stale data isn't around if anything ever reads it.
+    localStorage.removeItem("selectedTenantId");
+
     toast.success(`Switched to ${tenantName}`);
     navigate("/");
   };
