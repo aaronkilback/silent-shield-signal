@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { reportError } from "@/lib/errorReporting";
+import { useTenant } from "@/hooks/useTenant";
 
 const sourceSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
@@ -55,18 +56,24 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
 
   const selectedSourceType = sourceTypes.find(st => st.value === type);
   const queryClient = useQueryClient();
+  const { currentTenant } = useTenant();
 
   const addSourceMutation = useMutation({
     mutationFn: async () => {
       console.log("Starting source addition...");
-      
+
       // Check authentication
       const { data: { user } } = await supabase.auth.getUser();
       console.log("Current user:", user?.id);
-      
+
       if (!user) {
         throw new Error("You must be logged in to add sources");
       }
+
+      // BUG4/5b Path-γ: tenant-private by default. Analyst-created sources land
+      // under the current tenant scope. Global source creation (NULL tenant_id)
+      // is reserved for super_admin and must come via the bypass policy.
+      const createdByTenantId = currentTenant?.id ?? null;
 
       // Validate required fields
       if (!name.trim()) {
@@ -107,6 +114,7 @@ export const AddSourceDialog = ({ open, onOpenChange }: AddSourceDialogProps) =>
           config: parsedConfig,
           status: 'active',
           monitor_type: monitorType || null,
+          created_by_tenant_id: createdByTenantId,
         })
         .select();
 

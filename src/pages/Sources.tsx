@@ -50,7 +50,7 @@ const Sources = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { isAllTenantsView } = useTenant();
+  const { isAllTenantsView, currentTenant } = useTenant();
   const { sourceIds: tenantRelevantSourceIds } = useTenantRelevantSourceIds();
   const [searchParams, setSearchParams] = useSearchParams();
   
@@ -182,6 +182,8 @@ const Sources = () => {
         name: newSource.name,
         type: newSource.type,
         status: 'active',
+        // BUG4/5b Path-γ: tenant-private by default. Global (NULL) reserved for super_admin via bypass policy.
+        created_by_tenant_id: currentTenant?.id ?? null,
         config: {
           url: newSource.url,
           feed_url: newSource.url
@@ -206,6 +208,8 @@ const Sources = () => {
         name,
         type: 'url_feed',
         status: 'active',
+        // BUG4/5b Path-γ: tenant-private by default.
+        created_by_tenant_id: currentTenant?.id ?? null,
         config: { url, feed_url: url }
       });
 
