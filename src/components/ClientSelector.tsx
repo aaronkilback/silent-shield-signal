@@ -164,7 +164,9 @@ export const ClientSelector = ({
     }
   };
 
-  const { currentTenant } = useTenant();
+  // currentTenant already destructured at the top of the component
+  // (line 54) for the fetchClients tenant filter. Re-using it for the
+  // noun lookup so we don't double-declare the binding.
   const noun = getClientNoun(currentTenant?.settings);
   const displayTitle = title || (mode === 'navigate' ? `Select ${noun.singular}` : `${noun.singular} Filter`);
   const displayDescription = description || (
