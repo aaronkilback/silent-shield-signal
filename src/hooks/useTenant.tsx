@@ -4,13 +4,25 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 
 export type TenantRole = 'owner' | 'admin' | 'analyst' | 'viewer';
+export type AccessMode = 'tenant_member' | 'platform_admin' | 'tenant_member_plus_platform_admin';
 
 export interface Tenant {
   id: string;
   name: string;
   status: string;
   settings: Record<string, unknown>;
-  role: TenantRole;
+  // Canonical tenant authority. Null when caller is a super_admin viewing a
+  // tenant they have no tenant_users row for (platform_admin mode).
+  tenant_role: TenantRole | null;
+  // @deprecated back-compat alias of tenant_role. Mirrors tenant_role and is
+  // now nullable; new code should read tenant_role.
+  role: TenantRole | null;
+  // Platform-level capability — true iff the caller is a super_admin.
+  platform_access: boolean;
+  // Presentation mode for this tenant from the caller's perspective.
+  access_mode: AccessMode;
+  // Reserved for future RBAC; today this equals platform_access.
+  can_impersonate: boolean;
   joined_at: string;
 }
 
@@ -21,8 +33,17 @@ interface TenantContextType {
   isLoading: boolean;
   hasTenants: boolean;
   refetchTenants: () => void;
+  // Tenant-membership-derived gates. Strictly read tenant_role, NEVER
+  // platform_access, so super_admin impersonation does not silently grant
+  // owner/admin tenant UI actions.
   isOwnerOrAdmin: boolean;
   isOwner: boolean;
+  // True when the caller is observing the current tenant via super_admin
+  // platform access without an explicit tenant_users row. UI uses this to
+  // render the "Platform admin view" banner.
+  isPlatformAdminView: boolean;
+  // True when the caller may impersonate tenants (today: super_admin only).
+  canImpersonate: boolean;
   // "All Tenants" view for super admins (shows all data)
   isAllTenantsView: boolean;
   setAllTenantsView: (value: boolean) => void;
@@ -189,8 +210,12 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     return tenants.map(t => t.id);
   };
 
-  const isOwnerOrAdmin = currentTenant?.role === 'owner' || currentTenant?.role === 'admin';
-  const isOwner = currentTenant?.role === 'owner';
+  // Membership gates read tenant_role only — platform_access never grants
+  // owner/admin tenant UI capability.
+  const isOwnerOrAdmin = currentTenant?.tenant_role === 'owner' || currentTenant?.tenant_role === 'admin';
+  const isOwner = currentTenant?.tenant_role === 'owner';
+  const isPlatformAdminView = currentTenant?.access_mode === 'platform_admin';
+  const canImpersonate = !!currentTenant?.can_impersonate;
 
   return (
     <TenantContext.Provider value={{
@@ -202,6 +227,8 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       refetchTenants: refetch,
       isOwnerOrAdmin,
       isOwner,
+      isPlatformAdminView,
+      canImpersonate,
       isAllTenantsView,
       setAllTenantsView,
       hasTenantSelection,
