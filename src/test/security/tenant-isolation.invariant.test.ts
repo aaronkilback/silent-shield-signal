@@ -53,6 +53,16 @@ const INCIDENT_B_ID = "22222222-1519-4519-1519-000000000002";
 const INVESTIGATION_B_ID = "22222222-9519-4519-9519-000000000002";
 const REPORT_B_ID = "22222222-7519-4519-7519-000000000002";
 
+// Phase B fixtures (added 2026-05-19 with the client_assets /
+// site_audits / site_observations RLS hardening — migration
+// 20260519170000_tighten_rls_client_assets_site_audits.sql).
+const ASSET_A_ID = "11111111-a55e-4a55-aa55-000000000001";
+const ASSET_B_ID = "22222222-a55e-4a55-aa55-000000000002";
+const AUDIT_A_ID = "11111111-a3da-4a3d-aa3d-000000000001";
+const AUDIT_B_ID = "22222222-a3da-4a3d-aa3d-000000000002";
+const OBSERVATION_A_ID = "11111111-0b53-40b5-a0b5-000000000001";
+const OBSERVATION_B_ID = "22222222-0b53-40b5-a0b5-000000000002";
+
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const USER_A_EMAIL = process.env.TEST_INVARIANT_USER_A_EMAIL;
@@ -223,6 +233,58 @@ if (isCI && !haveAllEnv) {
           .eq("id", REPORT_B_ID);
         expect(data).toEqual([]);
       });
+
+      // Phase B tables — added 2026-05-19 when client_assets,
+      // site_audits, and site_observations were hardened from
+      // FOR SELECT TO authenticated USING (true) to the same
+      // tenant-scoped pattern as the rows above.
+      it("client_assets: client_id=B → 0 rows", async () => {
+        const { data } = await clientA
+          .from("client_assets")
+          .select("id")
+          .eq("client_id", CLIENT_B_ID);
+        expect(data).toEqual([]);
+      });
+
+      it("client_assets: lookup by known tenant B asset id → 0 rows", async () => {
+        const { data } = await clientA
+          .from("client_assets")
+          .select("id")
+          .eq("id", ASSET_B_ID);
+        expect(data).toEqual([]);
+      });
+
+      it("site_audits: client_id=B → 0 rows", async () => {
+        const { data } = await clientA
+          .from("site_audits")
+          .select("id")
+          .eq("client_id", CLIENT_B_ID);
+        expect(data).toEqual([]);
+      });
+
+      it("site_audits: lookup by known tenant B audit id → 0 rows", async () => {
+        const { data } = await clientA
+          .from("site_audits")
+          .select("id")
+          .eq("id", AUDIT_B_ID);
+        expect(data).toEqual([]);
+      });
+
+      it("site_observations: by audit_id=B → 0 rows", async () => {
+        const { data } = await clientA
+          .from("site_observations")
+          .select("id")
+          .eq("audit_id", AUDIT_B_ID);
+        expect(data).toEqual([]);
+      });
+
+      it("site_observations: lookup by known tenant B observation id → 0 rows", async () => {
+        const { data } = await clientA
+          .from("site_observations")
+          .select("id")
+          .eq("id", OBSERVATION_B_ID);
+        expect(data).toEqual([]);
+      });
     });
 
     // ── DIRECTION 2: User B must not see Tenant A data ──────────
@@ -266,6 +328,30 @@ if (isCI && !haveAllEnv) {
           .eq("tenant_id", TENANT_A_ID);
         expect(data).toEqual([]);
       });
+
+      it("client_assets: lookup by known tenant A asset id → 0 rows", async () => {
+        const { data } = await clientB
+          .from("client_assets")
+          .select("id")
+          .eq("id", ASSET_A_ID);
+        expect(data).toEqual([]);
+      });
+
+      it("site_audits: lookup by known tenant A audit id → 0 rows", async () => {
+        const { data } = await clientB
+          .from("site_audits")
+          .select("id")
+          .eq("id", AUDIT_A_ID);
+        expect(data).toEqual([]);
+      });
+
+      it("site_observations: lookup by known tenant A observation id → 0 rows", async () => {
+        const { data } = await clientB
+          .from("site_observations")
+          .select("id")
+          .eq("id", OBSERVATION_A_ID);
+        expect(data).toEqual([]);
+      });
     });
 
     // ── POSITIVE ASSERTIONS — guard against false-negative test ─
@@ -306,6 +392,59 @@ if (isCI && !haveAllEnv) {
           .eq("id", CLIENT_B_ID);
         expect(data?.length).toBe(1);
         expect(data?.[0]?.name).toBe("_invariant_client_b");
+      });
+
+      // Phase B positive coverage — confirms the new RLS isn't
+      // over-restrictive. If any of these regressed to 0 rows the
+      // fix has gone too far.
+      it("User A sees the tenant A asset by id", async () => {
+        const { data } = await clientA
+          .from("client_assets")
+          .select("id, name")
+          .eq("id", ASSET_A_ID);
+        expect(data?.length).toBe(1);
+        expect(data?.[0]?.name).toBe("_invariant_asset_a");
+      });
+
+      it("User A sees the tenant A audit by id", async () => {
+        const { data } = await clientA
+          .from("site_audits")
+          .select("id")
+          .eq("id", AUDIT_A_ID);
+        expect(data?.length).toBe(1);
+      });
+
+      it("User A sees the tenant A observation by id", async () => {
+        const { data } = await clientA
+          .from("site_observations")
+          .select("id")
+          .eq("id", OBSERVATION_A_ID);
+        expect(data?.length).toBe(1);
+      });
+
+      it("User B sees the tenant B asset by id", async () => {
+        const { data } = await clientB
+          .from("client_assets")
+          .select("id, name")
+          .eq("id", ASSET_B_ID);
+        expect(data?.length).toBe(1);
+        expect(data?.[0]?.name).toBe("_invariant_asset_b");
+      });
+
+      it("User B sees the tenant B audit by id", async () => {
+        const { data } = await clientB
+          .from("site_audits")
+          .select("id")
+          .eq("id", AUDIT_B_ID);
+        expect(data?.length).toBe(1);
+      });
+
+      it("User B sees the tenant B observation by id", async () => {
+        const { data } = await clientB
+          .from("site_observations")
+          .select("id")
+          .eq("id", OBSERVATION_B_ID);
+        expect(data?.length).toBe(1);
       });
     });
 
