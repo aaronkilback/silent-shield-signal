@@ -8,6 +8,7 @@ import { TravelNotificationBell } from "@/components/travel/TravelNotificationBe
 import { SettingsSheet } from "@/components/SettingsSheet";
 import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 import { PlatformAdminBanner } from "@/components/PlatformAdminBanner";
+import { PlatformAdminEscape } from "@/components/PlatformAdminEscape";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -258,6 +259,7 @@ export const Header = () => {
               </nav>
 
               <div className="flex items-center gap-1 lg:gap-2 ml-1 lg:ml-2 pl-1 lg:pl-2 border-l border-border">
+                <PlatformAdminEscape />
                 <EntityNotifications />
                 <TravelNotificationBell />
                 <div className="hidden 2xl:flex items-center gap-2 px-2 py-1.5 rounded-lg bg-secondary/50">
