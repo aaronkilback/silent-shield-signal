@@ -24,16 +24,23 @@ interface Client {
 export const ClientRiskSnapshot = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { currentTenant } = useTenant();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const noun = getClientNoun(currentTenant?.settings);
 
   const { data: clients = [], isLoading: loading } = useQuery({
-    queryKey: ["clients-risk-snapshot"],
+    queryKey: ["clients-risk-snapshot", currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("clients")
         .select("*")
         .order("created_at", { ascending: false });
+      // Tenant scope cascade — without this, super_admin RLS bypass
+      // lists every client across every tenant, contaminating the
+      // /clients page when observing a specific tenant.
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq("tenant_id", currentTenant.id);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return (data || []) as Client[];
     },

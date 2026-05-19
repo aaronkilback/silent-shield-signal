@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { useReportSchedules } from "@/hooks/useReportArchive";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenant } from "@/hooks/useTenant";
 import { CalendarClock, Plus, Trash2, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -46,6 +47,7 @@ const frequencyLabels: Record<string, string> = {
 
 export const ReportScheduleManager = () => {
   const { schedules, isLoading, createSchedule, toggleSchedule, deleteSchedule } = useReportSchedules();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     client_id: "",
@@ -57,9 +59,13 @@ export const ReportScheduleManager = () => {
   });
 
   const { data: clients } = useQuery({
-    queryKey: ["clients-for-schedule"],
+    queryKey: ["clients-for-schedule", currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase.from("clients").select("id, name").order("name");
+      let query = supabase.from("clients").select("id, name").order("name");
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq("tenant_id", currentTenant.id);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
