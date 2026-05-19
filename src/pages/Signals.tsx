@@ -5,6 +5,7 @@ import { ArchivalDocumentsList } from "@/components/ArchivalDocumentsList";
 import { ReprocessDocuments } from "@/components/ReprocessDocuments";
 import { DashboardClientSelector } from "@/components/ClientSelector";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenant } from "@/hooks/useTenant";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -41,6 +42,7 @@ interface UnmatchedSignal {
 
 const Signals = () => {
   const { user, loading } = useAuth();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -75,7 +77,7 @@ const Signals = () => {
 
   // Fetch unmatched signals — server-side filtering
   const { data: unmatchedSignals, isLoading: signalsLoading } = useQuery({
-    queryKey: ["unmatched-signals", searchTerm, dateRange],
+    queryKey: ["unmatched-signals", searchTerm, dateRange, currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
       // Compute date cutoff server-side
       const now = new Date();
@@ -95,6 +97,13 @@ const Signals = () => {
         .neq('match_confidence', 'assigned')
         .order("created_at", { ascending: false })
         .limit(100);
+
+      // Tenant scope cascade: same logic as SignalHistory.loadSignals().
+      // Without this, a super_admin with no client selected would see
+      // unmatched signals across every tenant via RLS bypass.
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
+      }
 
       if (cutoff) {
         query = query.gte('created_at', cutoff.toISOString());

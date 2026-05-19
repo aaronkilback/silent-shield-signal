@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck, Globe, AlertTriangle, ShieldOff } from "lucide-react";
 import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { SignalDetailDialog } from "./SignalDetailDialog";
@@ -105,6 +106,7 @@ export const SignalHistory = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
   const { selectedClientId } = useClientSelection();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const { startViewing, stopViewing, trackEvent } = useImplicitFeedback();
   
   // Filter states
@@ -176,7 +178,10 @@ export const SignalHistory = () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
     };
-  }, [selectedClientId]);
+    // currentTenant?.id + isAllTenantsView added so a tenant switch
+    // (which leaves selectedClientId at its prior value or null) still
+    // refetches signals against the new tenant scope.
+  }, [selectedClientId, currentTenant?.id, isAllTenantsView]);
 
   const fetchUpdateCounts = async (signalIds: string[]) => {
     if (signalIds.length === 0) {
@@ -262,9 +267,19 @@ export const SignalHistory = () => {
         .order('created_at', { ascending: false })
         .limit(50);
 
-      // Only filter by client if one is selected
+      // Filter scope cascade:
+      //  1. If a specific client is selected, narrow to that client.
+      //  2. Else if a tenant is selected (and not the super_admin
+      //     "All Tenants" view), narrow to that tenant. Without this
+      //     fallback, a super_admin with no client selected would see
+      //     ALL signals across ALL tenants (RLS bypass), making a
+      //     tenant switch look like nothing changed.
+      //  3. Else (no tenant, or All Tenants view), apply no scope filter
+      //     and let RLS handle it.
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
+      } else if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
       }
 
       const { data, error } = await query;
