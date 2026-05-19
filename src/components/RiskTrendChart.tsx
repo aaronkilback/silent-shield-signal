@@ -13,6 +13,8 @@ import {
 } from "recharts";
 import { format, startOfWeek, parseISO } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 interface WeeklyPoint {
   week: string;
@@ -22,9 +24,11 @@ interface WeeklyPoint {
 
 export function RiskTrendChart() {
   const { selectedClientId } = useClientSelection();
+  const { isAllTenantsView } = useTenant();
+  const { clientIds: tenantClientIds } = useTenantScopedClientIds();
 
   const { data: weeklyData = [], isLoading } = useQuery({
-    queryKey: ["risk-trend-12w", selectedClientId],
+    queryKey: ["risk-trend-12w", selectedClientId, tenantClientIds, isAllTenantsView],
     queryFn: async () => {
       let query = supabase
         .from("threat_radar_snapshots")
@@ -32,8 +36,15 @@ export function RiskTrendChart() {
         .order("created_at", { ascending: false })
         .limit(84); // 12 weeks × 7 days
 
+      // threat_radar_snapshots has client_id only (no tenant_id),
+      // so tenant scope is via the set of client_ids belonging to
+      // currentTenant. Without this, super_admin RLS bypass charts
+      // every tenant's risk trend mixed together.
       if (selectedClientId) {
         query = query.eq("client_id", selectedClientId);
+      } else if (tenantClientIds !== null && tenantClientIds !== undefined) {
+        if (tenantClientIds.length === 0) return [];
+        query = query.in("client_id", tenantClientIds);
       }
 
       const { data, error } = await query;

@@ -18,6 +18,7 @@ import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { DashboardClientSelector } from "@/components/ClientSelector";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 import { LocationsMap } from "@/components/LocationsMap";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DuplicateDetectionPanel } from "@/components/DuplicateDetectionPanel";
@@ -36,6 +37,7 @@ export default function Entities() {
   const navigate = useNavigate();
   const { isAdmin, isSuperAdmin } = useUserRole();
   const { selectedClientId, isContextReady } = useClientSelection();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -57,7 +59,7 @@ export default function Entities() {
 
   // Filter entities by the selected client
   const { data: entities = [], refetch } = useQuery({
-    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated, hideLowQuality],
+    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated, hideLowQuality, currentTenant?.id, isAllTenantsView],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
@@ -66,9 +68,17 @@ export default function Entities() {
         .eq('is_active', true)
         .order('created_at', { ascending: false });
 
-      // Filter by selected client
+      // Tenant scope cascade (defense-in-depth):
+      //   client + tenant → AND-cascade (stale cross-tenant client returns 0)
+      //   tenant only → narrow to tenant
+      //   neither (or All Tenants view) → no scope filter
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
+        if (currentTenant?.id && !isAllTenantsView) {
+          query = query.eq('tenant_id', currentTenant.id);
+        }
+      } else if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
       }
 
       if (searchTerm) {
@@ -96,7 +106,7 @@ export default function Entities() {
 
   // Get entity count for selected client
   const { data: totalCount = 0 } = useQuery({
-    queryKey: ['entities-total-count', selectedClientId, showAutoCreated],
+    queryKey: ['entities-total-count', selectedClientId, showAutoCreated, currentTenant?.id, isAllTenantsView],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
@@ -106,6 +116,11 @@ export default function Entities() {
 
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
+        if (currentTenant?.id && !isAllTenantsView) {
+          query = query.eq('tenant_id', currentTenant.id);
+        }
+      } else if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
       }
 
       if (showAutoCreated) {

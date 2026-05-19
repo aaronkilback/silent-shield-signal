@@ -73,7 +73,7 @@ interface Incident {
 }
 
 const ClientDetail = () => {
-  const { currentTenant } = useTenant();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const noun = getClientNoun(currentTenant?.settings);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -110,6 +110,22 @@ const ClientDetail = () => {
       if (clientError) throw clientError;
       if (!clientData) {
         toast.error(`${noun.singular} not found`);
+        navigate("/clients");
+        return;
+      }
+
+      // Cross-tenant guard: when observing a specific tenant, do not
+      // render a client that belongs to a different tenant — even for
+      // super_admin. Exit Tenant View first to inspect cross-tenant
+      // records. Skipped in All-Tenants view (super_admin global mode).
+      const loadedTenantId = (clientData as unknown as { tenant_id?: string | null }).tenant_id;
+      if (
+        currentTenant?.id &&
+        !isAllTenantsView &&
+        loadedTenantId &&
+        loadedTenantId !== currentTenant.id
+      ) {
+        toast.error(`${noun.singular} belongs to a different tenant`);
         navigate("/clients");
         return;
       }

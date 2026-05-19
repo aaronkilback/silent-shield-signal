@@ -14,6 +14,7 @@ import { ContextualKnowledgeWidget } from "@/components/agents/ContextualKnowled
 import { CommandPalette } from "@/components/CommandPalette";
 import { EnsureDefaultRole } from "@/components/EnsureDefaultRole";
 import { TenantProvider } from "@/hooks/useTenant";
+import { SuperAdminDebugPanel } from "@/components/SuperAdminDebugPanel";
 import { PasswordExpiryGuard } from "@/components/PasswordExpiryGuard";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -179,6 +180,7 @@ const App = () => {
                     </Routes>
                   </Suspense>
                   <SupportChatWidget />
+                  <SuperAdminDebugPanel />
                 </ClientSelectionProvider>
               </TenantProvider>
             </AuthProvider>
