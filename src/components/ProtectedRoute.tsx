@@ -31,7 +31,16 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   // /vip-deep-scan, /travel, /site-audits by direct URL. We only gate
   // once a tenant has loaded; pre-tenant loads pass through so the
   // home page itself isn't redirect-bounced.
-  if (currentTenant) {
+  //
+  // Super_admin bypasses the profile gate. The UI profile is a
+  // presentation choice for tenant users (CRT analyst sees the CRT
+  // surface). Super_admin observing CRT still needs route access to
+  // /super-admin, /tenant-admin, etc. to switch tenants and do
+  // support work — otherwise a hotmail super_admin who switches to
+  // CRT gets stuck with no way back. Page-level super_admin checks
+  // (e.g. SuperAdminDashboard's own useIsSuperAdmin redirect) still
+  // protect those pages from non-super_admin tenant users.
+  if (currentTenant && !currentTenant.platform_access) {
     const profile = getUiProfile(currentTenant.settings);
     if (!canAccessRoute(profile, location.pathname)) {
       return <Navigate to="/" replace />;
