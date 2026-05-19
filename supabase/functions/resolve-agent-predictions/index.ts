@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
-  const hb = await startHeartbeat(supabase, 'resolve-agent-predictions-nightly');
+  const hb = await startHeartbeat(supabase, 'resolve-agent-predictions-daily');
   const runStartedAt = Date.now();
   let resolved = 0;
   let confirmed = 0;
