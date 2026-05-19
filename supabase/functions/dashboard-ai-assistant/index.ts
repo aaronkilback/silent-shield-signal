@@ -1571,9 +1571,22 @@ async function executeTool(
     case "search_archival_documents": {
       // P0 Phase-C — fail-closed tenant gate
       assertTenantContext("search_archival_documents", tenantId);
+
+      // P0 Phase-C — restrict to caller's tenant's clients (archival_documents.client_id)
+      const sadScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (sadScopedClientIds.length === 0) {
+        return { success: true, documents: [], count: 0, note: `No clients in tenant ${tenantName}.` };
+      }
+
+      // If client_id was supplied, it must be in the caller's tenant.
+      if (args.client_id && !sadScopedClientIds.includes(args.client_id)) {
+        return { error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. search_archival_documents refused.` };
+      }
+
       let query = supabaseClient
         .from("archival_documents")
         .select("id, filename, file_type, upload_date, summary, content_text, entity_mentions, tags, client_id")
+        .in("client_id", sadScopedClientIds)
         .order("upload_date", { ascending: false })
         .limit(args.limit || 20);
 
@@ -1599,12 +1612,20 @@ async function executeTool(
     case "get_document_content": {
       // P0 Phase-C — fail-closed tenant gate
       assertTenantContext("get_document_content", tenantId);
+
+      // P0 Phase-C — restrict to caller's tenant's clients (archival_documents.client_id)
+      const gdcScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (gdcScopedClientIds.length === 0) {
+        return { success: true, documents: [], count: 0, note: `No clients in tenant ${tenantName}.` };
+      }
+
       const docId = String(args.document_id || '').trim();
       if (!docId) {
-        // List mode: return recent archival documents
+        // List mode: return recent archival documents in caller's tenant only
         const { data: docs, error: docsErr } = await supabaseClient
           .from("archival_documents")
           .select("id, filename, file_type, upload_date, summary")
+          .in("client_id", gdcScopedClientIds)
           .order("upload_date", { ascending: false }).limit(args.limit || 10);
         if (docsErr) return { success: false, error: docsErr.message };
         return { success: true, documents: docs || [], count: docs?.length || 0 };
@@ -1641,11 +1662,12 @@ async function executeTool(
         return storagePath;
       };
 
-      // Use maybeSingle so "not found" becomes a clean response (instead of a thrown Postgrest error)
+      // P0 Phase-C — restrict fetch to caller's tenant's clients
       const { data, error } = await supabaseClient
         .from("archival_documents")
         .select("*")
         .eq("id", docId)
+        .in("client_id", gdcScopedClientIds)
         .maybeSingle();
 
       if (error) {
@@ -1660,9 +1682,9 @@ async function executeTool(
       if (!data) {
         return {
           success: false,
-          error: "Document not found",
+          error: `TENANT_BOUNDARY: Document not found in tenant ${tenantName}`,
           document_id: docId,
-          hint: "Double-check the ID (a single character difference will fail).",
+          hint: "The document either does not exist or belongs to a different tenant.",
         };
       }
 
@@ -1721,6 +1743,23 @@ async function executeTool(
         return { success: false, error: "Missing document_id" };
       }
 
+      // P0 Phase-C — confirm document belongs to caller's tenant before any processing
+      const pdScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (pdScopedClientIds.length === 0) {
+        return { success: false, error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; process_document refused.` };
+      }
+      {
+        const { data: pdDoc } = await supabaseClient
+          .from('archival_documents')
+          .select('id, client_id')
+          .eq('id', docId)
+          .in('client_id', pdScopedClientIds)
+          .maybeSingle();
+        if (!pdDoc) {
+          return { success: false, error: `TENANT_BOUNDARY: document ${docId} is not in tenant ${tenantName}. process_document refused.` };
+        }
+      }
+
       const knownBuckets = [
         'ai-chat-attachments',
         'archival-documents',
@@ -1738,10 +1777,12 @@ async function executeTool(
       let storagePath: string | null = null;
 
       if (!filePath) {
+        // P0 Phase-C — scope by tenant client_ids
         const { data: doc, error: docErr } = await supabaseClient
           .from('archival_documents')
           .select('id, storage_path, file_type, metadata')
           .eq('id', docId)
+          .in('client_id', pdScopedClientIds)
           .maybeSingle();
 
         if (docErr) {
@@ -1832,22 +1873,29 @@ async function executeTool(
       const docId = String(args.document_id || '').trim();
       const analysisFocus = args.analysis_focus || 'general';
       const maxPages = Math.min(Math.max(1, args.max_pages || 5), 10);
-      
+
       if (!docId) {
         return { success: false, error: "Missing document_id" };
       }
 
-      // Get document info
+      // P0 Phase-C — restrict to caller's tenant's clients (archival_documents.client_id)
+      const avdScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (avdScopedClientIds.length === 0) {
+        return { success: false, error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; analyze_visual_document refused.` };
+      }
+
+      // Get document info (tenant-scoped fetch)
       const { data: doc, error: docError } = await supabaseClient
         .from("archival_documents")
         .select("*")
         .eq("id", docId)
+        .in("client_id", avdScopedClientIds)
         .maybeSingle();
 
       if (docError || !doc) {
         return {
           success: false,
-          error: docError ? docError.message : "Document not found",
+          error: docError ? docError.message : `TENANT_BOUNDARY: document not found in tenant ${tenantName}`,
           document_id: docId,
         };
       }
@@ -2283,23 +2331,53 @@ Be thorough and include every piece of visible text and data.`,
       const hoursBack = args.hours_back || 24;
       const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
 
+      // P0 Phase-C — derive the tenant's allowed source_ids (sources.created_by_tenant_id from
+      // Path-γ hybrid model). NULL = global sources; non-NULL must equal caller's tenant.
+      // We allow caller to read globals (NULL) + their own tenant's private sources.
+      const ridScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      const { data: ridAllowedSources } = await supabaseClient
+        .from("sources")
+        .select("id")
+        .or(`created_by_tenant_id.is.null,created_by_tenant_id.eq.${tenantId}`);
+      const ridAllowedSourceIds = (ridAllowedSources || []).map((s: any) => s.id);
+      // If no sources are visible at all, refuse rather than return cross-tenant data.
+      if (ridAllowedSourceIds.length === 0) {
+        return { success: true, documents: [], count: 0, note: `No accessible sources for tenant ${tenantName}.` };
+      }
+
       let documents: any[] = [];
       let searchMethod = "time_filter";
 
       // Filter by specific document IDs if provided
       if (args.document_ids && args.document_ids.length > 0) {
+        // P0 Phase-C — restrict to documents whose source is global or in caller's tenant
         const { data, error } = await supabaseClient
           .from("ingested_documents")
           .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
           .in("id", args.document_ids)
+          .in("source_id", ridAllowedSourceIds)
           .eq("processing_status", "completed");
-        
+
         if (error) throw error;
         documents = data || [];
         searchMethod = "document_ids";
       }
       // Filter by entity if provided
       else if (args.entity_id) {
+        // P0 Phase-C — entity must be linked to a client in caller's tenant
+        if (ridScopedClientIds.length === 0) {
+          return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; read_intelligence_documents refused.` };
+        }
+        const { data: ridEntLink } = await supabaseClient
+          .from("entity_clients")
+          .select("client_id")
+          .eq("entity_id", args.entity_id)
+          .in("client_id", ridScopedClientIds)
+          .limit(1)
+          .maybeSingle();
+        if (!ridEntLink) {
+          return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. read_intelligence_documents refused.` };
+        }
         // First, get the entity name for text search fallback
         const { data: entity } = await supabaseClient
           .from("entities")
@@ -2315,15 +2393,17 @@ Be thorough and include every piece of visible text and data.`,
         
         if (mentions && mentions.length > 0) {
           const docIds = mentions.map((m: any) => m.document_id);
+          // P0 Phase-C — restrict to documents from tenant-visible sources
           const { data, error } = await supabaseClient
             .from("ingested_documents")
             .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
             .in("id", docIds)
+            .in("source_id", ridAllowedSourceIds)
             .eq("processing_status", "completed")
             .gte("processed_at", cutoffTime)
             .order("processed_at", { ascending: false })
             .limit(limit);
-          
+
           if (!error && data) {
             documents = data;
             searchMethod = "entity_mentions";
@@ -2334,11 +2414,12 @@ Be thorough and include every piece of visible text and data.`,
         if (documents.length === 0 && entity) {
           console.log(`No entity mentions found, falling back to text search for: ${entity.name}`);
           
-          // Search in raw_text, title, and metadata
+          // Search in raw_text, title, and metadata — restricted to tenant-visible sources
           const searchTerms = [entity.name, ...(entity.aliases || [])];
           const { data, error } = await supabaseClient
             .from("ingested_documents")
             .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
+            .in("source_id", ridAllowedSourceIds)
             .eq("processing_status", "completed")
             .gte("processed_at", cutoffTime)
             .order("processed_at", { ascending: false })
@@ -2355,16 +2436,17 @@ Be thorough and include every piece of visible text and data.`,
           }
         }
       }
-      // Default: get recent documents
+      // Default: get recent documents — restricted to tenant-visible sources
       else {
         const { data, error } = await supabaseClient
           .from("ingested_documents")
           .select("id, title, raw_text, metadata, processed_at, processing_status, chunk_index, total_chunks, source_id, sources(name)")
+          .in("source_id", ridAllowedSourceIds)
           .eq("processing_status", "completed")
           .gte("processed_at", cutoffTime)
           .order("processed_at", { ascending: false })
           .limit(limit);
-        
+
         if (error) throw error;
         documents = data || [];
       }
