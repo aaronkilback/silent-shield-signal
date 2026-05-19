@@ -6,6 +6,7 @@ import { EntityNotifications } from "@/components/EntityNotifications";
 import { TravelNotificationBell } from "@/components/travel/TravelNotificationBell";
 import { SettingsSheet } from "@/components/SettingsSheet";
 import { EnvironmentBadge } from "@/components/EnvironmentBadge";
+import { PlatformAdminBanner } from "@/components/PlatformAdminBanner";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -69,6 +70,7 @@ export const MinimalHeader = () => {
 
   return (
     <header className="border-b border-border/50 bg-card/30 backdrop-blur-sm sticky top-0 z-50">
+      <PlatformAdminBanner />
       <div className="px-4 sm:px-6 py-2 flex items-center justify-between">
         {/* Logo */}
         <div className="flex items-center gap-2">

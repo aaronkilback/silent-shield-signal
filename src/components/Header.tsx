@@ -7,6 +7,7 @@ import { EntityNotifications } from "@/components/EntityNotifications";
 import { TravelNotificationBell } from "@/components/travel/TravelNotificationBell";
 import { SettingsSheet } from "@/components/SettingsSheet";
 import { EnvironmentBadge } from "@/components/EnvironmentBadge";
+import { PlatformAdminBanner } from "@/components/PlatformAdminBanner";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -216,6 +217,7 @@ export const Header = () => {
 
   return (
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
+      <PlatformAdminBanner />
       <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
         <div className="flex items-center justify-between">
           {/* Logo */}
