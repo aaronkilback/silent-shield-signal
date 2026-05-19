@@ -11540,6 +11540,36 @@ export type Database = {
           },
         ]
       }
+      ops_backfill_2026_05_19_tenant_id: {
+        Row: {
+          client_id: string
+          new_tenant_id: string
+          prior_tenant_id: string | null
+          reverted_at: string | null
+          row_id: string
+          snapshotted_at: string
+          source_table: string
+        }
+        Insert: {
+          client_id: string
+          new_tenant_id: string
+          prior_tenant_id?: string | null
+          reverted_at?: string | null
+          row_id: string
+          snapshotted_at?: string
+          source_table: string
+        }
+        Update: {
+          client_id?: string
+          new_tenant_id?: string
+          prior_tenant_id?: string | null
+          reverted_at?: string | null
+          row_id?: string
+          snapshotted_at?: string
+          source_table?: string
+        }
+        Relationships: []
+      }
       pending_shares: {
         Row: {
           consortium_id: string

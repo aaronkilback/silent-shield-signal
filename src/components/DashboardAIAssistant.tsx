@@ -922,13 +922,17 @@ This command **bypasses the AI entirely** and directly injects a test signal int
       setIsLoading(true);
 
       try {
-        // Step 1: Look up client ID
-        const { data: clientData, error: clientError } = await supabase
+        // Step 1: Look up client ID — tenant-scoped so /inject-test
+        // can't surface a cross-tenant client by name match.
+        let clientLookup = supabase
           .from('clients')
           .select('id, name')
           .ilike('name', `%${clientName}%`)
-          .limit(1)
-          .single();
+          .limit(1);
+        if (currentTenant?.id) {
+          clientLookup = clientLookup.eq('tenant_id', currentTenant.id);
+        }
+        const { data: clientData, error: clientError } = await clientLookup.single();
 
         if (clientError || !clientData) {
           const errorMsg: Message = {
