@@ -857,6 +857,90 @@ export type Database = {
           },
         ]
       }
+      agent_actions: {
+        Row: {
+          action_payload: Json
+          action_type: string
+          agent_call_sign: string
+          approved_at: string | null
+          approved_by: string | null
+          client_id: string | null
+          context_incident_id: string | null
+          context_signal_id: string | null
+          created_at: string
+          executed_at: string | null
+          execution_result: Json | null
+          id: string
+          permission_tier: string
+          rationale: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejection_reason: string | null
+          status: string
+          tenant_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          action_payload?: Json
+          action_type: string
+          agent_call_sign: string
+          approved_at?: string | null
+          approved_by?: string | null
+          client_id?: string | null
+          context_incident_id?: string | null
+          context_signal_id?: string | null
+          created_at?: string
+          executed_at?: string | null
+          execution_result?: Json | null
+          id?: string
+          permission_tier: string
+          rationale?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejection_reason?: string | null
+          status?: string
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          action_payload?: Json
+          action_type?: string
+          agent_call_sign?: string
+          approved_at?: string | null
+          approved_by?: string | null
+          client_id?: string | null
+          context_incident_id?: string | null
+          context_signal_id?: string | null
+          created_at?: string
+          executed_at?: string | null
+          execution_result?: Json | null
+          id?: string
+          permission_tier?: string
+          rationale?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejection_reason?: string | null
+          status?: string
+          tenant_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_actions_context_incident_id_fkey"
+            columns: ["context_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_actions_context_signal_id_fkey"
+            columns: ["context_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_assessments: {
         Row: {
           agent_id: string | null
@@ -1008,6 +1092,163 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_chat_beliefs: {
+        Row: {
+          agent_id: string
+          claim: string
+          claim_embedding: string | null
+          confidence: number
+          contradicted_at: string | null
+          contradicted_by_message: string | null
+          created_at: string
+          id: string
+          last_reinforced_at: string
+          origin_conversation_ids: string[]
+          origin_message_ids: string[]
+          reinforcements: number
+          scope_client_id: string | null
+          scope_entity_ids: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          agent_id: string
+          claim: string
+          claim_embedding?: string | null
+          confidence?: number
+          contradicted_at?: string | null
+          contradicted_by_message?: string | null
+          created_at?: string
+          id?: string
+          last_reinforced_at?: string
+          origin_conversation_ids?: string[]
+          origin_message_ids?: string[]
+          reinforcements?: number
+          scope_client_id?: string | null
+          scope_entity_ids?: string[] | null
+          updated_at?: string
+        }
+        Update: {
+          agent_id?: string
+          claim?: string
+          claim_embedding?: string | null
+          confidence?: number
+          contradicted_at?: string | null
+          contradicted_by_message?: string | null
+          created_at?: string
+          id?: string
+          last_reinforced_at?: string
+          origin_conversation_ids?: string[]
+          origin_message_ids?: string[]
+          reinforcements?: number
+          scope_client_id?: string | null
+          scope_entity_ids?: string[] | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_chat_beliefs_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_chat_beliefs_contradicted_by_message_fkey"
+            columns: ["contradicted_by_message"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_chat_beliefs_scope_client_id_fkey"
+            columns: ["scope_client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_conversation_memory: {
+        Row: {
+          agent_excerpt: string
+          agent_id: string
+          client_id: string | null
+          conversation_id: string
+          created_at: string
+          embedding: string | null
+          feedback: string | null
+          id: string
+          operator_excerpt: string
+          operator_id: string | null
+          response_message_id: string | null
+          trigger_message_id: string | null
+        }
+        Insert: {
+          agent_excerpt: string
+          agent_id: string
+          client_id?: string | null
+          conversation_id: string
+          created_at?: string
+          embedding?: string | null
+          feedback?: string | null
+          id?: string
+          operator_excerpt: string
+          operator_id?: string | null
+          response_message_id?: string | null
+          trigger_message_id?: string | null
+        }
+        Update: {
+          agent_excerpt?: string
+          agent_id?: string
+          client_id?: string | null
+          conversation_id?: string
+          created_at?: string
+          embedding?: string | null
+          feedback?: string | null
+          id?: string
+          operator_excerpt?: string
+          operator_id?: string | null
+          response_message_id?: string | null
+          trigger_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_conversation_memory_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversation_memory_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversation_memory_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversation_memory_response_message_id_fkey"
+            columns: ["response_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_conversation_memory_trigger_message_id_fkey"
+            columns: ["trigger_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_conversations: {
         Row: {
           agent_id: string
@@ -1078,6 +1319,7 @@ export type Database = {
       }
       agent_debate_records: {
         Row: {
+          client_id: string | null
           consensus_score: number | null
           created_at: string
           debate_type: string
@@ -1088,8 +1330,10 @@ export type Database = {
           judge_agent: string | null
           participating_agents: string[]
           synthesis: Json | null
+          tenant_id: string | null
         }
         Insert: {
+          client_id?: string | null
           consensus_score?: number | null
           created_at?: string
           debate_type?: string
@@ -1100,8 +1344,10 @@ export type Database = {
           judge_agent?: string | null
           participating_agents?: string[]
           synthesis?: Json | null
+          tenant_id?: string | null
         }
         Update: {
+          client_id?: string | null
           consensus_score?: number | null
           created_at?: string
           debate_type?: string
@@ -1112,6 +1358,7 @@ export type Database = {
           judge_agent?: string | null
           participating_agents?: string[]
           synthesis?: Json | null
+          tenant_id?: string | null
         }
         Relationships: [
           {
@@ -2134,6 +2381,154 @@ export type Database = {
         }
         Relationships: []
       }
+      asset_carver_score_history: {
+        Row: {
+          accessibility: number
+          asset_name: string
+          client_id: string
+          criticality: number
+          effect: number
+          id: string
+          justification: Json
+          recognizability: number
+          recorded_at: string
+          recuperability: number
+          score_id: string
+          scored_at: string
+          scored_by: string
+          snapshot_reason: string | null
+          total_score: number
+          vulnerability: number
+        }
+        Insert: {
+          accessibility: number
+          asset_name: string
+          client_id: string
+          criticality: number
+          effect: number
+          id?: string
+          justification: Json
+          recognizability: number
+          recorded_at?: string
+          recuperability: number
+          score_id: string
+          scored_at: string
+          scored_by: string
+          snapshot_reason?: string | null
+          total_score: number
+          vulnerability: number
+        }
+        Update: {
+          accessibility?: number
+          asset_name?: string
+          client_id?: string
+          criticality?: number
+          effect?: number
+          id?: string
+          justification?: Json
+          recognizability?: number
+          recorded_at?: string
+          recuperability?: number
+          score_id?: string
+          scored_at?: string
+          scored_by?: string
+          snapshot_reason?: string | null
+          total_score?: number
+          vulnerability?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asset_carver_score_history_score_id_fkey"
+            columns: ["score_id"]
+            isOneToOne: false
+            referencedRelation: "asset_carver_scores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      asset_carver_scores: {
+        Row: {
+          accessibility: number
+          asset_category: string | null
+          asset_location: string | null
+          asset_name: string
+          client_id: string
+          created_at: string
+          criticality: number
+          effect: number
+          id: string
+          justification: Json
+          last_reviewed_at: string | null
+          next_review_due: string | null
+          priority_tier: string | null
+          recognizability: number
+          recuperability: number
+          scored_at: string
+          scored_by: string
+          total_score: number | null
+          updated_at: string
+          validated_at: string | null
+          validated_by: string | null
+          vulnerability: number
+        }
+        Insert: {
+          accessibility: number
+          asset_category?: string | null
+          asset_location?: string | null
+          asset_name: string
+          client_id: string
+          created_at?: string
+          criticality: number
+          effect: number
+          id?: string
+          justification?: Json
+          last_reviewed_at?: string | null
+          next_review_due?: string | null
+          priority_tier?: string | null
+          recognizability: number
+          recuperability: number
+          scored_at?: string
+          scored_by: string
+          total_score?: number | null
+          updated_at?: string
+          validated_at?: string | null
+          validated_by?: string | null
+          vulnerability: number
+        }
+        Update: {
+          accessibility?: number
+          asset_category?: string | null
+          asset_location?: string | null
+          asset_name?: string
+          client_id?: string
+          created_at?: string
+          criticality?: number
+          effect?: number
+          id?: string
+          justification?: Json
+          last_reviewed_at?: string | null
+          next_review_due?: string | null
+          priority_tier?: string | null
+          recognizability?: number
+          recuperability?: number
+          scored_at?: string
+          scored_by?: string
+          total_score?: number | null
+          updated_at?: string
+          validated_at?: string | null
+          validated_by?: string | null
+          vulnerability?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asset_carver_scores_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       asset_vulnerabilities: {
         Row: {
           affected_component: string | null
@@ -2229,6 +2624,155 @@ export type Database = {
         }
         Relationships: []
       }
+      attribution_hypotheses: {
+        Row: {
+          alternative_explanations: Json
+          analyst_recommendation: string | null
+          analyst_state: string | null
+          anchor_handle: string | null
+          band: string
+          client_id: string | null
+          cluster_label: string | null
+          contradicting_evidence: Json
+          created_at: string | null
+          created_by_agent: string | null
+          deception_indicators: string | null
+          deception_observations: Json | null
+          guardrails_version: string | null
+          hypothesis_text: string | null
+          id: string
+          investigation_id: string | null
+          linguistic_status: string | null
+          llm_model_used: string | null
+          member_handles: string[]
+          member_platforms: string[]
+          merged_into_id: string | null
+          naming_status: string | null
+          network_status: string | null
+          per_axis_rationale: Json
+          platform_floor_applied: boolean | null
+          platform_floor_reason: string | null
+          promoted_at: string | null
+          promoted_by: string | null
+          promotion_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          reviewer_notes: string | null
+          scoring_engine_version: string
+          supporting_evidence: Json
+          temporal_status: string | null
+          tenant_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          alternative_explanations: Json
+          analyst_recommendation?: string | null
+          analyst_state?: string | null
+          anchor_handle?: string | null
+          band: string
+          client_id?: string | null
+          cluster_label?: string | null
+          contradicting_evidence?: Json
+          created_at?: string | null
+          created_by_agent?: string | null
+          deception_indicators?: string | null
+          deception_observations?: Json | null
+          guardrails_version?: string | null
+          hypothesis_text?: string | null
+          id?: string
+          investigation_id?: string | null
+          linguistic_status?: string | null
+          llm_model_used?: string | null
+          member_handles: string[]
+          member_platforms: string[]
+          merged_into_id?: string | null
+          naming_status?: string | null
+          network_status?: string | null
+          per_axis_rationale: Json
+          platform_floor_applied?: boolean | null
+          platform_floor_reason?: string | null
+          promoted_at?: string | null
+          promoted_by?: string | null
+          promotion_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          reviewer_notes?: string | null
+          scoring_engine_version: string
+          supporting_evidence: Json
+          temporal_status?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          alternative_explanations?: Json
+          analyst_recommendation?: string | null
+          analyst_state?: string | null
+          anchor_handle?: string | null
+          band?: string
+          client_id?: string | null
+          cluster_label?: string | null
+          contradicting_evidence?: Json
+          created_at?: string | null
+          created_by_agent?: string | null
+          deception_indicators?: string | null
+          deception_observations?: Json | null
+          guardrails_version?: string | null
+          hypothesis_text?: string | null
+          id?: string
+          investigation_id?: string | null
+          linguistic_status?: string | null
+          llm_model_used?: string | null
+          member_handles?: string[]
+          member_platforms?: string[]
+          merged_into_id?: string | null
+          naming_status?: string | null
+          network_status?: string | null
+          per_axis_rationale?: Json
+          platform_floor_applied?: boolean | null
+          platform_floor_reason?: string | null
+          promoted_at?: string | null
+          promoted_by?: string | null
+          promotion_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          reviewer_notes?: string | null
+          scoring_engine_version?: string
+          supporting_evidence?: Json
+          temporal_status?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attribution_hypotheses_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attribution_hypotheses_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "poi_investigations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attribution_hypotheses_merged_into_id_fkey"
+            columns: ["merged_into_id"]
+            isOneToOne: false
+            referencedRelation: "attribution_hypotheses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "attribution_hypotheses_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audio_briefings: {
         Row: {
           audio_url: string | null
@@ -2314,6 +2858,156 @@ export type Database = {
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_recommendations: {
+        Row: {
+          audit_id: string
+          bucket: string
+          created_at: string
+          description: string
+          id: string
+          priority: number | null
+          rationale: string | null
+          related_feature_ids: string[] | null
+          related_risk_categories: string[] | null
+          source: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          audit_id: string
+          bucket: string
+          created_at?: string
+          description: string
+          id?: string
+          priority?: number | null
+          rationale?: string | null
+          related_feature_ids?: string[] | null
+          related_risk_categories?: string[] | null
+          source?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          audit_id?: string
+          bucket?: string
+          created_at?: string
+          description?: string
+          id?: string
+          priority?: number | null
+          rationale?: string | null
+          related_feature_ids?: string[] | null
+          related_risk_categories?: string[] | null
+          source?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_recommendations_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "site_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_risk_ratings: {
+        Row: {
+          audit_id: string
+          created_at: string
+          derived_by: string
+          id: string
+          impact: string
+          likelihood: number
+          rating_band: string
+          rating_label: string
+          rationale: string | null
+          risk_category: string
+          source_features: string[] | null
+          updated_at: string
+        }
+        Insert: {
+          audit_id: string
+          created_at?: string
+          derived_by?: string
+          id?: string
+          impact: string
+          likelihood: number
+          rating_band: string
+          rating_label: string
+          rationale?: string | null
+          risk_category: string
+          source_features?: string[] | null
+          updated_at?: string
+        }
+        Update: {
+          audit_id?: string
+          created_at?: string
+          derived_by?: string
+          id?: string
+          impact?: string
+          likelihood?: number
+          rating_band?: string
+          rating_label?: string
+          rationale?: string | null
+          risk_category?: string
+          source_features?: string[] | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_risk_ratings_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "site_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_stage_analyses: {
+        Row: {
+          audit_id: string
+          created_at: string
+          error: string | null
+          findings: Json
+          id: string
+          model: string | null
+          photos_analyzed: number
+          stage: string
+          status: string
+        }
+        Insert: {
+          audit_id: string
+          created_at?: string
+          error?: string | null
+          findings: Json
+          id?: string
+          model?: string | null
+          photos_analyzed?: number
+          stage: string
+          status: string
+        }
+        Update: {
+          audit_id?: string
+          created_at?: string
+          error?: string | null
+          findings?: Json
+          id?: string
+          model?: string | null
+          photos_analyzed?: number
+          stage?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_stage_analyses_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "site_audits"
             referencedColumns: ["id"]
           },
         ]
@@ -2498,6 +3192,183 @@ export type Database = {
           scan_type?: string
           signals_analyzed?: number | null
           status?: string
+        }
+        Relationships: []
+      }
+      benchmark_examples: {
+        Row: {
+          created_at: string
+          derived_from_session: string | null
+          example_class: string
+          expected_category: string | null
+          expected_severity_max: string | null
+          expected_severity_min: string | null
+          expected_specialists: string[] | null
+          id: string
+          input_client_name: string
+          input_source_key: string | null
+          input_source_url: string | null
+          input_text: string
+          label_version: string
+          notes: string | null
+          rationale: string
+          should_create_signal: boolean
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          derived_from_session?: string | null
+          example_class: string
+          expected_category?: string | null
+          expected_severity_max?: string | null
+          expected_severity_min?: string | null
+          expected_specialists?: string[] | null
+          id?: string
+          input_client_name: string
+          input_source_key?: string | null
+          input_source_url?: string | null
+          input_text: string
+          label_version?: string
+          notes?: string | null
+          rationale: string
+          should_create_signal: boolean
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          derived_from_session?: string | null
+          example_class?: string
+          expected_category?: string | null
+          expected_severity_max?: string | null
+          expected_severity_min?: string | null
+          expected_specialists?: string[] | null
+          id?: string
+          input_client_name?: string
+          input_source_key?: string | null
+          input_source_url?: string | null
+          input_text?: string
+          label_version?: string
+          notes?: string | null
+          rationale?: string
+          should_create_signal?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      benchmark_results: {
+        Row: {
+          actual_category: string | null
+          actual_severity: string | null
+          actual_signal_created: boolean | null
+          actual_signal_id: string | null
+          actual_specialists: string[] | null
+          category_correct: boolean | null
+          created_at: string
+          example_id: string
+          id: string
+          latency_ms: number | null
+          notes: string | null
+          run_id: string
+          severity_within_bounds: boolean | null
+          signal_creation_correct: boolean | null
+        }
+        Insert: {
+          actual_category?: string | null
+          actual_severity?: string | null
+          actual_signal_created?: boolean | null
+          actual_signal_id?: string | null
+          actual_specialists?: string[] | null
+          category_correct?: boolean | null
+          created_at?: string
+          example_id: string
+          id?: string
+          latency_ms?: number | null
+          notes?: string | null
+          run_id: string
+          severity_within_bounds?: boolean | null
+          signal_creation_correct?: boolean | null
+        }
+        Update: {
+          actual_category?: string | null
+          actual_severity?: string | null
+          actual_signal_created?: boolean | null
+          actual_signal_id?: string | null
+          actual_specialists?: string[] | null
+          category_correct?: boolean | null
+          created_at?: string
+          example_id?: string
+          id?: string
+          latency_ms?: number | null
+          notes?: string | null
+          run_id?: string
+          severity_within_bounds?: boolean | null
+          signal_creation_correct?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "benchmark_results_example_id_fkey"
+            columns: ["example_id"]
+            isOneToOne: false
+            referencedRelation: "benchmark_examples"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "benchmark_results_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "benchmark_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      benchmark_runs: {
+        Row: {
+          category_accuracy: number | null
+          completed_at: string | null
+          examples_failed: number
+          examples_passed: number
+          examples_run: number
+          id: string
+          label_version: string
+          noise_suppression_rate: number | null
+          notes: string | null
+          pipeline_version: string | null
+          severity_calibration: number | null
+          signal_creation_accuracy: number | null
+          triggered_at: string
+          triggered_by: string | null
+        }
+        Insert: {
+          category_accuracy?: number | null
+          completed_at?: string | null
+          examples_failed?: number
+          examples_passed?: number
+          examples_run?: number
+          id?: string
+          label_version: string
+          noise_suppression_rate?: number | null
+          notes?: string | null
+          pipeline_version?: string | null
+          severity_calibration?: number | null
+          signal_creation_accuracy?: number | null
+          triggered_at?: string
+          triggered_by?: string | null
+        }
+        Update: {
+          category_accuracy?: number | null
+          completed_at?: string | null
+          examples_failed?: number
+          examples_passed?: number
+          examples_run?: number
+          id?: string
+          label_version?: string
+          noise_suppression_rate?: number | null
+          notes?: string | null
+          pipeline_version?: string | null
+          severity_calibration?: number | null
+          signal_creation_accuracy?: number | null
+          triggered_at?: string
+          triggered_by?: string | null
         }
         Relationships: []
       }
@@ -3092,6 +3963,33 @@ export type Database = {
           },
         ]
       }
+      broadcasts: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          priority: string
+          sender_id: string
+          title: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          priority?: string
+          sender_id: string
+          title: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          priority?: string
+          sender_id?: string
+          title?: string
+        }
+        Relationships: []
+      }
       bug_reports: {
         Row: {
           affects_client_facing: boolean | null
@@ -3102,6 +4000,7 @@ export type Database = {
           approved_by: string | null
           assigned_to: string | null
           browser_info: string | null
+          client_id: string | null
           conversation_log: Json | null
           created_at: string | null
           deleted_at: string | null
@@ -3119,6 +4018,7 @@ export type Database = {
           screenshots: string[] | null
           severity: string
           status: string
+          tenant_id: string | null
           test_results: Json | null
           title: string
           triaged_at: string | null
@@ -3138,6 +4038,7 @@ export type Database = {
           approved_by?: string | null
           assigned_to?: string | null
           browser_info?: string | null
+          client_id?: string | null
           conversation_log?: Json | null
           created_at?: string | null
           deleted_at?: string | null
@@ -3155,6 +4056,7 @@ export type Database = {
           screenshots?: string[] | null
           severity: string
           status?: string
+          tenant_id?: string | null
           test_results?: Json | null
           title: string
           triaged_at?: string | null
@@ -3174,6 +4076,7 @@ export type Database = {
           approved_by?: string | null
           assigned_to?: string | null
           browser_info?: string | null
+          client_id?: string | null
           conversation_log?: Json | null
           created_at?: string | null
           deleted_at?: string | null
@@ -3191,6 +4094,7 @@ export type Database = {
           screenshots?: string[] | null
           severity?: string
           status?: string
+          tenant_id?: string | null
           test_results?: Json | null
           title?: string
           triaged_at?: string | null
@@ -3214,6 +4118,106 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cipher_evidence_artifacts: {
+        Row: {
+          artifact_type: string
+          client_id: string | null
+          extracted_handles: string[] | null
+          extracted_post_ids: string[] | null
+          extracted_text: string | null
+          extraction_timestamp: string | null
+          id: string
+          ingest_timestamp: string
+          investigation_id: string | null
+          is_redacted: boolean | null
+          mime_type: string | null
+          notes: string | null
+          redaction_reason: string | null
+          related_entity_ids: string[] | null
+          related_signal_ids: string[] | null
+          sha256_hex: string
+          size_bytes: number | null
+          source_url: string | null
+          storage_bucket: string | null
+          storage_path: string | null
+          tenant_id: string | null
+          uploader_email: string | null
+          uploader_user_id: string | null
+        }
+        Insert: {
+          artifact_type: string
+          client_id?: string | null
+          extracted_handles?: string[] | null
+          extracted_post_ids?: string[] | null
+          extracted_text?: string | null
+          extraction_timestamp?: string | null
+          id?: string
+          ingest_timestamp?: string
+          investigation_id?: string | null
+          is_redacted?: boolean | null
+          mime_type?: string | null
+          notes?: string | null
+          redaction_reason?: string | null
+          related_entity_ids?: string[] | null
+          related_signal_ids?: string[] | null
+          sha256_hex: string
+          size_bytes?: number | null
+          source_url?: string | null
+          storage_bucket?: string | null
+          storage_path?: string | null
+          tenant_id?: string | null
+          uploader_email?: string | null
+          uploader_user_id?: string | null
+        }
+        Update: {
+          artifact_type?: string
+          client_id?: string | null
+          extracted_handles?: string[] | null
+          extracted_post_ids?: string[] | null
+          extracted_text?: string | null
+          extraction_timestamp?: string | null
+          id?: string
+          ingest_timestamp?: string
+          investigation_id?: string | null
+          is_redacted?: boolean | null
+          mime_type?: string | null
+          notes?: string | null
+          redaction_reason?: string | null
+          related_entity_ids?: string[] | null
+          related_signal_ids?: string[] | null
+          sha256_hex?: string
+          size_bytes?: number | null
+          source_url?: string | null
+          storage_bucket?: string | null
+          storage_path?: string | null
+          tenant_id?: string | null
+          uploader_email?: string | null
+          uploader_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cipher_evidence_artifacts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cipher_evidence_artifacts_investigation_id_fkey"
+            columns: ["investigation_id"]
+            isOneToOne: false
+            referencedRelation: "poi_investigations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cipher_evidence_artifacts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]
@@ -3308,6 +4312,160 @@ export type Database = {
           },
         ]
       }
+      client_arcgis_connections: {
+        Row: {
+          access_token: string | null
+          api_key_secret_ref: string | null
+          client_id: string
+          created_at: string
+          discovered_layers: Json | null
+          experience_label: string | null
+          experience_url: string | null
+          id: string
+          is_active: boolean
+          label: string
+          last_test_error: string | null
+          last_test_ok: boolean | null
+          last_tested_at: string | null
+          layer_aliases: Json
+          oauth_client_id: string | null
+          oauth_client_secret_ref: string | null
+          portal_url: string | null
+          token_expires_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          access_token?: string | null
+          api_key_secret_ref?: string | null
+          client_id: string
+          created_at?: string
+          discovered_layers?: Json | null
+          experience_label?: string | null
+          experience_url?: string | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          last_test_error?: string | null
+          last_test_ok?: boolean | null
+          last_tested_at?: string | null
+          layer_aliases?: Json
+          oauth_client_id?: string | null
+          oauth_client_secret_ref?: string | null
+          portal_url?: string | null
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          access_token?: string | null
+          api_key_secret_ref?: string | null
+          client_id?: string
+          created_at?: string
+          discovered_layers?: Json | null
+          experience_label?: string | null
+          experience_url?: string | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          last_test_error?: string | null
+          last_test_ok?: boolean | null
+          last_tested_at?: string | null
+          layer_aliases?: Json
+          oauth_client_id?: string | null
+          oauth_client_secret_ref?: string | null
+          portal_url?: string | null
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_arcgis_connections_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_assets: {
+        Row: {
+          asset_class: string
+          asset_subtype: string | null
+          attributes: Json
+          client_id: string
+          confidence: number
+          confidence_half_life_days: number | null
+          created_at: string
+          criticality_tier: string | null
+          deleted_at: string | null
+          estimated_value_high_usd: number | null
+          estimated_value_low_usd: number | null
+          external_ref: string | null
+          geom: unknown
+          id: string
+          last_verified_at: string | null
+          last_verified_by: string | null
+          name: string
+          operational_status: string
+          perimeter_geom: unknown
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          asset_class: string
+          asset_subtype?: string | null
+          attributes?: Json
+          client_id: string
+          confidence?: number
+          confidence_half_life_days?: number | null
+          created_at?: string
+          criticality_tier?: string | null
+          deleted_at?: string | null
+          estimated_value_high_usd?: number | null
+          estimated_value_low_usd?: number | null
+          external_ref?: string | null
+          geom?: unknown
+          id?: string
+          last_verified_at?: string | null
+          last_verified_by?: string | null
+          name: string
+          operational_status?: string
+          perimeter_geom?: unknown
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          asset_class?: string
+          asset_subtype?: string | null
+          attributes?: Json
+          client_id?: string
+          confidence?: number
+          confidence_half_life_days?: number | null
+          created_at?: string
+          criticality_tier?: string | null
+          deleted_at?: string | null
+          estimated_value_high_usd?: number | null
+          estimated_value_low_usd?: number | null
+          external_ref?: string | null
+          geom?: unknown
+          id?: string
+          last_verified_at?: string | null
+          last_verified_by?: string | null
+          name?: string
+          operational_status?: string
+          perimeter_geom?: unknown
+          source?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_assets_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_authorizations: {
         Row: {
           authorized_at: string | null
@@ -3382,6 +4540,47 @@ export type Database = {
           },
         ]
       }
+      client_observation_baselines: {
+        Row: {
+          client_id: string
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          metadata: Json | null
+          observation_kind: string
+          observation_value: string
+          occurrence_count: number
+        }
+        Insert: {
+          client_id: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          metadata?: Json | null
+          observation_kind: string
+          observation_value: string
+          occurrence_count?: number
+        }
+        Update: {
+          client_id?: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          metadata?: Json | null
+          observation_kind?: string
+          observation_value?: string
+          occurrence_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_observation_baselines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           competitor_names: string[] | null
@@ -3393,6 +4592,7 @@ export type Database = {
           id: string
           industry: string | null
           locations: string[] | null
+          monitored_domains: string[] | null
           monitoring_config: Json | null
           monitoring_keywords: string[] | null
           name: string
@@ -3401,6 +4601,8 @@ export type Database = {
           risk_assessment: Json | null
           status: string
           supply_chain_entities: string[] | null
+          tactic_keywords: string[] | null
+          tech_stack: string[] | null
           tenant_id: string | null
           threat_profile: Json | null
           updated_at: string
@@ -3415,6 +4617,7 @@ export type Database = {
           id?: string
           industry?: string | null
           locations?: string[] | null
+          monitored_domains?: string[] | null
           monitoring_config?: Json | null
           monitoring_keywords?: string[] | null
           name: string
@@ -3423,6 +4626,8 @@ export type Database = {
           risk_assessment?: Json | null
           status?: string
           supply_chain_entities?: string[] | null
+          tactic_keywords?: string[] | null
+          tech_stack?: string[] | null
           tenant_id?: string | null
           threat_profile?: Json | null
           updated_at?: string
@@ -3437,6 +4642,7 @@ export type Database = {
           id?: string
           industry?: string | null
           locations?: string[] | null
+          monitored_domains?: string[] | null
           monitoring_config?: Json | null
           monitoring_keywords?: string[] | null
           name?: string
@@ -3445,6 +4651,8 @@ export type Database = {
           risk_assessment?: Json | null
           status?: string
           supply_chain_entities?: string[] | null
+          tactic_keywords?: string[] | null
+          tech_stack?: string[] | null
           tenant_id?: string | null
           threat_profile?: Json | null
           updated_at?: string
@@ -4015,6 +5223,35 @@ export type Database = {
           },
         ]
       }
+      conversation_participants: {
+        Row: {
+          conversation_id: string
+          id: string
+          joined_at: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          id?: string
+          joined_at?: string
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          id?: string
+          joined_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_participants_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_summaries: {
         Row: {
           conversation_id: string
@@ -4067,6 +5304,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      conversations: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          is_group: boolean
+          name: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_group?: boolean
+          name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_group?: boolean
+          name?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       cop_entity_links: {
         Row: {
@@ -4645,6 +5909,51 @@ export type Database = {
           },
         ]
       }
+      dispatch_throttle_log: {
+        Row: {
+          agent_call_sign: string | null
+          client_id: string | null
+          id: string
+          metadata: Json
+          occurred_at: string
+          reason: string
+          signal_id: string | null
+        }
+        Insert: {
+          agent_call_sign?: string | null
+          client_id?: string | null
+          id?: string
+          metadata?: Json
+          occurred_at?: string
+          reason: string
+          signal_id?: string | null
+        }
+        Update: {
+          agent_call_sign?: string | null
+          client_id?: string | null
+          id?: string
+          metadata?: Json
+          occurred_at?: string
+          reason?: string
+          signal_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dispatch_throttle_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "dispatch_throttle_log_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       doctrine_documents: {
         Row: {
           content: string
@@ -5207,6 +6516,60 @@ export type Database = {
             columns: ["signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      entity_monitoring_changes: {
+        Row: {
+          change_kind: string
+          changed_at: string
+          changed_by: string | null
+          client_id: string
+          entity_id: string | null
+          estimated_monthly_reads: number | null
+          id: string
+          metadata: Json
+          override_reason: string | null
+          required_override: boolean
+        }
+        Insert: {
+          change_kind: string
+          changed_at?: string
+          changed_by?: string | null
+          client_id: string
+          entity_id?: string | null
+          estimated_monthly_reads?: number | null
+          id?: string
+          metadata?: Json
+          override_reason?: string | null
+          required_override?: boolean
+        }
+        Update: {
+          change_kind?: string
+          changed_at?: string
+          changed_by?: string | null
+          client_id?: string
+          entity_id?: string | null
+          estimated_monthly_reads?: number | null
+          id?: string
+          metadata?: Json
+          override_reason?: string | null
+          required_override?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entity_monitoring_changes_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entity_monitoring_changes_entity_id_fkey"
+            columns: ["entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
             referencedColumns: ["id"]
           },
         ]
@@ -5890,6 +7253,70 @@ export type Database = {
         }
         Relationships: []
       }
+      evidence_artifacts: {
+        Row: {
+          artifact_type: string
+          captured_at: string
+          captured_by: string | null
+          client_id: string
+          content_hash: string
+          hostile_actor_id: string | null
+          id: string
+          metadata: Json
+          signal_id: string | null
+          source_url: string | null
+          storage_path: string | null
+        }
+        Insert: {
+          artifact_type: string
+          captured_at?: string
+          captured_by?: string | null
+          client_id: string
+          content_hash: string
+          hostile_actor_id?: string | null
+          id?: string
+          metadata?: Json
+          signal_id?: string | null
+          source_url?: string | null
+          storage_path?: string | null
+        }
+        Update: {
+          artifact_type?: string
+          captured_at?: string
+          captured_by?: string | null
+          client_id?: string
+          content_hash?: string
+          hostile_actor_id?: string | null
+          id?: string
+          metadata?: Json
+          signal_id?: string | null
+          source_url?: string | null
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_artifacts_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_artifacts_hostile_actor_id_fkey"
+            columns: ["hostile_actor_id"]
+            isOneToOne: false
+            referencedRelation: "hostile_actors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_artifacts_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       executive_tone_rules: {
         Row: {
           category: string | null
@@ -6202,6 +7629,7 @@ export type Database = {
           relevance_score: number | null
           source_name: string | null
           source_url: string | null
+          tenant_id: string | null
         }
         Insert: {
           client_id?: string | null
@@ -6214,6 +7642,7 @@ export type Database = {
           relevance_score?: number | null
           source_name?: string | null
           source_url?: string | null
+          tenant_id?: string | null
         }
         Update: {
           client_id?: string | null
@@ -6226,6 +7655,7 @@ export type Database = {
           relevance_score?: number | null
           source_name?: string | null
           source_url?: string | null
+          tenant_id?: string | null
         }
         Relationships: [
           {
@@ -6273,6 +7703,99 @@ export type Database = {
           stack?: string | null
           user_agent?: string | null
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      function_jobs: {
+        Row: {
+          attempts: number
+          completed_at: string | null
+          created_at: string
+          error_message: string | null
+          id: string
+          idempotency_key: string | null
+          job_type: string
+          max_attempts: number
+          payload: Json
+          result: Json | null
+          scheduled_for: string
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          attempts?: number
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          idempotency_key?: string | null
+          job_type: string
+          max_attempts?: number
+          payload?: Json
+          result?: Json | null
+          scheduled_for?: string
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          attempts?: number
+          completed_at?: string | null
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          idempotency_key?: string | null
+          job_type?: string
+          max_attempts?: number
+          payload?: Json
+          result?: Json | null
+          scheduled_for?: string
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      function_telemetry: {
+        Row: {
+          ai_model: string | null
+          ai_provider: string | null
+          context: Json | null
+          duration_ms: number | null
+          error_class: string | null
+          error_message: string | null
+          function_name: string
+          id: string
+          started_at: string
+          status: string
+          tokens_in: number | null
+          tokens_out: number | null
+        }
+        Insert: {
+          ai_model?: string | null
+          ai_provider?: string | null
+          context?: Json | null
+          duration_ms?: number | null
+          error_class?: string | null
+          error_message?: string | null
+          function_name: string
+          id?: string
+          started_at?: string
+          status: string
+          tokens_in?: number | null
+          tokens_out?: number | null
+        }
+        Update: {
+          ai_model?: string | null
+          ai_provider?: string | null
+          context?: Json | null
+          duration_ms?: number | null
+          error_class?: string | null
+          error_message?: string | null
+          function_name?: string
+          id?: string
+          started_at?: string
+          status?: string
+          tokens_in?: number | null
+          tokens_out?: number | null
         }
         Relationships: []
       }
@@ -6608,6 +8131,99 @@ export type Database = {
         }
         Relationships: []
       }
+      handle_fingerprints: {
+        Row: {
+          account_age_estimate_days: number | null
+          burst_signature: Json | null
+          client_id: string | null
+          computed_at: string | null
+          first_seen_at: string | null
+          fixation_targets: string[] | null
+          fixation_themes: string[] | null
+          handle: string
+          id: string
+          inferred_tz_offset_hours: number | null
+          last_seen_at: string | null
+          linguistic_corpus_sufficient: boolean | null
+          observations_count: number | null
+          platform: string
+          posting_hours_utc: number[] | null
+          source_artifact_ids: string[] | null
+          source_signal_ids: string[] | null
+          temporal_confidence: string | null
+          tenant_id: string | null
+          timestamps_count: number | null
+          top_ngrams: Json | null
+          total_word_count: number | null
+          vocabulary_centroid: string | null
+        }
+        Insert: {
+          account_age_estimate_days?: number | null
+          burst_signature?: Json | null
+          client_id?: string | null
+          computed_at?: string | null
+          first_seen_at?: string | null
+          fixation_targets?: string[] | null
+          fixation_themes?: string[] | null
+          handle: string
+          id?: string
+          inferred_tz_offset_hours?: number | null
+          last_seen_at?: string | null
+          linguistic_corpus_sufficient?: boolean | null
+          observations_count?: number | null
+          platform: string
+          posting_hours_utc?: number[] | null
+          source_artifact_ids?: string[] | null
+          source_signal_ids?: string[] | null
+          temporal_confidence?: string | null
+          tenant_id?: string | null
+          timestamps_count?: number | null
+          top_ngrams?: Json | null
+          total_word_count?: number | null
+          vocabulary_centroid?: string | null
+        }
+        Update: {
+          account_age_estimate_days?: number | null
+          burst_signature?: Json | null
+          client_id?: string | null
+          computed_at?: string | null
+          first_seen_at?: string | null
+          fixation_targets?: string[] | null
+          fixation_themes?: string[] | null
+          handle?: string
+          id?: string
+          inferred_tz_offset_hours?: number | null
+          last_seen_at?: string | null
+          linguistic_corpus_sufficient?: boolean | null
+          observations_count?: number | null
+          platform?: string
+          posting_hours_utc?: number[] | null
+          source_artifact_ids?: string[] | null
+          source_signal_ids?: string[] | null
+          temporal_confidence?: string | null
+          tenant_id?: string | null
+          timestamps_count?: number | null
+          top_ngrams?: Json | null
+          total_word_count?: number | null
+          vocabulary_centroid?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "handle_fingerprints_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "handle_fingerprints_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       host_signoffs: {
         Row: {
           created_at: string
@@ -6631,6 +8247,132 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      hostile_actors: {
+        Row: {
+          cadence_profile: Json | null
+          client_id: string
+          created_at: string
+          display_name: string | null
+          fingerprint: string | null
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          signal_count: number
+          status: string
+          threat_tier: string | null
+          updated_at: string
+        }
+        Insert: {
+          cadence_profile?: Json | null
+          client_id: string
+          created_at?: string
+          display_name?: string | null
+          fingerprint?: string | null
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          signal_count?: number
+          status?: string
+          threat_tier?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cadence_profile?: Json | null
+          client_id?: string
+          created_at?: string
+          display_name?: string | null
+          fingerprint?: string | null
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          signal_count?: number
+          status?: string
+          threat_tier?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hostile_actors_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hostile_handles: {
+        Row: {
+          author_id: string | null
+          client_id: string
+          created_at: string
+          fingerprint: string | null
+          first_seen_at: string
+          handle: string
+          hostile_actor_id: string
+          id: string
+          is_active: boolean
+          last_seen_at: string
+          latest_signal_id: string | null
+          platform: string
+          signal_count: number
+          updated_at: string
+        }
+        Insert: {
+          author_id?: string | null
+          client_id: string
+          created_at?: string
+          fingerprint?: string | null
+          first_seen_at?: string
+          handle: string
+          hostile_actor_id: string
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string
+          latest_signal_id?: string | null
+          platform: string
+          signal_count?: number
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string | null
+          client_id?: string
+          created_at?: string
+          fingerprint?: string | null
+          first_seen_at?: string
+          handle?: string
+          hostile_actor_id?: string
+          id?: string
+          is_active?: boolean
+          last_seen_at?: string
+          latest_signal_id?: string | null
+          platform?: string
+          signal_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hostile_handles_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hostile_handles_hostile_actor_id_fkey"
+            columns: ["hostile_actor_id"]
+            isOneToOne: false
+            referencedRelation: "hostile_actors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hostile_handles_latest_signal_id_fkey"
+            columns: ["latest_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       hypothesis_branches: {
         Row: {
@@ -8357,7 +10099,7 @@ export type Database = {
           correlated_entity_ids: string[] | null
           created_at: string | null
           created_by_name: string | null
-          cross_references: string[] | null
+          cross_references: Json | null
           file_number: string
           file_status: string | null
           id: string
@@ -8376,7 +10118,7 @@ export type Database = {
           correlated_entity_ids?: string[] | null
           created_at?: string | null
           created_by_name?: string | null
-          cross_references?: string[] | null
+          cross_references?: Json | null
           file_number: string
           file_status?: string | null
           id?: string
@@ -8395,7 +10137,7 @@ export type Database = {
           correlated_entity_ids?: string[] | null
           created_at?: string | null
           created_by_name?: string | null
-          cross_references?: string[] | null
+          cross_references?: Json | null
           file_number?: string
           file_status?: string | null
           id?: string
@@ -8943,6 +10685,93 @@ export type Database = {
         }
         Relationships: []
       }
+      llm_budget_caps: {
+        Row: {
+          daily_usd_alert: number
+          daily_usd_hard_cap: number
+          notes: string | null
+          scope: string
+          updated_at: string
+        }
+        Insert: {
+          daily_usd_alert: number
+          daily_usd_hard_cap: number
+          notes?: string | null
+          scope: string
+          updated_at?: string
+        }
+        Update: {
+          daily_usd_alert?: number
+          daily_usd_hard_cap?: number
+          notes?: string | null
+          scope?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      llm_daily_cost: {
+        Row: {
+          ai_model: string
+          calls: number
+          computed_at: string
+          day: string
+          est_usd: number
+          function_name: string
+          id: number
+          scope: string
+          tokens_in: number
+          tokens_out: number
+        }
+        Insert: {
+          ai_model?: string
+          calls?: number
+          computed_at?: string
+          day: string
+          est_usd?: number
+          function_name?: string
+          id?: number
+          scope: string
+          tokens_in?: number
+          tokens_out?: number
+        }
+        Update: {
+          ai_model?: string
+          calls?: number
+          computed_at?: string
+          day?: string
+          est_usd?: number
+          function_name?: string
+          id?: number
+          scope?: string
+          tokens_in?: number
+          tokens_out?: number
+        }
+        Relationships: []
+      }
+      llm_model_pricing: {
+        Row: {
+          ai_model: string
+          in_per_1m: number
+          notes: string | null
+          out_per_1m: number
+          updated_at: string
+        }
+        Insert: {
+          ai_model: string
+          in_per_1m: number
+          notes?: string | null
+          out_per_1m: number
+          updated_at?: string
+        }
+        Update: {
+          ai_model?: string
+          in_per_1m?: number
+          notes?: string | null
+          out_per_1m?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       macro_indicators: {
         Row: {
           captured_at: string
@@ -9017,6 +10846,203 @@ export type Database = {
           },
         ]
       }
+      media_assets: {
+        Row: {
+          ai_analysis_error: string | null
+          ai_analysis_status: string | null
+          ai_analyzed_at: string | null
+          ai_findings: Json | null
+          altitude_m: number | null
+          asset_id: string
+          audit_id: string | null
+          bearing_deg: number | null
+          bearing_ref: string | null
+          captured_at: string | null
+          confidence: number
+          deleted_at: string | null
+          doc_type: string | null
+          feature_id: string | null
+          filename: string | null
+          focal_length_35mm_eq: number | null
+          focal_length_mm: number | null
+          geom_point: unknown
+          gps_accuracy_m: number | null
+          gps_datum: string | null
+          id: string
+          kind: string
+          mime_type: string | null
+          observation_id: string | null
+          pitch_deg: number | null
+          raw_exif: Json | null
+          roll_deg: number | null
+          size_bytes: number | null
+          software_app: string | null
+          storage_path: string
+          uploaded_at: string
+          uploaded_by: string
+        }
+        Insert: {
+          ai_analysis_error?: string | null
+          ai_analysis_status?: string | null
+          ai_analyzed_at?: string | null
+          ai_findings?: Json | null
+          altitude_m?: number | null
+          asset_id: string
+          audit_id?: string | null
+          bearing_deg?: number | null
+          bearing_ref?: string | null
+          captured_at?: string | null
+          confidence?: number
+          deleted_at?: string | null
+          doc_type?: string | null
+          feature_id?: string | null
+          filename?: string | null
+          focal_length_35mm_eq?: number | null
+          focal_length_mm?: number | null
+          geom_point?: unknown
+          gps_accuracy_m?: number | null
+          gps_datum?: string | null
+          id?: string
+          kind: string
+          mime_type?: string | null
+          observation_id?: string | null
+          pitch_deg?: number | null
+          raw_exif?: Json | null
+          roll_deg?: number | null
+          size_bytes?: number | null
+          software_app?: string | null
+          storage_path: string
+          uploaded_at?: string
+          uploaded_by: string
+        }
+        Update: {
+          ai_analysis_error?: string | null
+          ai_analysis_status?: string | null
+          ai_analyzed_at?: string | null
+          ai_findings?: Json | null
+          altitude_m?: number | null
+          asset_id?: string
+          audit_id?: string | null
+          bearing_deg?: number | null
+          bearing_ref?: string | null
+          captured_at?: string | null
+          confidence?: number
+          deleted_at?: string | null
+          doc_type?: string | null
+          feature_id?: string | null
+          filename?: string | null
+          focal_length_35mm_eq?: number | null
+          focal_length_mm?: number | null
+          geom_point?: unknown
+          gps_accuracy_m?: number | null
+          gps_datum?: string | null
+          id?: string
+          kind?: string
+          mime_type?: string | null
+          observation_id?: string | null
+          pitch_deg?: number | null
+          raw_exif?: Json | null
+          roll_deg?: number | null
+          size_bytes?: number | null
+          software_app?: string | null
+          storage_path?: string
+          uploaded_at?: string
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "media_assets_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "client_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "site_audits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_feature_id_fkey"
+            columns: ["feature_id"]
+            isOneToOne: false
+            referencedRelation: "site_features"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_assets_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "site_observations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      media_perceptual_hashes: {
+        Row: {
+          ahash_8x8: string | null
+          client_id: string | null
+          dhash_8x8: string | null
+          first_observed_at: string | null
+          format: string | null
+          height: number | null
+          id: string
+          phash_8x8: string | null
+          source_handle: string | null
+          storage_bucket: string
+          storage_path: string
+          tenant_id: string | null
+          width: number | null
+        }
+        Insert: {
+          ahash_8x8?: string | null
+          client_id?: string | null
+          dhash_8x8?: string | null
+          first_observed_at?: string | null
+          format?: string | null
+          height?: number | null
+          id?: string
+          phash_8x8?: string | null
+          source_handle?: string | null
+          storage_bucket: string
+          storage_path: string
+          tenant_id?: string | null
+          width?: number | null
+        }
+        Update: {
+          ahash_8x8?: string | null
+          client_id?: string | null
+          dhash_8x8?: string | null
+          first_observed_at?: string | null
+          format?: string | null
+          height?: number | null
+          id?: string
+          phash_8x8?: string | null
+          source_handle?: string | null
+          storage_bucket?: string
+          storage_path?: string
+          tenant_id?: string | null
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "media_perceptual_hashes_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "media_perceptual_hashes_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memory_access_log: {
         Row: {
           accessed_at: string
@@ -9055,6 +11081,70 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "user_project_context"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          agent_id: string | null
+          attachments: Json
+          content: string
+          conversation_id: string
+          created_at: string
+          encrypted: boolean
+          id: string
+          is_agent_query: boolean
+          mentioned_agent_id: string | null
+          nonce: string | null
+          sender_id: string | null
+        }
+        Insert: {
+          agent_id?: string | null
+          attachments?: Json
+          content: string
+          conversation_id: string
+          created_at?: string
+          encrypted?: boolean
+          id?: string
+          is_agent_query?: boolean
+          mentioned_agent_id?: string | null
+          nonce?: string | null
+          sender_id?: string | null
+        }
+        Update: {
+          agent_id?: string | null
+          attachments?: Json
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          encrypted?: boolean
+          id?: string
+          is_agent_query?: boolean
+          mentioned_agent_id?: string | null
+          nonce?: string | null
+          sender_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_mentioned_agent_id_fkey"
+            columns: ["mentioned_agent_id"]
+            isOneToOne: false
+            referencedRelation: "ai_agents"
             referencedColumns: ["id"]
           },
         ]
@@ -9193,6 +11283,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      mute_preferences: {
+        Row: {
+          created_at: string
+          days_of_week: number[]
+          enabled: boolean
+          end_time: string | null
+          id: string
+          start_time: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          days_of_week?: number[]
+          enabled?: boolean
+          end_time?: string | null
+          id?: string
+          start_time?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          days_of_week?: number[]
+          enabled?: boolean
+          end_time?: string | null
+          id?: string
+          start_time?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       notification_preferences: {
         Row: {
@@ -9357,6 +11480,66 @@ export type Database = {
         }
         Relationships: []
       }
+      operator_invites: {
+        Row: {
+          client_id: string | null
+          conversation_id: string | null
+          created_at: string
+          created_by: string
+          email: string | null
+          expires_at: string
+          id: string
+          pin: string
+          role: Database["public"]["Enums"]["app_role"] | null
+          token: string
+          used_at: string | null
+          used_by_user_id: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          created_by: string
+          email?: string | null
+          expires_at?: string
+          id?: string
+          pin: string
+          role?: Database["public"]["Enums"]["app_role"] | null
+          token?: string
+          used_at?: string | null
+          used_by_user_id?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          created_by?: string
+          email?: string | null
+          expires_at?: string
+          id?: string
+          pin?: string
+          role?: Database["public"]["Enums"]["app_role"] | null
+          token?: string
+          used_at?: string | null
+          used_by_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operator_invites_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "operator_invites_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pending_shares: {
         Row: {
           consortium_id: string
@@ -9462,6 +11645,163 @@ export type Database = {
           },
         ]
       }
+      personal_trip_alerts: {
+        Row: {
+          category: string | null
+          created_at: string
+          description: string | null
+          id: string
+          is_read: boolean
+          itinerary_id: string | null
+          location: string | null
+          severity: string
+          title: string
+          user_id: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_read?: boolean
+          itinerary_id?: string | null
+          location?: string | null
+          severity?: string
+          title: string
+          user_id: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_read?: boolean
+          itinerary_id?: string | null
+          location?: string | null
+          severity?: string
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_trip_alerts_itinerary_id_fkey"
+            columns: ["itinerary_id"]
+            isOneToOne: false
+            referencedRelation: "personal_trips"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      personal_trip_flights: {
+        Row: {
+          airline: string | null
+          arrival_airport: string
+          arrival_time: string | null
+          created_at: string
+          delay_minutes: number
+          delay_reason: string | null
+          departure_airport: string
+          departure_time: string
+          flight_number: string
+          gate: string | null
+          id: string
+          itinerary_id: string | null
+          last_checked_at: string | null
+          reservation_code: string | null
+          status: string
+          terminal: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          airline?: string | null
+          arrival_airport: string
+          arrival_time?: string | null
+          created_at?: string
+          delay_minutes?: number
+          delay_reason?: string | null
+          departure_airport: string
+          departure_time: string
+          flight_number: string
+          gate?: string | null
+          id?: string
+          itinerary_id?: string | null
+          last_checked_at?: string | null
+          reservation_code?: string | null
+          status?: string
+          terminal?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          airline?: string | null
+          arrival_airport?: string
+          arrival_time?: string | null
+          created_at?: string
+          delay_minutes?: number
+          delay_reason?: string | null
+          departure_airport?: string
+          departure_time?: string
+          flight_number?: string
+          gate?: string | null
+          id?: string
+          itinerary_id?: string | null
+          last_checked_at?: string | null
+          reservation_code?: string | null
+          status?: string
+          terminal?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_trip_flights_itinerary_id_fkey"
+            columns: ["itinerary_id"]
+            isOneToOne: false
+            referencedRelation: "personal_trips"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      personal_trips: {
+        Row: {
+          created_at: string
+          departure_date: string
+          destination: string
+          id: string
+          notes: string | null
+          return_date: string | null
+          status: string
+          trip_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          departure_date: string
+          destination: string
+          id?: string
+          notes?: string | null
+          return_date?: string | null
+          status?: string
+          trip_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          departure_date?: string
+          destination?: string
+          id?: string
+          notes?: string | null
+          return_date?: string | null
+          status?: string
+          trip_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       petronas_assets: {
         Row: {
           asset_name: string
@@ -9546,6 +11886,63 @@ export type Database = {
         }
         Relationships: []
       }
+      platform_findings: {
+        Row: {
+          action: string | null
+          affected_agent: string | null
+          affected_job: string | null
+          analysis: string | null
+          category: string
+          fingerprint: string
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          metadata: Json
+          occurrence_count: number
+          plain_english: string | null
+          resolution_note: string | null
+          resolved_at: string | null
+          severity: string
+          title: string
+        }
+        Insert: {
+          action?: string | null
+          affected_agent?: string | null
+          affected_job?: string | null
+          analysis?: string | null
+          category: string
+          fingerprint: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          metadata?: Json
+          occurrence_count?: number
+          plain_english?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          severity: string
+          title: string
+        }
+        Update: {
+          action?: string | null
+          affected_agent?: string | null
+          affected_job?: string | null
+          analysis?: string | null
+          category?: string
+          fingerprint?: string
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          metadata?: Json
+          occurrence_count?: number
+          plain_english?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          severity?: string
+          title?: string
+        }
+        Relationships: []
+      }
       playbooks: {
         Row: {
           created_at: string
@@ -9602,6 +11999,7 @@ export type Database = {
       }
       poi_investigations: {
         Row: {
+          client_id: string | null
           created_at: string
           entity_id: string
           error_message: string | null
@@ -9613,9 +12011,11 @@ export type Database = {
           results_found: number
           sources_searched: number
           status: string
+          tenant_id: string | null
           updated_at: string
         }
         Insert: {
+          client_id?: string | null
           created_at?: string
           entity_id: string
           error_message?: string | null
@@ -9627,9 +12027,11 @@ export type Database = {
           results_found?: number
           sources_searched?: number
           status?: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Update: {
+          client_id?: string | null
           created_at?: string
           entity_id?: string
           error_message?: string | null
@@ -9641,6 +12043,7 @@ export type Database = {
           results_found?: number
           sources_searched?: number
           status?: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -9939,27 +12342,42 @@ export type Database = {
           client_id: string | null
           created_at: string
           id: string
+          key_salt: string | null
           keyboard_shortcuts: Json | null
+          last_known_lat: number | null
+          last_known_lng: number | null
+          last_known_loc_at: string | null
           last_password_changed_at: string | null
           name: string
+          public_key: string | null
           updated_at: string
         }
         Insert: {
           client_id?: string | null
           created_at?: string
           id: string
+          key_salt?: string | null
           keyboard_shortcuts?: Json | null
+          last_known_lat?: number | null
+          last_known_lng?: number | null
+          last_known_loc_at?: string | null
           last_password_changed_at?: string | null
           name: string
+          public_key?: string | null
           updated_at?: string
         }
         Update: {
           client_id?: string | null
           created_at?: string
           id?: string
+          key_salt?: string | null
           keyboard_shortcuts?: Json | null
+          last_known_lat?: number | null
+          last_known_lng?: number | null
+          last_known_loc_at?: string | null
           last_password_changed_at?: string | null
           name?: string
+          public_key?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -10616,6 +13034,7 @@ export type Database = {
       }
       reports: {
         Row: {
+          client_id: string | null
           created_at: string
           generated_at: string
           id: string
@@ -10623,9 +13042,11 @@ export type Database = {
           period_end: string
           period_start: string
           storage_url: string | null
+          tenant_id: string | null
           type: string
         }
         Insert: {
+          client_id?: string | null
           created_at?: string
           generated_at?: string
           id?: string
@@ -10633,9 +13054,11 @@ export type Database = {
           period_end: string
           period_start: string
           storage_url?: string | null
+          tenant_id?: string | null
           type: string
         }
         Update: {
+          client_id?: string | null
           created_at?: string
           generated_at?: string
           id?: string
@@ -10643,6 +13066,7 @@ export type Database = {
           period_end?: string
           period_start?: string
           storage_url?: string | null
+          tenant_id?: string | null
           type?: string
         }
         Relationships: []
@@ -11037,6 +13461,42 @@ export type Database = {
           },
         ]
       }
+      sequence_patterns: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          min_stages_to_trigger: number
+          name: string
+          stages: Json
+          updated_at: string
+          window_seconds: number
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          min_stages_to_trigger?: number
+          name: string
+          stages: Json
+          updated_at?: string
+          window_seconds?: number
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          min_stages_to_trigger?: number
+          name?: string
+          stages?: Json
+          updated_at?: string
+          window_seconds?: number
+        }
+        Relationships: []
+      }
       shared_incidents: {
         Row: {
           classification:
@@ -11355,39 +13815,48 @@ export type Database = {
           agent_call_sign: string
           analysis: string
           analysis_tier: string | null
+          client_id: string | null
           confidence_breakdown: Json | null
           confidence_score: number | null
           created_at: string | null
+          embedding: string | null
           id: string
           pattern_matches: Json | null
           reasoning_log: Json | null
           signal_id: string | null
+          tenant_id: string | null
           trigger_reason: string | null
         }
         Insert: {
           agent_call_sign: string
           analysis: string
           analysis_tier?: string | null
+          client_id?: string | null
           confidence_breakdown?: Json | null
           confidence_score?: number | null
           created_at?: string | null
+          embedding?: string | null
           id?: string
           pattern_matches?: Json | null
           reasoning_log?: Json | null
           signal_id?: string | null
+          tenant_id?: string | null
           trigger_reason?: string | null
         }
         Update: {
           agent_call_sign?: string
           analysis?: string
           analysis_tier?: string | null
+          client_id?: string | null
           confidence_breakdown?: Json | null
           confidence_score?: number | null
           created_at?: string | null
+          embedding?: string | null
           id?: string
           pattern_matches?: Json | null
           reasoning_log?: Json | null
           signal_id?: string | null
+          tenant_id?: string | null
           trigger_reason?: string | null
         }
         Relationships: [
@@ -11614,6 +14083,7 @@ export type Database = {
         Row: {
           avg_confidence: number | null
           category: string | null
+          client_id: string | null
           created_at: string
           id: string
           location: string | null
@@ -11623,11 +14093,13 @@ export type Database = {
           severity: string | null
           signal_count: number | null
           sources_json: Json | null
+          tenant_id: string | null
           updated_at: string
         }
         Insert: {
           avg_confidence?: number | null
           category?: string | null
+          client_id?: string | null
           created_at?: string
           id?: string
           location?: string | null
@@ -11637,11 +14109,13 @@ export type Database = {
           severity?: string | null
           signal_count?: number | null
           sources_json?: Json | null
+          tenant_id?: string | null
           updated_at?: string
         }
         Update: {
           avg_confidence?: number | null
           category?: string | null
+          client_id?: string | null
           created_at?: string
           id?: string
           location?: string | null
@@ -11651,6 +14125,7 @@ export type Database = {
           severity?: string | null
           signal_count?: number | null
           sources_json?: Json | null
+          tenant_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -11739,6 +14214,70 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "signal_feedback_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signal_hostile_attribution: {
+        Row: {
+          attributed_at: string
+          attribution_method: string
+          confidence: number | null
+          confirmed_at: string | null
+          confirmed_by: string | null
+          evidence: Json
+          hostile_actor_id: string | null
+          hostile_handle_id: string | null
+          id: string
+          signal_id: string
+          status: string
+        }
+        Insert: {
+          attributed_at?: string
+          attribution_method: string
+          confidence?: number | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          evidence?: Json
+          hostile_actor_id?: string | null
+          hostile_handle_id?: string | null
+          id?: string
+          signal_id: string
+          status?: string
+        }
+        Update: {
+          attributed_at?: string
+          attribution_method?: string
+          confidence?: number | null
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          evidence?: Json
+          hostile_actor_id?: string | null
+          hostile_handle_id?: string | null
+          id?: string
+          signal_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_hostile_attribution_hostile_actor_id_fkey"
+            columns: ["hostile_actor_id"]
+            isOneToOne: false
+            referencedRelation: "hostile_actors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_hostile_attribution_hostile_handle_id_fkey"
+            columns: ["hostile_handle_id"]
+            isOneToOne: false
+            referencedRelation: "hostile_handles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_hostile_attribution_signal_id_fkey"
             columns: ["signal_id"]
             isOneToOne: false
             referencedRelation: "signals"
@@ -11885,6 +14424,79 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      signal_sequences: {
+        Row: {
+          anchor_entity_id: string | null
+          anchor_label: string
+          client_id: string
+          created_at: string
+          id: string
+          last_event_at: string
+          matched_stages: string[]
+          notes: string | null
+          pattern_id: string | null
+          sequence_score: number | null
+          signal_ids: string[]
+          started_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          anchor_entity_id?: string | null
+          anchor_label: string
+          client_id: string
+          created_at?: string
+          id?: string
+          last_event_at: string
+          matched_stages?: string[]
+          notes?: string | null
+          pattern_id?: string | null
+          sequence_score?: number | null
+          signal_ids?: string[]
+          started_at: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          anchor_entity_id?: string | null
+          anchor_label?: string
+          client_id?: string
+          created_at?: string
+          id?: string
+          last_event_at?: string
+          matched_stages?: string[]
+          notes?: string | null
+          pattern_id?: string | null
+          sequence_score?: number | null
+          signal_ids?: string[]
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signal_sequences_anchor_entity_id_fkey"
+            columns: ["anchor_entity_id"]
+            isOneToOne: false
+            referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_sequences_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signal_sequences_pattern_id_fkey"
+            columns: ["pattern_id"]
+            isOneToOne: false
+            referencedRelation: "sequence_patterns"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       signal_storyline_members: {
         Row: {
@@ -12121,6 +14733,8 @@ export type Database = {
           event_date: string | null
           expert_context: Json | null
           feedback_score: number | null
+          foreign_alignment_indicators: string[] | null
+          foreign_alignment_score: number | null
           hashtags: string[] | null
           id: string
           image_url: string | null
@@ -12133,6 +14747,7 @@ export type Database = {
           mentions: string[] | null
           momentum: number | null
           normalized_text: string | null
+          platform: string | null
           post_caption: string | null
           proximity: number | null
           quality_score: number | null
@@ -12145,6 +14760,7 @@ export type Database = {
           rule_tags: string[] | null
           severity: string | null
           severity_score: number | null
+          signal_number: string
           signal_type: string | null
           source_id: string | null
           source_reliability: string | null
@@ -12178,6 +14794,8 @@ export type Database = {
           event_date?: string | null
           expert_context?: Json | null
           feedback_score?: number | null
+          foreign_alignment_indicators?: string[] | null
+          foreign_alignment_score?: number | null
           hashtags?: string[] | null
           id?: string
           image_url?: string | null
@@ -12190,6 +14808,7 @@ export type Database = {
           mentions?: string[] | null
           momentum?: number | null
           normalized_text?: string | null
+          platform?: string | null
           post_caption?: string | null
           proximity?: number | null
           quality_score?: number | null
@@ -12202,6 +14821,7 @@ export type Database = {
           rule_tags?: string[] | null
           severity?: string | null
           severity_score?: number | null
+          signal_number: string
           signal_type?: string | null
           source_id?: string | null
           source_reliability?: string | null
@@ -12235,6 +14855,8 @@ export type Database = {
           event_date?: string | null
           expert_context?: Json | null
           feedback_score?: number | null
+          foreign_alignment_indicators?: string[] | null
+          foreign_alignment_score?: number | null
           hashtags?: string[] | null
           id?: string
           image_url?: string | null
@@ -12247,6 +14869,7 @@ export type Database = {
           mentions?: string[] | null
           momentum?: number | null
           normalized_text?: string | null
+          platform?: string | null
           post_caption?: string | null
           proximity?: number | null
           quality_score?: number | null
@@ -12259,6 +14882,7 @@ export type Database = {
           rule_tags?: string[] | null
           severity?: string | null
           severity_score?: number | null
+          signal_number?: string
           signal_type?: string | null
           source_id?: string | null
           source_reliability?: string | null
@@ -12376,6 +15000,229 @@ export type Database = {
             columns: ["target_entity_id"]
             isOneToOne: false
             referencedRelation: "entities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_audits: {
+        Row: {
+          asset_id: string
+          client_id: string
+          co_operators: string[]
+          completed_at: string | null
+          controls_confirmed: number
+          created_at: string
+          id: string
+          observations_count: number
+          primary_operator: string
+          report_url: string | null
+          started_at: string
+          status: string
+          summary_text: string | null
+          updated_at: string
+          vulnerabilities_added: number
+          wizard_state: Json
+        }
+        Insert: {
+          asset_id: string
+          client_id: string
+          co_operators?: string[]
+          completed_at?: string | null
+          controls_confirmed?: number
+          created_at?: string
+          id?: string
+          observations_count?: number
+          primary_operator: string
+          report_url?: string | null
+          started_at?: string
+          status?: string
+          summary_text?: string | null
+          updated_at?: string
+          vulnerabilities_added?: number
+          wizard_state?: Json
+        }
+        Update: {
+          asset_id?: string
+          client_id?: string
+          co_operators?: string[]
+          completed_at?: string | null
+          controls_confirmed?: number
+          created_at?: string
+          id?: string
+          observations_count?: number
+          primary_operator?: string
+          report_url?: string | null
+          started_at?: string
+          status?: string
+          summary_text?: string | null
+          updated_at?: string
+          vulnerabilities_added?: number
+          wizard_state?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_audits_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "client_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_audits_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_features: {
+        Row: {
+          asset_id: string
+          attributes: Json
+          bearing_deg: number | null
+          confidence: number
+          created_at: string
+          created_audit_id: string | null
+          deleted_at: string | null
+          feature_type: string
+          geom: unknown
+          half_life_days: number
+          id: string
+          label: string | null
+          last_verified_at: string | null
+          last_verified_audit_id: string | null
+          last_verified_by: string | null
+          primary_photo_url: string | null
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          asset_id: string
+          attributes?: Json
+          bearing_deg?: number | null
+          confidence?: number
+          created_at?: string
+          created_audit_id?: string | null
+          deleted_at?: string | null
+          feature_type: string
+          geom?: unknown
+          half_life_days?: number
+          id?: string
+          label?: string | null
+          last_verified_at?: string | null
+          last_verified_audit_id?: string | null
+          last_verified_by?: string | null
+          primary_photo_url?: string | null
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          asset_id?: string
+          attributes?: Json
+          bearing_deg?: number | null
+          confidence?: number
+          created_at?: string
+          created_audit_id?: string | null
+          deleted_at?: string | null
+          feature_type?: string
+          geom?: unknown
+          half_life_days?: number
+          id?: string
+          label?: string | null
+          last_verified_at?: string | null
+          last_verified_audit_id?: string | null
+          last_verified_by?: string | null
+          primary_photo_url?: string | null
+          source?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_features_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "client_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_features_created_audit_id_fkey"
+            columns: ["created_audit_id"]
+            isOneToOne: false
+            referencedRelation: "site_audits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_features_last_verified_audit_id_fkey"
+            columns: ["last_verified_audit_id"]
+            isOneToOne: false
+            referencedRelation: "site_audits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_observations: {
+        Row: {
+          asset_id: string
+          audit_id: string
+          confidence: number
+          created_at: string
+          field_key: string
+          freeform_notes: string | null
+          id: string
+          linked_risk_ids: string[]
+          location: unknown
+          observed_at: string
+          observer_id: string
+          photo_urls: string[]
+          stage: string
+          value: Json | null
+        }
+        Insert: {
+          asset_id: string
+          audit_id: string
+          confidence?: number
+          created_at?: string
+          field_key: string
+          freeform_notes?: string | null
+          id?: string
+          linked_risk_ids?: string[]
+          location?: unknown
+          observed_at?: string
+          observer_id: string
+          photo_urls?: string[]
+          stage: string
+          value?: Json | null
+        }
+        Update: {
+          asset_id?: string
+          audit_id?: string
+          confidence?: number
+          created_at?: string
+          field_key?: string
+          freeform_notes?: string | null
+          id?: string
+          linked_risk_ids?: string[]
+          location?: unknown
+          observed_at?: string
+          observer_id?: string
+          photo_urls?: string[]
+          stage?: string
+          value?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_observations_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "client_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_observations_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: false
+            referencedRelation: "site_audits"
             referencedColumns: ["id"]
           },
         ]
@@ -12566,6 +15413,30 @@ export type Database = {
           status?: string | null
           type?: string
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      spatial_ref_sys: {
+        Row: {
+          auth_name: string | null
+          auth_srid: number | null
+          proj4text: string | null
+          srid: number
+          srtext: string | null
+        }
+        Insert: {
+          auth_name?: string | null
+          auth_srid?: number | null
+          proj4text?: string | null
+          srid: number
+          srtext?: string | null
+        }
+        Update: {
+          auth_name?: string | null
+          auth_srid?: number | null
+          proj4text?: string | null
+          srid?: number
+          srtext?: string | null
         }
         Relationships: []
       }
@@ -14739,6 +17610,33 @@ export type Database = {
         }
         Relationships: []
       }
+      wave1_prod_audit_runs: {
+        Row: {
+          client_id: string | null
+          client_name: string | null
+          fired_at: string | null
+          request_id: number | null
+          signal_id: string | null
+          test_name: string
+        }
+        Insert: {
+          client_id?: string | null
+          client_name?: string | null
+          fired_at?: string | null
+          request_id?: number | null
+          signal_id?: string | null
+          test_name: string
+        }
+        Update: {
+          client_id?: string | null
+          client_name?: string | null
+          fired_at?: string | null
+          request_id?: number | null
+          signal_id?: string | null
+          test_name?: string
+        }
+        Relationships: []
+      }
       webhook_deliveries: {
         Row: {
           attempt_count: number
@@ -14856,6 +17754,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      wildfire_portal_usage: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          ip_hash: string | null
+          payload: Json
+          referrer: string | null
+          session_id: string
+          user_agent: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          ip_hash?: string | null
+          payload?: Json
+          referrer?: string | null
+          session_id: string
+          user_agent?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          ip_hash?: string | null
+          payload?: Json
+          referrer?: string | null
+          session_id?: string
+          user_agent?: string | null
+        }
+        Relationships: []
       }
       wildfire_station_ratings: {
         Row: {
@@ -15185,6 +18116,156 @@ export type Database = {
           },
         ]
       }
+      world_geographies: {
+        Row: {
+          area_km2: number | null
+          attributes: Json
+          confidence: number
+          created_at: string
+          deleted_at: string | null
+          external_id: string | null
+          feature_type: string
+          function: string | null
+          geom: unknown
+          id: string
+          ingested_at: string
+          jurisdiction: string | null
+          jurisdiction_name: string | null
+          last_verified_at: string
+          layer: string
+          length_km: number | null
+          name: string | null
+          parent_id: string | null
+          sector: string | null
+          source: string
+          source_record_id: string | null
+          source_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          area_km2?: number | null
+          attributes?: Json
+          confidence?: number
+          created_at?: string
+          deleted_at?: string | null
+          external_id?: string | null
+          feature_type: string
+          function?: string | null
+          geom: unknown
+          id?: string
+          ingested_at?: string
+          jurisdiction?: string | null
+          jurisdiction_name?: string | null
+          last_verified_at?: string
+          layer: string
+          length_km?: number | null
+          name?: string | null
+          parent_id?: string | null
+          sector?: string | null
+          source: string
+          source_record_id?: string | null
+          source_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          area_km2?: number | null
+          attributes?: Json
+          confidence?: number
+          created_at?: string
+          deleted_at?: string | null
+          external_id?: string | null
+          feature_type?: string
+          function?: string | null
+          geom?: unknown
+          id?: string
+          ingested_at?: string
+          jurisdiction?: string | null
+          jurisdiction_name?: string | null
+          last_verified_at?: string
+          layer?: string
+          length_km?: number | null
+          name?: string | null
+          parent_id?: string | null
+          sector?: string | null
+          source?: string
+          source_record_id?: string | null
+          source_url?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "world_geographies_layer_fkey"
+            columns: ["layer"]
+            isOneToOne: false
+            referencedRelation: "world_geography_layers"
+            referencedColumns: ["layer"]
+          },
+          {
+            foreignKeyName: "world_geographies_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "world_geographies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      world_geography_layers: {
+        Row: {
+          attributes: Json
+          created_at: string
+          description: string | null
+          display_name: string
+          geometry_type: string
+          is_active: boolean
+          last_refreshed_at: string | null
+          layer: string
+          next_refresh_at: string | null
+          notes: string | null
+          refresh_cadence_days: number
+          sector: string
+          source: string
+          source_config: Json
+          source_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          attributes?: Json
+          created_at?: string
+          description?: string | null
+          display_name: string
+          geometry_type: string
+          is_active?: boolean
+          last_refreshed_at?: string | null
+          layer: string
+          next_refresh_at?: string | null
+          notes?: string | null
+          refresh_cadence_days?: number
+          sector: string
+          source: string
+          source_config?: Json
+          source_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          attributes?: Json
+          created_at?: string
+          description?: string | null
+          display_name?: string
+          geometry_type?: string
+          is_active?: boolean
+          last_refreshed_at?: string | null
+          layer?: string
+          next_refresh_at?: string | null
+          notes?: string | null
+          refresh_cadence_days?: number
+          sector?: string
+          source?: string
+          source_config?: Json
+          source_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       world_knowledge_sources: {
         Row: {
           created_at: string
@@ -15378,8 +18459,157 @@ export type Database = {
           },
         ]
       }
+      x_api_call_log: {
+        Row: {
+          budget_blocked: boolean | null
+          called_at: string
+          client_id: string | null
+          error_text: string | null
+          est_cost_usd: number | null
+          flag_skipped: boolean | null
+          http_status: number | null
+          id: string
+          query_class: string
+          query_string: string
+          result_count: number | null
+          signals_created: number | null
+          tenant_id: string | null
+          took_ms: number | null
+        }
+        Insert: {
+          budget_blocked?: boolean | null
+          called_at?: string
+          client_id?: string | null
+          error_text?: string | null
+          est_cost_usd?: number | null
+          flag_skipped?: boolean | null
+          http_status?: number | null
+          id?: string
+          query_class: string
+          query_string: string
+          result_count?: number | null
+          signals_created?: number | null
+          tenant_id?: string | null
+          took_ms?: number | null
+        }
+        Update: {
+          budget_blocked?: boolean | null
+          called_at?: string
+          client_id?: string | null
+          error_text?: string | null
+          est_cost_usd?: number | null
+          flag_skipped?: boolean | null
+          http_status?: number | null
+          id?: string
+          query_class?: string
+          query_string?: string
+          result_count?: number | null
+          signals_created?: number | null
+          tenant_id?: string | null
+          took_ms?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "x_api_call_log_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "x_api_call_log_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      x_quota_consumption: {
+        Row: {
+          client_id: string | null
+          consumed_at: string
+          consumed_day: string
+          id: string
+          metadata: Json
+          query_text: string | null
+          reads: number
+          source_class: string
+        }
+        Insert: {
+          client_id?: string | null
+          consumed_at?: string
+          consumed_day?: string
+          id?: string
+          metadata?: Json
+          query_text?: string | null
+          reads: number
+          source_class: string
+        }
+        Update: {
+          client_id?: string | null
+          consumed_at?: string
+          consumed_day?: string
+          id?: string
+          metadata?: Json
+          query_text?: string | null
+          reads?: number
+          source_class?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "x_quota_consumption_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
+      agent_actions_24h: {
+        Row: {
+          action_type: string | null
+          agent_call_sign: string | null
+          executed: number | null
+          failed: number | null
+          pending: number | null
+          permission_tier: string | null
+          rejected: number | null
+          total: number | null
+        }
+        Relationships: []
+      }
+      agent_actions_awaiting_approval: {
+        Row: {
+          action_payload: Json | null
+          action_type: string | null
+          agent_call_sign: string | null
+          context_incident_id: string | null
+          context_signal_id: string | null
+          created_at: string | null
+          id: string | null
+          rationale: string | null
+          signal_title: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_actions_context_incident_id_fkey"
+            columns: ["context_incident_id"]
+            isOneToOne: false
+            referencedRelation: "incidents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_actions_context_signal_id_fkey"
+            columns: ["context_signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       dlq_health: {
         Row: {
           exhausted_retries: number | null
@@ -15389,6 +18619,87 @@ export type Database = {
           queue_depth: number | null
           stale_items: number | null
           status: string | null
+        }
+        Relationships: []
+      }
+      function_jobs_failed_24h: {
+        Row: {
+          error_samples: string[] | null
+          failed_count: number | null
+          job_type: string | null
+          most_recent_failure: string | null
+          oldest_failure: string | null
+        }
+        Relationships: []
+      }
+      function_jobs_throughput_24h: {
+        Row: {
+          avg_attempts: number | null
+          completed: number | null
+          failed: number | null
+          in_flight: number | null
+          job_type: string | null
+          p50_ms: number | null
+          p95_ms: number | null
+          success_pct: number | null
+          total: number | null
+        }
+        Relationships: []
+      }
+      function_telemetry_24h: {
+        Row: {
+          calls: number | null
+          errors: number | null
+          function_name: string | null
+          models_used: string[] | null
+          p50_ms: number | null
+          p95_ms: number | null
+          p99_ms: number | null
+          success_pct: number | null
+          tokens_in_total: number | null
+          tokens_out_total: number | null
+        }
+        Relationships: []
+      }
+      geography_columns: {
+        Row: {
+          coord_dimension: number | null
+          f_geography_column: unknown
+          f_table_catalog: unknown
+          f_table_name: unknown
+          f_table_schema: unknown
+          srid: number | null
+          type: string | null
+        }
+        Relationships: []
+      }
+      geometry_columns: {
+        Row: {
+          coord_dimension: number | null
+          f_geometry_column: unknown
+          f_table_catalog: string | null
+          f_table_name: unknown
+          f_table_schema: unknown
+          srid: number | null
+          type: string | null
+        }
+        Insert: {
+          coord_dimension?: number | null
+          f_geometry_column?: unknown
+          f_table_catalog?: string | null
+          f_table_name?: unknown
+          f_table_schema?: unknown
+          srid?: number | null
+          type?: string | null
+        }
+        Update: {
+          coord_dimension?: number | null
+          f_geometry_column?: unknown
+          f_table_catalog?: string | null
+          f_table_name?: unknown
+          f_table_schema?: unknown
+          srid?: number | null
+          type?: string | null
         }
         Relationships: []
       }
@@ -15457,7 +18768,149 @@ export type Database = {
       }
     }
     Functions: {
+      _postgis_deprecate: {
+        Args: { newname: string; oldname: string; version: string }
+        Returns: undefined
+      }
+      _postgis_index_extent: {
+        Args: { col: string; tbl: unknown }
+        Returns: unknown
+      }
+      _postgis_pgsql_version: { Args: never; Returns: string }
+      _postgis_scripts_pgsql_version: { Args: never; Returns: string }
+      _postgis_selectivity: {
+        Args: { att_name: string; geom: unknown; mode?: string; tbl: unknown }
+        Returns: number
+      }
+      _postgis_stats: {
+        Args: { ""?: string; att_name: string; tbl: unknown }
+        Returns: string
+      }
+      _st_3dintersects: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_contains: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_containsproperly: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_coveredby:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      _st_covers:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      _st_crosses: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_dwithin: {
+        Args: {
+          geog1: unknown
+          geog2: unknown
+          tolerance: number
+          use_spheroid?: boolean
+        }
+        Returns: boolean
+      }
+      _st_equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      _st_intersects: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_linecrossingdirection: {
+        Args: { line1: unknown; line2: unknown }
+        Returns: number
+      }
+      _st_longestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      _st_maxdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      _st_orderingequals: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_overlaps: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_sortablehash: { Args: { geom: unknown }; Returns: number }
+      _st_touches: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      _st_voronoi: {
+        Args: {
+          clip?: unknown
+          g1: unknown
+          return_polygons?: boolean
+          tolerance?: number
+        }
+        Returns: unknown
+      }
+      _st_within: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      addauth: { Args: { "": string }; Returns: boolean }
+      addgeometrycolumn:
+        | {
+            Args: {
+              catalog_name: string
+              column_name: string
+              new_dim: number
+              new_srid_in: number
+              new_type: string
+              schema_name: string
+              table_name: string
+              use_typmod?: boolean
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              column_name: string
+              new_dim: number
+              new_srid: number
+              new_type: string
+              schema_name: string
+              table_name: string
+              use_typmod?: boolean
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              column_name: string
+              new_dim: number
+              new_srid: number
+              new_type: string
+              table_name: string
+              use_typmod?: boolean
+            }
+            Returns: string
+          }
+      alert_stale_secrets: { Args: never; Returns: Json }
+      apply_agent_action: {
+        Args: { p_action_id: string; p_reason?: string }
+        Returns: boolean
+      }
+      auto_approve_safe_actions: { Args: never; Returns: Json }
       auto_archive_stale_entities: { Args: never; Returns: number }
+      bulk_upsert_world_geographies: {
+        Args: {
+          p_features: Json
+          p_layer: string
+          p_source: string
+          p_source_url: string
+        }
+        Returns: Json
+      }
       calculate_signal_hash: { Args: { text_content: string }; Returns: string }
       calibrate_agent_accuracy: { Args: never; Returns: number }
       calibrate_analyst_accuracy: { Args: never; Returns: number }
@@ -15485,6 +18938,7 @@ export type Database = {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
       }
+      category_title_keywords: { Args: { cat: string }; Returns: string[] }
       check_rate_limit: {
         Args: {
           p_action_type: string
@@ -15498,17 +18952,76 @@ export type Database = {
         Args: { p_tenant_id: string; p_user_id: string }
         Returns: boolean
       }
+      clean_signal_text: { Args: { src: string }; Returns: string }
+      clean_signal_title_text:
+        | { Args: { src: string }; Returns: string }
+        | { Args: { cat?: string; src: string }; Returns: string }
       cleanup_old_errors: { Args: never; Returns: number }
       cleanup_processing_queue: { Args: never; Returns: number }
+      compute_llm_daily_cost: { Args: never; Returns: Json }
       compute_signal_feedback_score: {
         Args: { p_signal_id: string }
         Returns: number
       }
+      create_conversation_with_participant: {
+        Args: { _is_group: boolean; _name: string }
+        Returns: string
+      }
+      disablelongtransactions: { Args: never; Returns: string }
+      dropgeometrycolumn:
+        | {
+            Args: {
+              catalog_name: string
+              column_name: string
+              schema_name: string
+              table_name: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              column_name: string
+              schema_name: string
+              table_name: string
+            }
+            Returns: string
+          }
+        | { Args: { column_name: string; table_name: string }; Returns: string }
+      dropgeometrytable:
+        | {
+            Args: {
+              catalog_name: string
+              schema_name: string
+              table_name: string
+            }
+            Returns: string
+          }
+        | { Args: { schema_name: string; table_name: string }; Returns: string }
+        | { Args: { table_name: string }; Returns: string }
+      enablelongtransactions: { Args: never; Returns: string }
       enqueue_signal_processing: {
         Args: { priority_level?: number; signal_id: string }
         Returns: string
       }
+      equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
       expire_watch_list_entries: { Args: never; Returns: number }
+      find_similar_agent_analyses: {
+        Args: {
+          p_agent_call_sign: string
+          p_limit?: number
+          p_min_similarity?: number
+          p_query_embedding: string
+        }
+        Returns: {
+          analysis: string
+          confidence_score: number
+          created_at: string
+          id: string
+          signal_id: string
+          similarity: number
+          trigger_reason: string
+        }[]
+      }
       find_similar_signals_by_embedding: {
         Args: {
           p_embedding: string
@@ -15531,6 +19044,119 @@ export type Database = {
           source_id: string
         }[]
       }
+      geometry: { Args: { "": string }; Returns: unknown }
+      geometry_above: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_below: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_cmp: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      geometry_contained_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_contains: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_contains_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_distance_box: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      geometry_distance_centroid: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      geometry_eq: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_ge: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_gt: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_le: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_left: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_lt: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overabove: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overbelow: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overlaps: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overlaps_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overleft: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_overright: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_right: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_same: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_same_3d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geometry_within: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      geomfromewkt: { Args: { "": string }; Returns: unknown }
+      get_accessible_client_ids_for_user: {
+        Args: { p_user_id: string }
+        Returns: {
+          client_id: string
+        }[]
+      }
+      get_adjacent_incidents: {
+        Args: { p_asset_id: string; p_radius_km?: number }
+        Returns: Json
+      }
+      get_asset_features_with_coords: {
+        Args: { p_asset_id: string }
+        Returns: Json
+      }
+      get_current_service_role_key: { Args: never; Returns: string }
       get_decayed_confidence: {
         Args: {
           p_base_confidence: number
@@ -15540,6 +19166,10 @@ export type Database = {
         Returns: number
       }
       get_service_role_key: { Args: never; Returns: string }
+      get_site_context: {
+        Args: { p_lat: number; p_lng: number; p_radius_km?: number }
+        Returns: Json
+      }
       get_user_accessible_client_ids: {
         Args: never
         Returns: {
@@ -15549,6 +19179,7 @@ export type Database = {
       get_user_consortium_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenants: { Args: { p_user_id: string }; Returns: string[] }
+      gettransactionid: { Args: never; Returns: unknown }
       has_consortium_role: {
         Args: {
           _consortium_id: string
@@ -15584,6 +19215,11 @@ export type Database = {
         Args: { _consortium_id: string; _user_id: string }
         Returns: boolean
       }
+      is_conversation_participant: {
+        Args: { _conversation_id: string; _user_id: string }
+        Returns: boolean
+      }
+      is_muted: { Args: { _user_id: string }; Returns: boolean }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_tenant_admin_or_owner: {
         Args: { _tenant_id: string; _user_id: string }
@@ -15609,23 +19245,70 @@ export type Database = {
         Args: { _user_id: string; _workspace_id: string }
         Returns: boolean
       }
-      match_agent_memories: {
+      latest_heartbeat_per_job: {
+        Args: never
+        Returns: {
+          error_message: string
+          job_name: string
+          started_at: string
+          status: string
+        }[]
+      }
+      longtransactionsenabled: { Args: never; Returns: boolean }
+      mark_world_geography_layer_refreshed: {
+        Args: { p_feature_count: number; p_layer: string }
+        Returns: undefined
+      }
+      match_agent_chat_beliefs: {
         Args: {
-          p_agent: string
-          p_match_count?: number
-          p_match_threshold?: number
-          p_query_embedding: string
+          _agent_id: string
+          _client?: string
+          _limit?: number
+          _query: string
         }
         Returns: {
+          claim: string
           confidence: number
-          content: string
-          entities: string[]
           id: string
-          incident_id: string
-          memory_type: string
+          last_reinforced_at: string
+          reinforcements: number
           similarity: number
         }[]
       }
+      match_agent_memories:
+        | {
+            Args: {
+              _agent_id: string
+              _client?: string
+              _limit?: number
+              _query: string
+            }
+            Returns: {
+              agent_excerpt: string
+              created_at: string
+              feedback: string
+              id: string
+              operator_excerpt: string
+              similarity: number
+            }[]
+          }
+        | {
+            Args: {
+              p_agent: string
+              p_match_count?: number
+              p_match_threshold?: number
+              p_query_embedding: string
+            }
+            Returns: {
+              confidence: number
+              content: string
+              entities: string[]
+              id: string
+              incident_id: string
+              memory_type: string
+              similarity: number
+            }[]
+          }
       match_cross_agent_memories: {
         Args: {
           p_exclude_agent: string
@@ -15667,6 +19350,47 @@ export type Database = {
         }
         Returns: boolean
       }
+      populate_geometry_columns:
+        | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
+        | { Args: { use_typmod?: boolean }; Returns: string }
+      postgis_constraint_dims: {
+        Args: { geomcolumn: string; geomschema: string; geomtable: string }
+        Returns: number
+      }
+      postgis_constraint_srid: {
+        Args: { geomcolumn: string; geomschema: string; geomtable: string }
+        Returns: number
+      }
+      postgis_constraint_type: {
+        Args: { geomcolumn: string; geomschema: string; geomtable: string }
+        Returns: string
+      }
+      postgis_extensions_upgrade: { Args: never; Returns: string }
+      postgis_full_version: { Args: never; Returns: string }
+      postgis_geos_version: { Args: never; Returns: string }
+      postgis_lib_build_date: { Args: never; Returns: string }
+      postgis_lib_revision: { Args: never; Returns: string }
+      postgis_lib_version: { Args: never; Returns: string }
+      postgis_libjson_version: { Args: never; Returns: string }
+      postgis_liblwgeom_version: { Args: never; Returns: string }
+      postgis_libprotobuf_version: { Args: never; Returns: string }
+      postgis_libxml_version: { Args: never; Returns: string }
+      postgis_proj_version: { Args: never; Returns: string }
+      postgis_scripts_build_date: { Args: never; Returns: string }
+      postgis_scripts_installed: { Args: never; Returns: string }
+      postgis_scripts_released: { Args: never; Returns: string }
+      postgis_svn_version: { Args: never; Returns: string }
+      postgis_type_name: {
+        Args: {
+          coord_dimension: number
+          geomname: string
+          use_new_name?: boolean
+        }
+        Returns: string
+      }
+      postgis_version: { Args: never; Returns: string }
+      postgis_wagyu_version: { Args: never; Returns: string }
+      reclassify_signal_groups: { Args: never; Returns: Json }
       record_violation: {
         Args: {
           p_category: string
@@ -15681,6 +19405,10 @@ export type Database = {
       }
       refresh_entity_quality_score: {
         Args: { p_entity_id: string }
+        Returns: undefined
+      }
+      refresh_feature_on_verify: {
+        Args: { p_audit_id: string; p_feature_id: string }
         Returns: undefined
       }
       refresh_signal_feedback_scores: { Args: never; Returns: number }
@@ -15712,12 +19440,625 @@ export type Database = {
         Args: { target_user_id: string }
         Returns: number
       }
+      set_client_asset_geom: {
+        Args: {
+          p_accuracy_m?: number
+          p_asset_id: string
+          p_audit_id: string
+          p_lat: number
+          p_lng: number
+        }
+        Returns: Json
+      }
       set_current_client: {
         Args: { client_id_param: string }
         Returns: undefined
       }
+      severity_rank: { Args: { s: string }; Returns: number }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      st_3dclosestpoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_3ddistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_3dintersects: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_3dlongestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_3dmakebox: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_3dmaxdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_3dshortestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_addpoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_angle:
+        | { Args: { line1: unknown; line2: unknown }; Returns: number }
+        | {
+            Args: { pt1: unknown; pt2: unknown; pt3: unknown; pt4?: unknown }
+            Returns: number
+          }
+      st_area:
+        | { Args: { geog: unknown; use_spheroid?: boolean }; Returns: number }
+        | { Args: { "": string }; Returns: number }
+      st_asencodedpolyline: {
+        Args: { geom: unknown; nprecision?: number }
+        Returns: string
+      }
+      st_asewkt: { Args: { "": string }; Returns: string }
+      st_asgeojson:
+        | {
+            Args: { geog: unknown; maxdecimaldigits?: number; options?: number }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; options?: number }
+            Returns: string
+          }
+        | {
+            Args: {
+              geom_column?: string
+              maxdecimaldigits?: number
+              pretty_bool?: boolean
+              r: Record<string, unknown>
+            }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+      st_asgml:
+        | {
+            Args: {
+              geog: unknown
+              id?: string
+              maxdecimaldigits?: number
+              nprefix?: string
+              options?: number
+            }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; options?: number }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+        | {
+            Args: {
+              geog: unknown
+              id?: string
+              maxdecimaldigits?: number
+              nprefix?: string
+              options?: number
+              version: number
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              geom: unknown
+              id?: string
+              maxdecimaldigits?: number
+              nprefix?: string
+              options?: number
+              version: number
+            }
+            Returns: string
+          }
+      st_askml:
+        | {
+            Args: { geog: unknown; maxdecimaldigits?: number; nprefix?: string }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; nprefix?: string }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+      st_aslatlontext: {
+        Args: { geom: unknown; tmpl?: string }
+        Returns: string
+      }
+      st_asmarc21: { Args: { format?: string; geom: unknown }; Returns: string }
+      st_asmvtgeom: {
+        Args: {
+          bounds: unknown
+          buffer?: number
+          clip_geom?: boolean
+          extent?: number
+          geom: unknown
+        }
+        Returns: unknown
+      }
+      st_assvg:
+        | {
+            Args: { geog: unknown; maxdecimaldigits?: number; rel?: number }
+            Returns: string
+          }
+        | {
+            Args: { geom: unknown; maxdecimaldigits?: number; rel?: number }
+            Returns: string
+          }
+        | { Args: { "": string }; Returns: string }
+      st_astext: { Args: { "": string }; Returns: string }
+      st_astwkb:
+        | {
+            Args: {
+              geom: unknown
+              prec?: number
+              prec_m?: number
+              prec_z?: number
+              with_boxes?: boolean
+              with_sizes?: boolean
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              geom: unknown[]
+              ids: number[]
+              prec?: number
+              prec_m?: number
+              prec_z?: number
+              with_boxes?: boolean
+              with_sizes?: boolean
+            }
+            Returns: string
+          }
+      st_asx3d: {
+        Args: { geom: unknown; maxdecimaldigits?: number; options?: number }
+        Returns: string
+      }
+      st_azimuth:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: number }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: number }
+      st_boundingdiagonal: {
+        Args: { fits?: boolean; geom: unknown }
+        Returns: unknown
+      }
+      st_buffer:
+        | {
+            Args: { geom: unknown; options?: string; radius: number }
+            Returns: unknown
+          }
+        | {
+            Args: { geom: unknown; quadsegs: number; radius: number }
+            Returns: unknown
+          }
+      st_centroid: { Args: { "": string }; Returns: unknown }
+      st_clipbybox2d: {
+        Args: { box: unknown; geom: unknown }
+        Returns: unknown
+      }
+      st_closestpoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_collect: { Args: { geom1: unknown; geom2: unknown }; Returns: unknown }
+      st_concavehull: {
+        Args: {
+          param_allow_holes?: boolean
+          param_geom: unknown
+          param_pctconvex: number
+        }
+        Returns: unknown
+      }
+      st_contains: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_containsproperly: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_coorddim: { Args: { geometry: unknown }; Returns: number }
+      st_coveredby:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_covers:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_crosses: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_curvetoline: {
+        Args: { flags?: number; geom: unknown; tol?: number; toltype?: number }
+        Returns: unknown
+      }
+      st_delaunaytriangles: {
+        Args: { flags?: number; g1: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_difference: {
+        Args: { geom1: unknown; geom2: unknown; gridsize?: number }
+        Returns: unknown
+      }
+      st_disjoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_distance:
+        | {
+            Args: { geog1: unknown; geog2: unknown; use_spheroid?: boolean }
+            Returns: number
+          }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: number }
+      st_distancesphere:
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: number }
+        | {
+            Args: { geom1: unknown; geom2: unknown; radius: number }
+            Returns: number
+          }
+      st_distancespheroid: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_dwithin: {
+        Args: {
+          geog1: unknown
+          geog2: unknown
+          tolerance: number
+          use_spheroid?: boolean
+        }
+        Returns: boolean
+      }
+      st_equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_expand:
+        | { Args: { box: unknown; dx: number; dy: number }; Returns: unknown }
+        | {
+            Args: { box: unknown; dx: number; dy: number; dz?: number }
+            Returns: unknown
+          }
+        | {
+            Args: {
+              dm?: number
+              dx: number
+              dy: number
+              dz?: number
+              geom: unknown
+            }
+            Returns: unknown
+          }
+      st_force3d: { Args: { geom: unknown; zvalue?: number }; Returns: unknown }
+      st_force3dm: {
+        Args: { geom: unknown; mvalue?: number }
+        Returns: unknown
+      }
+      st_force3dz: {
+        Args: { geom: unknown; zvalue?: number }
+        Returns: unknown
+      }
+      st_force4d: {
+        Args: { geom: unknown; mvalue?: number; zvalue?: number }
+        Returns: unknown
+      }
+      st_generatepoints:
+        | { Args: { area: unknown; npoints: number }; Returns: unknown }
+        | {
+            Args: { area: unknown; npoints: number; seed: number }
+            Returns: unknown
+          }
+      st_geogfromtext: { Args: { "": string }; Returns: unknown }
+      st_geographyfromtext: { Args: { "": string }; Returns: unknown }
+      st_geohash:
+        | { Args: { geog: unknown; maxchars?: number }; Returns: string }
+        | { Args: { geom: unknown; maxchars?: number }; Returns: string }
+      st_geomcollfromtext: { Args: { "": string }; Returns: unknown }
+      st_geometricmedian: {
+        Args: {
+          fail_if_not_converged?: boolean
+          g: unknown
+          max_iter?: number
+          tolerance?: number
+        }
+        Returns: unknown
+      }
+      st_geometryfromtext: { Args: { "": string }; Returns: unknown }
+      st_geomfromewkt: { Args: { "": string }; Returns: unknown }
+      st_geomfromgeojson:
+        | { Args: { "": Json }; Returns: unknown }
+        | { Args: { "": Json }; Returns: unknown }
+        | { Args: { "": string }; Returns: unknown }
+      st_geomfromgml: { Args: { "": string }; Returns: unknown }
+      st_geomfromkml: { Args: { "": string }; Returns: unknown }
+      st_geomfrommarc21: { Args: { marc21xml: string }; Returns: unknown }
+      st_geomfromtext: { Args: { "": string }; Returns: unknown }
+      st_gmltosql: { Args: { "": string }; Returns: unknown }
+      st_hasarc: { Args: { geometry: unknown }; Returns: boolean }
+      st_hausdorffdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_hexagon: {
+        Args: { cell_i: number; cell_j: number; origin?: unknown; size: number }
+        Returns: unknown
+      }
+      st_hexagongrid: {
+        Args: { bounds: unknown; size: number }
+        Returns: Record<string, unknown>[]
+      }
+      st_interpolatepoint: {
+        Args: { line: unknown; point: unknown }
+        Returns: number
+      }
+      st_intersection: {
+        Args: { geom1: unknown; geom2: unknown; gridsize?: number }
+        Returns: unknown
+      }
+      st_intersects:
+        | { Args: { geog1: unknown; geog2: unknown }; Returns: boolean }
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_isvaliddetail: {
+        Args: { flags?: number; geom: unknown }
+        Returns: Database["public"]["CompositeTypes"]["valid_detail"]
+        SetofOptions: {
+          from: "*"
+          to: "valid_detail"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      st_length:
+        | { Args: { geog: unknown; use_spheroid?: boolean }; Returns: number }
+        | { Args: { "": string }; Returns: number }
+      st_letters: { Args: { font?: Json; letters: string }; Returns: unknown }
+      st_linecrossingdirection: {
+        Args: { line1: unknown; line2: unknown }
+        Returns: number
+      }
+      st_linefromencodedpolyline: {
+        Args: { nprecision?: number; txtin: string }
+        Returns: unknown
+      }
+      st_linefromtext: { Args: { "": string }; Returns: unknown }
+      st_linelocatepoint: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_linetocurve: { Args: { geometry: unknown }; Returns: unknown }
+      st_locatealong: {
+        Args: { geometry: unknown; leftrightoffset?: number; measure: number }
+        Returns: unknown
+      }
+      st_locatebetween: {
+        Args: {
+          frommeasure: number
+          geometry: unknown
+          leftrightoffset?: number
+          tomeasure: number
+        }
+        Returns: unknown
+      }
+      st_locatebetweenelevations: {
+        Args: { fromelevation: number; geometry: unknown; toelevation: number }
+        Returns: unknown
+      }
+      st_longestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_makebox2d: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_makeline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_makevalid: {
+        Args: { geom: unknown; params: string }
+        Returns: unknown
+      }
+      st_maxdistance: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: number
+      }
+      st_minimumboundingcircle: {
+        Args: { inputgeom: unknown; segs_per_quarter?: number }
+        Returns: unknown
+      }
+      st_mlinefromtext: { Args: { "": string }; Returns: unknown }
+      st_mpointfromtext: { Args: { "": string }; Returns: unknown }
+      st_mpolyfromtext: { Args: { "": string }; Returns: unknown }
+      st_multilinestringfromtext: { Args: { "": string }; Returns: unknown }
+      st_multipointfromtext: { Args: { "": string }; Returns: unknown }
+      st_multipolygonfromtext: { Args: { "": string }; Returns: unknown }
+      st_node: { Args: { g: unknown }; Returns: unknown }
+      st_normalize: { Args: { geom: unknown }; Returns: unknown }
+      st_offsetcurve: {
+        Args: { distance: number; line: unknown; params?: string }
+        Returns: unknown
+      }
+      st_orderingequals: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_overlaps: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: boolean
+      }
+      st_perimeter: {
+        Args: { geog: unknown; use_spheroid?: boolean }
+        Returns: number
+      }
+      st_pointfromtext: { Args: { "": string }; Returns: unknown }
+      st_pointm: {
+        Args: {
+          mcoordinate: number
+          srid?: number
+          xcoordinate: number
+          ycoordinate: number
+        }
+        Returns: unknown
+      }
+      st_pointz: {
+        Args: {
+          srid?: number
+          xcoordinate: number
+          ycoordinate: number
+          zcoordinate: number
+        }
+        Returns: unknown
+      }
+      st_pointzm: {
+        Args: {
+          mcoordinate: number
+          srid?: number
+          xcoordinate: number
+          ycoordinate: number
+          zcoordinate: number
+        }
+        Returns: unknown
+      }
+      st_polyfromtext: { Args: { "": string }; Returns: unknown }
+      st_polygonfromtext: { Args: { "": string }; Returns: unknown }
+      st_project: {
+        Args: { azimuth: number; distance: number; geog: unknown }
+        Returns: unknown
+      }
+      st_quantizecoordinates: {
+        Args: {
+          g: unknown
+          prec_m?: number
+          prec_x: number
+          prec_y?: number
+          prec_z?: number
+        }
+        Returns: unknown
+      }
+      st_reduceprecision: {
+        Args: { geom: unknown; gridsize: number }
+        Returns: unknown
+      }
+      st_relate: { Args: { geom1: unknown; geom2: unknown }; Returns: string }
+      st_removerepeatedpoints: {
+        Args: { geom: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_segmentize: {
+        Args: { geog: unknown; max_segment_length: number }
+        Returns: unknown
+      }
+      st_setsrid:
+        | { Args: { geog: unknown; srid: number }; Returns: unknown }
+        | { Args: { geom: unknown; srid: number }; Returns: unknown }
+      st_sharedpaths: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_shortestline: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_simplifypolygonhull: {
+        Args: { geom: unknown; is_outer?: boolean; vertex_fraction: number }
+        Returns: unknown
+      }
+      st_split: { Args: { geom1: unknown; geom2: unknown }; Returns: unknown }
+      st_square: {
+        Args: { cell_i: number; cell_j: number; origin?: unknown; size: number }
+        Returns: unknown
+      }
+      st_squaregrid: {
+        Args: { bounds: unknown; size: number }
+        Returns: Record<string, unknown>[]
+      }
+      st_srid:
+        | { Args: { geog: unknown }; Returns: number }
+        | { Args: { geom: unknown }; Returns: number }
+      st_subdivide: {
+        Args: { geom: unknown; gridsize?: number; maxvertices?: number }
+        Returns: unknown[]
+      }
+      st_swapordinates: {
+        Args: { geom: unknown; ords: unknown }
+        Returns: unknown
+      }
+      st_symdifference: {
+        Args: { geom1: unknown; geom2: unknown; gridsize?: number }
+        Returns: unknown
+      }
+      st_symmetricdifference: {
+        Args: { geom1: unknown; geom2: unknown }
+        Returns: unknown
+      }
+      st_tileenvelope: {
+        Args: {
+          bounds?: unknown
+          margin?: number
+          x: number
+          y: number
+          zoom: number
+        }
+        Returns: unknown
+      }
+      st_touches: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_transform:
+        | {
+            Args: { from_proj: string; geom: unknown; to_proj: string }
+            Returns: unknown
+          }
+        | {
+            Args: { from_proj: string; geom: unknown; to_srid: number }
+            Returns: unknown
+          }
+        | { Args: { geom: unknown; to_proj: string }; Returns: unknown }
+      st_triangulatepolygon: { Args: { g1: unknown }; Returns: unknown }
+      st_union:
+        | { Args: { geom1: unknown; geom2: unknown }; Returns: unknown }
+        | {
+            Args: { geom1: unknown; geom2: unknown; gridsize: number }
+            Returns: unknown
+          }
+      st_voronoilines: {
+        Args: { extend_to?: unknown; g1: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_voronoipolygons: {
+        Args: { extend_to?: unknown; g1: unknown; tolerance?: number }
+        Returns: unknown
+      }
+      st_within: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      st_wkbtosql: { Args: { wkb: string }; Returns: unknown }
+      st_wkttosql: { Args: { "": string }; Returns: unknown }
+      st_wrapx: {
+        Args: { geom: unknown; move: number; wrap: number }
+        Returns: unknown
+      }
+      unlockrows: { Args: { "": string }; Returns: number }
+      update_client_asset_from_audit: {
+        Args: {
+          p_asset_id: string
+          p_attributes_patch?: Json
+          p_audit_id: string
+          p_criticality_tier?: string
+          p_operational_status?: string
+        }
+        Returns: Json
+      }
+      updategeometrysrid: {
+        Args: {
+          catalogn_name: string
+          column_name: string
+          new_srid_in: number
+          schema_name: string
+          table_name: string
+        }
+        Returns: string
+      }
       upsert_rate_limit: {
         Args: {
           p_function_name: string
@@ -15728,6 +20069,10 @@ export type Database = {
         Returns: Json
       }
       uuid_generate_v4: { Args: never; Returns: string }
+      x_daily_calls_used_for_class: {
+        Args: { p_class: string }
+        Returns: number
+      }
     }
     Enums: {
       alert_status: "pending" | "sent" | "delivered" | "failed" | "acknowledged"
@@ -15862,7 +20207,15 @@ export type Database = {
         | "viewer"
     }
     CompositeTypes: {
-      [_ in never]: never
+      geometry_dump: {
+        path: number[] | null
+        geom: unknown
+      }
+      valid_detail: {
+        valid: boolean | null
+        reason: string | null
+        location: unknown
+      }
     }
   }
 }
@@ -16136,3 +20489,4 @@ export const Constants = {
     },
   },
 } as const
+

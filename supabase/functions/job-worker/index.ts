@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
-  const hb = await startHeartbeat(supabase, 'job-worker');
+  const hb = await startHeartbeat(supabase, 'job-worker-1min');
   const runStartedAt = Date.now();
   let claimed = 0;
   let succeeded = 0;
