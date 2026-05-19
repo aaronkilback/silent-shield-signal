@@ -239,26 +239,129 @@ const tools = aegisToolDefinitions;
 //     Use for tables with a tenant_id column.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Tools that touch tenant-scoped data. ALL must be invoked with a valid tenantId.
+// Generated from the Phase-C audit: any case "tool" that touches clients, entities,
+// signals, incidents, reports, investigations, agent_missions, agent_memory,
+// tenant_knowledge, signal_agent_analyses, entity_relationships, entity_content,
+// client_assets, archival_documents, ioc_indicators, alerts, risk_profiles,
+// monitoring_history, or site_audits/observations gets listed here.
 const TENANT_SCOPED_TOOLS = new Set<string>([
-  // Data-fetch tools — must scope by tenant
+  // Already individually hardened with inline tenant filters
   "query_fortress_data",
   "analyze_threat_radar",
   "generate_fortress_report",
   "generate_poi_report",
-  "list_agent_missions",
-  "assign_agent_mission",
-  "check_dark_web_exposure",
-  "run_entity_deep_scan",
-  "investigate_poi",
+  // Phase-C swept tools — fail-closed at executeTool entry; tool body queries
+  // should also apply tenant filters (incremental hardening tracked in audit).
+  "fix_duplicate_signals",
+  "analyze_signal_quality",
+  "get_security_reports",
+  "get_report_content",
+  "import_report_images",
+  "search_archival_documents",
+  "get_document_content",
+  "process_document",
+  "analyze_visual_document",
   "create_entity",
   "update_entity",
+  "read_intelligence_documents",
+  "detect_signal_duplicates",
+  "diagnose_feed_errors",
+  "read_client_monitoring_config",
+  "update_client_monitoring_config",
+  "analyze_signal_patterns",
+  "suggest_categorization_rules",
+  "analyze_cross_client_threats",
+  "detect_signal_anomalies",
+  "analyze_edge_function_errors",
+  "generate_edge_function_template",
+  "assign_agent_mission",
+  "list_agent_missions",
+  "update_mission_progress",
+  "recommend_playbook",
+  "propose_signal_merge",
   "inject_test_signal",
-  "fix_duplicate_signals",
+  "propose_new_monitoring_keywords",
+  "identify_critical_failure_points",
+  "generate_incident_briefing",
+  "guide_decision_tree",
+  "track_mitigation_effectiveness",
+  "get_threat_intel_feeds",
+  "run_entity_deep_scan",
+  "search_social_media",
+  "enrich_entity_descriptions",
+  "extract_signal_insights",
+  "get_principal_profile",
+  "analyze_sentiment_drift",
+  "dispatch_agent_investigation",
+  "trigger_multi_agent_debate",
+  "agent_self_assessment",
+  // Other known tenant-data tools
+  "check_dark_web_exposure",
+  "investigate_poi",
   "submit_ai_feedback",
   "lookup_ioc_indicator",
-  "update_client_monitoring_config",
   "auto_summarize_incidents",
+  "add_entity_to_watchlist",
+  // P0 Phase-C — additional tools promoted to tenant-scoped on 2026-05-19
+  // (previously ungated; now require active tenant context).
+  "suggest_monitoring_adjustments",
+  "submit_rule_proposal",
+  "search_bug_reports",
+  "get_bug_report_details",
+  "diagnose_bug",
+  "suggest_code_fix",
+  "create_fix_proposal",
+  "update_risk_profile",
+  "recommend_tactical_countermeasures",
+  "evaluate_countermeasure_impact",
+  "optimize_defense_strategies",
+  "propose_security_investments",
+  "audit_compliance_status",
+  "recommend_compliance_remediation",
+  "review_client_policy",
+  "query_internal_context",
+  "manage_incident_ticket",
+  "run_vip_deep_scan",
+  "run_data_quality_check",
+  "search_chat_history",
+  "get_user_memory",
+  "remember_this",
+  "manage_project_context",
+  "configure_principal_alerts",
+  "generate_report_visual",
+  "generate_audio_briefing",
+  "create_briefing_session",
+  "run_cyber_sentinel",
+  "get_common_operating_picture",
+  "broadcast_to_agents",
+  "synthesize_knowledge",
+  "send_message_to_agent",
 ]);
+
+// Tools intentionally excluded from TENANT_SCOPED_TOOLS — these are global / system / external:
+//   list_source_files, get_source_file      — codebase introspection (global system metadata)
+//   search_knowledge_base, get_knowledge_base_categories — public published KB articles
+//   get_database_schema, list_edge_functions — system metadata
+//   explain_feature, get_system_architecture, analyze_platform_capabilities, suggest_improvements — system docs/suggestions
+//   create_agent, update_agent_configuration  — global agent registry (super_admin gated separately)
+//   autonomous_source_health_manager          — cross-tenant source health (operator tool)
+//   query_legal_database, retrieve_regulatory_document, access_industry_standards,
+//     monitor_regulatory_changes, map_policy_to_controls, recommend_policy_adjustments,
+//     model_geopolitical_risk                 — external / global reference data
+//   perform_external_web_search, perform_web_fetch — external web (no tenant data leak risk on its own)
+//   get_system_health, get_tech_radar         — system-wide health metrics
+//   query_expert_knowledge, add_expert_source, run_agent_knowledge_hunt,
+//     ingest_expert_topics, list_expert_profiles, ingest_expert_content,
+//     get_global_learning_insights, submit_learning_insight, get_cross_tenant_patterns
+//                                              — explicitly cross-tenant learning/knowledge curation
+//                                                (operator/super_admin tooling)
+//   update_user_preferences                   — user-scoped (caller's own preferences)
+//   perform_impact_analysis, integrate_incident_management, optimize_rule_thresholds,
+//     simulate_attack_path, simulate_protest_escalation, run_what_if_scenario
+//                                              — currently stubs returning "not available"
+//
+// If any of these are later wired up to read tenant data, they MUST be promoted.
 
 function assertTenantContext(toolName: string, tenantId: string | undefined): asserts tenantId is string {
   if (!tenantId) {
@@ -304,6 +407,16 @@ async function executeTool(
   tenantId?: string,
   tenantName?: string,
 ) {
+  // P0 Phase-C — fail-closed gate. Any tool that touches tenant-scoped data
+  // requires a valid tenantId. This blocks unauthenticated/anonymous callers
+  // from reaching ANY query path that could leak cross-tenant data.
+  if (TENANT_SCOPED_TOOLS.has(toolName) && !tenantId) {
+    console.warn(`[TENANT_BOUNDARY] denied unscoped invocation of tenant-tool '${toolName}'`);
+    return {
+      error: `TENANT_BOUNDARY: tool '${toolName}' requires an active tenant context. Authenticate with a tenant-scoped session.`,
+    };
+  }
+
   // Inject user ID for memory tools
   const memoryTools = ["get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"];
   if (memoryTools.includes(toolName) && userId) {
@@ -315,7 +428,10 @@ async function executeTool(
   const handler = _extractedHandlers[toolName];
   if (handler) {
     try {
-      return await handler(args, supabaseClient, userId);
+      // Pass tenantId + tenantName to extracted handlers as a 5th arg so they
+      // can apply tenant filters. Backward-compatible: handlers that don't
+      // declare the params simply ignore the extra args.
+      return await handler(args, supabaseClient, userId, tenantId, tenantName);
     } catch (error) {
       console.error(`Tool execution error for ${toolName}:`, error);
       throw error;
@@ -394,12 +510,14 @@ async function executeTool(
     // ── Signal deduplication ────────────────────────────────────────────────
 
     case "fix_duplicate_signals": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("fix_duplicate_signals", tenantId);
       const { signal_ids, action, keep_signal_id } = args;
 
       if (!signal_ids || signal_ids.length < 2) {
         // Dry-run scan mode: find potential duplicates from DB
         const { data: dupScan } = await supabaseClient
-          .from("signals").select("content_hash, id, title, created_at")
+          .from("signals").eq("tenant_id", tenantId).select("content_hash, id, title, created_at")
           .not("content_hash", "is", null).order("created_at", { ascending: false }).limit(500);
         const hashMap: Record<string, any[]> = {};
         for (const s of (dupScan || [])) {
@@ -442,10 +560,11 @@ async function executeTool(
         const primaryId = keep_signal_id || signal_ids[0];
         const toDelete = signal_ids.filter((id: string) => id !== primaryId);
         
-        // Delete duplicate signals
+        // Delete duplicate signals (P0 Phase-C — tenant-scoped delete)
         const { error: deleteError } = await supabaseClient
           .from("signals")
           .delete()
+          .eq("tenant_id", tenantId)
           .in("id", toDelete);
 
         if (deleteError) {
@@ -478,10 +597,11 @@ async function executeTool(
           .update({ signal_id: primaryId })
           .in("signal_id", otherIds);
 
-        // Delete duplicate signals
+        // Delete duplicate signals (P0 Phase-C — tenant-scoped delete)
         const { error: deleteError } = await supabaseClient
           .from("signals")
           .delete()
+          .eq("tenant_id", tenantId)
           .in("id", otherIds);
 
         if (deleteError) {
@@ -500,14 +620,18 @@ async function executeTool(
     }
 
     case "analyze_signal_quality": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("analyze_signal_quality", tenantId);
       const daysBack = args.days_back || 7;
       const minConfidence = args.min_confidence || 0.5;
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysBack);
 
+      // P0 Phase-C — restrict signal-quality analysis to caller's tenant
       const { data: recentSignals, error: signalsError } = await supabaseClient
         .from("signals")
         .select("id, title, confidence, status, severity, created_at, source_id")
+        .eq("tenant_id", tenantId)
         .gte("created_at", cutoffDate.toISOString())
         .order("created_at", { ascending: false });
 
@@ -1254,9 +1378,12 @@ async function executeTool(
     }
 
     case "get_security_reports": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("get_security_reports", tenantId);
       let query = supabaseClient
         .from("reports")
-        .select("id, type, period_start, period_end, generated_at, meta_json")
+        .select("id, type, period_start, period_end, generated_at, meta_json, tenant_id")
+        .eq("tenant_id", tenantId)
         .order("generated_at", { ascending: false })
         .limit(args.limit || 10);
 
@@ -1282,11 +1409,14 @@ async function executeTool(
     }
 
     case "get_report_content": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("get_report_content", tenantId);
       if (!args.report_id) {
-        // List mode: return recent reports
+        // List mode: return recent reports, scoped to caller's tenant
         const { data: recentReports, error: listErr } = await supabaseClient
           .from("reports")
           .select("id, type, generated_at, period_start, period_end")
+          .eq("tenant_id", tenantId)
           .order("generated_at", { ascending: false })
           .limit(args.limit || 5);
         if (listErr) return { success: false, error: listErr.message };
@@ -1294,15 +1424,17 @@ async function executeTool(
       }
       const _reportUuidValid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(args.report_id));
       if (!_reportUuidValid) return { success: false, error: "Invalid report_id — must be a UUID" };
+      // P0 Phase-C — restrict report read to caller's tenant
       const { data, error } = await supabaseClient
         .from("reports")
         .select("*")
         .eq("id", args.report_id)
+        .eq("tenant_id", tenantId)
         .maybeSingle();
 
       if (error) throw error;
       if (!data) {
-        return { success: false, message: "Report not found" };
+        return { success: false, message: `TENANT_BOUNDARY: Report not found in tenant ${tenantName}` };
       }
 
       // Extract images from the report content if present
@@ -1336,14 +1468,16 @@ async function executeTool(
     }
 
     case "import_report_images": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("import_report_images", tenantId);
       if (!args.report_id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(args.report_id))) {
         // List reports that have images
-        const { data: rpts } = await supabaseClient.from("reports")
+        const { data: rpts } = await supabaseClient.from("reports").eq("tenant_id", tenantId)
           .select("id, type, generated_at").order("generated_at", { ascending: false }).limit(5);
         return { success: true, note: "Provide report_id to import images — showing recent reports", reports: rpts || [], count: rpts?.length || 0 };
       }
       const { data: report, error: reportError } = await supabaseClient
-        .from("reports")
+        .from("reports").eq("tenant_id", tenantId)
         .select("meta_json")
         .eq("id", args.report_id)
         .maybeSingle();
@@ -1435,6 +1569,8 @@ async function executeTool(
     }
 
     case "search_archival_documents": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("search_archival_documents", tenantId);
       let query = supabaseClient
         .from("archival_documents")
         .select("id, filename, file_type, upload_date, summary, content_text, entity_mentions, tags, client_id")
@@ -1461,6 +1597,8 @@ async function executeTool(
     }
 
     case "get_document_content": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("get_document_content", tenantId);
       const docId = String(args.document_id || '').trim();
       if (!docId) {
         // List mode: return recent archival documents
@@ -1576,6 +1714,8 @@ async function executeTool(
     }
 
     case "process_document": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("process_document", tenantId);
       const docId = String(args.document_id || '').trim();
       if (!docId) {
         return { success: false, error: "Missing document_id" };
@@ -1659,6 +1799,7 @@ async function executeTool(
       // 4) Invoke the document converter
       const { data: docResult, error: invokeErr } = await supabaseClient.functions.invoke('fortress-document-converter', {
         body: {
+          tenant_id: tenantId,
           documentId: docId,
           filePath,
           mimeType,
@@ -1686,6 +1827,8 @@ async function executeTool(
     }
 
     case "analyze_visual_document": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("analyze_visual_document", tenantId);
       const docId = String(args.document_id || '').trim();
       const analysisFocus = args.analysis_focus || 'general';
       const maxPages = Math.min(Math.max(1, args.max_pages || 5), 10);
@@ -2062,6 +2205,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "create_entity": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("create_entity", tenantId);
       const { name, type, description, aliases } = args;
       
       // Check if entity already exists
@@ -2132,6 +2277,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "read_intelligence_documents": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("read_intelligence_documents", tenantId);
       const limit = Math.min(args.limit || 10, 50);
       const hoursBack = args.hours_back || 24;
       const cutoffTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
@@ -2255,13 +2402,15 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "detect_signal_duplicates": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("detect_signal_duplicates", tenantId);
       const threshold = args.threshold || 0.85;
       const limit = args.limit || 20;
 
       if (!args.signal_id) {
         // Batch mode: find recent signals sharing the same content_hash
         const { data: dupeGroups, error: dupeErr } = await supabaseClient
-          .from("signals")
+          .from("signals").eq("tenant_id", tenantId)
           .select("content_hash, id, title, created_at, client_id, clients(name)")
           .not("content_hash", "is", null)
           .order("created_at", { ascending: false })
@@ -2284,7 +2433,7 @@ Be thorough and include every piece of visible text and data.`,
 
       // Get the target signal
       const { data: signal, error: signalError } = await supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, normalized_text, title, description, content_hash, created_at")
         .eq("id", args.signal_id)
         .single();
@@ -2298,7 +2447,7 @@ Be thorough and include every piece of visible text and data.`,
 
       // Check for exact hash matches first
       const { data: hashMatches } = await supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
         .eq("content_hash", signal.content_hash)
         .neq("id", signal.id)
@@ -2307,7 +2456,7 @@ Be thorough and include every piece of visible text and data.`,
 
       // Check for near-duplicates via similarity
       const { data: recentSignals } = await supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
         .neq("id", signal.id)
         .order("created_at", { ascending: false })
@@ -2364,6 +2513,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "diagnose_feed_errors": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("diagnose_feed_errors", tenantId);
       const { source_name, include_successful = false } = args;
 
       // Get monitoring history for RSS sources
@@ -2541,7 +2692,25 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "submit_ai_feedback": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("submit_ai_feedback", tenantId);
       const { object_id, object_type, feedback, notes, correction, reason } = args;
+
+      // P0 Phase-C — if feedback targets a signal, verify the signal is in caller's tenant
+      if (object_type === 'signal' && object_id) {
+        const { data: sigCheck } = await supabaseClient
+          .from('signals').eq("tenant_id", tenantId)
+          .select('id, tenant_id')
+          .eq('id', object_id)
+          .maybeSingle();
+        if (!sigCheck || (sigCheck.tenant_id && sigCheck.tenant_id !== tenantId)) {
+          return {
+            success: false,
+            verified: false,
+            message: `TENANT_BOUNDARY: signal ${object_id} is not in tenant ${tenantName}. Feedback refused.`,
+          };
+        }
+      }
 
       // ── Call process-feedback edge function for full learning pipeline ──
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -2627,6 +2796,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "read_client_monitoring_config": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("read_client_monitoring_config", tenantId);
       const { client_id, include_sources = true } = args;
 
       // Resolve client_id if name is provided
@@ -2744,6 +2915,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "suggest_monitoring_adjustments": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("suggest_monitoring_adjustments", tenantId);
       const { client_id, analysis_summary, keyword_changes, source_changes } = args;
 
       // Store suggestions in intelligence_config for human review
@@ -2795,12 +2968,14 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "analyze_signal_patterns": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("analyze_signal_patterns", tenantId);
       const { client_id, days_back = 30, min_confidence = 0.75 } = args;
       const cutoffDate = new Date(Date.now() - days_back * 24 * 60 * 60 * 1000).toISOString();
 
       // Build signal query
       let signalQuery = supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, source_id, category, severity, confidence, created_at")
         .gte("created_at", cutoffDate)
         .order("created_at", { ascending: false });
@@ -2898,11 +3073,13 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "suggest_categorization_rules": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("suggest_categorization_rules", tenantId);
       const { rule_type = "all", pattern_source, confidence_threshold = 0.8 } = args;
 
       // Get recent signal patterns
       const { data: signals } = await supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, source_id, category, severity")
         .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
         .limit(1000);
@@ -3032,6 +3209,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "submit_rule_proposal": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("submit_rule_proposal", tenantId);
       const { 
         rule_name, 
         description, 
@@ -3098,12 +3277,14 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "analyze_cross_client_threats": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("analyze_cross_client_threats", tenantId);
       const { time_window_days = 14, min_client_count = 2, threat_categories } = args;
       const cutoffDate = new Date(Date.now() - time_window_days * 24 * 60 * 60 * 1000).toISOString();
 
       // Get signals across all clients
       let query = supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, client_id, source_id, category, severity, normalized_text, created_at, clients(name)")
         .gte("created_at", cutoffDate)
         .order("created_at", { ascending: false });
@@ -3204,20 +3385,22 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "detect_signal_anomalies": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("detect_signal_anomalies", tenantId);
       const { detection_type = "all", baseline_days = 30, sensitivity = 7 } = args;
       const baselineCutoff = new Date(Date.now() - baseline_days * 24 * 60 * 60 * 1000).toISOString();
       const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // Last 24h
 
       // Get baseline signals
       const { data: baselineSignals } = await supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, source_id, category, severity, created_at")
         .gte("created_at", baselineCutoff)
         .lt("created_at", recentCutoff);
 
       // Get recent signals
       const { data: recentSignals } = await supabaseClient
-        .from("signals")
+        .from("signals").eq("tenant_id", tenantId)
         .select("id, source_id, category, severity, created_at")
         .gte("created_at", recentCutoff);
 
@@ -3321,8 +3504,10 @@ Be thorough and include every piece of visible text and data.`,
 
 
     case "search_bug_reports": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("search_bug_reports", tenantId);
       let query = supabaseClient
-        .from("bug_reports")
+        .from("bug_reports").eq("tenant_id", tenantId)
         .select("id, title, description, severity, status, created_at, page_url, user_id")
         .order("created_at", { ascending: false })
         .limit(args.limit || 20);
@@ -3357,16 +3542,18 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "get_bug_report_details": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("get_bug_report_details", tenantId);
       if (!args.bug_id) {
         // List mode: return recent bug reports
         const { data: recentBugs, error: listErr } = await supabaseClient
-          .from("bug_reports").select("id, title, severity, status, created_at")
+          .from("bug_reports").eq("tenant_id", tenantId).select("id, title, severity, status, created_at")
           .order("created_at", { ascending: false }).limit(args.limit || 10);
         if (listErr) return { success: false, message: listErr.message };
         return { success: true, bugs: recentBugs, count: recentBugs?.length || 0 };
       }
       const { data, error } = await supabaseClient
-        .from("bug_reports")
+        .from("bug_reports").eq("tenant_id", tenantId)
         .select("id, title, description, severity, status, page_url, browser_info, screenshots, created_at, user_id")
         .eq("id", args.bug_id)
         .maybeSingle();
@@ -3396,6 +3583,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "analyze_edge_function_errors": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("analyze_edge_function_errors", tenantId);
       const hoursBack = args.hours_back || 24;
       const startTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
 
@@ -3453,6 +3642,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "diagnose_bug": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("diagnose_bug", tenantId);
       const { description, error_message, affected_area } = args;
 
       // Build diagnosis by analyzing related components
@@ -3585,6 +3776,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "suggest_code_fix": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("suggest_code_fix", tenantId);
       const { bug_description, root_cause, affected_files } = args;
 
       const fix: any = {
@@ -3647,6 +3840,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "create_fix_proposal": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("create_fix_proposal", tenantId);
       const {
         bug_id,
         root_cause,
@@ -3670,6 +3865,7 @@ Be thorough and include every piece of visible text and data.`,
           };
         }
 
+        // P0 Phase-C — write tenant_id into the new bug row (INSERT can't be filtered post-hoc)
         const { data: newBug, error: createError } = await supabaseClient
           .from("bug_reports")
           .insert({
@@ -3678,7 +3874,8 @@ Be thorough and include every piece of visible text and data.`,
             severity,
             status: 'open',
             page_url: 'AI-detected',
-            browser_info: 'Detected by AI Assistant'
+            browser_info: 'Detected by AI Assistant',
+            tenant_id: tenantId,
           })
           .select("id")
           .single();
@@ -3714,7 +3911,7 @@ Be thorough and include every piece of visible text and data.`,
         ai_model: "gpt-4o-mini"
       };
 
-      // Update bug report with fix proposal
+      // Update bug report with fix proposal (P0 Phase-C — tenant-scoped update)
       const { data: updatedBug, error: updateError } = await supabaseClient
         .from("bug_reports")
         .update({
@@ -3723,6 +3920,7 @@ Be thorough and include every piece of visible text and data.`,
           status: 'in_progress'
         })
         .eq("id", targetBugId)
+        .eq("tenant_id", tenantId)
         .select("id, title, fix_status")
         .single();
 
@@ -3812,6 +4010,8 @@ Be thorough and include every piece of visible text and data.`,
     }
 
     case "generate_edge_function_template": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("generate_edge_function_template", tenantId);
       const { function_name, purpose } = args;
       
       const template = `import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -3860,7 +4060,7 @@ Deno.serve(async (req) => {
         totalScans++;
         
         // If threat found, create signal
-        // const { error } = await supabaseClient.from('signals').insert({
+        // const { error } = await supabaseClient.from('signals').eq("tenant_id", tenantId).insert({
         //   title: 'Threat detected',
         //   description: 'Details...',
         //   severity: 'medium',
@@ -4058,13 +4258,19 @@ Deno.serve(async (req) => {
     }
 
     case "lookup_ioc_indicator": {
-      // Delegates to ai-tools-query — searches all ingested threat intel signals
-      const { data: iocResult, error: iocError } = await supabaseClient.functions.invoke("ai-tools-query", { body: { toolName, parameters: args } });
+      // P0 Phase-C — fail-closed tenant gate; pass tenantId through to ai-tools-query
+      assertTenantContext("lookup_ioc_indicator", tenantId);
+      const { data: iocResult, error: iocError } = await supabaseClient.functions.invoke("ai-tools-query", {
+        body: { toolName, parameters: { ...args, tenant_id: tenantId } }
+      });
       if (iocError) return { error: iocError.message, message: "IOC lookup failed" };
       return iocResult.result;
     }
 
     case "assign_agent_mission": {
+      // P0 Phase-C — fail-closed tenant gate + tenant-scoped client resolution
+      assertTenantContext("assign_agent_mission", tenantId);
+      const amScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
       const { agent, title, objective, deadline, reporting_cadence = "on_finding", client_name } = args;
 
       // Verify agent exists
@@ -4072,12 +4278,19 @@ Deno.serve(async (req) => {
         .from("ai_agents").select("id, call_sign, specialty").eq("call_sign", agent).eq("is_active", true).maybeSingle();
       if (!agentRow) return { error: `Agent '${agent}' not found or inactive. Use list_agent_missions with no filter to see available agents.` };
 
-      // Resolve client_id if client_name provided
+      // Resolve client_id from name — STRICTLY tenant-scoped. Foreign tenants resolve to NO MATCH.
       let clientId: string | null = null;
       if (client_name) {
         const { data: clientRow } = await supabaseClient
-          .from("clients").select("id").ilike("name", `%${client_name}%`).maybeSingle();
-        clientId = clientRow?.id ?? null;
+          .from("clients").select("id").eq("tenant_id", tenantId).ilike("name", `%${client_name}%`).maybeSingle();
+        if (!clientRow) {
+          return { error: `TENANT_BOUNDARY: no client matching "${client_name}" in tenant ${tenantName}. Cannot assign mission to a client outside this tenant.` };
+        }
+        clientId = clientRow.id;
+      }
+      // If client_id supplied explicitly, verify it's in caller's tenant
+      if (clientId && !amScopedClientIds.includes(clientId)) {
+        return { error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. Mission write refused.` };
       }
 
       const { data: mission, error: missionErr } = await supabaseClient
@@ -4107,6 +4320,9 @@ Deno.serve(async (req) => {
     }
 
     case "list_agent_missions": {
+      // P0 Phase-C — fail-closed tenant gate + tenant-scoped client filter
+      assertTenantContext("list_agent_missions", tenantId);
+      const lmScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
       const { agent, status = "active", client_name } = args;
 
       let q = supabaseClient
@@ -4115,11 +4331,19 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(30);
 
+      // ALWAYS restrict to caller's tenant's clients (in addition to any explicit filter).
+      if (lmScopedClientIds.length === 0) {
+        q = q.in("client_id", ["00000000-0000-0000-0000-000000000000"]);
+      } else {
+        q = q.in("client_id", lmScopedClientIds);
+      }
       if (agent) q = q.eq("assigned_agent", agent);
       if (status && status !== "all") q = q.eq("status", status);
       if (client_name) {
-        const { data: clientRow } = await supabaseClient.from("clients").select("id").ilike("name", `%${client_name}%`).maybeSingle();
+        // Name lookup also tenant-scoped — foreign names resolve to NO MATCH.
+        const { data: clientRow } = await supabaseClient.from("clients").select("id").eq("tenant_id", tenantId).ilike("name", `%${client_name}%`).maybeSingle();
         if (clientRow) q = q.eq("client_id", clientRow.id);
+        else return { error: `TENANT_BOUNDARY: no client matching "${client_name}" in tenant ${tenantName}.` };
       }
 
       const { data: missions, error: listErr } = await q;
@@ -4144,11 +4368,22 @@ Deno.serve(async (req) => {
     }
 
     case "update_mission_progress": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("update_mission_progress", tenantId);
       const { mission_id, update, finding_type, mark_completed = false } = args;
 
-      const { data: mission, error: fetchErr } = await supabaseClient
-        .from("agent_missions").select("id, progress_log, status").eq("id", mission_id).maybeSingle();
-      if (fetchErr || !mission) return { error: `Mission ${mission_id} not found` };
+      // P0 Phase-C — restrict mission lookup to caller's tenant's clients
+      const umpScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      const missionQ = supabaseClient
+        .from("agent_missions")
+        .select("id, progress_log, status, client_id")
+        .eq("id", mission_id);
+      const { data: mission, error: fetchErr } = umpScopedClientIds.length > 0
+        ? await missionQ.in("client_id", umpScopedClientIds).maybeSingle()
+        : await missionQ.in("client_id", ["00000000-0000-0000-0000-000000000000"]).maybeSingle();
+      if (fetchErr || !mission) {
+        return { error: `TENANT_BOUNDARY: Mission ${mission_id} not found in tenant ${tenantName}` };
+      }
 
       const newEntry = { date: new Date().toISOString(), update, finding_type };
       const updatedLog = [...(mission.progress_log || []), newEntry];
@@ -4172,19 +4407,24 @@ Deno.serve(async (req) => {
     }
 
     case "update_risk_profile": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("update_risk_profile", tenantId);
       // update_risk_profile is a write operation — calls ai-tools-query
-      const { data: urpResult, error: urpError } = await supabaseClient.functions.invoke("ai-tools-query", { body: { toolName, parameters: args } });
+      // P0 Phase-C — pass tenant_id to downstream so it can scope writes
+      const { data: urpResult, error: urpError } = await supabaseClient.functions.invoke("ai-tools-query", { body: { toolName, parameters: { ...args, tenant_id: tenantId } } });
       if (urpError) return { error: urpError.message, message: "Failed to update risk profile" };
       return urpResult.result;
     }
 
     case "recommend_playbook": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("recommend_playbook", tenantId);
       const { signal_id, incident_type } = args;
 
       // Fetch signal context if signal_id provided
       let signalData: any = null;
       if (signal_id) {
-        const { data: sig } = await supabaseClient.from("signals")
+        const { data: sig } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
           .select("id, title, category, severity, description, entity_tags")
           .eq("id", signal_id).maybeSingle();
         signalData = sig;
@@ -4237,11 +4477,13 @@ Deno.serve(async (req) => {
     }
 
     case "propose_signal_merge": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("propose_signal_merge", tenantId);
       const { primary_signal_id, duplicate_signal_ids, similarity_scores, rationale } = args;
       
       if (!primary_signal_id || !duplicate_signal_ids?.length) {
         // Return merge candidates from recent duplicate hash groups
-        const { data: dupScan } = await supabaseClient.from("signals")
+        const { data: dupScan } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
           .select("content_hash, id, title, created_at, client_id")
           .not("content_hash", "is", null).order("created_at", { ascending: false }).limit(500);
         const hashMap: Record<string, any[]> = {};
@@ -4264,6 +4506,7 @@ Deno.serve(async (req) => {
         "signal-processor",
         {
           body: {
+            tenant_id: tenantId,
             action: 'merge',
             primary_signal_id,
             duplicate_signal_ids,
@@ -4290,6 +4533,8 @@ Deno.serve(async (req) => {
     }
 
     case "inject_test_signal": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("inject_test_signal", tenantId);
       const { text, client_name, client_id, severity = "medium", category = "test" } = args;
       
       // CRITICAL FIX: Look up client_id from client_name if provided
@@ -4324,9 +4569,11 @@ Deno.serve(async (req) => {
 
         // Attempt exact-ish match first (case-insensitive pattern without wildcards), then fallback to contains.
         for (const name of attemptedNames) {
+          // P0 Phase-C — tenant-scoped name lookup (foreign tenants resolve to NO MATCH)
           const exact = await supabaseClient
             .from("clients")
             .select("id, name")
+            .eq("tenant_id", tenantId)
             .ilike("name", name)
             .limit(1)
             .maybeSingle();
@@ -4339,6 +4586,7 @@ Deno.serve(async (req) => {
           const contains = await supabaseClient
             .from("clients")
             .select("id, name")
+            .eq("tenant_id", tenantId)
             .ilike("name", `%${name}%`)
             .limit(1)
             .maybeSingle();
@@ -4354,6 +4602,7 @@ Deno.serve(async (req) => {
           const { data: clientsList } = await supabaseClient
             .from("clients")
             .select("id, name")
+            .eq("tenant_id", tenantId)
             .order("name")
             .limit(500);
 
@@ -4386,7 +4635,18 @@ Deno.serve(async (req) => {
           message: "Either client_name or client_id must be provided",
         };
       }
-      
+
+      // P0 Phase-C — confirm resolved client_id belongs to caller's tenant before writing.
+      {
+        const itsScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        if (!itsScopedClientIds.includes(resolvedClientId)) {
+          console.warn(`[TENANT_BOUNDARY] inject_test_signal denied: client ${resolvedClientId} not in tenant ${tenantId}`);
+          return {
+            error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. inject_test_signal refused.`,
+          };
+        }
+      }
+
       console.log(`Injecting test signal for client: ${resolvedClientId}`);
       
       // CRITICAL FIX: Use direct HTTP call instead of supabaseClient.functions.invoke()
@@ -4448,6 +4708,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "propose_new_monitoring_keywords": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("propose_new_monitoring_keywords", tenantId);
       const { client_id, observed_trends, lookback_days = 30 } = args;
 
       if (!client_id) return { error: "client_id is required" };
@@ -4457,7 +4719,7 @@ The signal is now in the database with status 'triaged' and rules have been appl
       // Proceed even if client record is not found — still analyze signals by client_id
 
       const since = new Date(Date.now() - lookback_days * 86400000).toISOString();
-      const { data: signals } = await supabaseClient.from("signals")
+      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("raw_json, category, severity, entity_tags")
         .eq("client_id", client_id).gte("received_at", since).limit(500);
 
@@ -4550,11 +4812,13 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "identify_critical_failure_points": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("identify_critical_failure_points", tenantId);
       const { client_operation_flow, threat_scenario } = args;
 
       // Analyze last 90 days of incident history to identify real failure patterns
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
-      const { data: incidents } = await supabaseClient.from("incidents")
+      const { data: incidents } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
         .select("id, title, status, priority, severity_level, opened_at, resolved_at, client_id, clients(name, industry)")
         .gte("opened_at", ninetyDaysAgo)
         .order("opened_at", { ascending: false }).limit(500);
@@ -4625,21 +4889,23 @@ The signal is now in the database with status 'triaged' and rules have been appl
     }
 
     case "generate_incident_briefing": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("generate_incident_briefing", tenantId);
       const { incident_id, format = "executive" } = args;
 
       if (!incident_id) {
-        const { data: openInc } = await supabaseClient.from("incidents")
+        const { data: openInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
           .select("id, title, status, priority, severity_level, opened_at, clients(name)")
           .in("status", ["open", "investigating", "escalated"])
           .order("opened_at", { ascending: false }).limit(10);
         return { success: true, note: "incident_id required — showing open incidents to choose from", incidents: openInc || [], count: openInc?.length || 0 };
       }
 
-      const { data: incident, error: incErr } = await supabaseClient.from("incidents")
+      const { data: incident, error: incErr } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
         .select("*, clients(name, industry)").eq("id", incident_id).maybeSingle();
       if (incErr || !incident) return { error: "Incident not found", incident_id };
 
-      const { data: relatedSignals } = await supabaseClient.from("signals")
+      const { data: relatedSignals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("id, title, severity, category, description, entity_tags, location, received_at")
         .eq("client_id", incident.client_id)
         .gte("received_at", new Date(Date.now() - 7 * 86400000).toISOString())
@@ -4704,6 +4970,8 @@ ${(relatedSignals || []).map((s: any) => `- [${(s.severity || "").toUpperCase()}
     }
 
     case "guide_decision_tree": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("guide_decision_tree", tenantId);
       const { incident_id, current_state, user_response, scenario } = args;
 
       if (!incident_id && !scenario) {
@@ -4714,7 +4982,7 @@ ${(relatedSignals || []).map((s: any) => `- [${(s.severity || "").toUpperCase()}
       let incidentContext = "";
       let incidentData: any = null;
       if (incident_id) {
-        const { data } = await supabaseClient.from("incidents")
+        const { data } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
           .select("*, clients(name, industry, locations)").eq("id", incident_id).maybeSingle();
         incidentData = data;
         if (incidentData) {
@@ -4790,11 +5058,13 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "track_mitigation_effectiveness": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("track_mitigation_effectiveness", tenantId);
       const { incident_id, mitigation_actions, outcome, notes, playbook_id } = args;
 
       // If recording specific effectiveness data for an incident
       if (incident_id && mitigation_actions && outcome) {
-        const { data: incident } = await supabaseClient.from("incidents")
+        const { data: incident } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
           .select("id, title, priority, severity_level, opened_at, resolved_at, status, clients(name)")
           .eq("id", incident_id).maybeSingle();
         const resTimeHours = incident?.opened_at && incident?.resolved_at
@@ -4813,11 +5083,11 @@ Return a JSON object (no markdown, only valid JSON):
       // Analytics mode: real incident resolution metrics over last 90 days
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
       const [resolvedResult, openResult] = await Promise.all([
-        supabaseClient.from("incidents")
+        supabaseClient.from("incidents").eq("tenant_id", tenantId)
           .select("id, title, priority, severity_level, opened_at, resolved_at, client_id, clients(name)")
           .not("resolved_at", "is", null).gte("resolved_at", ninetyDaysAgo)
           .order("resolved_at", { ascending: false }).limit(200),
-        supabaseClient.from("incidents")
+        supabaseClient.from("incidents").eq("tenant_id", tenantId)
           .select("id, priority, severity_level, opened_at")
           .in("status", ["open", "investigating", "escalated"]).gte("opened_at", ninetyDaysAgo).limit(200),
       ]);
@@ -4858,13 +5128,15 @@ Return a JSON object (no markdown, only valid JSON):
 
     // Phase 6: Proactive Defense Optimization
     case "recommend_tactical_countermeasures": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("recommend_tactical_countermeasures", tenantId);
       const { signal_id, client_context } = args;
       
       console.log(`Recommending tactical countermeasures for signal: ${signal_id}`);
       
       const { data: countermeasuresResult, error: countermeasuresError } = await supabaseClient.functions.invoke(
         "recommend-tactical-countermeasures",
-        { body: { signal_id, client_context } }
+        { body: { signal_id, client_context, tenant_id: tenantId } }
       );
 
       if (countermeasuresError) {
@@ -4885,13 +5157,15 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "evaluate_countermeasure_impact": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("evaluate_countermeasure_impact", tenantId);
       const { countermeasure_plan, threat_scenario_id } = args;
       
       console.log(`Evaluating countermeasure impact for scenario: ${threat_scenario_id}`);
       
       const { data: evaluationResult, error: evaluationError } = await supabaseClient.functions.invoke(
         "evaluate-countermeasure-impact",
-        { body: { countermeasure_plan, threat_scenario_id } }
+        { body: { countermeasure_plan, threat_scenario_id, tenant_id: tenantId } }
       );
 
       if (evaluationError) {
@@ -4912,13 +5186,22 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "optimize_defense_strategies": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("optimize_defense_strategies", tenantId);
       const { client_id, threat_type } = args;
       
       console.log(`Optimizing defense strategies for client: ${client_id}, threat: ${threat_type}`);
       
+      // P0 Phase-C — confirm client_id belongs to caller's tenant
+      if (client_id) {
+        const odsScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        if (!odsScopedClientIds.includes(client_id)) {
+          return { error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. optimize_defense_strategies refused.` };
+        }
+      }
       const { data: strategyResult, error: strategyError } = await supabaseClient.functions.invoke(
         "optimize-defense-strategies",
-        { body: { client_id, threat_type } }
+        { body: { client_id, threat_type, tenant_id: tenantId } }
       );
 
       if (strategyError) {
@@ -4941,13 +5224,22 @@ Return a JSON object (no markdown, only valid JSON):
 
     // Phase 6: Strategic Foresight & Long-term Planning
     case "propose_security_investments": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("propose_security_investments", tenantId);
       const { client_id, budget_constraints, time_horizon_months } = args;
       
       console.log(`Proposing security investments for client: ${client_id}`);
       
+      // P0 Phase-C — confirm client_id belongs to caller's tenant
+      if (client_id) {
+        const psiScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        if (!psiScopedClientIds.includes(client_id)) {
+          return { error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. propose_security_investments refused.` };
+        }
+      }
       const { data: investmentResult, error: investmentError } = await supabaseClient.functions.invoke(
         "propose-security-investments",
-        { body: { client_id, budget_constraints, time_horizon_months } }
+        { body: { client_id, budget_constraints, time_horizon_months, tenant_id: tenantId } }
       );
 
       if (investmentError) {
@@ -5078,13 +5370,23 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "audit_compliance_status": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("audit_compliance_status", tenantId);
       const { client_id, policy_area, audit_period_days } = args;
-      
+
+      // P0 Phase-C — confirm client belongs to caller's tenant
+      if (client_id) {
+        const acsScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        if (!acsScopedClientIds.includes(client_id)) {
+          return { error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. audit_compliance_status refused.` };
+        }
+      }
+
       console.log(`Auditing compliance status for client: ${client_id}, policy area: ${policy_area}`);
-      
+
       const { data: auditResult, error: auditError } = await supabaseClient.functions.invoke(
         "audit-compliance-status",
-        { body: { client_id, policy_area, audit_period_days } }
+        { body: { client_id, policy_area, audit_period_days, tenant_id: tenantId } }
       );
 
       if (auditError) {
@@ -5106,13 +5408,23 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "recommend_compliance_remediation": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("recommend_compliance_remediation", tenantId);
       const { client_id, compliance_gap_description, risk_score } = args;
-      
+
+      // P0 Phase-C — confirm client belongs to caller's tenant
+      if (client_id) {
+        const rcrScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        if (!rcrScopedClientIds.includes(client_id)) {
+          return { error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. recommend_compliance_remediation refused.` };
+        }
+      }
+
       console.log(`Recommending compliance remediation for client: ${client_id}`);
-      
+
       const { data: remediationResult, error: remediationError } = await supabaseClient.functions.invoke(
         "recommend-compliance-remediation",
-        { body: { client_id, compliance_gap_description, risk_score } }
+        { body: { client_id, compliance_gap_description, risk_score, tenant_id: tenantId } }
       );
 
       if (remediationError) {
@@ -5394,11 +5706,22 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "review_client_policy": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("review_client_policy", tenantId);
       const { client_id, client_name, policy_name, policy_type, analysis_type } = args;
+
+      // P0 Phase-C — confirm client_id (if supplied) is in caller's tenant
+      if (client_id) {
+        const rcpScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        if (!rcpScopedClientIds.includes(client_id)) {
+          return { error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. review_client_policy refused.` };
+        }
+      }
+
       console.log(`Reviewing client policy: ${client_id || client_name}`);
-      
+
       const { data, error } = await supabaseClient.functions.invoke("review-client-policy", {
-        body: { client_id, client_name, policy_name, policy_type, analysis_type }
+        body: { client_id, client_name, policy_name, policy_type, analysis_type, tenant_id: tenantId }
       });
       
       if (error) {
@@ -5576,7 +5899,7 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query signals
       if (query_type === 'signals' || query_type === 'comprehensive') {
-        let signalsQ = supabaseClient.from('signals').select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json').neq('is_test', true);
+        let signalsQ = supabaseClient.from('signals').eq("tenant_id", tenantId).select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json').neq('is_test', true);
         signalsQ = applyFilters(signalsQ);
         if (filters.severity?.length) signalsQ = signalsQ.in('severity', filters.severity);
         if (filters.status?.length) signalsQ = signalsQ.in('status', filters.status);
@@ -5590,7 +5913,7 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query incidents
       if (query_type === 'incidents' || query_type === 'comprehensive') {
-        let incQ = supabaseClient.from('incidents').select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary');
+        let incQ = supabaseClient.from('incidents').eq("tenant_id", tenantId).select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary');
         incQ = applyFilters(incQ);
         if (filters.priority?.length) incQ = incQ.in('priority', filters.priority);
         if (filters.status?.length) incQ = incQ.in('status', filters.status);
@@ -5789,6 +6112,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "query_internal_context": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("query_internal_context", tenantId);
       const { 
         query_type, 
         asset_id, 
@@ -5978,6 +6303,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "manage_incident_ticket": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("manage_incident_ticket", tenantId);
       const {
         action,
         ticket_system_id,
@@ -6002,6 +6329,7 @@ Return a JSON object (no markdown, only valid JSON):
         "manage-incident-ticket",
         {
           body: {
+            tenant_id: tenantId,
             action,
             ticket_system_id,
             title,
@@ -6071,6 +6399,7 @@ Return a JSON object (no markdown, only valid JSON):
         "threat-radar-analysis",
         {
           body: {
+            tenant_id: tenantId,
             client_id: resolvedClientId,
             timeframe_hours,
             focus_areas: focus_areas || ['radical_activity', 'sentiment', 'precursors', 'infrastructure'],
@@ -6086,7 +6415,7 @@ Return a JSON object (no markdown, only valid JSON):
         const fallbackCutoff = new Date();
         fallbackCutoff.setDate(fallbackCutoff.getDate() - 30);
         const { data: fallbackSignals } = await supabaseClient
-          .from("signals")
+          .from("signals").eq("tenant_id", tenantId)
           .select("id, title, severity, status, classification, created_at, normalized_text")
           .is("deleted_at", null)
           .or("signal_type.is.null,signal_type.not.in.(historical,test)")
@@ -6166,6 +6495,8 @@ Return a JSON object (no markdown, only valid JSON):
     // DARK WEB & BREACH INTELLIGENCE EXECUTION HANDLERS
     // ══════════════════════════════════════════════════════════════════════════
     case "check_dark_web_exposure": {
+      // P0 Phase-C — fail-closed tenant gate (HIBP is a tenant-scoped enrichment)
+      assertTenantContext("check_dark_web_exposure", tenantId);
       const { person_name, include_paste_check = true } = args;
       const email = args.email || args.email_or_domain;
 
@@ -6295,6 +6626,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "run_vip_deep_scan": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("run_vip_deep_scan", tenantId);
       const { email, location, industry, social_handles } = args;
       const name = args.name || args.entity_name;
 
@@ -6431,6 +6764,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "get_threat_intel_feeds": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("get_threat_intel_feeds", tenantId);
       const { industry_filter, severity_filter = "all", limit = 10 } = args;
       
       console.log(`[get_threat_intel_feeds] Fetching threat intelligence feeds`);
@@ -6485,7 +6820,7 @@ Return a JSON object (no markdown, only valid JSON):
           const cutoff = new Date();
           cutoff.setDate(cutoff.getDate() - 30);
           const { data: signalRows, error: signalRowsError } = await supabaseClient
-            .from("signals")
+            .from("signals").eq("tenant_id", tenantId)
             .select("id, title, severity, status, signal_type, created_at, classification, normalized_text")
             .is("deleted_at", null)
             .or("signal_type.is.null,signal_type.not.in.(historical,test)")
@@ -6567,6 +6902,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "run_entity_deep_scan": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("run_entity_deep_scan", tenantId);
       const { entity_id, entity_name } = args;
       if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
 
@@ -6592,7 +6929,7 @@ Return a JSON object (no markdown, only valid JSON):
       const investigations = investigationsRes.data || [];
 
       // Also search signals that mention this entity
-      const { data: signals } = await supabaseClient.from("signals")
+      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("id, title, severity, category, received_at, location")
         .or(`normalized_text.ilike.%${entity.name}%,title.ilike.%${entity.name}%`)
         .order("received_at", { ascending: false }).limit(20);
@@ -6720,6 +7057,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "search_social_media": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("search_social_media", tenantId);
       const { query, platforms, time_filter, location } = args;
       
       if (!query) {
@@ -6787,7 +7126,7 @@ Return a JSON object (no markdown, only valid JSON):
         const content = perplexityResult.choices?.[0]?.message?.content || "No results found";
         const citations = perplexityResult.citations || [];
 
-        // Store as a signal for reference
+        // Store as a signal for reference (P0 Phase-C — stamp tenant_id on INSERT)
         const signalText = `Social Media Search: ${query}\n\n${content}`;
         await supabaseClient
           .from("signals")
@@ -6797,6 +7136,7 @@ Return a JSON object (no markdown, only valid JSON):
             source: "social_media_search",
             severity: "info",
             status: "triaged",
+            tenant_id: tenantId,
             metadata: {
               search_query: query,
               platforms: targetPlatforms,
@@ -6825,25 +7165,69 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "run_data_quality_check": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("run_data_quality_check", tenantId);
       const { data, error } = await supabaseClient.functions.invoke('data-quality-monitor', {
-        body: { auto_fix: args.auto_fix || false, categories: args.categories || ['incident', 'entity', 'signal'] }
+        body: { auto_fix: args.auto_fix || false, categories: args.categories || ['incident', 'entity', 'signal'], tenant_id: tenantId }
       });
       if (error) throw error;
       return data;
     }
 
     case "auto_summarize_incidents": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("auto_summarize_incidents", tenantId);
+
+      // P0 Phase-C — if a specific incident_id is provided, verify it belongs to caller's tenant
+      if (args.incident_id) {
+        const asiScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        const { data: incCheck } = await supabaseClient
+          .from('incidents').eq("tenant_id", tenantId)
+          .select('id, client_id')
+          .eq('id', args.incident_id)
+          .maybeSingle();
+        if (!incCheck || !asiScopedClientIds.includes(incCheck.client_id)) {
+          return {
+            error: `TENANT_BOUNDARY: incident ${args.incident_id} is not in tenant ${tenantName}. auto_summarize_incidents refused.`,
+          };
+        }
+      }
+
       const { data, error } = await supabaseClient.functions.invoke('incident-manager', {
-        body: { action: 'summarize', incident_id: args.incident_id, batch_mode: args.batch_mode || false, limit: args.limit || 20 }
+        body: {
+          action: 'summarize',
+          incident_id: args.incident_id,
+          batch_mode: args.batch_mode || false,
+          limit: args.limit || 20,
+          tenant_id: tenantId,
+        }
       });
       if (error) throw error;
       return data;
     }
 
     case "enrich_entity_descriptions": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("enrich_entity_descriptions", tenantId);
       const { entity_id, batch_mode, limit = 10 } = args;
 
+      const eedScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (eedScopedClientIds.length === 0) {
+        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; enrich_entity_descriptions refused.` };
+      }
+
       if (entity_id) {
+        // P0 Phase-C — entity must be linked to a client in caller's tenant
+        const { data: eedLink } = await supabaseClient
+          .from("entity_clients")
+          .select("client_id")
+          .eq("entity_id", entity_id)
+          .in("client_id", eedScopedClientIds)
+          .limit(1)
+          .maybeSingle();
+        if (!eedLink) {
+          return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. enrich_entity_descriptions refused.` };
+        }
         const { data: entity } = await supabaseClient.from("entities")
           .select("id, name, type, description, risk_level, threat_score, created_at")
           .eq("id", entity_id).maybeSingle();
@@ -6860,15 +7244,25 @@ Return a JSON object (no markdown, only valid JSON):
         };
       }
 
-      // Batch: list entities with missing descriptions, prioritized by threat score
+      // Batch: list entities with missing descriptions, restricted to caller's tenant
+      const { data: eedTenantEntities } = await supabaseClient
+        .from("entity_clients")
+        .select("entity_id")
+        .in("client_id", eedScopedClientIds);
+      const eedTenantEntityIds = (eedTenantEntities || []).map((r: any) => r.entity_id);
+      if (eedTenantEntityIds.length === 0) {
+        return { success: true, entities_needing_enrichment: 0, total_entities: 0, entities: [], message: `No entities in tenant ${tenantName}.` };
+      }
       const { data: entities } = await supabaseClient.from("entities")
         .select("id, name, type, description, risk_level, threat_score")
+        .in("id", eedTenantEntityIds)
         .or("description.is.null,description.eq.")
         .order("threat_score", { ascending: false, nullsFirst: false })
         .limit(limit);
 
       const { count: totalEntities } = await supabaseClient.from("entities")
-        .select("id", { count: "exact", head: true });
+        .select("id", { count: "exact", head: true })
+        .in("id", eedTenantEntityIds);
 
       return {
         success: true,
@@ -6883,10 +7277,12 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "extract_signal_insights": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("extract_signal_insights", tenantId);
       const { signal_id, batch_mode, limit = 10 } = args;
 
       if (signal_id) {
-        const { data: signal } = await supabaseClient.from("signals")
+        const { data: signal } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
           .select("id, title, description, severity, category, entity_tags, location, received_at, source_id, confidence, quality_score, raw_json")
           .eq("id", signal_id).maybeSingle();
         if (!signal) return { error: `Signal not found: ${signal_id}` };
@@ -6909,7 +7305,7 @@ Return a JSON object (no markdown, only valid JSON):
       }
 
       // Batch: aggregate insights from recent signals
-      const { data: signals } = await supabaseClient.from("signals")
+      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("id, title, severity, category, entity_tags, location, received_at, confidence, quality_score, raw_json")
         .not("is_test", "eq", true).order("received_at", { ascending: false }).limit(limit * 5);
 
@@ -6947,13 +7343,19 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "search_chat_history": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("search_chat_history", tenantId);
+      if (!userId) {
+        return { error: "TENANT_BOUNDARY: search_chat_history requires an authenticated user." };
+      }
       const limit = args.limit || 50;
       const includeContext = args.include_context !== false;
-      
-      // Get all non-deleted messages for the current user
+
+      // P0 Phase-C — restrict to caller's own messages; never read another user's history
       let query = supabaseClient
         .from("ai_assistant_messages")
         .select("id, role, content, created_at")
+        .eq("user_id", userId)
         .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(limit * 2); // Get extra for context
@@ -7044,6 +7446,8 @@ Return a JSON object (no markdown, only valid JSON):
     // PERSISTENT MEMORY TOOL IMPLEMENTATIONS
     // ══════════════════════════════════════════════════════════════════════════
     case "get_user_memory": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("get_user_memory", tenantId);
       // User ID should be passed in args from the handler
       const userId = args._user_id;
       if (!userId) {
@@ -7080,6 +7484,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "remember_this": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("remember_this", tenantId);
       const userId = args._user_id;
       if (!userId) {
         return { success: false, message: "No authenticated user found." };
@@ -7154,6 +7560,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "manage_project_context": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("manage_project_context", tenantId);
       const userId = args._user_id;
       if (!userId) {
         // Health check / no-auth mode: list recent projects
@@ -7275,8 +7683,10 @@ Return a JSON object (no markdown, only valid JSON):
     // ══════════════════════════════════════════════════════════════════════════
 
     case "get_principal_profile": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("get_principal_profile", tenantId);
       const { entity_id, entity_name } = args;
-      
+
       let entity = null;
       if (entity_id) {
         const { data } = await supabaseClient.from("entities").select("*").eq("id", entity_id).maybeSingle();
@@ -7286,6 +7696,23 @@ Return a JSON object (no markdown, only valid JSON):
         entity = data;
       }
       if (!entity) return { error: "Principal entity not found" };
+
+      // P0 Phase-C — entity must be linked to a client in caller's tenant
+      const gppScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (gppScopedClientIds.length > 0) {
+        const { data: ecLink } = await supabaseClient
+          .from("entity_clients")
+          .select("client_id")
+          .eq("entity_id", entity.id)
+          .in("client_id", gppScopedClientIds)
+          .limit(1)
+          .maybeSingle();
+        if (!ecLink) {
+          return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. Principal profile refused.` };
+        }
+      } else {
+        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; principal profile refused.` };
+      }
 
       const { data: relationships } = await supabaseClient.from("entity_relationships").select("*, entity_b:entity_b_id(id, name, type, risk_level)").eq("entity_a_id", entity.id);
       const { data: alertPrefs } = await supabaseClient.from("principal_alert_preferences").select("*").eq("entity_id", entity.id).maybeSingle();
@@ -7314,6 +7741,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "analyze_sentiment_drift": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("analyze_sentiment_drift", tenantId);
       const { entity_id, entity_name, time_windows = [7, 30, 90] } = args;
 
       let resolvedEntityId = entity_id;
@@ -7324,6 +7753,22 @@ Return a JSON object (no markdown, only valid JSON):
         if (!resolvedEntityId) return { error: `Entity not found: ${entity_name}` };
       }
       if (!resolvedEntityId) return { error: "entity_id or entity_name is required" };
+
+      // P0 Phase-C — entity must be linked to a client in caller's tenant
+      const asdScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (asdScopedClientIds.length === 0) {
+        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; sentiment drift refused.` };
+      }
+      const { data: asdLink } = await supabaseClient
+        .from("entity_clients")
+        .select("client_id")
+        .eq("entity_id", resolvedEntityId)
+        .in("client_id", asdScopedClientIds)
+        .limit(1)
+        .maybeSingle();
+      if (!asdLink) {
+        return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. Sentiment drift refused.` };
+      }
 
       const { data: entity } = await supabaseClient.from("entities")
         .select("id, name, type, risk_level, threat_score").eq("id", resolvedEntityId).maybeSingle();
@@ -7381,8 +7826,26 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "configure_principal_alerts": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("configure_principal_alerts", tenantId);
       const { entity_id, risk_appetite, alert_threshold, preferred_channels, quiet_hours } = args;
       if (!entity_id) return { error: "entity_id is required" };
+
+      // P0 Phase-C — entity must be linked to a client in caller's tenant before alert preferences can be configured
+      const cpaScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (cpaScopedClientIds.length === 0) {
+        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; configure_principal_alerts refused.` };
+      }
+      const { data: cpaLink } = await supabaseClient
+        .from("entity_clients")
+        .select("client_id")
+        .eq("entity_id", entity_id)
+        .in("client_id", cpaScopedClientIds)
+        .limit(1)
+        .maybeSingle();
+      if (!cpaLink) {
+        return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. configure_principal_alerts refused.` };
+      }
 
       const updateData: any = { entity_id, updated_at: new Date().toISOString() };
       if (risk_appetite) updateData.risk_appetite = risk_appetite;
@@ -7396,6 +7859,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "generate_report_visual": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("generate_report_visual", tenantId);
       const { types = ["header"], client_name: vizClientName, report_title, threat_categories = [], 
               locations = [], risk_level = "moderate", incident_types = [], period, custom_prompt, high_quality = false } = args;
       
@@ -7675,7 +8140,7 @@ Return a JSON object (no markdown, only valid JSON):
               mediaSince.setDate(mediaSince.getDate() - (period_days || 7));
 
               const { data: clientSignals } = await serviceClient
-                .from("signals")
+                .from("signals").eq("tenant_id", tenantId)
                 .select("id")
                 .eq("client_id", client_id)
                 .gte("received_at", mediaSince.toISOString())
@@ -7835,7 +8300,7 @@ Return a JSON object (no markdown, only valid JSON):
           const errorText = await reportResponse.text();
           console.error(`Report generation failed: ${reportResponse.status}`, errorText);
           // Fallback: return recent saved reports from DB
-          const { data: savedReports } = await supabaseClient.from("reports")
+          const { data: savedReports } = await supabaseClient.from("reports").eq("tenant_id", tenantId)
             .select("id, type, generated_at, period_start, period_end")
             .order("generated_at", { ascending: false }).limit(5);
           return {
@@ -7872,7 +8337,7 @@ Return a JSON object (no markdown, only valid JSON):
             let signalIds: string[] = [];
             if (client_id) {
               const { data: clientSignals } = await serviceClient
-                .from("signals")
+                .from("signals").eq("tenant_id", tenantId)
                 .select("id")
                 .eq("client_id", client_id)
                 .gte("received_at", mediaSince.toISOString())
@@ -8106,6 +8571,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "dispatch_agent_investigation": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("dispatch_agent_investigation", tenantId);
       const { incident_id, agent_call_sign, prompt } = args;
       
       const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -8127,7 +8594,7 @@ Return a JSON object (no markdown, only valid JSON):
         const errText = await orchestratorResponse.text();
         // Fallback: list recent incidents that could be investigated
         if (!incident_id) {
-          const { data: recentInc } = await supabaseClient.from("incidents")
+          const { data: recentInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
             .select("id, title, status, priority, opened_at, client_id, clients(name)")
             .in("status", ["open", "investigating"]).order("opened_at", { ascending: false }).limit(5);
           return {
@@ -8153,6 +8620,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "trigger_multi_agent_debate": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("trigger_multi_agent_debate", tenantId);
       const { incident_id, debate_type, custom_prompt } = args;
 
       const supabaseUrl2 = Deno.env.get("SUPABASE_URL") ?? "";
@@ -8186,7 +8655,7 @@ Return a JSON object (no markdown, only valid JSON):
         const errText = await debateResponse.text();
         // Fallback: list open incidents for debate context
         if (!incident_id) {
-          const { data: debateInc } = await supabaseClient.from("incidents")
+          const { data: debateInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
             .select("id, title, status, priority, opened_at, client_id, clients(name)")
             .in("status", ["open", "investigating", "escalated"]).order("opened_at", { ascending: false }).limit(5);
           return {
@@ -8213,6 +8682,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "generate_audio_briefing": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("generate_audio_briefing", tenantId);
       const { content, title } = args;
       const briefingUserId = userId || args._user_id;
       
@@ -8287,6 +8758,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "create_briefing_session": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("create_briefing_session", tenantId);
       const { title, description, incident_id, investigation_id, agent_ids, meeting_mode } = args;
       const sessionUserId = userId || args._user_id;
       
@@ -8376,6 +8849,8 @@ Return a JSON object (no markdown, only valid JSON):
     // CYBER SENTINEL EXECUTION HANDLER
     // ══════════════════════════════════════════════════════════════════════════
     case "run_cyber_sentinel": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("run_cyber_sentinel", tenantId);
       const { mode = "status" } = args;
       console.log(`[run_cyber_sentinel] Mode: ${mode}`);
 
@@ -8428,6 +8903,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "get_common_operating_picture": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("get_common_operating_picture", tenantId);
       try {
         const cop = await buildCOP(supabaseClient);
         return {
@@ -8642,6 +9119,8 @@ Return a JSON object (no markdown, only valid JSON):
 
     case "get_agent_responses":
     case "broadcast_to_agents": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("broadcast_to_agents", tenantId);
       const { message, priority = "normal" } = args;
 
       // Get all active agents with their system prompts and models
@@ -8724,6 +9203,8 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "agent_self_assessment": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("agent_self_assessment", tenantId);
       // ── Pull system-wide context to give agents real grounding ──────────
       const [
         { data: activeAgents2, error: agentsErr2 },
@@ -8735,8 +9216,8 @@ Return a JSON object (no markdown, only valid JSON):
           .from("ai_agents")
           .select("id, call_sign, codename, specialty, mission_scope, input_sources, output_types, system_prompt")
           .eq("is_active", true),
-        supabaseClient.from("signals").select("*", { count: "exact", head: true }),
-        supabaseClient.from("incidents").select("*", { count: "exact", head: true }),
+        supabaseClient.from("signals").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
+        supabaseClient.from("incidents").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
         supabaseClient.from("entities").select("*", { count: "exact", head: true }),
       ]);
 
@@ -8979,6 +9460,8 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
     }
 
     case "synthesize_knowledge": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("synthesize_knowledge", tenantId);
       const { agent_call_sign, since_days = 7 } = args;
 
       const since = new Date(Date.now() - since_days * 86400000).toISOString();
@@ -9206,6 +9689,8 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
     }
 
     case "send_message_to_agent": {
+      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      assertTenantContext("send_message_to_agent", tenantId);
       const { agent_call_sign, message: agentMsg, priority: agentPriority = "normal" } = args;
 
       // Look up the specific agent by call sign
@@ -9303,7 +9788,21 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
     }
 
     case "add_entity_to_watchlist": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("add_entity_to_watchlist", tenantId);
       const { entity_name, watch_level, reason, client_id, expiry_days, entity_id } = args;
+
+      // P0 Phase-C — if client_id supplied, must belong to caller's tenant.
+      if (client_id) {
+        const aewScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+        if (!aewScopedClientIds.includes(client_id)) {
+          return {
+            success: false,
+            error: `TENANT_BOUNDARY: client_id is not in tenant ${tenantName}. Watchlist add refused.`,
+          };
+        }
+      }
+
       const severityBoostMap: Record<string, number> = { monitor: 10, alert: 20, critical: 35 };
       const expiry = expiry_days
         ? new Date(Date.now() + expiry_days * 86400000).toISOString()
@@ -9338,14 +9837,35 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
     }
 
     case "investigate_poi": {
+      // P0 Phase-C — fail-closed tenant gate (kept even though endpoint returns stub)
+      assertTenantContext("investigate_poi", tenantId);
       return { error: "investigate_poi is not available — the OSINT investigation engine is not deployed. Use run_entity_deep_scan to access available intelligence, or perform_external_web_search for live OSINT." };
     }
 
     case "generate_poi_report": {
+      // P0 Phase-C — fail-closed tenant gate
+      assertTenantContext("generate_poi_report", tenantId);
       const { entity_id, investigation_id } = args;
+
+      // P0 Phase-C — entity must be linked to a client in caller's tenant
+      const gprScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      if (gprScopedClientIds.length === 0) {
+        return { success: false, error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; POI report refused.` };
+      }
+      const { data: gprLink } = await supabaseClient
+        .from("entity_clients")
+        .select("client_id")
+        .eq("entity_id", entity_id)
+        .in("client_id", gprScopedClientIds)
+        .limit(1)
+        .maybeSingle();
+      if (!gprLink) {
+        return { success: false, error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. POI report refused.` };
+      }
+
       const { data: rptData, error: rptErr } = await supabaseClient.functions.invoke(
         'generate-poi-report',
-        { body: { entity_id, investigation_id: investigation_id || undefined } }
+        { body: { entity_id, investigation_id: investigation_id || undefined, tenant_id: tenantId } }
       );
       if (rptErr) return { success: false, error: rptErr.message };
       return {
