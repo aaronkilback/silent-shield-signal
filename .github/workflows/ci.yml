@@ -243,3 +243,15 @@ jobs:
         run: npm test
         env:
           CI: true
+          # Inputs for the tenant-isolation invariant test
+          # (src/test/security/tenant-isolation.invariant.test.ts).
+          # The test FAILS LOUDLY if any of these are missing in CI —
+          # this is a load-bearing security gate, not an optional test.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          TEST_INVARIANT_USER_A_EMAIL: ${{ secrets.TEST_INVARIANT_USER_A_EMAIL }}
+          TEST_INVARIANT_USER_A_PASSWORD: ${{ secrets.TEST_INVARIANT_USER_A_PASSWORD }}
+          TEST_INVARIANT_USER_B_EMAIL: ${{ secrets.TEST_INVARIANT_USER_B_EMAIL }}
+          TEST_INVARIANT_USER_B_PASSWORD: ${{ secrets.TEST_INVARIANT_USER_B_PASSWORD }}
+        env:
+          CI: true
