@@ -34,14 +34,22 @@ export const Header = () => {
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { isSuperAdmin, isAdmin } = useUserRole();
-  const { currentTenant } = useTenant();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const uiProfile = getUiProfile(currentTenant?.settings);
-  // Super_admin sees the full nav (cosmetic gate is bypassed for them
-  // so they can do support work in any tenant). Non-super_admin tenant
-  // users get UI profile filtering: hidden items disappear, greyed
-  // items render disabled.
+  // Nav visibility uses the SAME canAccessRoute (via getNavVisibility)
+  // that ProtectedRoute uses. Two gates always agree.
+  //
+  // Bypass rule: only when there is no tenant being observed (global
+  // platform mode — currentTenant=null OR isAllTenantsView=true) does
+  // the operator see the full nav. While observing a specific tenant,
+  // the tenant's UI profile applies — even for super_admin. Exit
+  // Tenant View is the documented escape hatch for super_admin to
+  // return to global mode.
+  const tenantObservation = !!currentTenant && !isAllTenantsView;
   const filterNavByProfile = <T extends { path: string }>(items: T[]): Array<T & { _visibility: 'active' | 'greyed' }> => {
-    if (isSuperAdmin) return items.map((i) => ({ ...i, _visibility: 'active' as const }));
+    if (!tenantObservation) {
+      return items.map((i) => ({ ...i, _visibility: 'active' as const }));
+    }
     return items
       .map((i) => ({ ...i, _visibility: getNavVisibility(uiProfile, i.path) }))
       .filter((i) => i._visibility !== 'hidden')

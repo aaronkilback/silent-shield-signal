@@ -43,7 +43,10 @@ export function getUiProfile(settings?: Record<string, unknown> | null): UiProfi
 
 export function getNavVisibility(profile: UiProfile, path: string): NavVisibility {
   if (profile === 'operator') return 'active';
-  if (CRT_ACTIVE_PATHS.has(path)) return 'active';
+  // Delegate the access decision to canAccessRoute so the route guard
+  // and the nav dropdowns can never disagree about whether a path is
+  // allowed. canAccessRoute is the single source of truth.
+  if (canAccessRoute(profile, path)) return 'active';
   if (CRT_GREYED_PATHS.has(path)) return 'greyed';
   return 'hidden';
 }
