@@ -19,6 +19,7 @@ import { Loader2, Plus, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenant } from "@/hooks/useTenant";
 import {
   useClientAssets,
   useCreateClientAsset,
@@ -50,15 +51,22 @@ export function AssetPicker({ onAuditStarted }: AssetPickerProps) {
   const [newName, setNewName] = useState("");
   const [newClass, setNewClass] = useState<AssetClass>("oil_gas_plant");
   const [newExternalRef, setNewExternalRef] = useState("");
+  const { currentTenant, isAllTenantsView } = useTenant();
 
+  // Tenant-scoped so the audit wizard can only target assets of the
+  // active tenant's clients.
   const { data: clients } = useQuery({
-    queryKey: ["site-audit-clients"],
+    queryKey: ["site-audit-clients", currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("clients")
         .select("id, name, status")
         .eq("status", "active")
         .order("name");
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq("tenant_id", currentTenant.id);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []).filter((c: any) => typeof c.name === "string" && !c.name.startsWith("_"));
     },

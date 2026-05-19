@@ -41,7 +41,7 @@ interface ClientSelectorProps {
  * - Navigation to client details (mode='navigate')
  * - Filtering dashboard data by client (mode='filter')
  */
-export const ClientSelector = ({ 
+export const ClientSelector = ({
   mode = 'filter',
   title,
   description,
@@ -51,18 +51,16 @@ export const ClientSelector = ({
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const { selectedClientId, setSelectedClientId } = useClientSelection();
+  const { currentTenant, isAllTenantsView } = useTenant();
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null;
-    let initialized = false;
 
     const init = async (session: any) => {
       if (!session?.user) {
         setLoading(false);
         return;
       }
-      if (initialized) return;
-      initialized = true;
 
       await fetchClients();
 
@@ -93,7 +91,11 @@ export const ClientSelector = ({
       subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
     };
-  }, []);
+    // currentTenant?.id + isAllTenantsView added so the dropdown
+    // refetches against the new tenant scope every time the operator
+    // switches tenants. Without these deps the list is captured once
+    // on mount and never narrows.
+  }, [currentTenant?.id, isAllTenantsView]);
 
   const fetchClients = async () => {
     try {
@@ -103,25 +105,48 @@ export const ClientSelector = ({
       // select and see test fixtures instead of live signals. Inactive
       // clients still exist for the benchmark + QA pipelines, they
       // just shouldn't appear in the operator-facing filter.
-      const { data, error } = await supabase
+      let query = supabase
         .from("clients")
         .select("id, name, organization, status")
         .eq("status", "active")
         .order("name", { ascending: true });
 
+      // 2026-05-19: tenant scope cascade. Super_admin RLS bypass would
+      // otherwise surface every client across every tenant in this
+      // dropdown, which is exactly the cross-tenant Petronas leak we
+      // saw after the tenant-switch landed. Skipped in All-Tenants
+      // view so super_admin's global mode still sees everything.
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq("tenant_id", currentTenant.id);
+      }
+
+      const { data, error } = await query;
+
       if (error) throw error;
       setClients(data || []);
-      
-      // Auto-select first client if in filter mode and none selected
-      if (mode === 'filter' && data && data.length > 0) {
-        if (!selectedClientId) {
-          setSelectedClientId(data[0].id);
-        } else {
-          // Validate the stored selection exists
-          const isValid = data.some(client => client.id === selectedClientId);
-          if (!isValid) {
+
+      // Auto-select operates over a tenant-scoped list now, so any
+      // selection that survives is guaranteed to belong to the
+      // current tenant.
+      if (mode === 'filter') {
+        if (data && data.length > 0) {
+          if (!selectedClientId) {
             setSelectedClientId(data[0].id);
+          } else {
+            const isValid = data.some(client => client.id === selectedClientId);
+            if (!isValid) {
+              // Stored selection isn't in the current tenant's clients
+              // — clear rather than auto-pick a different tenant's
+              // first client. useClientSelection's validation effect
+              // is the canonical clearer, but doing it here too
+              // prevents a flash of cross-tenant data between fetches.
+              setSelectedClientId(null);
+            }
           }
+        } else if (selectedClientId) {
+          // Tenant has zero clients in scope (e.g. a freshly-onboarded
+          // tenant). Clear the stale selection so the dropdown is honest.
+          setSelectedClientId(null);
         }
       }
     } catch (error) {

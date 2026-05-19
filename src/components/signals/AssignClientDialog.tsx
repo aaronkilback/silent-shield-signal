@@ -8,6 +8,7 @@ import { Search, Loader2, Building2 } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useTenant } from "@/hooks/useTenant";
 
 interface AssignClientDialogProps {
   open: boolean;
@@ -29,10 +30,12 @@ export function AssignClientDialog({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const { currentTenant, isAllTenantsView } = useTenant();
 
-  // Fetch clients for selection
+  // Fetch clients for selection — tenant-scoped so a signal cannot be
+  // reassigned to a client of another tenant from this dialog.
   const { data: clients, isLoading: clientsLoading } = useQuery({
-    queryKey: ["clients-search", searchTerm],
+    queryKey: ["clients-search", searchTerm, currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
       let query = supabase
         .from("clients")
@@ -40,6 +43,10 @@ export function AssignClientDialog({
         .eq("status", "active")
         .order("name")
         .limit(20);
+
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq("tenant_id", currentTenant.id);
+      }
 
       if (searchTerm) {
         query = query.ilike("name", `%${searchTerm}%`);

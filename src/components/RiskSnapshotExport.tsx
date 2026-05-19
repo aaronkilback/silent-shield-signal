@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import DOMPurify from 'dompurify';
 import { generatePdfFromHtml } from "@/utils/htmlToPdf";
 import { useReportArchive } from "@/hooks/useReportArchive";
+import { useTenant } from "@/hooks/useTenant";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -23,6 +24,29 @@ export const RiskSnapshotExport = () => {
   const [loading, setLoading] = useState(false);
   const [reportHtml, setReportHtml] = useState<string | null>(null);
   const { persistReport } = useReportArchive();
+  const { currentTenant, isAllTenantsView } = useTenant();
+
+  // Real, active clients only — sandbox / QA fixture clients (whose
+  // names start with `_`) and inactive clients are filtered out so
+  // the operator can't accidentally generate a snapshot scoped to
+  // QA test fixtures (which would read as "fake data" in the PDF).
+  // Tenant-scoped so super_admin cannot export cross-tenant snapshots.
+  const { data: clients } = useQuery({
+    queryKey: ['snapshot-real-clients', currentTenant?.id, isAllTenantsView],
+    queryFn: async () => {
+      let query = supabase
+        .from('clients')
+        .select('id, name, status')
+        .eq('status', 'active')
+        .order('name');
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data ?? []).filter((c: any) => typeof c.name === 'string' && !c.name.startsWith('_'));
+    },
+  });
 
   const generateReport = async () => {
     setLoading(true);

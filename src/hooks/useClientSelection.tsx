@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTenant } from './useTenant';
 
 interface ClientSelectionContextType {
   selectedClientId: string | null;
@@ -22,6 +23,7 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
   const hasSetInitialContext = useRef(false);
   const previousClientId = useRef<string | null>(selectedClientId);
   const queryClient = useQueryClient();
+  const { currentTenant, isAllTenantsView } = useTenant();
 
   // Track authentication state
   useEffect(() => {
@@ -97,6 +99,38 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
     
     updateClientContext();
   }, [selectedClientId, queryClient, isAuthenticated]);
+
+  // Cross-tenant trust check. Triggered whenever currentTenant or
+  // selectedClientId changes: verifies the persisted client_id
+  // actually belongs to the active tenant. A stale value from a
+  // prior observation session (e.g. localStorage carries Petronas
+  // after a super_admin switched to CRT) is discarded here so it
+  // cannot be trusted by downstream queries. Skipped when
+  // isAllTenantsView is on — super_admin's global platform mode
+  // legitimately spans tenants.
+  useEffect(() => {
+    if (!selectedClientId || !currentTenant?.id || isAllTenantsView) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('id', selectedClientId)
+        .eq('tenant_id', currentTenant.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (!data) {
+        console.warn('[ClientContext] Discarding cross-tenant client', {
+          selectedClientId,
+          expectedTenant: currentTenant.id,
+        });
+        setSelectedClientId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClientId, currentTenant?.id, isAllTenantsView]);
 
   return (
     <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId, isContextReady }}>

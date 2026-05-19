@@ -10,6 +10,7 @@ import DOMPurify from 'dompurify';
 import { useActivityTracking } from "@/hooks/useActivityTracking";
 import { generatePdfFromHtml } from "@/utils/htmlToPdf";
 import { useReportArchive } from "@/hooks/useReportArchive";
+import { useTenant } from "@/hooks/useTenant";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -26,20 +27,25 @@ export const ExecutiveReportGenerator = () => {
   const { toast } = useToast();
   const { trackReportGeneration } = useActivityTracking();
   const { persistReport } = useReportArchive();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [periodDays, setPeriodDays] = useState<string>("7");
   const [isGenerating, setIsGenerating] = useState(false);
   const [reportHtml, setReportHtml] = useState<string>("");
 
-  // Fetch clients
+  // Fetch clients — tenant-scoped when a tenant is active so super_admin
+  // cannot inadvertently generate reports for clients of another tenant.
   const { data: clients } = useQuery({
-    queryKey: ['clients'],
+    queryKey: ['clients', 'executive-report', currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('clients')
         .select('id, name, status')
         .order('name');
-      
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     }
