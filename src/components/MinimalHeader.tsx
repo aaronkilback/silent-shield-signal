@@ -7,6 +7,7 @@ import { TravelNotificationBell } from "@/components/travel/TravelNotificationBe
 import { SettingsSheet } from "@/components/SettingsSheet";
 import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 import { PlatformAdminBanner } from "@/components/PlatformAdminBanner";
+import { PlatformAdminEscape } from "@/components/PlatformAdminEscape";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -99,6 +100,7 @@ export const MinimalHeader = () => {
             <span>⌘K</span>
           </button>
 
+          <PlatformAdminEscape />
           <EntityNotifications />
           <TravelNotificationBell />
 

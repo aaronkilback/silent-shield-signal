@@ -74,7 +74,7 @@ export default function SuperAdminDashboard() {
   const navigate = useNavigate();
   const { isSuperAdmin, isLoading: loadingAdmin } = useIsSuperAdmin();
   const { tenants: accessibleTenants } = useTenant();
-  const switchTenant = useSwitchTenant();
+  const { switchTenant } = useSwitchTenant();
   const [tenants, setTenants] = useState<TenantStats[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
