@@ -1,5 +1,7 @@
 import { DashboardAIAssistant } from "@/components/DashboardAIAssistant";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenant } from "@/hooks/useTenant";
+import { useOrientationEmail } from "@/hooks/useOrientationEmail";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
@@ -8,7 +10,17 @@ import { Loader2 } from "lucide-react";
 
 const Index = () => {
   const { user, loading } = useAuth();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const navigate = useNavigate();
+
+  // Fire orientation email (Email 2) on first successful dashboard landing.
+  // Idempotent server-side — only sends once per first-login acceptance.
+  // Skipped in platform-admin / all-tenants view (super_admin viewing globally).
+  useOrientationEmail({
+    userId: user?.id,
+    tenantId: currentTenant?.id,
+    skip: isAllTenantsView || currentTenant?.access_mode === "platform_admin",
+  });
 
   useEffect(() => {
     if (!loading && !user) {

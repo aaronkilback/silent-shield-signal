@@ -55,7 +55,11 @@ export const FirstLoginAgreementGate = ({
       const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : null;
 
       // Detect first-ever acceptance vs reaccept-after-version-bump. The
-      // orientation email (Email 2) fires only on the first.
+      // orientation email (Email 2) fires only after the FIRST acceptance —
+      // but the actual send is gated on dashboard mount (see useOrientationEmail
+      // in Index.tsx), not on this insert. Reason: an email tied to "successful
+      // activation" should not be sent if routing breaks before the dashboard
+      // renders.
       const { count: priorCount } = await supabase
         .from("onboarding_acceptances")
         .select("id", { count: "exact", head: true })
@@ -77,23 +81,6 @@ export const FirstLoginAgreementGate = ({
         toast.error(`Could not record acceptance: ${error.message}`);
         setSubmitting(false);
         return;
-      }
-
-      // Fire orientation email (Email 2) on first-ever acceptance only.
-      // Fail-soft: a missed orientation email does NOT block the user from
-      // reaching the dashboard. The gate's job is complete once the
-      // acceptance row lands.
-      if (isFirstAcceptance) {
-        supabase.functions
-          .invoke("send-orientation-email", { body: { tenantId } })
-          .then(({ error: emailError }) => {
-            if (emailError) {
-              console.warn("[FirstLoginAgreementGate] orientation email failed:", emailError);
-            }
-          })
-          .catch((e) => {
-            console.warn("[FirstLoginAgreementGate] orientation email exception:", e);
-          });
       }
 
       toast.success("Acceptance recorded. Welcome to Fortress.");

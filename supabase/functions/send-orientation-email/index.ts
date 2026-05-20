@@ -1,29 +1,34 @@
 // send-orientation-email
 // ─────────────────────────────────────────────────────────────────────────────
-// EMAIL 2 in the onboarding chain. Fired by FirstLoginAgreementGate.tsx
-// immediately after a user's first-ever onboarding_acceptances row is
-// written (source='first_login'). NOT fired on version-bump re-accepts.
+// EMAIL 2 in the onboarding chain. Fired from the dashboard (Index page) on
+// first successful authenticated landing AFTER the user has cleared:
+//   1. password set
+//   2. SMS MFA
+//   3. acceptance gate (writes onboarding_acceptances row, source='first_login')
+//   4. tenant confirmation screen
 //
-// Voice + content per Aaron's spec (2026-05-19):
-//   - what AEGIS is
-//   - what AEGIS is NOT
-//   - investigative upload guidance
-//   - account cycling framing
-//   - attribution-caution language (behavioral correlation / pattern consistency,
-//     not "confirmed actor" / "same individual")
-//   - example GOOD prompts
-//   - example BAD prompts
-//   - concierge support CTA
+// The function is IDEMPOTENT — safe to invoke repeatedly. It only sends when:
+//   - the caller has a `source='first_login'` acceptance row, AND
+//   - that row has `orientation_email_sent_at IS NULL`.
+// On success it atomically marks the row as sent. Subsequent calls return
+// `{email_sent: false, reason: 'already_sent'}` and do not contact Resend.
 //
-// Authorization model: deployed with verify_jwt = true. Caller (the gate
-// component) must be authenticated; we re-derive the recipient from the
-// caller's JWT, not from a client-supplied address. This prevents abuse:
-// a malicious caller cannot trigger an orientation email to a third party.
+// This design closes the failure mode where the gate writes the acceptance
+// row but routing breaks before the dashboard renders — the email would have
+// been misleading. By gating on dashboard mount + idempotent server check,
+// the email reflects successful activation, not partial onboarding.
+//
+// Authorization model: deployed with verify_jwt = true. Caller must be
+// authenticated; we re-derive the recipient from the caller's JWT, not from
+// a client-supplied address. Prevents abuse where a malicious caller could
+// trigger an orientation email to a third party.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Resend } from "npm:resend@2.0.0";
 import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { renderEmail, sectionHeading, ctaButton, escapeHtml } from "../_shared/email-templates.ts";
+
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const RESEND_FROM = Deno.env.get("RESEND_FROM_EMAIL")
@@ -73,6 +78,38 @@ Deno.serve(async (req) => {
       return errorResponse("Tenant not found or not visible to caller", 404);
     }
 
+    // ── Idempotency check ────────────────────────────────────────────────────
+    // Find the caller's most recent acceptance row for this tenant. Only send
+    // when:
+    //   (a) source = 'first_login'  — never on re-accepts
+    //   (b) orientation_email_sent_at IS NULL — not already sent
+    // Service-role client used for the read+atomic-update (caller's JWT-scoped
+    // client cannot UPDATE orientation_email_sent_at by design).
+    const admin = createClient(supabaseUrl, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: latest, error: latestErr } = await admin
+      .from("onboarding_acceptances")
+      .select("id, source, orientation_email_sent_at")
+      .eq("user_id", user.id)
+      .eq("tenant_id", tenantId)
+      .order("accepted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestErr) {
+      console.error("[send-orientation-email] latest lookup error:", latestErr);
+      return errorResponse("Could not look up acceptance status", 500);
+    }
+    if (!latest) {
+      return successResponse({ email_sent: false, reason: "no_acceptance_row" });
+    }
+    if (latest.source !== "first_login") {
+      return successResponse({ email_sent: false, reason: "not_first_login" });
+    }
+    if (latest.orientation_email_sent_at) {
+      return successResponse({ email_sent: false, reason: "already_sent" });
+    }
+
     // Recipient email is the caller's own — never a client-supplied address.
     const toEmail = user.email;
     if (!toEmail) {
@@ -100,17 +137,17 @@ Deno.serve(async (req) => {
     const bodyHtml = `
       <p style="margin:0 0 14px; font-size:17px; font-weight:600; color:#0b0d10;">Welcome to Fortress.</p>
       <p style="margin:0 0 14px;">
-        ${escapeHtml(displayName)} — you have completed activation under <strong>${escapeHtml(tenant.name)}</strong>. This message is your short orientation to AEGIS, the analytical layer inside Fortress, written so you can work effectively from day one.
+        ${escapeHtml(displayName)} — you have completed activation under <strong>${escapeHtml(tenant.name)}</strong>. This message is your short orientation to AEGIS, the intelligence operations engine inside Fortress, written so you can work effectively from day one.
       </p>
 
       ${sectionHeading("What AEGIS is")}
       <p style="margin:0 0 14px;">
-        AEGIS is an intelligence decision-support layer. It synthesizes signals from monitored sources, surfaces correlations across entities and events, and produces summaries, briefings, and reports under your direction. It is built to operate at the scale of a protective operations cell: many subjects, many signals, partial information, time pressure.
+        AEGIS is the intelligence operations engine inside Fortress. It synthesizes signals from monitored sources, surfaces correlations across entities and events, and produces summaries, briefings, and reports under your direction. It is built for the operating environment of a protective operations cell: high signal volume, incomplete information, real decisions on a clock.
       </p>
 
       ${sectionHeading("What AEGIS is not")}
       <p style="margin:0 0 14px;">
-        AEGIS is not a verifier of fact. Outputs are probabilistic, derived from patterns observed in source data, not adjudicated truth. AEGIS is not legal advice, not law enforcement, and not a guarantee of detection or prevention.
+        AEGIS does not establish fact. Its outputs are inferences — patterns and correlations drawn from third-party source data, not adjudicated truth. AEGIS is not legal advice, not law enforcement, and not a guarantee of detection or prevention.
       </p>
       <p style="margin:0 0 14px;">
         You retain operational judgment. Validate consequential decisions against primary sources before acting.
@@ -218,6 +255,20 @@ Deno.serve(async (req) => {
         email_sent: false,
         error: mailErr instanceof Error ? mailErr.message : "Resend send failed",
       });
+    }
+
+    // Atomically mark this acceptance as orientation-sent. Done AFTER Resend
+    // succeeds so a Resend failure doesn't poison the idempotency check —
+    // next invocation will retry. Service-role client; no RLS interference.
+    const { error: markErr } = await admin
+      .from("onboarding_acceptances")
+      .update({ orientation_email_sent_at: new Date().toISOString() })
+      .eq("id", latest.id)
+      .is("orientation_email_sent_at", null);  // belt-and-braces: don't overwrite if another caller raced us
+    if (markErr) {
+      // Email was sent but bookkeeping failed. Log loudly so we can investigate;
+      // duplicate-send risk on next mount is acceptable vs. failing the call.
+      console.error("[send-orientation-email] mark-sent error after successful send:", markErr);
     }
 
     return successResponse({ email_sent: true });
