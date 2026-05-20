@@ -44,8 +44,13 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (lookupError) {
+      // Surface the actual PostgREST error to help diagnose mid-deploy issues
+      // (auth-key rotation, missing table, etc). Token is not echoed back.
       console.error("[accept-tenant-invitation] lookup error:", lookupError);
-      return errorResponse("Could not look up invitation", 500);
+      return errorResponse(
+        `Could not look up invitation: ${lookupError.message ?? "unknown"} (code=${lookupError.code ?? "n/a"}, hint=${lookupError.hint ?? "n/a"})`,
+        500,
+      );
     }
     if (!invite) {
       return errorResponse("Invitation not found", 404);
