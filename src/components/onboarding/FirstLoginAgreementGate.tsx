@@ -54,6 +54,14 @@ export const FirstLoginAgreementGate = ({
       // an extra round trip, and the audit row is acceptable without it for v1).
       const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : null;
 
+      // Detect first-ever acceptance vs reaccept-after-version-bump. The
+      // orientation email (Email 2) fires only on the first.
+      const { count: priorCount } = await supabase
+        .from("onboarding_acceptances")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId);
+      const isFirstAcceptance = (priorCount ?? 0) === 0;
+
       const { error } = await supabase.from("onboarding_acceptances").insert({
         user_id: userId,
         tenant_id: tenantId,
@@ -61,7 +69,7 @@ export const FirstLoginAgreementGate = ({
         ai_ack_version: ACCEPTANCE_VERSIONS.ai_ack,
         privacy_version: ACCEPTANCE_VERSIONS.privacy,
         user_agent: userAgent,
-        source: "first_login",
+        source: isFirstAcceptance ? "first_login" : "reaccept",
       });
 
       if (error) {
@@ -69,6 +77,23 @@ export const FirstLoginAgreementGate = ({
         toast.error(`Could not record acceptance: ${error.message}`);
         setSubmitting(false);
         return;
+      }
+
+      // Fire orientation email (Email 2) on first-ever acceptance only.
+      // Fail-soft: a missed orientation email does NOT block the user from
+      // reaching the dashboard. The gate's job is complete once the
+      // acceptance row lands.
+      if (isFirstAcceptance) {
+        supabase.functions
+          .invoke("send-orientation-email", { body: { tenantId } })
+          .then(({ error: emailError }) => {
+            if (emailError) {
+              console.warn("[FirstLoginAgreementGate] orientation email failed:", emailError);
+            }
+          })
+          .catch((e) => {
+            console.warn("[FirstLoginAgreementGate] orientation email exception:", e);
+          });
       }
 
       toast.success("Acceptance recorded. Welcome to Fortress.");
