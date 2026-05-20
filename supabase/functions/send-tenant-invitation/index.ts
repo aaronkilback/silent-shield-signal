@@ -28,6 +28,10 @@ import { corsHeaders, handleCors, successResponse, errorResponse } from "../_sha
 // Email send becomes a non-fatal "email_sent: false" with the accept_url returned
 // to the admin for manual delivery (also useful when the SMTP provider is rotated).
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
+// Production has a RESEND_FROM_EMAIL secret already set (e.g. when the verified
+// sender domain changes). Prefer it; fall back to the historical address.
+const RESEND_FROM = Deno.env.get("RESEND_FROM_EMAIL")
+  || "Fortress AEGIS <onboarding@silentshieldsecurity.com>";
 const PUBLIC_APP_URL = Deno.env.get("PUBLIC_APP_URL") ?? "https://fortress.silentshieldsecurity.com";
 
 interface TenantInvitationRequest {
@@ -152,7 +156,7 @@ Deno.serve(async (req) => {
     try {
       const resend = new Resend(RESEND_API_KEY);
       await resend.emails.send({
-        from: "Fortress AEGIS <onboarding@silentshieldsecurity.com>",
+        from: RESEND_FROM,
         to: [email],
         subject: `Invitation to ${tenant.name} — Fortress AEGIS`,
         html,
