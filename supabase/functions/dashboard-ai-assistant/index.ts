@@ -2364,15 +2364,12 @@ Be thorough and include every piece of visible text and data.`,
       }
       // Filter by entity if provided
       else if (args.entity_id) {
-        // P0 Phase-C — entity must be linked to a client in caller's tenant
-        if (ridScopedClientIds.length === 0) {
-          return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; read_intelligence_documents refused.` };
-        }
+        // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct check)
         const { data: ridEntLink } = await supabaseClient
-          .from("entity_clients")
-          .select("client_id")
-          .eq("entity_id", args.entity_id)
-          .in("client_id", ridScopedClientIds)
+          .from("entities")
+          .select("id")
+          .eq("id", args.entity_id)
+          .eq("tenant_id", tenantId)
           .limit(1)
           .maybeSingle();
         if (!ridEntLink) {
@@ -7293,27 +7290,16 @@ Return a JSON object (no markdown, only valid JSON):
       assertTenantContext("enrich_entity_descriptions", tenantId);
       const { entity_id, batch_mode, limit = 10 } = args;
 
-      const eedScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
-      if (eedScopedClientIds.length === 0) {
-        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; enrich_entity_descriptions refused.` };
-      }
-
       if (entity_id) {
-        // P0 Phase-C — entity must be linked to a client in caller's tenant
-        const { data: eedLink } = await supabaseClient
-          .from("entity_clients")
-          .select("client_id")
-          .eq("entity_id", entity_id)
-          .in("client_id", eedScopedClientIds)
-          .limit(1)
+        // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct check)
+        const { data: entity } = await supabaseClient.from("entities")
+          .select("id, name, type, description, risk_level, threat_score, created_at, tenant_id")
+          .eq("id", entity_id)
+          .eq("tenant_id", tenantId)
           .maybeSingle();
-        if (!eedLink) {
+        if (!entity) {
           return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. enrich_entity_descriptions refused.` };
         }
-        const { data: entity } = await supabaseClient.from("entities")
-          .select("id, name, type, description, risk_level, threat_score, created_at")
-          .eq("id", entity_id).maybeSingle();
-        if (!entity) return { error: `Entity not found: ${entity_id}` };
         const needsEnrichment = !entity.description || entity.description.length < 50;
         return {
           success: true,
@@ -7326,25 +7312,17 @@ Return a JSON object (no markdown, only valid JSON):
         };
       }
 
-      // Batch: list entities with missing descriptions, restricted to caller's tenant
-      const { data: eedTenantEntities } = await supabaseClient
-        .from("entity_clients")
-        .select("entity_id")
-        .in("client_id", eedScopedClientIds);
-      const eedTenantEntityIds = (eedTenantEntities || []).map((r: any) => r.entity_id);
-      if (eedTenantEntityIds.length === 0) {
-        return { success: true, entities_needing_enrichment: 0, total_entities: 0, entities: [], message: `No entities in tenant ${tenantName}.` };
-      }
+      // Batch: list entities with missing descriptions in caller's tenant
       const { data: entities } = await supabaseClient.from("entities")
         .select("id, name, type, description, risk_level, threat_score")
-        .in("id", eedTenantEntityIds)
+        .eq("tenant_id", tenantId)
         .or("description.is.null,description.eq.")
         .order("threat_score", { ascending: false, nullsFirst: false })
         .limit(limit);
 
       const { count: totalEntities } = await supabaseClient.from("entities")
         .select("id", { count: "exact", head: true })
-        .in("id", eedTenantEntityIds);
+        .eq("tenant_id", tenantId);
 
       return {
         success: true,
@@ -7769,32 +7747,16 @@ Return a JSON object (no markdown, only valid JSON):
       assertTenantContext("get_principal_profile", tenantId);
       const { entity_id, entity_name } = args;
 
+      // P0 Phase-C — entity lookup is tenant-scoped via entities.tenant_id direct
       let entity = null;
       if (entity_id) {
-        const { data } = await supabaseClient.from("entities").select("*").eq("id", entity_id).maybeSingle();
+        const { data } = await supabaseClient.from("entities").select("*").eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
         entity = data;
       } else if (entity_name) {
-        const { data } = await supabaseClient.from("entities").select("*").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
+        const { data } = await supabaseClient.from("entities").select("*").eq("tenant_id", tenantId).ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
         entity = data;
       }
-      if (!entity) return { error: "Principal entity not found" };
-
-      // P0 Phase-C — entity must be linked to a client in caller's tenant
-      const gppScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
-      if (gppScopedClientIds.length > 0) {
-        const { data: ecLink } = await supabaseClient
-          .from("entity_clients")
-          .select("client_id")
-          .eq("entity_id", entity.id)
-          .in("client_id", gppScopedClientIds)
-          .limit(1)
-          .maybeSingle();
-        if (!ecLink) {
-          return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. Principal profile refused.` };
-        }
-      } else {
-        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; principal profile refused.` };
-      }
+      if (!entity) return { error: `TENANT_BOUNDARY: principal entity not found in tenant ${tenantName}.` };
 
       const { data: relationships } = await supabaseClient.from("entity_relationships").select("*, entity_b:entity_b_id(id, name, type, risk_level)").eq("entity_a_id", entity.id);
       const { data: alertPrefs } = await supabaseClient.from("principal_alert_preferences").select("*").eq("entity_id", entity.id).maybeSingle();
@@ -7836,24 +7798,15 @@ Return a JSON object (no markdown, only valid JSON):
       }
       if (!resolvedEntityId) return { error: "entity_id or entity_name is required" };
 
-      // P0 Phase-C — entity must be linked to a client in caller's tenant
-      const asdScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
-      if (asdScopedClientIds.length === 0) {
-        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; sentiment drift refused.` };
-      }
-      const { data: asdLink } = await supabaseClient
-        .from("entity_clients")
-        .select("client_id")
-        .eq("entity_id", resolvedEntityId)
-        .in("client_id", asdScopedClientIds)
-        .limit(1)
+      // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
+      const { data: entity } = await supabaseClient.from("entities")
+        .select("id, name, type, risk_level, threat_score, tenant_id")
+        .eq("id", resolvedEntityId)
+        .eq("tenant_id", tenantId)
         .maybeSingle();
-      if (!asdLink) {
+      if (!entity) {
         return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. Sentiment drift refused.` };
       }
-
-      const { data: entity } = await supabaseClient.from("entities")
-        .select("id, name, type, risk_level, threat_score").eq("id", resolvedEntityId).maybeSingle();
 
       const windowResults: any[] = [];
       for (const days of (time_windows as number[])) {
@@ -7914,18 +7867,14 @@ Return a JSON object (no markdown, only valid JSON):
       if (!entity_id) return { error: "entity_id is required" };
 
       // P0 Phase-C — entity must be linked to a client in caller's tenant before alert preferences can be configured
-      const cpaScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
-      if (cpaScopedClientIds.length === 0) {
-        return { error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; configure_principal_alerts refused.` };
-      }
-      const { data: cpaLink } = await supabaseClient
-        .from("entity_clients")
-        .select("client_id")
-        .eq("entity_id", entity_id)
-        .in("client_id", cpaScopedClientIds)
-        .limit(1)
+      // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
+      const { data: cpaEntity } = await supabaseClient
+        .from("entities")
+        .select("id")
+        .eq("id", entity_id)
+        .eq("tenant_id", tenantId)
         .maybeSingle();
-      if (!cpaLink) {
+      if (!cpaEntity) {
         return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. configure_principal_alerts refused.` };
       }
 
@@ -9929,19 +9878,14 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
       assertTenantContext("generate_poi_report", tenantId);
       const { entity_id, investigation_id } = args;
 
-      // P0 Phase-C — entity must be linked to a client in caller's tenant
-      const gprScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
-      if (gprScopedClientIds.length === 0) {
-        return { success: false, error: `TENANT_BOUNDARY: tenant ${tenantName} has no clients; POI report refused.` };
-      }
-      const { data: gprLink } = await supabaseClient
-        .from("entity_clients")
-        .select("client_id")
-        .eq("entity_id", entity_id)
-        .in("client_id", gprScopedClientIds)
-        .limit(1)
+      // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
+      const { data: gprEntity } = await supabaseClient
+        .from("entities")
+        .select("id")
+        .eq("id", entity_id)
+        .eq("tenant_id", tenantId)
         .maybeSingle();
-      if (!gprLink) {
+      if (!gprEntity) {
         return { success: false, error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. POI report refused.` };
       }
 
