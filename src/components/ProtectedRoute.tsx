@@ -4,8 +4,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTenant } from "@/hooks/useTenant";
 import { canAccessRoute, getUiProfile } from "@/lib/ui-profile";
 import { useOnboardingGate } from "@/hooks/useOnboardingGate";
+import { useMfaEnforcement } from "@/hooks/useMfaEnforcement";
 import { FirstLoginAgreementGate } from "@/components/onboarding/FirstLoginAgreementGate";
 import { TenantConfirmationScreen } from "@/components/onboarding/TenantConfirmationScreen";
+import { MandatoryMFAEnrollment } from "@/components/MandatoryMFAEnrollment";
 import { Loader2 } from "lucide-react";
 
 /**
@@ -138,16 +140,24 @@ const OnboardingChecks = ({
   isAllTenantsView,
   children,
 }: OnboardingChecksProps) => {
-  // Platform-admin view skips the per-tenant gate.
+  // Platform-admin view skips the per-tenant gate. We DO NOT treat
+  // `!currentTenant` as platform-admin here — that catches brand-new users
+  // mid-tenant-context-refetch and lets them bypass the onboarding gate.
+  // For the genuinely-no-tenant case, we render a loader below and wait for
+  // the context to resolve.
   const platformAdminMode =
     isAllTenantsView ||
-    currentTenant?.access_mode === "platform_admin" ||
-    !currentTenant;
+    currentTenant?.access_mode === "platform_admin";
+
+  const { loading: mfaLoading, enrolled: mfaEnrolled, refresh: refreshMfa } = useMfaEnforcement({
+    userId: user.id,
+    skip: platformAdminMode,
+  });
 
   const { loading: gateLoading, upToDate, refresh } = useOnboardingGate({
     userId: user.id,
     tenantId: currentTenant?.id,
-    skip: platformAdminMode,
+    skip: platformAdminMode || !currentTenant,
   });
 
   // Session-scoped confirmation flag: shown once per (tenant, session).
@@ -162,6 +172,32 @@ const OnboardingChecks = ({
 
   if (platformAdminMode) {
     return <>{children}</>;
+  }
+
+  // MFA enforcement: catches the email-confirmation-link bypass where the user
+  // gets a session without going through Auth.tsx's signup-form MFA trigger.
+  // Fires BEFORE the onboarding gate because MFA is the security floor.
+  if (mfaLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!mfaEnrolled) {
+    return <MandatoryMFAEnrollment onComplete={() => refreshMfa()} />;
+  }
+
+  // Brand-new user mid-tenant-context-refetch: hold the loader rather than
+  // letting the dashboard render past the gate. The tenant context's own
+  // refetch will populate `currentTenant` within a tick.
+  if (!currentTenant) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
   }
 
   if (gateLoading) {

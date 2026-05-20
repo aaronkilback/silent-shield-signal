@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Shield, CheckCircle2, XCircle, Loader2, AlertCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenant } from "@/hooks/useTenant";
 import { toast } from "sonner";
 
 /**
@@ -21,6 +22,7 @@ export default function AcceptTenantInvite() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, session, loading: authLoading } = useAuth();
+  const { refetchTenants } = useTenant();
 
   const token = searchParams.get("token");
 
@@ -88,6 +90,15 @@ export default function AcceptTenantInvite() {
       if (data?.status === "accepted" || data?.status === "already_accepted") {
         setPhase("accepted");
         toast.success(data.message ?? "Invitation accepted.");
+        // CRITICAL: refresh tenant context so ProtectedRoute sees the new
+        // tenant_users row before navigating to /. Without this, currentTenant
+        // is null on first render, the dashboard renders past the onboarding
+        // gate, and MFA + acceptance gate get skipped.
+        try {
+          await refetchTenants();
+        } catch (e) {
+          console.warn("[AcceptTenantInvite] refetchTenants failed:", e);
+        }
         // Small delay so the user sees the success state, then navigate.
         setTimeout(() => navigate("/", { replace: true }), 1500);
         return;
