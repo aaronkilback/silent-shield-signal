@@ -59,11 +59,19 @@ interface InvitationInfo {
 const Auth = () => {
   const [searchParams] = useSearchParams();
   const inviteToken = searchParams.get("invite");
-  
+  // Tenant invite flow (new: replaces emailed-temp-password flow).
+  // When present, Auth.tsx:
+  //   - prefills the email field with the invited address
+  //   - defaults to the SIGNUP tab (user is creating credentials for the first time)
+  //   - on successful sign-up/sign-in, redirects to /accept-tenant-invite?token=<tenantInviteToken>
+  // The acceptance edge function will then attach the user to the tenant + roles.
+  const tenantInviteToken = searchParams.get("invitation_token");
+  const tenantInviteEmail = searchParams.get("email");
+
   // Check if coming from tenant invite flow - default to signup
   const hasTenantInviteRedirect = typeof window !== 'undefined' && sessionStorage.getItem('invite_redirect');
-  const [isLogin, setIsLogin] = useState(!inviteToken && !hasTenantInviteRedirect); // Default to signup if invite
-  const [email, setEmail] = useState("");
+  const [isLogin, setIsLogin] = useState(!inviteToken && !hasTenantInviteRedirect && !tenantInviteToken); // Default to signup if invite
+  const [email, setEmail] = useState(tenantInviteEmail ?? "");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -89,7 +97,12 @@ const Auth = () => {
   const location = useLocation();
   // The route the operator was trying to reach when ProtectedRoute
   // bounced them here. Falls back to "/" if they came directly to /auth.
-  const intendedPath: string = ((location.state as { from?: string } | null)?.from) || "/";
+  // If the user arrived here via /accept-tenant-invite, send them back there
+  // after sign-in/sign-up so the accept-tenant-invitation edge function attaches
+  // them to the tenant + roles BEFORE the dashboard renders.
+  const intendedPath: string = tenantInviteToken
+    ? `/accept-tenant-invite?token=${encodeURIComponent(tenantInviteToken)}`
+    : ((location.state as { from?: string } | null)?.from) || "/";
 
   // Fetch invitation details if token is present
   useEffect(() => {

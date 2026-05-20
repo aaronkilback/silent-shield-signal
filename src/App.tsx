@@ -60,6 +60,7 @@ const Workspace = lazyWithRetry(() => import("./pages/Workspace"));
 const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
 const InviteRequired = lazyWithRetry(() => import("./pages/InviteRequired"));
 const AcceptInvite = lazyWithRetry(() => import("./pages/AcceptInvite"));
+const AcceptTenantInvite = lazyWithRetry(() => import("./pages/AcceptTenantInvite"));
 const TenantAdmin = lazyWithRetry(() => import("./pages/TenantAdmin"));
 const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
 const WildfirePortal = lazyWithRetry(() => import("./pages/WildfirePortal"));
@@ -130,6 +131,7 @@ const App = () => {
                       <Route path="/authorize/:token" element={<ClientAuthorization />} />
                       <Route path="/welcome" element={<Welcome />} />
                       <Route path="/invite/accept" element={<AcceptInvite />} />
+                      <Route path="/accept-tenant-invite" element={<AcceptTenantInvite />} />
                       <Route path="/invite-required" element={<InviteRequired />} />
                       {/* Public Wildfire Portal — no auth, anonymous access by URL.
                           Live BCWS daily report + WILDFIRE agent chat.
