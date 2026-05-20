@@ -23,6 +23,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Resend } from "npm:resend@2.0.0";
 import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { renderEmail, sectionHeading, ctaButton, escapeHtml, formatExpiry } from "../_shared/email-templates.ts";
 
 // Lazy-init Resend so missing RESEND_API_KEY does not crash module load.
 // Email send becomes a non-fatal "email_sent: false" with the accept_url returned
@@ -120,25 +121,58 @@ Deno.serve(async (req) => {
     }
 
     const acceptUrl = `${PUBLIC_APP_URL}/accept-tenant-invite?token=${invitation.token}`;
+    const supportEmail = Deno.env.get("SUPPORT_EMAIL") ?? "support@silentshieldsecurity.com";
+    const expiresHuman = formatExpiry(invitation.expires_at);
 
-    const html = `
-      <div style="font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; max-width: 560px; margin: auto; padding: 24px; color: #111;">
-        <h2 style="margin-top:0;">You've been invited to Fortress AEGIS</h2>
-        <p>${escapeHtml(inviterName)} has invited you to join <strong>${escapeHtml(tenant.name)}</strong> as <strong>${escapeHtml(role)}</strong>.</p>
-        <p>This is a single-use invitation link. It expires on <strong>${new Date(invitation.expires_at).toUTCString()}</strong>.</p>
-        <p style="margin: 24px 0;">
-          <a href="${acceptUrl}" style="background:#111; color:#fff; padding: 12px 20px; text-decoration:none; border-radius:6px; display:inline-block;">Accept invitation &amp; set your password</a>
-        </p>
-        <p style="font-size: 12px; color: #555;">
-          You will be asked to set your own password and enroll mobile multi-factor authentication.
-          You will then review and accept Fortress's Terms of Use, AI Acknowledgement, and Privacy
-          attestation before accessing any data.
-        </p>
-        <p style="font-size: 12px; color: #555;">
-          If you did not expect this invitation, you can safely ignore this email.
-        </p>
-      </div>
+    // EMAIL 1 — ACCESS GRANTED
+    // Voice: calm, operator-grade, high-trust. No emoji. No sales copy.
+    const bodyHtml = `
+      <p style="margin:0 0 14px; font-size:17px; font-weight:600; color:#0b0d10;">Your Fortress access has been provisioned.</p>
+      <p style="margin:0 0 14px;">This environment has been configured for your operational use under <strong>${escapeHtml(tenant.name)}</strong>.</p>
+      <p style="margin:0 0 4px;">Invitation issued by <strong>${escapeHtml(inviterName)}</strong>.</p>
+
+      ${ctaButton("Activate your access", acceptUrl)}
+
+      <p style="margin:0 0 14px; font-size:13px; color:#5b6573;">
+        This link is single-use. It expires <strong>${escapeHtml(expiresHuman)}</strong>.
+        If it expires before you use it, contact ${escapeHtml(inviterName)} for a new invitation.
+      </p>
+
+      ${sectionHeading("What happens next")}
+      <ol style="margin:0 0 0 18px; padding:0;">
+        <li style="margin-bottom:10px;">
+          <strong>Set your password.</strong>
+          You create your own credentials on first click. Fortress does not store or transmit administrator-set passwords.
+        </li>
+        <li style="margin-bottom:10px;">
+          <strong>Enroll mobile multi-factor authentication.</strong>
+          You will be prompted for a mobile number to receive a one-time verification code. MFA is mandatory; you cannot reach the dashboard without enrolling.
+        </li>
+        <li style="margin-bottom:10px;">
+          <strong>Review and accept the operating terms.</strong>
+          Three short acknowledgements — platform terms, AI use, and lawful upload authority. Required on first session.
+        </li>
+        <li style="margin-bottom:0;">
+          <strong>Confirm tenant scope.</strong>
+          You will see the assets and clients your account has access to before you reach the dashboard. If anything looks wrong, stop and contact your administrator.
+        </li>
+      </ol>
+
+      ${sectionHeading("Confidentiality")}
+      <p style="margin:0 0 14px;">
+        Material visible inside ${escapeHtml(tenant.name)} is confidential and operational. Do not forward this invitation. Do not share dashboard screenshots outside your authorized team.
+      </p>
+
+      ${sectionHeading("Support")}
+      <p style="margin:0;">
+        If you need assistance during activation, reply to this message or contact <a href="mailto:${escapeHtml(supportEmail)}" style="color:#0b0d10;">${escapeHtml(supportEmail)}</a>.
+      </p>
     `;
+
+    const html = renderEmail({
+      preheader: `Single-use activation link for ${tenant.name}. Expires in 72 hours.`,
+      bodyHtml,
+    });
 
     // If RESEND_API_KEY is not configured, return the accept URL so the admin can
     // deliver it manually. Useful on staging (no Resend) and during prod-side
@@ -158,7 +192,7 @@ Deno.serve(async (req) => {
       await resend.emails.send({
         from: RESEND_FROM,
         to: [email],
-        subject: `Invitation to ${tenant.name} — Fortress AEGIS`,
+        subject: `Fortress access provisioned — ${tenant.name}`,
         html,
       });
     } catch (mailErr) {
@@ -183,13 +217,3 @@ Deno.serve(async (req) => {
     return errorResponse(e instanceof Error ? e.message : "Unknown error", 500);
   }
 });
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[c]!));
-}
