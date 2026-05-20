@@ -24,7 +24,10 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { Resend } from "npm:resend@2.0.0";
 import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
-const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
+// Lazy-init Resend so missing RESEND_API_KEY does not crash module load.
+// Email send becomes a non-fatal "email_sent: false" with the accept_url returned
+// to the admin for manual delivery (also useful when the SMTP provider is rotated).
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const PUBLIC_APP_URL = Deno.env.get("PUBLIC_APP_URL") ?? "https://fortress.silentshieldsecurity.com";
 
 interface TenantInvitationRequest {
@@ -133,7 +136,21 @@ Deno.serve(async (req) => {
       </div>
     `;
 
+    // If RESEND_API_KEY is not configured, return the accept URL so the admin can
+    // deliver it manually. Useful on staging (no Resend) and during prod-side
+    // SMTP rotation.
+    if (!RESEND_API_KEY) {
+      return successResponse({
+        invitation_id: invitation.id,
+        email_sent: false,
+        accept_url: acceptUrl,
+        expires_at: invitation.expires_at,
+        warning: "RESEND_API_KEY is not configured. Invitation row created; copy accept_url to the invitee manually.",
+      });
+    }
+
     try {
+      const resend = new Resend(RESEND_API_KEY);
       await resend.emails.send({
         from: "Fortress AEGIS <onboarding@silentshieldsecurity.com>",
         to: [email],
@@ -142,7 +159,7 @@ Deno.serve(async (req) => {
       });
     } catch (mailErr) {
       console.error("[send-tenant-invitation] resend error:", mailErr);
-      // We still return success with the accept URL; admin can hand-deliver it.
+      // Invitation row exists; admin can hand-deliver the URL.
       return successResponse({
         invitation_id: invitation.id,
         email_sent: false,
