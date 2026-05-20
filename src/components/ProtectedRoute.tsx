@@ -1,8 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { useTenant } from "@/hooks/useTenant";
 import { canAccessRoute, getUiProfile } from "@/lib/ui-profile";
+import { useOnboardingGate } from "@/hooks/useOnboardingGate";
+import { FirstLoginAgreementGate } from "@/components/onboarding/FirstLoginAgreementGate";
+import { TenantConfirmationScreen } from "@/components/onboarding/TenantConfirmationScreen";
 import { Loader2 } from "lucide-react";
 
 /**
@@ -103,6 +106,91 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
   if (!accessible) {
     return <Navigate to="/" replace />;
+  }
+
+  // ── Onboarding gate: acceptance + tenant confirmation ────────────────────
+  // Skip for: super_admin in platform/all-tenants view (they're operating across
+  // tenants and the per-tenant acceptance flow doesn't apply at the platform level).
+  // Once super_admin switches INTO a tenant (currentTenant && !isAllTenantsView)
+  // they get gated like everyone else — same posture as the route-access policy.
+  return (
+    <OnboardingChecks
+      user={user}
+      currentTenant={currentTenant}
+      isAllTenantsView={isAllTenantsView}
+    >
+      {children}
+    </OnboardingChecks>
+  );
+};
+
+// Separate component so the hooks below are not declared conditionally above.
+interface OnboardingChecksProps {
+  user: { id: string };
+  currentTenant: { id: string; name: string; access_mode?: string } | null;
+  isAllTenantsView: boolean;
+  children: React.ReactNode;
+}
+
+const OnboardingChecks = ({
+  user,
+  currentTenant,
+  isAllTenantsView,
+  children,
+}: OnboardingChecksProps) => {
+  // Platform-admin view skips the per-tenant gate.
+  const platformAdminMode =
+    isAllTenantsView ||
+    currentTenant?.access_mode === "platform_admin" ||
+    !currentTenant;
+
+  const { loading: gateLoading, upToDate, refresh } = useOnboardingGate({
+    userId: user.id,
+    tenantId: currentTenant?.id,
+    skip: platformAdminMode,
+  });
+
+  // Session-scoped confirmation flag: shown once per (tenant, session).
+  const [tenantConfirmed, setTenantConfirmed] = useState<boolean>(() => {
+    if (platformAdminMode || !currentTenant) return true;
+    try {
+      return sessionStorage.getItem(`tenant_confirmed:${currentTenant.id}`) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  if (platformAdminMode) {
+    return <>{children}</>;
+  }
+
+  if (gateLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!upToDate && currentTenant) {
+    return (
+      <FirstLoginAgreementGate
+        userId={user.id}
+        tenantId={currentTenant.id}
+        tenantName={currentTenant.name}
+        onAccepted={() => refresh()}
+      />
+    );
+  }
+
+  if (!tenantConfirmed && currentTenant) {
+    return (
+      <TenantConfirmationScreen
+        tenantId={currentTenant.id}
+        tenantName={currentTenant.name}
+        onContinue={() => setTenantConfirmed(true)}
+      />
+    );
   }
 
   return <>{children}</>;

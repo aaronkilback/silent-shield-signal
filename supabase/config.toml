@@ -847,3 +847,6 @@ verify_jwt = false
 
 [functions.detect-signal-sequences]
 verify_jwt = false
+
+[functions.accept-tenant-invitation]
+verify_jwt = false
