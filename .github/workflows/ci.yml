@@ -70,6 +70,17 @@ jobs:
           [ "$COUNT" -gt "0" ] && echo "WARNING: $COUNT vip_id references found"
           exit 0
 
+  shared-imports:
+    name: Shared Imports Consistency (_shared/*)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify every import from supabase/functions/_shared/* resolves to a real export
+        run: node scripts/check-shared-imports.mjs
+
   cron-alignment:
     name: Cron Schedule Alignment
     runs-on: ubuntu-latest
