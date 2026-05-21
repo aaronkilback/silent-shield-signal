@@ -38,6 +38,13 @@ interface AiGatewayRequest {
   dlqPayload?: Record<string, unknown>;
   /** If true, skip anti-hallucination injection (e.g., for image generation) */
   skipGuardrails?: boolean;
+  /**
+   * Extra free-form fields merged into the telemetry `context` jsonb on
+   * the resulting function_telemetry row. Use for caller-specific tags
+   * like few-shot state, retrieval mode, or scope hints. Kept small —
+   * do not shove prompts/responses here.
+   */
+  extraContext?: Record<string, unknown>;
 }
 
 interface AiGatewayResponse {
@@ -305,6 +312,9 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
       }
 
       if (telemetryClient) {
+        const baseContext: Record<string, unknown> = hallucinationWarnings.length > 0
+          ? { hallucination_warnings: hallucinationWarnings.length, attempt }
+          : { attempt };
         await recordTelemetry(telemetryClient, {
           functionName: request.functionName,
           durationMs: Date.now() - callStartedAt,
@@ -313,9 +323,7 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
           aiModel: provider.model,
           tokensIn: usage.prompt_tokens ?? usage.input_tokens,
           tokensOut: usage.completion_tokens ?? usage.output_tokens,
-          context: hallucinationWarnings.length > 0
-            ? { hallucination_warnings: hallucinationWarnings.length, attempt }
-            : { attempt },
+          context: { ...baseContext, ...(request.extraContext ?? {}) },
         });
       }
 

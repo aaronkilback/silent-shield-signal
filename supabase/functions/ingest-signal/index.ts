@@ -745,6 +745,15 @@ Be specific and concise. Focus on facts, not speculation.`
 
     const classResult = await callAiGatewayJson({
       model: 'gpt-4o-mini',
+      // #130 Phase 0B observation — annotate telemetry with few-shot state
+      // so we can measure the calibration-quality tradeoff from fail-closed
+      // skipping when explicitClientId is absent (matching-mode signals).
+      extraContext: {
+        few_shot_state: fewShotTelemetry.state,
+        few_shot_tenant_id: fewShotTelemetry.tenant_id,
+        few_shot_examples: fewShotTelemetry.examples,
+        explicit_client_id_provided: !!explicitClientId,
+      },
       messages: [
         {
           role: 'system',

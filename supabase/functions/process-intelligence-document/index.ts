@@ -489,8 +489,19 @@ ${feedbackRejectionContext}
     // failure was the silent killer of Instagram intake (and all other
     // monitor-instagram / process-intelligence-document paths). Routed
     // directly to OpenAI now.
+    // #130 Phase 0B observation — telemetry annotation for feedback-context tenant scope
+    const feedbackTelemetryState: 'applied' | 'applied_empty' | 'skipped' =
+      !feedbackTenantId
+        ? 'skipped'
+        : (feedbackRejectionContext ? 'applied' : 'applied_empty');
+
     const aiResult = await callAiGateway({
       model: 'gpt-4o-mini',
+      extraContext: {
+        feedback_context_state: feedbackTelemetryState,
+        feedback_tenant_id: feedbackTenantId,
+        client_matches: clientMatches.length,
+      },
       messages: [
         {
           role: 'system',
