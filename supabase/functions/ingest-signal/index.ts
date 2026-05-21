@@ -1,3 +1,42 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  ⚠ DEPLOY-BLOCKED — DO NOT DEPLOY ingest-signal FROM main UNTIL #112 LANDS ⚠
+//
+//  This file imports `getCallerIdentity` and `getAccessibleClientIds` from
+//  _shared/supabase-client.ts (line below). On main, supabase-client.ts
+//  exports NEITHER symbol. Running:
+//      supabase functions deploy ingest-signal --project-ref <prod> --use-api
+//  from a clean checkout of main will fail at module load with WORKER_ERROR
+//  and return 503 on every call to /functions/v1/ingest-signal — i.e. it
+//  would reproduce the real "503 cluster" that #102 was titled to describe.
+//
+//  Production is currently alive only because the deployed bundle was built
+//  before commit f2965d9c (2026-05-18) introduced these imports.
+//
+//  Background:
+//    - 60006a89 (2026-05-13)  added getCallerIdentity to supabase-client.ts as
+//                             part of F-026, the auth gate that closes
+//                             anonymous cross-tenant signal injection.
+//    - f2965d9c (2026-05-18)  added the F-026 gate to ingest-signal, including
+//                             an import of getAccessibleClientIds that was
+//                             never exported. On main, even getCallerIdentity
+//                             is missing — both helpers are absent.
+//
+//  Tracking:
+//    #112 — restore the F-026 helpers in _shared/supabase-client.ts and add a
+//           CI guard for import/export consistency across supabase/functions/.
+//    #102 — umbrella architectural defect (silent ingestion blackout under
+//           AI-gateway sustained failure).
+//
+//  If you absolutely must deploy ingest-signal before #112 lands, you MUST
+//  first add both `getCallerIdentity` and `getAccessibleClientIds` to
+//  _shared/supabase-client.ts in shapes consistent with the F-026 auth
+//  matrix (see docs/audit-evidence/f-026-iteration-6/) and verify the gate's
+//  anon/unauthorized/service-role/user-with-access/user-without-access
+//  permutations on staging before any prod deploy.
+//
+//  REMOVE THIS BANNER as the final commit of #112.
+// ════════════════════════════════════════════════════════════════════════════
+
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "npm:zod@3.22.4";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
