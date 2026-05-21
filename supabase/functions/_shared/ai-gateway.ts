@@ -339,6 +339,23 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
         // relevance gate couldn't reach OpenAI. The fallback model defaults
         // to `gemini-1.5-flash` (widely available, not in MODEL_NORMALIZATION
         // redirects) and is overridable via OPENAI_FALLBACK_GEMINI_MODEL.
+        //
+        // #113 (2026-05-21) — full fallback observability. Records four
+        // distinct telemetry events so we can reconstruct what the fallback
+        // path did under sustained primary failures (see May 16-18 incident
+        // RCA in #102):
+        //   * fallback_event='attempted'       — fired before the fetch, so a
+        //                                        hung fallback still leaves a
+        //                                        trail
+        //   * fallback_event='success'         — Gemini returned 200; signal
+        //                                        recovered
+        //   * fallback_event='non_ok_response' — Gemini returned non-2xx
+        //   * fallback_event='exception'       — Gemini fetch threw (network,
+        //                                        timeout, malformed response)
+        // All four rows include primary_provider, primary_model,
+        // primary_failure_reason, primary_status_code, primary_duration_ms,
+        // and (where applicable) fallback_duration_ms +
+        // fallback_request_id + fallback_status_code.
         const isOpenAi429 = aiProvider === 'openai' && status === 429;
         const geminiKey = Deno.env.get('GEMINI_API_KEY');
         if (isOpenAi429 && geminiKey) {
@@ -349,6 +366,33 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
           // for callers that route through getProviderConfig), since we're
           // building the fetch directly here.
           const fallbackModel = Deno.env.get('OPENAI_FALLBACK_GEMINI_MODEL') ?? 'gemini-2.5-flash';
+          const fallbackStartedAt = Date.now();
+          const primaryDurationMs = fallbackStartedAt - callStartedAt;
+          const primaryFailureReason = errMsg.substring(0, 300);
+          const fallbackContextBase = {
+            fallback_from: `${aiProvider}_${status ?? 'unknown'}`,
+            primary_provider: aiProvider,
+            primary_model: provider.model,
+            primary_failure_reason: primaryFailureReason,
+            primary_status_code: status ?? null,
+            primary_duration_ms: primaryDurationMs,
+            fallback_model: fallbackModel,
+          };
+
+          // 'attempted' row — written BEFORE the fetch so a hung/never-returning
+          // fallback still produces forensic evidence. Telemetry insert is
+          // awaited because we want it durable before initiating the call.
+          if (telemetryClient) {
+            await recordTelemetry(telemetryClient, {
+              functionName: request.functionName,
+              durationMs: primaryDurationMs,
+              status: 'success',
+              aiProvider: 'gemini',
+              aiModel: fallbackModel,
+              context: { ...fallbackContextBase, fallback_event: 'attempted' },
+            });
+          }
+
           try {
             console.warn(`[${request.functionName}] OpenAI 429 → falling back to Gemini ${fallbackModel}`);
             const fbResponse = await fetch(
@@ -362,6 +406,12 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
                 body: JSON.stringify({ model: fallbackModel, messages, ...request.extraBody }),
               },
             );
+            const fallbackDurationMs = Date.now() - fallbackStartedAt;
+            const fbRequestId =
+              fbResponse.headers.get('x-request-id') ??
+              fbResponse.headers.get('x-goog-request-id') ??
+              null;
+
             if (fbResponse.ok) {
               const fbData = await fbResponse.json();
               const fbContent = fbData?.choices?.[0]?.message?.content || null;
@@ -375,16 +425,60 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
                   aiModel: fallbackModel,
                   tokensIn: fbUsage.prompt_tokens ?? fbUsage.input_tokens,
                   tokensOut: fbUsage.completion_tokens ?? fbUsage.output_tokens,
-                  context: { fallback_from: 'openai_429', original_model: provider.model },
+                  context: {
+                    ...fallbackContextBase,
+                    fallback_event: 'success',
+                    fallback_duration_ms: fallbackDurationMs,
+                    fallback_status_code: fbResponse.status,
+                    fallback_request_id: fbRequestId,
+                    original_model: provider.model, // preserved for backwards compat with prior queries
+                  },
                 });
               }
               return { content: fbContent, raw: fbData, error: null, circuitOpen: false };
             } else {
               const fbErrText = await fbResponse.text();
-              console.warn(`[${request.functionName}] Gemini fallback ${fbResponse.status}: ${fbErrText.substring(0, 200)}`);
+              const fbErrSnippet = fbErrText.substring(0, 250);
+              console.warn(`[${request.functionName}] Gemini fallback ${fbResponse.status}: ${fbErrSnippet}`);
+              if (telemetryClient) {
+                await recordTelemetry(telemetryClient, {
+                  functionName: request.functionName,
+                  durationMs: Date.now() - callStartedAt,
+                  status: 'error',
+                  aiProvider: 'gemini',
+                  aiModel: fallbackModel,
+                  errorClass: classifyError(new Error(fbErrSnippet), fbResponse.status),
+                  errorMessage: `Gemini fallback ${fbResponse.status}: ${fbErrSnippet}`,
+                  context: {
+                    ...fallbackContextBase,
+                    fallback_event: 'non_ok_response',
+                    fallback_duration_ms: fallbackDurationMs,
+                    fallback_status_code: fbResponse.status,
+                    fallback_request_id: fbRequestId,
+                  },
+                });
+              }
             }
           } catch (fbErr) {
-            console.warn(`[${request.functionName}] Gemini fallback threw: ${fbErr instanceof Error ? fbErr.message : String(fbErr)}`);
+            const fallbackDurationMs = Date.now() - fallbackStartedAt;
+            const fbErrMsg = fbErr instanceof Error ? fbErr.message : String(fbErr);
+            console.warn(`[${request.functionName}] Gemini fallback threw: ${fbErrMsg}`);
+            if (telemetryClient) {
+              await recordTelemetry(telemetryClient, {
+                functionName: request.functionName,
+                durationMs: Date.now() - callStartedAt,
+                status: 'error',
+                aiProvider: 'gemini',
+                aiModel: fallbackModel,
+                errorClass: classifyError(fbErr, undefined),
+                errorMessage: `Gemini fallback threw: ${fbErrMsg.substring(0, 250)}`,
+                context: {
+                  ...fallbackContextBase,
+                  fallback_event: 'exception',
+                  fallback_duration_ms: fallbackDurationMs,
+                },
+              });
+            }
           }
         }
 
