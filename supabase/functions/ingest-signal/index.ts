@@ -243,10 +243,50 @@ Deno.serve(async (req) => {
         );
       }
 
+      // F-026 — AUTHORIZATION CHECK MUST PRECEDE ALL BUSINESS-RULE CHECKS.
+      //
+      // Reasoning: the F-026 access gate determines whether the CALLER is
+      // permitted to interact with this client_id AT ALL. Any subsequent
+      // check that returns information about the client (its status, its
+      // name in the error message, its existence as distinct from "not
+      // found") is a cross-tenant information disclosure if the caller
+      // does not actually own the client.
+      //
+      // Defect history (caught by F-026 staging Mode 6 validation, #112):
+      //   Originally (commit f2965d9c, 2026-05-18) this check ran AFTER
+      //   the test-signals-on-active-clients guard at line ~250. A CRT
+      //   user sending `is_test=true` + a Petronas `client_id` received
+      //   `{"error":"test signals not permitted on active clients",
+      //   "message":"Client Petronas Canada has status='active'..."}`
+      //   — leaking the existence + name + status of a client outside
+      //   the caller's accessible scope, AND skipping the 403 entirely.
+      //
+      //   Reordered 2026-05-20 (#112) so the F-026 gate fires before any
+      //   subsequent guard that could leak client metadata or differential
+      //   timing.
+      //
+      // Service-role callers (accessibleClientIds === null) bypass this
+      // check — same as before. Trusted internal caller inventory is in
+      // the F-026 evidence record.
+      if (caller.kind === 'user' && accessibleClientIds !== null
+          && !accessibleClientIds.includes(clientCheck.id)) {
+        console.error(`⚠ FORBIDDEN: user ${caller.userId} attempted ingest into client ${clientCheck.id} outside accessible scope`);
+        return new Response(
+          JSON.stringify({
+            error: 'forbidden: client_id outside accessible scope',
+          }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       // Block test signals against active clients. Until 2026-05-07 the
       // fortress-qa-agent injected synthetic signals into Petronas Canada
       // because is_test=true was permitted on any client. Use a status
       // != 'active' QA client (e.g. _qa_test_client).
+      //
+      // This check is INTENTIONALLY downstream of F-026 — it only fires
+      // for callers that already have access to the target client. A
+      // cross-tenant caller is rejected at the F-026 gate above.
       if (is_test === true && clientCheck.status === 'active') {
         console.error(`⚠ TEST SIGNAL BLOCKED: is_test=true cannot target active client ${clientCheck.name} (${clientCheck.id})`);
         return new Response(
@@ -260,21 +300,6 @@ Deno.serve(async (req) => {
 
       validatedExplicitClientId = clientCheck.id;
       console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id}) status=${clientCheck.status}`);
-
-      // F-026 — user-tier callers must own the explicit client_id. Service-role
-      // is exempt (trusted internal caller list documented in evidence file).
-      // Rejection is 403 (not 404) here because the client_id existence was
-      // already confirmed above — at this point hiding existence is moot.
-      if (caller.kind === 'user' && accessibleClientIds !== null
-          && !accessibleClientIds.includes(clientCheck.id)) {
-        console.error(`⚠ FORBIDDEN: user ${caller.userId} attempted ingest into client ${clientCheck.name} outside accessible scope`);
-        return new Response(
-          JSON.stringify({
-            error: 'forbidden: client_id outside accessible scope',
-          }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
     }
     
     let signalText = text || JSON.stringify(event);
