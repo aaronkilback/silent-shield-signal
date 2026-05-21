@@ -421,16 +421,38 @@ Deno.serve(async (req) => {
       .limit(1)
       .single();
 
-    // Build concise rejection reason summaries from feedback
+    // #130 Phase 0B — tenant-scope feedback context to prevent cross-tenant ML
+    // contamination of document analysis. Resolve tenant_id via the first
+    // matched client. Fail-closed if not resolvable.
+    let feedbackTenantId: string | null = null;
+    if (clientMatches[0]?.clientId) {
+      const { data: feedbackClientRow } = await supabase
+        .from('clients')
+        .select('tenant_id')
+        .eq('id', clientMatches[0].clientId)
+        .maybeSingle();
+      feedbackTenantId = feedbackClientRow?.tenant_id ?? null;
+    }
+
+    // Build concise rejection reason summaries from feedback (tenant-scoped per #130 Phase 0B)
     let feedbackRejectionContext = '';
     try {
-      const { data: recentRejections } = await supabase
+      if (!feedbackTenantId) {
+        console.log(`[#130 telemetry] process-intelligence-document feedback_context=skipped reason=no_tenant_context`);
+      }
+      const { data: recentRejections } = feedbackTenantId ? await supabase
         .from('feedback_events')
-        .select('notes, feedback_context')
+        .select('notes, feedback_context, signals!inner(tenant_id)')
         .eq('object_type', 'signal')
+        .eq('signals.tenant_id', feedbackTenantId)
         .eq('feedback', 'irrelevant')
         .order('created_at', { ascending: false })
-        .limit(30);
+        .limit(30) : { data: null };
+
+      if (feedbackTenantId) {
+        const n = (recentRejections || []).length;
+        console.log(`[#130 telemetry] process-intelligence-document feedback_context=${n > 0 ? 'applied' : 'applied_empty'} tenant=${feedbackTenantId} examples=${n}`);
+      }
 
       if (recentRejections && recentRejections.length > 0) {
         const reasons = new Map<string, number>();

@@ -16,6 +16,17 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  // #130 Phase 0A: kill switch for cross-tenant ML aggregation.
+  // Pulls feedback_events platform-wide to tune alert thresholds → cross-tenant
+  // ML contamination. Disabled by default; Phase 1 re-enables with per-tenant loop.
+  if (Deno.env.get('FEEDBACK_LEARNING_PER_TENANT_ENABLED') !== 'true') {
+    console.warn('[PredictiveAlertTuning] #130 Phase 0A — cross-tenant feedback aggregation disabled pending per-tenant fix');
+    return successResponse({
+      skipped: true,
+      reason: '#130 Phase 0A: cross-tenant feedback aggregation disabled pending per-tenant fix',
+    });
+  }
+
   try {
     const supabase = createServiceClient();
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");

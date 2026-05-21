@@ -666,14 +666,41 @@ Be specific and concise. Focus on facts, not speculation.`
       confidence: 0.5
     };
 
+    // #130 Phase 0B — tenant-scope few-shot feedback to prevent cross-tenant
+    // ML contamination of signal classification. Resolve the incoming signal's
+    // tenant_id via its client (if known). Fail-closed: if tenant cannot be
+    // resolved (matching-mode signal where client_id isn't yet derived), skip
+    // few-shot entirely — better to lose calibration than contaminate
+    // classification with another tenant's feedback notes.
+    let fewShotTenantId: string | null = null;
+    if (explicitClientId) {
+      const { data: fewShotClientRow } = await supabase
+        .from('clients')
+        .select('tenant_id')
+        .eq('id', explicitClientId)
+        .maybeSingle();
+      fewShotTenantId = fewShotClientRow?.tenant_id ?? null;
+    }
+
     // Fetch analyst feedback for severity calibration (few-shot injection)
-    // Reads from feedback_events joined to signals — the live feedback path
+    // Reads from feedback_events joined to signals — tenant-scoped per #130 Phase 0B
     let fewShotBlock = '';
+    let fewShotTelemetry: { state: string; tenant_id: string | null; examples: number } = {
+      state: 'unknown', tenant_id: fewShotTenantId, examples: 0,
+    };
     try {
+      // #130 Phase 0B: skip few-shot entirely if no tenant context (fail-closed)
+      if (!fewShotTenantId) {
+        fewShotTelemetry = { state: 'skipped_no_tenant', tenant_id: null, examples: 0 };
+        console.log(`[#130 telemetry] ingest-signal few_shot=skipped reason=no_tenant_context`);
+      } else {
+      // PostgREST inner-join scopes feedback to signals owned by THIS tenant.
+      // This is the marker-provable tenant isolation gate.
       const { data: feedbackEvents } = await supabase
         .from('feedback_events')
-        .select('feedback, notes, correction, object_id')
+        .select('feedback, notes, correction, object_id, signals!inner(tenant_id)')
         .eq('object_type', 'signal')
+        .eq('signals.tenant_id', fewShotTenantId)
         .in('feedback', ['irrelevant', 'wrong_severity', 'confirmed'])
         .not('notes', 'is', null)
         .order('created_at', { ascending: false })
@@ -700,9 +727,21 @@ Be specific and concise. Focus on facts, not speculation.`
 
         if (examples.length > 0) {
           fewShotBlock = '\n\nANALYST CALIBRATION EXAMPLES (learn from these real corrections):\n' + examples.join('\n');
+          fewShotTelemetry = { state: 'applied', tenant_id: fewShotTenantId, examples: examples.length };
+          console.log(`[#130 telemetry] ingest-signal few_shot=applied tenant=${fewShotTenantId} examples=${examples.length}`);
+        } else {
+          fewShotTelemetry = { state: 'applied_empty', tenant_id: fewShotTenantId, examples: 0 };
+          console.log(`[#130 telemetry] ingest-signal few_shot=applied_empty tenant=${fewShotTenantId} (no tenant-local feedback yet)`);
         }
+      } else {
+        fewShotTelemetry = { state: 'applied_empty', tenant_id: fewShotTenantId, examples: 0 };
+        console.log(`[#130 telemetry] ingest-signal few_shot=applied_empty tenant=${fewShotTenantId} (query returned 0)`);
       }
-    } catch { /* non-blocking */ }
+      } // close `if (fewShotTenantId)` from #130 Phase 0B
+    } catch (err) {
+      fewShotTelemetry = { state: 'error', tenant_id: fewShotTenantId, examples: 0 };
+      console.warn(`[#130 telemetry] ingest-signal few_shot=error tenant=${fewShotTenantId} err=${err instanceof Error ? err.message : String(err)}`);
+    }
 
     const classResult = await callAiGatewayJson({
       model: 'gpt-4o-mini',

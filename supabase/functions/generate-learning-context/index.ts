@@ -4,6 +4,19 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  // #130 Phase 0A: kill switch for cross-tenant ML aggregation.
+  // Aggregates feedback_events + entity_suggestions + incident_outcomes
+  // platform-wide to build a "learning context" artifact consumed by agents.
+  // Without tenant scoping this is cross-tenant ML contamination.
+  // Disabled by default; Phase 1 re-enables with explicit per-tenant invocation.
+  if (Deno.env.get('FEEDBACK_LEARNING_PER_TENANT_ENABLED') !== 'true') {
+    console.warn('[Learning] #130 Phase 0A — cross-tenant feedback aggregation disabled pending per-tenant fix');
+    return successResponse({
+      skipped: true,
+      reason: '#130 Phase 0A: cross-tenant feedback aggregation disabled pending per-tenant fix',
+    });
+  }
+
   try {
     const supabase = createServiceClient();
     console.log('[Learning] ═══ Starting full adaptive learning cycle v3 ═══');
