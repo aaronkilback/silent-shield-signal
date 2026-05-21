@@ -612,6 +612,46 @@ Be specific and concise. Focus on facts, not speculation.`
       sourceId = source.id;
     }
 
+    // ─── #120 Phase 1 — REGRESSION GUARD: external signal attribution invariant ───
+    // Goal: prevent new externally-sourced signals from landing silently without
+    // source attribution. "Aegis confidently citing junk destroys trust faster than
+    // missing marginal signals" — un-attributed external signals are exactly that.
+    //
+    // Modes:
+    //   Always-on: emit a console.warn marker that watchdogs / log aggregators
+    //   can grep for ("EXTERNAL_UNATTRIBUTED"). Makes silent drift observable.
+    //
+    //   Env-gated strict block: when INGEST_STRICT_SOURCE_ATTRIBUTION=true is set,
+    //   reject any external signal (source_url present, not example.com, not test)
+    //   that arrives without a resolvable source_id. Default OFF so the current
+    //   broken paths (#125 — 280 other_external signals, monitor-cisa-kev's
+    //   re-processing-path bug) don't immediately 4xx. Flip to true once #125
+    //   audits each monitor.
+    const externalUrl = source_url || url || null;
+    if (
+      sourceId === null &&
+      externalUrl &&
+      !externalUrl.includes('example.com') &&
+      !externalUrl.includes('qa.test') &&
+      is_test_input !== true
+    ) {
+      console.warn(
+        `[ingest-signal] EXTERNAL_UNATTRIBUTED — source_id null, source_url=${externalUrl.substring(0, 120)} ` +
+        `source_key=${source_key ?? 'NOT_PROVIDED'} client_id=${client_id ?? clientIdCamel ?? 'NOT_PROVIDED'}`
+      );
+      if (Deno.env.get('INGEST_STRICT_SOURCE_ATTRIBUTION') === 'true') {
+        return new Response(
+          JSON.stringify({
+            error: 'External signal blocked: missing source attribution',
+            message: 'Signals with source_url must pass a source_key that matches a registered sources row. Set source_key, register the source in the sources table, or set INGEST_STRICT_SOURCE_ATTRIBUTION=false to bypass this guard.',
+            source_url: externalUrl,
+            source_key_provided: source_key ?? null,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     // Step 1: Apply rules-based classification
     const rulesResult = applyRules(signalText);
     console.log('Rules matched:', rulesResult);

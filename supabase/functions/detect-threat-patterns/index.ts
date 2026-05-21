@@ -27,6 +27,21 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const targetClientId: string | undefined = body.client_id;
 
+    // #120 Phase 1 — resolve "Fortress Pattern Detector" source_id ONCE for all
+    // pattern signal inserts below. Pattern signals are internally derived; this
+    // source row makes their internal provenance explicit so Aegis can cite them
+    // as "Fortress internal pattern detection" rather than as a ghost source.
+    // Created in migration 20260521020000_source_attribution_phase1.sql.
+    const { data: patternSourceRow } = await supabase
+      .from('sources')
+      .select('id')
+      .eq('name', 'Fortress Pattern Detector')
+      .maybeSingle();
+    const patternSourceId: string | null = patternSourceRow?.id ?? null;
+    if (!patternSourceId) {
+      console.warn('[detect-threat-patterns] Fortress Pattern Detector source row not found — pattern signals will land without internal attribution');
+    }
+
     // Fetch clients to process
     const clientQuery = supabase.from('clients').select('id, name').eq('status', 'active');
     if (targetClientId) clientQuery.eq('id', targetClientId);
@@ -135,6 +150,7 @@ Deno.serve(async (req) => {
 
         const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
           client_id: client.id,
+          source_id: patternSourceId,
           title: `[PATTERN] Entity escalation: "${displayName}" (${uniqueIds.length} signals in 7d)`,
           description: `Automated pattern detection: entity "${displayName}" has appeared in ${uniqueIds.length} signals over the past 7 days${isResolvedEntity ? ' (resolved via entity graph)' : ''}, indicating sustained attention or escalating activity. Contributing signals have been linked below.`,
           normalized_text: `Entity escalation pattern detected for "${displayName}": ${uniqueIds.length} signals in 7 days.`,
@@ -204,6 +220,7 @@ Deno.serve(async (req) => {
 
         const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
           client_id: client.id,
+          source_id: patternSourceId,
           title: `[PATTERN] Geographic cluster: ${data.ids.length} signals near "${location}" in 48h`,
           description: `Automated pattern detection: ${data.ids.length} signals from the "${location}" area have been detected within the last 48 hours, suggesting a localized incident cluster or coordinated activity.`,
           normalized_text: `Geographic cluster: ${data.ids.length} signals near "${location}" within 48 hours.`,
@@ -267,6 +284,7 @@ Deno.serve(async (req) => {
 
           const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
             client_id: client.id,
+            source_id: patternSourceId,
             title: `[PATTERN] Frequency spike: ${currentWeekCount} signals this week (${prior} prior week)`,
             description: `Automated pattern detection: signal volume for this client has spiked from ${prior} signals last week to ${currentWeekCount} this week — a ${prior > 0 ? Math.round((currentWeekCount / prior - 1) * 100) : 100}% increase. This volume anomaly may indicate elevated threat activity or a coordinated campaign.`,
             normalized_text: `Signal frequency spike: ${currentWeekCount} signals this week vs ${prior} last week.`,
@@ -329,6 +347,7 @@ Deno.serve(async (req) => {
 
           const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
             client_id: client.id,
+            source_id: patternSourceId,
             title: `[PATTERN] Threat type cluster: ${typeClusterSignals.length} ${dominantType} signals in 72h`,
             description: `Automated pattern detection: ${typeClusterSignals.length} threat signals of type "${dominantType}" (and related types) have been detected within 72 hours. Types observed: ${Object.entries(typeCount).map(([t, c]) => `${t} (${c})`).join(', ')}. This clustering suggests a coordinated or escalating threat campaign.`,
             normalized_text: `Threat type cluster: ${typeClusterSignals.length} signals (${dominantType}-dominant) within 72 hours.`,
