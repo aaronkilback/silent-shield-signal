@@ -86,22 +86,50 @@ const Sources = () => {
     setSearchParams(searchParams);
   };
 
+  // ─── #135 — Sources view scoping doctrine ─────────────────────────────
+  //
+  // The `sources` table has a `created_by_tenant_id` column:
+  //   NULL     → global source (platform-wide infrastructure)
+  //   <uuid>   → tenant-private source (owned by that tenant)
+  //
+  // SECURITY MODEL (unchanged here):
+  //   RLS policy `sources_visibility_select` already enforces hard tenant
+  //   isolation for non-super-admin users: they see (global ∪ own-tenant).
+  //   Vince and other analysts cannot see cross-tenant tenant-private rows
+  //   regardless of this frontend filter.
+  //
+  // PRODUCT-VISIBILITY MODEL (this filter):
+  //   super_admin remains omniscient by design — the
+  //   `super_admin_bypass_sources` RLS policy returns ALL rows.
+  //   Tenant view is a UX scoping boundary, not a security boundary.
+  //   When a super_admin operator switches to "tenant view" they want the
+  //   list to reflect what that tenant would see (global ∪ own-tenant) —
+  //   not the full omniscient view. The .or() filter below enforces that
+  //   alignment for super_admin; for non-super-admin it is belt-and-
+  //   suspenders consistent with RLS.
+  //
+  // The `tenantRelevantSourceIds` narrower is preserved as a secondary
+  // filter for noise reduction (sources that actually produced signals
+  // for this tenant's clients in 90 days). It must NOT widen the result.
+  // ─────────────────────────────────────────────────────────────────────
   const { data: sources, isLoading, refetch } = useQuery({
-    queryKey: ["sources", tenantRelevantSourceIds, isAllTenantsView],
+    queryKey: ["sources", tenantRelevantSourceIds, isAllTenantsView, currentTenant?.id ?? null],
     queryFn: async () => {
       let query = supabase
         .from("sources")
         .select("*")
         .order("created_at", { ascending: false });
 
-      // Tenant relevance gate (Option B, 2026-05-19): when observing
-      // a specific tenant, narrow the displayed source inventory to
-      // sources that have produced signals for THIS tenant's clients
-      // in the recent activity window (see useTenantRelevantSourceIds).
-      // Sources are platform-wide infrastructure; this is purely an
-      // access-layer view filter, not an ingestion change.
-      //
-      //   null      → All Tenants view, no filter
+      // PRIMARY scope (ownership): align super_admin tenant view with
+      // what the tenant would actually see. No-op when in All Tenants
+      // view or when no tenant is selected (platform admin mode).
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.or(`created_by_tenant_id.is.null,created_by_tenant_id.eq.${currentTenant.id}`);
+      }
+
+      // SECONDARY narrower (activity relevance): see
+      // useTenantRelevantSourceIds. Applied AFTER ownership scope.
+      //   null      → All Tenants view, no further filter
       //   undefined → still loading; `enabled` gate below holds the query
       //   string[]  → restrict to these source IDs (empty array → no rows)
       if (tenantRelevantSourceIds !== null && tenantRelevantSourceIds !== undefined) {
@@ -113,8 +141,6 @@ const Sources = () => {
       if (error) throw error;
       return data;
     },
-    // Wait for relevance state to settle so we never briefly show every
-    // source on first paint while the tenant scope is still loading.
     enabled: isAllTenantsView || tenantRelevantSourceIds !== undefined,
   });
 
@@ -300,6 +326,21 @@ const Sources = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10"
             />
+          </div>
+
+          {/* #135: explicit scope indicator — operator clarity, not security gate */}
+          <div className="text-xs text-muted-foreground flex items-center gap-2 px-1">
+            <span className="font-medium">Scope:</span>
+            {isAllTenantsView ? (
+              <Badge variant="outline">All tenants (platform admin)</Badge>
+            ) : currentTenant?.id ? (
+              <Badge variant="outline">
+                Global + {currentTenant.name ?? "current tenant"} owned
+              </Badge>
+            ) : (
+              <Badge variant="outline">No tenant selected</Badge>
+            )}
+            <span className="opacity-60">— UX scope, not access control</span>
           </div>
 
           <Card>
