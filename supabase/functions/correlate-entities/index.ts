@@ -412,10 +412,24 @@ Deno.serve(async (req) => {
 
                 console.log(`[Phase4D] Corroboration: ${corroboratingNames.join(', ')} have recent activity. Boost: +${boost.toFixed(3)}`);
 
-                // Step 5: boost composite_confidence and write graph context to raw_json
+                // Step 5: boost composite_confidence and write graph context to raw_json.
+                //
+                // #121 Phase 1 (2026-05-21) — also promote matched_entities into
+                // signals.entity_tags. Phase 4D was already computing tenant-scoped
+                // entity matches but writing them ONLY to raw_json. AEGIS recon
+                // (`fortress-recon.ts`) reads signals.entity_tags for retrieval,
+                // so leaving the column empty meant recon retrieved diluted context
+                // even when matches existed. The fix: resolve matched_entities UUIDs
+                // to names tenant-scoped, merge with any existing tags, dedupe, and
+                // write to entity_tags in the same UPDATE.
+                //
+                // Tenant scoping is non-negotiable here — resolving a UUID without
+                // a tenant filter could leak a cross-tenant entity name onto a
+                // signal that doesn't own it. The .eq('tenant_id', sig.tenant_id)
+                // filter is the invariant.
                 const { data: sig } = await supabase
                   .from('signals')
-                  .select('composite_confidence, raw_json')
+                  .select('composite_confidence, raw_json, entity_tags, tenant_id')
                   .eq('id', sourceId)
                   .maybeSingle();
 
@@ -423,8 +437,29 @@ Deno.serve(async (req) => {
                   const oldScore = sig.composite_confidence ?? null;
                   const newScore = oldScore !== null ? Math.min(0.98, oldScore + boost) : null;
 
+                  // Resolve entityIds → names, tenant-scoped + soft-deleted-excluded.
+                  // If a matched UUID isn't found under this tenant, it's silently
+                  // dropped (defensive against stale matched_entities or cross-tenant
+                  // UUIDs slipping through).
+                  let mergedEntityTags: string[] = Array.isArray(sig.entity_tags) ? sig.entity_tags : [];
+                  if (sig.tenant_id && entityIds.length > 0) {
+                    const { data: matchedNameRows } = await supabase
+                      .from('entities')
+                      .select('name')
+                      .in('id', entityIds)
+                      .eq('tenant_id', sig.tenant_id)
+                      .is('deleted_at', null);
+                    const newTagNames = (matchedNameRows ?? [])
+                      .map((e: any) => e?.name)
+                      .filter((n: unknown): n is string => typeof n === 'string' && n.length > 0);
+                    if (newTagNames.length > 0) {
+                      mergedEntityTags = Array.from(new Set([...mergedEntityTags, ...newTagNames]));
+                    }
+                  }
+
                   await supabase.from('signals').update({
                     composite_confidence: newScore,
+                    entity_tags: mergedEntityTags,
                     raw_json: {
                       ...(sig.raw_json || {}),
                       phase4d_traversal: {
@@ -439,7 +474,7 @@ Deno.serve(async (req) => {
                     },
                   }).eq('id', sourceId);
 
-                  console.log(`[Phase4D] ${sourceId} composite_confidence: ${oldScore?.toFixed(3) ?? 'null'} → ${newScore?.toFixed(3) ?? 'null'}`);
+                  console.log(`[Phase4D] ${sourceId} composite_confidence: ${oldScore?.toFixed(3) ?? 'null'} → ${newScore?.toFixed(3) ?? 'null'} | entity_tags: +${mergedEntityTags.length - (Array.isArray(sig.entity_tags) ? sig.entity_tags.length : 0)}`);
                 }
               } else {
                 console.log(`[Phase4D] No corroboration — related entities have no recent activity`);
