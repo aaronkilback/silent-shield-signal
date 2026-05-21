@@ -2290,10 +2290,13 @@ Be thorough and include every piece of visible text and data.`,
         };
       }
       
-      // Create as entity_suggestion instead of directly in entities (suggestions-first policy)
+      // Create as entity_suggestion instead of directly in entities (suggestions-first policy).
+      // #134: tenant_id must be set — RLS for analyst/admin visibility requires
+      // tenant_id IS NOT NULL. assertTenantContext above guarantees tenantId.
       const { data: newSuggestion, error } = await supabaseClient
         .from("entity_suggestions")
         .insert({
+          tenant_id: tenantId,
           suggested_name: name,
           suggested_type: type,
           suggested_aliases: aliases || null,

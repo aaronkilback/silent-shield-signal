@@ -56,19 +56,26 @@ export const Header = () => {
       .map((i) => ({ ...i, _visibility: i._visibility as 'active' | 'greyed' }));
   };
 
-  // Get pending entity suggestions count — only for admins
+  // Get pending entity suggestions count — only for admins.
+  // Tenant-scoped: in tenant view, only count this tenant's suggestions;
+  // in All Tenants view (super_admin), count all.
   const { data: pendingSuggestions } = useQuery({
-    queryKey: ['pending-entity-suggestions-count'],
+    queryKey: ['pending-entity-suggestions-count', currentTenant?.id ?? null, isAllTenantsView],
     queryFn: async () => {
-      const { count, error } = await supabase
+      let query = supabase
         .from('entity_suggestions')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'pending');
 
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
+      }
+
+      const { count, error } = await query;
       if (error) throw error;
       return count || 0;
     },
-    enabled: isAdmin || isSuperAdmin,
+    enabled: (isAdmin || isSuperAdmin) && (isAllTenantsView || !!currentTenant?.id),
     refetchInterval: 30000
   });
 

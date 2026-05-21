@@ -1738,9 +1738,15 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           toolResults.push({ tool: 'create_signal', result: { success: true, signal_id: signal?.id, title: signal?.title } });
           
         } else if (funcName === 'suggest_entity') {
+          // #134: tenant_id required for analyst visibility — derived from agent's tenant
+          if (!agent.tenant_id) {
+            toolResults.push({ tool: 'suggest_entity', result: { success: false, error: 'agent has no tenant_id; suggestion would be invisible' } });
+            continue;
+          }
           const { data: suggestion, error } = await supabase
             .from('entity_suggestions')
             .insert({
+              tenant_id: agent.tenant_id,
               suggested_name: args.suggested_name || 'Unknown Entity',
               suggested_type: args.suggested_type || 'person',
               context: args.context || '',
@@ -1752,7 +1758,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             })
             .select('id, suggested_name')
             .single();
-          
+
           if (error) throw error;
           toolResults.push({ tool: 'suggest_entity', result: { success: true, suggestion_id: suggestion?.id, name: suggestion?.suggested_name } });
           

@@ -690,7 +690,23 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
         }
 
         // Create entity suggestion with source_type that matches UI expectations
+        // #134: tenant_id derived via document.client_id → clients.tenant_id
+        // (archival_documents has no tenant_id column).
+        let tenantIdForSuggestion: string | null = null;
+        if (document?.client_id) {
+          const { data: clientRow } = await supabase
+            .from('clients')
+            .select('tenant_id')
+            .eq('id', document.client_id)
+            .maybeSingle();
+          tenantIdForSuggestion = clientRow?.tenant_id ?? null;
+        }
+        if (!tenantIdForSuggestion) {
+          console.warn(`[#134] skipping suggestion for "${entity.name}" — could not derive tenant_id (document client_id=${document?.client_id ?? 'null'})`);
+          continue;
+        }
         const suggestionData = {
+          tenant_id: tenantIdForSuggestion,
           source_id: documentId || 'manual',
           source_type: 'archival_document', // Changed from 'security_report' to match UI
           suggested_name: entity.name,
@@ -708,7 +724,7 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
         };
 
         console.log(`Creating entity suggestion for "${entity.name}" (${entity.type})`);
-        
+
         const { error: suggestionError } = await supabase
           .from('entity_suggestions')
           .insert(suggestionData);

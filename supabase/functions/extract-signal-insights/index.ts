@@ -285,21 +285,27 @@ ${signalText.substring(0, 4000)}`
             .eq('id', signal.id);
 
           // Create entity suggestions for high-confidence entities
-          for (const entity of insights.entities.filter(e => e.confidence >= 0.7)) {
-            try {
-              await supabase
-                .from('entity_suggestions')
-                .insert({
-                  source_type: 'signal',
-                  source_id: crypto.randomUUID(),
-                  suggested_name: entity.name,
-                  suggested_type: entity.type,
-                  confidence: entity.confidence,
-                  context: entity.context || `Extracted from signal ${signal.id}`,
-                  status: 'pending'
-                });
-            } catch (err) {
-              // Ignore duplicate suggestions
+          // #134: tenant_id derived from source signal — required for analyst visibility.
+          if (!signal.tenant_id) {
+            console.warn(`[#134] skipping suggestions for signal ${signal.id} — no tenant_id`);
+          } else {
+            for (const entity of insights.entities.filter(e => e.confidence >= 0.7)) {
+              try {
+                await supabase
+                  .from('entity_suggestions')
+                  .insert({
+                    tenant_id: signal.tenant_id,
+                    source_type: 'signal',
+                    source_id: crypto.randomUUID(),
+                    suggested_name: entity.name,
+                    suggested_type: entity.type,
+                    confidence: entity.confidence,
+                    context: entity.context || `Extracted from signal ${signal.id}`,
+                    status: 'pending'
+                  });
+              } catch (err) {
+                // Ignore duplicate suggestions
+              }
             }
           }
         }

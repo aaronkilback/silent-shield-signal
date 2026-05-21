@@ -27,6 +27,7 @@ interface CreateEntityRequest {
   direct_create?: boolean;
   confidence_score?: number;
   source_context?: string;
+  tenant_id?: string;  // #134: required when creating suggestion (direct_create=false)
 }
 
 Deno.serve(async (req: Request) => {
@@ -149,7 +150,26 @@ Deno.serve(async (req: Request) => {
         { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     } else {
+      // #134: tenant_id required when creating a suggestion (RLS visibility).
+      // Derive from body.tenant_id; fall back to resolved client's tenant_id.
+      let suggestionTenantId = body.tenant_id || null;
+      if (!suggestionTenantId && resolvedClientId) {
+        const { data: clientRow } = await supabase
+          .from("clients")
+          .select("tenant_id")
+          .eq("id", resolvedClientId)
+          .maybeSingle();
+        suggestionTenantId = clientRow?.tenant_id ?? null;
+      }
+      if (!suggestionTenantId) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Cannot create entity suggestion: tenant_id missing and could not be derived from client_id" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const suggestionData = {
+        tenant_id: suggestionTenantId,
         suggested_name: body.name,
         suggested_type: body.type,
         suggested_aliases: body.aliases || null,

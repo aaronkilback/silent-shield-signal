@@ -90,6 +90,17 @@ async function processDocumentBackground(documentId: string) {
       throw new Error(`Document not found: ${docError?.message}`);
     }
 
+    // #134: archival_documents has no tenant_id column — derive via client_id → clients.tenant_id.
+    let docTenantId: string | null = null;
+    if (document.client_id) {
+      const { data: clientRow } = await supabase
+        .from('clients')
+        .select('tenant_id')
+        .eq('id', document.client_id)
+        .maybeSingle();
+      docTenantId = clientRow?.tenant_id ?? null;
+    }
+
     console.log(`Found document: ${document.filename}`);
 
     // CRITICAL: Early file size check to prevent memory exhaustion
@@ -1299,6 +1310,7 @@ Think like a professional intelligence analyst reading an opposition research do
         }
         
         entitySuggestions.push({
+          tenant_id: docTenantId,
           suggested_name: entity.name,
           suggested_type: entity.type,
           confidence: entity.confidence,
@@ -1335,13 +1347,22 @@ Think like a professional intelligence analyst reading an opposition research do
     console.log(`Found ${entitySuggestions.length} high-confidence entities`);
 
     // Insert entity suggestions
+    // #134: drop any rows whose tenant_id couldn't be resolved — RLS requires
+    // tenant_id NOT NULL, and a NULL row would be invisible to analysts.
     if (entitySuggestions.length > 0) {
-      const { error: suggestError } = await supabase
-        .from('entity_suggestions')
-        .insert(entitySuggestions);
+      const filtered = entitySuggestions.filter(s => s.tenant_id);
+      const dropped = entitySuggestions.length - filtered.length;
+      if (dropped > 0) {
+        console.warn(`[#134] dropped ${dropped} suggestion(s) with NULL tenant_id (document ${documentId} has no tenant)`);
+      }
+      if (filtered.length > 0) {
+        const { error: suggestError } = await supabase
+          .from('entity_suggestions')
+          .insert(filtered);
 
-      if (suggestError) {
-        console.error('Error inserting entity suggestions:', suggestError);
+        if (suggestError) {
+          console.error('Error inserting entity suggestions:', suggestError);
+        }
       }
     }
 

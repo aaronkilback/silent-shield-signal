@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     if (batch_mode) {
       const { data: allEntities } = await supabase
         .from('entities')
-        .select('id, name, type, description, risk_level, aliases, threat_indicators, client_id')
+        .select('id, name, type, description, risk_level, aliases, threat_indicators, client_id, tenant_id')
         .order('updated_at', { ascending: true })
         .limit(200);
 
@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
     } else if (entity_id) {
       const { data: entity } = await supabase
         .from('entities')
-        .select('id, name, type, description, risk_level, aliases, threat_indicators, client_id')
+        .select('id, name, type, description, risk_level, aliases, threat_indicators, client_id, tenant_id')
         .eq('id', entity_id)
         .single();
 
@@ -215,26 +215,32 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
           console.log(`[auto-enrich-entities] Applied enrichment to ${entity.name}`);
 
         } else {
-          await supabase
-            .from('entity_suggestions')
-            .insert({
-              source_type: 'auto_enrichment',
-              source_id: crypto.randomUUID(),
-              suggested_name: entity.name,
-              suggested_type: entity.type,
-              matched_entity_id: entity.id,
-              suggested_attributes: {
-                proposed_description: enrichment.description,
-                proposed_risk_level: enrichment.risk_level,
-                proposed_aliases: enrichment.aliases,
-                proposed_threat_indicators: enrichment.threat_indicators,
-                risk_justification: enrichment.risk_justification,
-                associations: enrichment.associations
-              },
-              confidence: enrichment.confidence,
-              context: `Auto-enrichment proposal: ${enrichment.needs_human_review ? 'Needs verification' : 'High confidence'}`,
-              status: 'pending'
-            });
+          // #134: propagate the entity's tenant_id to the suggestion
+          if (!entity.tenant_id) {
+            console.warn(`[#134] skipping enrichment suggestion for entity ${entity.id} — no tenant_id`);
+          } else {
+            await supabase
+              .from('entity_suggestions')
+              .insert({
+                tenant_id: entity.tenant_id,
+                source_type: 'auto_enrichment',
+                source_id: crypto.randomUUID(),
+                suggested_name: entity.name,
+                suggested_type: entity.type,
+                matched_entity_id: entity.id,
+                suggested_attributes: {
+                  proposed_description: enrichment.description,
+                  proposed_risk_level: enrichment.risk_level,
+                  proposed_aliases: enrichment.aliases,
+                  proposed_threat_indicators: enrichment.threat_indicators,
+                  risk_justification: enrichment.risk_justification,
+                  associations: enrichment.associations
+                },
+                confidence: enrichment.confidence,
+                context: `Auto-enrichment proposal: ${enrichment.needs_human_review ? 'Needs verification' : 'High confidence'}`,
+                status: 'pending'
+              });
+          }
 
           results.push({
             entity_id: entity.id,

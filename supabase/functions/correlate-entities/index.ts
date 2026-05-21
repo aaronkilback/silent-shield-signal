@@ -100,6 +100,39 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // #134: resolve tenant_id from the source record. Entity suggestions
+    // created here must carry tenant_id or analysts will not see them.
+    //   signals             → direct tenant_id column
+    //   archival_documents  → chain via client_id → clients.tenant_id
+    //   investigations      → chain via client_id → clients.tenant_id
+    let sourceTenantId: string | null = null;
+    if (sourceType === 'signal') {
+      const { data: sigRow } = await supabase
+        .from('signals')
+        .select('tenant_id')
+        .eq('id', sourceId)
+        .maybeSingle();
+      sourceTenantId = sigRow?.tenant_id ?? null;
+    } else if (sourceType === 'archival_document' || sourceType === 'investigation') {
+      const table = sourceType === 'archival_document' ? 'archival_documents' : 'investigations';
+      const { data: srcRow } = await supabase
+        .from(table)
+        .select('client_id')
+        .eq('id', sourceId)
+        .maybeSingle();
+      if (srcRow?.client_id) {
+        const { data: clientRow } = await supabase
+          .from('clients')
+          .select('tenant_id')
+          .eq('id', srcRow.client_id)
+          .maybeSingle();
+        sourceTenantId = clientRow?.tenant_id ?? null;
+      }
+    }
+    if (!sourceTenantId) {
+      console.warn(`[#134] correlate-entities: could not resolve tenant_id for ${sourceType}:${sourceId} — suggestions will be skipped`);
+    }
+
     // Fetch all active entities with pagination (PostgREST max-rows cap = 1000)
     const entities: any[] = [];
     const pageSize = 1000;
@@ -286,14 +319,15 @@ Deno.serve(async (req) => {
         if (!createError && newEntity) {
           matches.push({ entityId: newEntity.id, entityName: newEntity.name, confidence, matchedOn: [name] });
         }
-      } else {
+      } else if (sourceTenantId) {
         const { data: suggestion, error: suggestionError } = await supabase
           .from('entity_suggestions')
-          .insert({ suggested_name: name, suggested_type: suggestedType, source_type: sourceType,
+          .insert({ tenant_id: sourceTenantId, suggested_name: name, suggested_type: suggestedType, source_type: sourceType,
             source_id: sourceId, confidence, context: ctx, status: 'pending' })
           .select().single();
         if (!suggestionError && suggestion) suggestions.push(suggestion);
       }
+      // else: tenant_id couldn't be resolved → suggestion skipped (warning logged above)
     }
 
     // Write correlated entity IDs back to source record

@@ -14,11 +14,13 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 
 export const EntitySuggestionsPanel = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { selectedClientId } = useClientSelection();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const queryClient = useQueryClient();
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
@@ -49,18 +51,24 @@ export const EntitySuggestionsPanel = () => {
   };
 
   const { data: suggestions, isLoading } = useQuery({
-    queryKey: ['entity-suggestions'],
+    queryKey: ['entity-suggestions', currentTenant?.id ?? null, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('entity_suggestions')
         .select('*')
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
 
+      if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
-    refetchInterval: 30000 // Refetch every 30 seconds
+    enabled: isAllTenantsView || !!currentTenant?.id,
+    refetchInterval: 30000
   });
 
   const deleteAllMutation = useMutation({

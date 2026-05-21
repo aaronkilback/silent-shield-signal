@@ -6,10 +6,13 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
-    const { file, filename, mimeType } = await req.json();
-    
+    const { file, filename, mimeType, tenant_id } = await req.json();
+
     if (!file || !filename) {
       return errorResponse('File and filename are required', 400);
+    }
+    if (!tenant_id) {
+      return errorResponse('tenant_id is required (entity suggestions must be tenant-scoped)', 400);
     }
 
     console.log('Processing entities document:', filename, mimeType);
@@ -146,6 +149,17 @@ ${text}`
       throw new Error('Invalid user token');
     }
 
+    // #134: verify caller is a member of the supplied tenant
+    const { data: membership } = await supabase
+      .from('tenant_users')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .eq('tenant_id', tenant_id)
+      .limit(1);
+    if (!Array.isArray(membership) || membership.length === 0) {
+      return errorResponse('Forbidden: not a member of the supplied tenant', 403);
+    }
+
     // Suggestions-first policy: store extracted entities as pending suggestions (not active entities)
     const uploadId = crypto.randomUUID();
 
@@ -212,6 +226,7 @@ ${text}`
       const { data, error } = await supabase
         .from('entity_suggestions')
         .insert({
+          tenant_id,
           suggested_name: entity.name,
           suggested_type: suggestedType,
           suggested_aliases: entity.aliases || [],
