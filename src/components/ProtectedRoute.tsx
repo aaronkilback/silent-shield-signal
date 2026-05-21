@@ -38,7 +38,7 @@ import { Loader2 } from "lucide-react";
  */
 export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading: authLoading } = useAuth();
-  const { currentTenant, isAllTenantsView, isLoading: tenantLoading } = useTenant();
+  const { currentTenant, isAllTenantsView, isLoading: tenantLoading, isSuperAdmin } = useTenant();
   const location = useLocation();
   const prevDecisionRef = useRef<string>("");
 
@@ -120,6 +120,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
       user={user}
       currentTenant={currentTenant}
       isAllTenantsView={isAllTenantsView}
+      isSuperAdmin={isSuperAdmin}
     >
       {children}
     </OnboardingChecks>
@@ -131,6 +132,7 @@ interface OnboardingChecksProps {
   user: { id: string };
   currentTenant: { id: string; name: string; access_mode?: string } | null;
   isAllTenantsView: boolean;
+  isSuperAdmin: boolean;
   children: React.ReactNode;
 }
 
@@ -138,16 +140,22 @@ const OnboardingChecks = ({
   user,
   currentTenant,
   isAllTenantsView,
+  isSuperAdmin,
   children,
 }: OnboardingChecksProps) => {
   // Platform-admin view skips the per-tenant gate. We DO NOT treat
-  // `!currentTenant` as platform-admin here — that catches brand-new users
-  // mid-tenant-context-refetch and lets them bypass the onboarding gate.
-  // For the genuinely-no-tenant case, we render a loader below and wait for
-  // the context to resolve.
+  // `!currentTenant` as platform-admin here for regular users — that catches
+  // brand-new users mid-tenant-context-refetch and lets them bypass the
+  // onboarding gate. But for super_admin with no scope selected we MUST
+  // admit them as platform-admin, otherwise the !currentTenant loader at
+  // line 195 spins forever (super_admin hydration intentionally leaves
+  // currentTenant=null when no localStorage selection exists — see
+  // useTenant.tsx:201-207). Restores #81's lost behavior — root cause of
+  // the 2026-05-21 prod page hang.
   const platformAdminMode =
     isAllTenantsView ||
-    currentTenant?.access_mode === "platform_admin";
+    currentTenant?.access_mode === "platform_admin" ||
+    (isSuperAdmin && !currentTenant);
 
   const { loading: mfaLoading, enrolled: mfaEnrolled, refresh: refreshMfa } = useMfaEnforcement({
     userId: user.id,
