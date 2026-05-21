@@ -9,6 +9,7 @@ import { FirstLoginAgreementGate } from "@/components/onboarding/FirstLoginAgree
 import { TenantConfirmationScreen } from "@/components/onboarding/TenantConfirmationScreen";
 import { MandatoryMFAEnrollment } from "@/components/MandatoryMFAEnrollment";
 import { Loader2 } from "lucide-react";
+import { RecoverableLoader } from "@/components/RecoverableLoader";
 
 /**
  * Route guard. Decisions are derived purely from context state at
@@ -92,11 +93,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }, [decisionKey, location.pathname, user, isLoading, currentTenant, isAllTenantsView, profile, tenantObservation, routeAccessible, accessible]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <RecoverableLoader label="Loading session…" />;
   }
 
   if (!user) {
@@ -186,11 +183,7 @@ const OnboardingChecks = ({
   // gets a session without going through Auth.tsx's signup-form MFA trigger.
   // Fires BEFORE the onboarding gate because MFA is the security floor.
   if (mfaLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <RecoverableLoader label="Verifying MFA…" />;
   }
 
   if (!mfaEnrolled) {
@@ -199,21 +192,15 @@ const OnboardingChecks = ({
 
   // Brand-new user mid-tenant-context-refetch: hold the loader rather than
   // letting the dashboard render past the gate. The tenant context's own
-  // refetch will populate `currentTenant` within a tick.
+  // refetch will populate `currentTenant` within a tick. Wrapped in
+  // RecoverableLoader so a future state-deadlock here can self-recover
+  // instead of spinning forever (see 2026-05-21 P0 incident).
   if (!currentTenant) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <RecoverableLoader label="Loading tenant context…" />;
   }
 
   if (gateLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <RecoverableLoader label="Checking onboarding gate…" />;
   }
 
   if (!upToDate && currentTenant) {

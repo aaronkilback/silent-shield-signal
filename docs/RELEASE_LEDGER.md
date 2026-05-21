@@ -36,6 +36,46 @@ Copy this template for each new release:
 
 ## Entries
 
+### 2026-05-21T20:05Z — P0 hotfix: super_admin bootstrap infinite spinner
+
+- **Ticket:** P0 prod hang triage (no ticket # — incident response)
+- **Operator:** ak@silentshieldsecurity.com (Claude-assisted)
+- **Commits / PRs:** commit `69419afe` (pushed direct to main, no PR — emergency hotfix)
+- **Migrations applied (prod):** none
+- **Functions deployed (prod):** none
+- **Frontend deploy:** live on Cloudflare Worker (deploy succeeded 1m44s; Aaron confirmed page loads after hard refresh)
+- **Manual SQL / data changes:**
+  1. `FEEDBACK_LEARNING_PER_TENANT_ENABLED=true` set as prod secret (option A speculative fix; later determined unrelated to the actual root cause but left set; safe — it would only re-enable already-deployed Phase 1 logic when those functions next run)
+- **Validation performed:**
+  - DevTools network triage ruled out backend hang (signals/incidents/user 200, no pending XHR)
+  - Debug overlay confirmed: tenant=null, profile=operator, isAllTenantsView=false, selectedClient populated
+  - Code trace → `ProtectedRoute.tsx:195` unconditional `if (!currentTenant) return <Loader>` inside `OnboardingChecks`
+  - Aaron's super_admin session had no `fortress_current_tenant_id` in localStorage and no `fortress_all_tenants_view`, so `useTenant` hydration intentionally left `currentTenant=null` ("explicit no-selection" — useTenant.tsx:201-207 from Bug 2 2026-05-19 sweep). Hit loader, spun forever.
+  - Ticket #81 ("Super_admin lockout hotfix — admit isSuperAdmin+!currentTenant into platformAdminMode") was supposed to prevent this case; the fix had been lost from `OnboardingChecks.platformAdminMode`.
+  - Hotfix: added `(isSuperAdmin && !currentTenant)` to `platformAdminMode` condition. Super_admin with no scope now hits early-return at line 173.
+  - Post-deploy: Aaron confirmed prod page loaded after hard refresh.
+- **Rollback:** `git revert 69419afe`. No DB / migration / function impact.
+- **Followups filed:**
+  - #147 — Playwright regression test for super_admin no-scope bootstrap
+  - #148 — No-forever-spinner global guard (8-10s timeout → recoverable reset)
+
+### 2026-05-21T19:50Z — #130 Phase 0: feedback_events tenant containment + ML kill switches + telemetry
+
+- **Ticket:** #130 (Phase 0A + 0B), #143, #144
+- **Operator:** ak@silentshieldsecurity.com (Claude-assisted)
+- **Commits / PRs:** commit `f7675f5d` (Phase 0A migration + 3 feature-flag patches + Phase 0B tenant-scope patches)
+- **Migrations applied (prod):** `20260521190000_feedback_events_phase0a_rls_clamp` — dropped broad "Analysts and admins full access" policy; replaced with polymorphic tenant-scoped SELECT via signals/entities chain; super_admin bypass.
+- **Functions deployed (prod):** `optimize-rule-thresholds`, `predictive-alert-tuning`, `generate-learning-context` (feature-flag-disabled via FEEDBACK_LEARNING_PER_TENANT_ENABLED, default OFF), `ingest-signal` (tenant-scoped few-shot via signals!inner join), `process-intelligence-document` (tenant-scoped feedback via clients chain)
+- **Frontend deploy:** none (backend-only)
+- **Manual SQL / data changes:** prod marker proof seed/cleanup (deleted)
+- **Validation performed:**
+  - Staging deterministic marker proof (5 cases all PASS — A_ONLY_MARKER visible to CRT only, B_ONLY_MARKER visible to Petronas only, pre-fix shape would have seen both)
+  - Prod marker proof re-run (5 cases all PASS, same shape)
+  - Customer API read leak closed: Vince's feedback_events visibility dropped 264 → 5 rows
+  - super_admin omniscience preserved: Aaron sees 264 rows
+  - 211 prod ingest-signal calls post-Phase 0: 0 errors, latency comparable (p50 2470ms vs pre 2850ms)
+- **Rollback:** `git revert f7675f5d`; re-apply old RLS policy; unset env var.
+
 ### 2026-05-21T18:46Z — #139 entities visibility_class model
 
 - **Ticket:** #139 (Issue 2 Phase B — provenance-aware suppression)
