@@ -116,7 +116,8 @@ Deno.serve(async (req: Request) => {
         client_id: resolvedClientId,
         confidence_score: body.confidence_score ?? 0.85,
         is_active: true,
-        entity_status: "confirmed"
+        entity_status: "confirmed",
+        visibility_class: "curated",  // #139: direct_create is operator-directed entity authoring
       };
 
       const { data: newEntity, error: createError } = await supabase

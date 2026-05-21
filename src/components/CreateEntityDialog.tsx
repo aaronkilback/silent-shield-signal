@@ -258,7 +258,8 @@ export const CreateEntityDialog = ({
           address_city: formData.address_city || null,
           address_province: formData.address_province || null,
           address_postal_code: formData.address_postal_code || null,
-          address_country: formData.address_country || null
+          address_country: formData.address_country || null,
+          visibility_class: 'curated',  // #139: operator-authored via Add Entity dialog
         }])
         .select()
         .single();

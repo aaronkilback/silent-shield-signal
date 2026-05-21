@@ -43,7 +43,7 @@ export default function Entities() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [showAutoCreated, setShowAutoCreated] = useState(false);
-  const [hideLowQuality, setHideLowQuality] = useState(true);
+  const [hideLowQuality, setHideLowQuality] = useState(true); // toggle label: "Hide unreviewed extractions" (#139)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [bulletinDialogOpen, setBulletinDialogOpen] = useState(false);
@@ -94,8 +94,11 @@ export default function Entities() {
       }
 
       if (hideLowQuality) {
-        // Always show entities that have been assessed or investigated, regardless of quality score
-        query = query.or('quality_score.gte.5,ai_assessment.not.is.null,ai_assessed_at.not.is.null');
+        // #139: provenance-aware suppression. Hide only machine-originated entities
+        // that have not yet been gated by a human. visibility_class='curated' (operator
+        // authored) and 'reviewed' (suggestion approved) are always shown; only
+        // 'extracted' is suppressible. Replaces the old quality_score-based proxy.
+        query = query.neq('visibility_class', 'extracted');
       }
 
       const { data, error } = await query;
@@ -404,9 +407,9 @@ export default function Entities() {
                 variant={hideLowQuality ? "default" : "outline"}
                 size="sm"
                 onClick={() => setHideLowQuality(!hideLowQuality)}
-                title="Hide entities with no signals, relationships, or content"
+                title="Hide machine-extracted entities that have not been reviewed by an analyst. Manually-created and approved entities stay visible."
               >
-                Quality Filter
+                Hide Unreviewed Extractions
               </Button>
             </div>
             <div className="flex gap-1">

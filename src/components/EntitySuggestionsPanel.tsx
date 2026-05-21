@@ -179,6 +179,7 @@ export const EntitySuggestionsPanel = () => {
           is_active: true,
           description: `Created from ${suggestion.source_type} suggestion`,
           client_id: clientId,
+          visibility_class: 'reviewed',  // #139: analyst approved an entity_suggestion
         }])
         .select()
         .single();

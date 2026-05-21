@@ -841,6 +841,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
           entity_status: 'confirmed',
           is_active: true,
           description: [person.position, person.company].filter(Boolean).join(' at ') || null,
+          visibility_class: 'curated',  // #139: operator promoted investigation person → entity
           attributes: {
             phone: person.phone,
             email: person.email,
@@ -914,6 +915,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
           entity_status: 'confirmed',
           is_active: true,
           description: `Organization linked from investigation ${investigation?.file_number || ''}`.trim(),
+          visibility_class: 'curated',  // #139: operator promoted investigation org → entity
           attributes: {
             source_investigation: investigation?.file_number,
             associated_person: person.name
@@ -957,6 +959,7 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
           entity_status: 'confirmed',
           is_active: true,
           confidence_score: 0.7,
+          visibility_class: 'curated',  // #139: operator added location via investigation UI
           attributes: {
             source_investigation: investigation?.file_number
           }
