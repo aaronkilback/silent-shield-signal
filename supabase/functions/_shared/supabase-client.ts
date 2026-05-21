@@ -133,12 +133,140 @@ export async function getUserFromRequest(req: Request): Promise<AuthResult> {
  */
 export async function requireAuth(req: Request): Promise<{ userId: string; user: any }> {
   const { userId, user, error } = await getUserFromRequest(req);
-  
+
   if (!userId || !user) {
     throw errorResponse(error || 'Authentication required', 401);
   }
-  
+
   return { userId, user };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//   F-026 caller-identity gate (service-role aware) + tenant access checks
+//
+//   Used by edge functions with verify_jwt=false that must distinguish
+//   trusted internal callers (service role) from user JWT callers (must bind
+//   tenant). Originally introduced in 60006a89 for F-025 (generate-daily-
+//   briefing, generate-executive-report); extended in f2965d9c for F-026
+//   (ingest-signal).
+//
+//   Three exports here:
+//     - getCallerIdentity        — resolves a request to service_role / user /
+//                                  unauthorized. Drop-in for any function that
+//                                  needs to distinguish trusted internal vs
+//                                  user-JWT callers under verify_jwt=false.
+//     - userCanAccessClient      — singular: does THIS user have access to
+//                                  THIS one client_id? Cheap, prefer when the
+//                                  caller knows the single client_id ahead.
+//     - getAccessibleClientIds   — plural: which client_ids does THIS user
+//                                  have access to? Used when the caller must
+//                                  validate against a set or list. Calls the
+//                                  canonical parameterized RPC (migration
+//                                  20260520235000); SAME join as the no-arg
+//                                  RPC used by RLS on `clients`.
+//
+//   Both helpers fail-CLOSED: any error returns "no access" rather than
+//   "all access" — the gate code interprets empty access as a 403.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type CallerIdentity =
+  | { kind: 'service_role' }
+  | { kind: 'user'; userId: string; user: any }
+  | { kind: 'unauthorized'; error: string; status: number };
+
+export async function getCallerIdentity(req: Request): Promise<CallerIdentity> {
+  const authHeader = req.headers.get('Authorization') ?? req.headers.get('authorization');
+  if (!authHeader || !/^Bearer\s+/i.test(authHeader)) {
+    return { kind: 'unauthorized', error: 'authentication required', status: 401 };
+  }
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (!token) {
+    return { kind: 'unauthorized', error: 'authentication required', status: 401 };
+  }
+
+  // Service-role check covers two real paths the codebase actually uses:
+  //   (a) callers that read Deno.env.SUPABASE_SERVICE_ROLE_KEY directly
+  //       (scheduled-report-delivery, dashboard-ai-assistant report tool)
+  //   (b) callers that use the rotated vault key via the
+  //       get_current_service_role_key() RPC (May 6 2026 rotation pattern)
+  // Either must be accepted; env and vault values can diverge during a
+  // rotation window, and rejecting one would 401 legitimate inter-function calls.
+  const envKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  if (envKey.length > 0 && token === envKey) {
+    return { kind: 'service_role' };
+  }
+  try {
+    const probe = createServiceClient();
+    const { data: vaultKey } = await probe.rpc('get_current_service_role_key');
+    if (typeof vaultKey === 'string' && vaultKey.length > 0 && token === vaultKey) {
+      return { kind: 'service_role' };
+    }
+  } catch (_) {
+    // Vault probe failed — fall through to user-JWT path. We do not treat
+    // vault failure as fatal because (a) the RPC may not exist on every
+    // environment yet, and (b) the env-key path above already handled the
+    // common service-role caller. User JWT validation still works.
+  }
+
+  try {
+    const supabase = createServiceClient();
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+      return { kind: 'unauthorized', error: error?.message || 'invalid or expired token', status: 401 };
+    }
+    return { kind: 'user', userId: user.id, user };
+  } catch (err) {
+    console.error('[getCallerIdentity] token validation threw:', err);
+    return { kind: 'unauthorized', error: 'token validation failed', status: 401 };
+  }
+}
+
+/**
+ * F-025 helper — check whether a specific user can access a specific client.
+ * Cheap (single-row check). Prefer over getAccessibleClientIds() when the
+ * caller already knows the single client_id to validate.
+ */
+export async function userCanAccessClient(
+  supabase: SupabaseClient,
+  userId: string,
+  clientId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('id, tenant_id, tenant_users!inner(user_id)')
+    .eq('id', clientId)
+    .eq('tenant_users.user_id', userId)
+    .limit(1);
+  if (error) {
+    console.error('[userCanAccessClient] lookup error:', error);
+    return false;
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
+ * F-026 helper — return the full set of client_ids a user can access via
+ * their tenant_users membership. Calls the canonical parameterized RPC
+ * `get_user_accessible_client_ids(_user_id)`, which uses the SAME join as
+ * the no-arg RPC used by RLS on `clients`. Any divergence between this
+ * helper and RLS is a bug — both must point at the same SQL function.
+ *
+ * Fail-closed: any error returns empty array. Caller treats empty as
+ * "no accessible clients" → gate rejects the request.
+ */
+export async function getAccessibleClientIds(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .rpc('get_user_accessible_client_ids', { _user_id: userId });
+  if (error) {
+    console.error('[getAccessibleClientIds] RPC error:', error);
+    return [];
+  }
+  return (data ?? [])
+    .map((row: { client_id: string }) => row?.client_id)
+    .filter((id: string | undefined): id is string => typeof id === 'string');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
