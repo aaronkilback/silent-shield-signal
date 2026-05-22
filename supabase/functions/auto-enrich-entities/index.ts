@@ -1,13 +1,17 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
-// #179 H-2 Entity governance — origin=llm (autonomous cron); cannot reach operator_promoted.
-// Note: enrichment proposals target existing entities (matched_entity_id always set);
-// validator returns auto_link on name match — we still persist the suggestion because
-// the row encodes proposed changes, not a new entity.
+// #182A Phase 1 — Audit-first atomic persistence via SECURITY DEFINER RPC.
+// Enrichment doctrine (carried from #179 H-2): validator returns auto_link
+// because the matched entity already exists, but the suggestion row carries
+// a proposed *mutation* (description, risk_level, aliases, threat_indicators
+// targeting an existing curated entity). We override verdict to
+// suggestion_queue so the proposed change reaches an operator — auto-applying
+// LLM-proposed mutations to curated entities is exactly what #171 prevents.
 import {
   validateAndClassify as governanceValidateAndClassify,
-  recordGovernanceEvent as governanceRecordEvent,
+  persistGovernanceVerdict as governancePersist,
   type EntityCandidate,
+  type EntityGovernanceResult,
 } from "../_shared/entity-governance.ts";
 
 const corsHeaders = {
@@ -294,55 +298,59 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
               description: enrichment.description ?? null,
               confidence: enrichment.confidence,
               origin: 'llm',
-              context: `Auto-enrichment proposal: ${enrichment.needs_human_review ? 'Needs verification' : 'High confidence'}`,
+              context: `${entity.name}: Auto-enrichment proposal (${enrichment.needs_human_review ? 'Needs verification' : 'High confidence'}). ${(enrichment.description ?? '').substring(0, 200)}`,
               sourceRef: { kind: 'investigation', id: entity.id },
             };
             const verdict = await governanceValidateAndClassify(supabase, entity.tenant_id, candidate);
             metrics.verdict_counts[verdict.verdict] = (metrics.verdict_counts[verdict.verdict] ?? 0) + 1;
-            // Enrichment semantics: validator will typically return auto_link (the entity exists).
-            // We still persist the suggestion row because it carries the proposed changes —
-            // this is an enrichment-of-existing pattern, distinct from new-entity proposals.
-            // auto_reject (e.g., entity name became invalid by ontology) skips persistence + records event.
+            // #182A — Single atomic call via governance_persist_* RPC.
+            // auto_reject: event-only (no suggestion row).
+            // Otherwise (auto_link from name-match, or suggestion_queue from a novel name):
+            // force suggestion_queue so the proposed mutation reaches an operator.
+            // See import-block doctrine note. validator's actual finding was already
+            // counted in verdict_counts above so per-verdict telemetry is preserved.
             if (verdict.verdict === 'auto_reject') {
-              governanceRecordEvent(supabase, { tenantId: entity.tenant_id, sourceWriter: 'other', candidate, result: verdict });
-              console.warn(`[#179 H-2] enrichment rejected for ${entity.id}: ${verdict.rejectionReasons.join(',')}`);
-            } else {
-              const { data: newSugg, error: sErr } = await supabase
-                .from('entity_suggestions')
-                .insert({
-                  tenant_id: entity.tenant_id,
-                  source_type: 'auto_enrichment',
-                  source_id: crypto.randomUUID(),
-                  suggested_name: verdict.normalizedName,
-                  suggested_type: verdict.resolvedType,
-                  matched_entity_id: entity.id,
-                  suggested_attributes: {
-                    proposed_description: enrichment.description,
-                    proposed_risk_level: enrichment.risk_level,
-                    proposed_aliases: enrichment.aliases,
-                    proposed_threat_indicators: enrichment.threat_indicators,
-                    risk_justification: enrichment.risk_justification,
-                    associations: enrichment.associations,
-                  },
-                  confidence: verdict.effectiveConfidence,
-                  context: candidate.context,
-                  status: 'pending',
-                })
-                .select('id')
-                .single();
-              if (sErr) {
-                metrics.persistence_errors += 1;
-                governanceRecordEvent(supabase, { tenantId: entity.tenant_id, sourceWriter: 'other', candidate, result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] } });
-                console.error(`[#179 H-2] enrichment persistence failed for ${entity.id}:`, sErr.message);
-              } else {
-                governanceRecordEvent(supabase, {
+              try {
+                await governancePersist(supabase, {
                   tenantId: entity.tenant_id,
-                  sourceWriter: 'other',
+                  sourceWriter: 'auto_enrich_entities',
+                  callerIntent: 'autonomous_system',
                   candidate,
                   result: verdict,
-                  suggestionId: newSugg.id,
-                  linkedEntityId: entity.id,
                 });
+              } catch (e: any) {
+                metrics.persistence_errors += 1;
+                console.error(`[#182A] enrichment auto_reject persist failed for ${entity.id}: ${e?.message ?? e}`);
+              }
+              console.warn(`[#182A] enrichment rejected for ${entity.id}: ${verdict.rejectionReasons.join(',')}`);
+            } else {
+              const enrichmentVerdict: EntityGovernanceResult = { ...verdict, verdict: 'suggestion_queue' };
+              try {
+                await governancePersist(supabase, {
+                  tenantId: entity.tenant_id,
+                  sourceWriter: 'auto_enrich_entities',
+                  callerIntent: 'autonomous_system',
+                  candidate,
+                  result: enrichmentVerdict,
+                  suggestionRow: {
+                    source_type: 'auto_enrichment',
+                    source_id: crypto.randomUUID(),
+                    matched_entity_id: entity.id,
+                    suggested_attributes: {
+                      proposed_description: enrichment.description,
+                      proposed_risk_level: enrichment.risk_level,
+                      proposed_aliases: enrichment.aliases,
+                      proposed_threat_indicators: enrichment.threat_indicators,
+                      risk_justification: enrichment.risk_justification,
+                      associations: enrichment.associations,
+                    },
+                    context: candidate.context ?? null,
+                    status: 'pending',
+                  },
+                });
+              } catch (e: any) {
+                metrics.persistence_errors += 1;
+                console.error(`[#182A] enrichment persistence failed for ${entity.id}: ${e?.message ?? e}`);
               }
             }
           }
