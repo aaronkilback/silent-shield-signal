@@ -120,6 +120,38 @@ export async function failHeartbeat(
 }
 
 /**
+ * Read the result_summary from the most-recent SUCCEEDED heartbeat for a job.
+ * Used by functions implementing the budget/cursor pattern (e.g. monitor-news-google)
+ * to resume where a prior run left off via result_summary.next_cursor.
+ *
+ * Filters status='succeeded' so the caller never picks up:
+ *   - an in-flight 'running' row (possibly its own, if the caller just wrote one)
+ *   - a 'failed' prior run whose result_summary may not carry a meaningful cursor
+ *
+ * Returns null on no prior successful run, on row-not-found, or on query error.
+ * Callers should treat null as "start from the beginning of the work list."
+ */
+export async function getLatestSucceededResultSummary(
+  supabase: SupabaseClient,
+  jobName: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const { data } = await supabase
+      .from("cron_heartbeat")
+      .select("result_summary")
+      .eq("job_name", jobName)
+      .eq("status", "succeeded")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return (data?.result_summary as Record<string, unknown> | null) ?? null;
+  } catch (e) {
+    console.warn(`[heartbeat] getLatestSucceededResultSummary(${jobName}) failed:`, e);
+    return null;
+  }
+}
+
+/**
  * Single-insert pattern — write one completed row at the end of a run.
  * Use this for short functions that don't need a 'running' state visible during execution.
  */
