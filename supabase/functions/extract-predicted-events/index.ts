@@ -23,6 +23,12 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGatewayJson } from "../_shared/ai-gateway.ts";
+// #179 Entity governance — LLM cron extractor; can never reach operator_promoted (origin=llm).
+// Direct entities.insert replaced with governance-routed suggestion creation.
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+} from "../_shared/entity-governance.ts";
 
 const EVENT_TRIGGER_REGEX = /\b(forum|rally|protest|march|hearing|tribunal|workshop|conference|panel|presentation|town\s*hall|webinar|symposium|gathering|vigil|meeting|consultation|roundtable|summit|festival|memorial|launch)\b/i;
 const SCAN_WINDOW_DAYS = 7;
@@ -126,36 +132,68 @@ Deno.serve(async (req) => {
         }).then(() => {}, (e: unknown) => console.warn('[events] mention insert failed', e));
         eventsLinked++;
       } else {
-        const { error: insertErr } = await supabase.from('entities').insert({
-          name: eventName,
-          type: 'event',
-          client_id: sig.client_id ?? null,
-          attributes,
-          active_monitoring_enabled: true,
-          risk_level: 'unknown',
-        });
-        if (insertErr) {
-          skipped.push(`${sig.id}:entity_insert_failed:${insertErr.message}`);
+        // #179 — Autonomous LLM cron: route through governance. Cannot reach
+        // operator_promoted (origin=llm). Best outcome: suggestion_queue.
+        // Tenant resolution: signal.tenant_id (deterministic).
+        let sigTenantId: string | null = null;
+        if (sig.client_id) {
+          const { data: clientRow } = await supabase.from('clients').select('tenant_id').eq('id', sig.client_id).maybeSingle();
+          sigTenantId = clientRow?.tenant_id ?? null;
+        }
+        if (!sigTenantId) {
+          // Try signal.tenant_id directly (post-#134 signals have this field)
+          const { data: sigTenantRow } = await supabase.from('signals').select('tenant_id').eq('id', sig.id).maybeSingle();
+          sigTenantId = sigTenantRow?.tenant_id ?? null;
+        }
+        if (!sigTenantId) {
+          skipped.push(`${sig.id}:no_tenant_context_refused_per_doctrine`);
           continue;
         }
-        // Look up the new entity id and link the source signal
-        const { data: newEnt } = await supabase
-          .from('entities')
-          .select('id')
-          .eq('name', eventName)
-          .eq('type', 'event')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (newEnt?.id) {
+
+        const candidate = {
+          name: eventName,
+          type: 'event',
+          description: typeof attributes?.summary === 'string' ? attributes.summary : null,
+          confidence: eventConfidence,
+          origin: 'llm' as const,
+          context: sig.normalized_text?.substring(0, 500) ?? null,
+          sourceRef: { kind: 'signal' as const, id: sig.id },
+        };
+
+        const verdict = await governanceValidateAndClassify(supabase, sigTenantId, candidate);
+
+        if (verdict.verdict === 'auto_link' && verdict.matchedEntityId) {
+          governanceRecordEvent(supabase, { tenantId: sigTenantId, sourceWriter: 'other', candidate, result: verdict });
           await supabase.from('entity_mentions').insert({
-            entity_id: newEnt.id,
-            signal_id: sig.id,
-            confidence: eventConfidence,
-            context: 'predicted_event_extraction',
+            entity_id: verdict.matchedEntityId, signal_id: sig.id, confidence: eventConfidence, context: 'predicted_event_extraction',
           }).then(() => {}, (e: unknown) => console.warn('[events] mention insert failed', e));
+          eventsLinked++;
+          continue;
         }
-        eventsCreated++;
+        if (verdict.verdict === 'auto_reject') {
+          governanceRecordEvent(supabase, { tenantId: sigTenantId, sourceWriter: 'other', candidate, result: verdict });
+          skipped.push(`${sig.id}:governance_rejected:${verdict.rejectionReasons.join(',')}`);
+          continue;
+        }
+        // suggestion_queue — persist as entity_suggestion (event must be operator-promoted to become entity)
+        const { data: newSuggestion, error: suggErr } = await supabase.from('entity_suggestions').insert({
+          tenant_id: sigTenantId,
+          suggested_name: verdict.normalizedName,
+          suggested_type: verdict.resolvedType,
+          suggested_attributes: attributes,
+          source_type: 'signal',
+          source_id: sig.id,
+          confidence: verdict.effectiveConfidence,
+          context: `Predicted event extraction from signal ${sig.id}`,
+          status: 'pending',
+        }).select('id').single();
+        if (suggErr) {
+          skipped.push(`${sig.id}:suggestion_insert_failed:${suggErr.message}`);
+          governanceRecordEvent(supabase, { tenantId: sigTenantId, sourceWriter: 'other', candidate, result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] } });
+          continue;
+        }
+        governanceRecordEvent(supabase, { tenantId: sigTenantId, sourceWriter: 'other', candidate, result: verdict, suggestionId: newSuggestion.id });
+        eventsCreated++;  // counter retained for compat; semantic: events queued
       }
     }
 

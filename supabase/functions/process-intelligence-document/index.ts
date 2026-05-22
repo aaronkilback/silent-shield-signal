@@ -3,6 +3,11 @@ import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
 import { enqueueJob } from "../_shared/queue.ts";
+// #179 Entity governance — LLM extraction from documents routes through suggestion queue
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+} from "../_shared/entity-governance.ts";
 
 const AI_REFUSAL_PATTERNS = [
   /i cannot (fulfill|provide|complete|generate)/i,
@@ -750,23 +755,49 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
         }
       }
 
-      // Create new entity only if truly novel
+      // #179 — Create suggestion instead of direct entity. LLM origin can never
+      // reach operator_promoted; human review must approve before entity creation.
+      // Tenant resolution: clientMatch.clientId → clients.tenant_id (deterministic
+      // since this branch only fires when clientMatch is set; doc was attributed to a tenant).
       if (!entityId) {
-        const { data: newEntity, error: entityError } = await supabase
-          .from('entities')
-          .insert({
-            name: entity.name,
-            type: entity.type,
-            confidence_score: entity.confidence,
-            entity_status: 'suggested',
-            is_active: true
-          })
-          .select('id')
-          .single();
-
-        if (!entityError && newEntity) {
-          entityId = newEntity.id;
+        let docTenantId: string | null = null;
+        if (clientMatch?.clientId) {
+          const { data: c } = await supabase.from('clients').select('tenant_id').eq('id', clientMatch.clientId).maybeSingle();
+          docTenantId = c?.tenant_id ?? null;
+        }
+        if (!docTenantId) {
+          // Per #179 doctrine: no tenant context = no persistence
+          continue;
+        }
+        const candidate = {
+          name: entity.name,
+          type: entity.type,
+          confidence: entity.confidence ?? 0.7,
+          origin: 'llm' as const,
+          context: typeof entity.context === 'string' ? entity.context : null,
+          sourceRef: { kind: 'document' as const, id: documentId ?? crypto.randomUUID() },
+        };
+        const verdict = await governanceValidateAndClassify(supabase, docTenantId, candidate);
+        if (verdict.verdict === 'auto_link' && verdict.matchedEntityId) {
+          entityId = verdict.matchedEntityId;
+          governanceRecordEvent(supabase, { tenantId: docTenantId, sourceWriter: 'other', candidate, result: verdict });
+        } else if (verdict.verdict === 'suggestion_queue') {
+          const { data: sugg } = await supabase.from('entity_suggestions').insert({
+            tenant_id: docTenantId,
+            suggested_name: verdict.normalizedName,
+            suggested_type: verdict.resolvedType,
+            source_type: 'document',
+            source_id: documentId ?? crypto.randomUUID(),
+            confidence: verdict.effectiveConfidence,
+            context: candidate.context || `Extracted from document ${documentId}`,
+            status: 'pending',
+          }).select('id').single();
+          governanceRecordEvent(supabase, { tenantId: docTenantId, sourceWriter: 'other', candidate, result: verdict, suggestionId: sugg?.id });
           results.entities_extracted++;
+          continue;  // no entityId for mention creation; mention deferred until suggestion approved
+        } else {
+          governanceRecordEvent(supabase, { tenantId: docTenantId, sourceWriter: 'other', candidate, result: verdict });
+          continue;
         }
       }
 

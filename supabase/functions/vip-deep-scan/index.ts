@@ -1,4 +1,23 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+// #179 Entity governance + tenant resolution. VIP intake is operator-mediated;
+// uses operator_promoted verdict with mandatory audit metadata.
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+  type BypassMetadata,
+} from "../_shared/entity-governance.ts";
+
+function parseJwtSub(req: Request): string | null {
+  try {
+    const auth = req.headers.get('authorization') || '';
+    const token = auth.replace(/^Bearer\s+/i, '');
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.sub ?? null;
+  } catch (_) { return null; }
+}
 
 interface VIPIntakeData {
   clientId: string;
@@ -70,6 +89,21 @@ Deno.serve(async (req) => {
     console.log(`[VIP-DEEP-SCAN] Priority: ${intakeData.priorityLevel}`);
     console.log(`[VIP-DEEP-SCAN] Client ID: ${intakeData.clientId}`);
 
+    // #179 — Tenant resolution from clientId. No fallback per doctrine.
+    const operatorId = parseJwtSub(req);
+    if (!operatorId) {
+      return errorResponse("AUTH_REQUIRED: caller JWT could not be parsed", 401);
+    }
+    const { data: clientRow } = await supabase
+      .from("clients")
+      .select("tenant_id")
+      .eq("id", intakeData.clientId)
+      .maybeSingle();
+    const vipTenantId = clientRow?.tenant_id ?? null;
+    if (!vipTenantId) {
+      return errorResponse(`TENANT_BOUNDARY: client ${intakeData.clientId} has no tenant_id`, 400);
+    }
+
     // 1. Create the VIP entity
     const aliases = intakeData.knownAliases.split(",").map(a => a.trim()).filter(Boolean);
     const socialHandles: Record<string, string> = {};
@@ -87,15 +121,49 @@ Deno.serve(async (req) => {
     const primaryAddress = intakeData.properties.find(p => p.type === "primary")?.address || 
                            intakeData.properties[0]?.address || "";
 
+    // #179 — Operator-promoted: VIP intake action IS the audit moment.
+    // Build governance candidate; validator returns operator_promoted on success.
+    const vipBypassMetadata: BypassMetadata = {
+      bypass_type: "operator_promoted",
+      operator_id: operatorId,
+      reason: `VIP intake form submission: ${intakeData.fullLegalName} (priority=${intakeData.priorityLevel}, client=${intakeData.clientId})`,
+    };
+    const vipCandidate = {
+      name: intakeData.fullLegalName,
+      type: "person",
+      description: `VIP protectee, priority=${intakeData.priorityLevel}, primary address=${primaryAddress.substring(0, 100)}`,
+      aliases,
+      confidence: 0.95,
+      origin: "human" as const,
+      context: `VIP intake by operator ${operatorId}`,
+      sourceRef: { kind: "conversation" as const, id: crypto.randomUUID() },
+      requestPromotion: true,
+      bypassMetadata: vipBypassMetadata,
+    };
+    const vipVerdict = await governanceValidateAndClassify(supabase, vipTenantId, vipCandidate);
+    if (vipVerdict.verdict === "auto_reject") {
+      governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: vipCandidate, result: vipVerdict });
+      return errorResponse(`VIP intake rejected by governance: ${vipVerdict.rejectionReasons.join(", ")}`, 422);
+    }
+    if (vipVerdict.verdict === "auto_link" && vipVerdict.matchedEntityId) {
+      governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: vipCandidate, result: vipVerdict });
+      return errorResponse(`VIP entity already exists with id ${vipVerdict.matchedEntityId} — use update flow`, 409);
+    }
+    // Expect operator_promoted on the happy path; defensive guard otherwise
+    if (vipVerdict.verdict !== "operator_promoted") {
+      return errorResponse(`Unexpected governance verdict ${vipVerdict.verdict} for VIP intake`, 500);
+    }
+
     const { data: entity, error: entityError } = await supabase
       .from("entities")
       .insert({
-        name: intakeData.fullLegalName,
-        type: "person",
+        name: vipVerdict.normalizedName,
+        type: vipVerdict.resolvedType,
         entity_status: "active",
         is_active: true,
         active_monitoring_enabled: true,
         client_id: intakeData.clientId,
+        tenant_id: vipTenantId,
         aliases: aliases,
         current_location: primaryAddress,
         attributes: {
@@ -152,26 +220,60 @@ Deno.serve(async (req) => {
       .single();
 
     if (entityError) {
+      governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: vipCandidate, result: { ...vipVerdict, verdict: "auto_reject", rejectionReasons: ["persistence_error"] } });
       console.error("[VIP-DEEP-SCAN] Error creating entity:", entityError);
       throw entityError;
     }
+    // Audit successful operator-promoted insert
+    governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: vipCandidate, result: vipVerdict, linkedEntityId: entity.id });
 
     console.log(`[VIP-DEEP-SCAN] Created entity: ${entity.id}`);
 
-    // 2. Create family member entities
+    // 2. Create family member entities — same operator-promoted pattern
     const familyEntityIds: string[] = [];
     for (const member of intakeData.familyMembers) {
       if (!member.name) continue;
-      
+
+      // #179 — Each family member is a separate operator-promoted entity write.
+      // Governance validates each + audit trail per member.
+      const famBypass: BypassMetadata = {
+        bypass_type: "operator_promoted",
+        operator_id: operatorId,
+        reason: `VIP family member intake: ${member.name} (relationship=${member.relationship}, vip_parent=${entity.id})`,
+      };
+      const famCandidate = {
+        name: member.name,
+        type: "person",
+        description: `VIP family member of ${vipVerdict.normalizedName}; relationship=${member.relationship}`,
+        confidence: 0.9,
+        origin: "human" as const,
+        context: `VIP family intake by operator ${operatorId}`,
+        sourceRef: { kind: "conversation" as const, id: entity.id },
+        requestPromotion: true,
+        bypassMetadata: famBypass,
+      };
+      const famVerdict = await governanceValidateAndClassify(supabase, vipTenantId, famCandidate);
+      if (famVerdict.verdict === "auto_link" && famVerdict.matchedEntityId) {
+        governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: famCandidate, result: famVerdict });
+        familyEntityIds.push(famVerdict.matchedEntityId);
+        continue;
+      }
+      if (famVerdict.verdict !== "operator_promoted") {
+        governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: famCandidate, result: famVerdict });
+        console.warn(`[VIP-DEEP-SCAN] family member ${member.name} skipped: ${famVerdict.verdict} ${famVerdict.rejectionReasons.join(",")}`);
+        continue;
+      }
+
       const { data: familyEntity, error: familyError } = await supabase
         .from("entities")
         .insert({
-          name: member.name,
-          type: "person",
+          name: famVerdict.normalizedName,
+          type: famVerdict.resolvedType,
           entity_status: "active",
           is_active: true,
           active_monitoring_enabled: true,
           client_id: intakeData.clientId,
+          tenant_id: vipTenantId,
           attributes: {
             relationship_to_vip: member.relationship,
             date_of_birth: member.dateOfBirth,
@@ -182,6 +284,11 @@ Deno.serve(async (req) => {
         })
         .select()
         .single();
+      if (!familyError && familyEntity) {
+        governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: famCandidate, result: famVerdict, linkedEntityId: familyEntity.id });
+      } else if (familyError) {
+        governanceRecordEvent(supabase, { tenantId: vipTenantId, sourceWriter: "other", candidate: famCandidate, result: { ...famVerdict, verdict: "auto_reject", rejectionReasons: ["persistence_error"] } });
+      }
 
       if (!familyError && familyEntity) {
         familyEntityIds.push(familyEntity.id);

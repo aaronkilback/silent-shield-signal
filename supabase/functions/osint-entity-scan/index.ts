@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+// #179 Entity governance — OSINT-discovered associates route through suggestion queue (origin=llm)
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+} from "../_shared/entity-governance.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -319,25 +324,53 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // Create target entity if it doesn't exist
+          // #179 — OSINT-discovered associate: route through governance.
+          // origin='llm' → cannot reach operator_promoted. Best outcome: suggestion_queue.
+          // Relationship creation defers until human approves the suggestion.
           if (!targetEntity) {
-            const { data: newEntity, error: createError } = await supabase
-              .from('entities')
-              .insert({
-                name: rel.target_entity_name,
-                type: rel.target_entity_type,
-                description: `Entity discovered via OSINT scan of ${entity.name}`,
-                risk_level: 'low',
-                is_active: false // Mark as unverified
-              })
-              .select('id')
-              .single();
-
-            if (createError) {
-              console.error('Error creating target entity:', createError);
+            // Tenant context: inherit from parent entity being scanned (entity.tenant_id).
+            // Per #179 doctrine: no tenant = no persistence.
+            if (!entity.tenant_id) {
+              console.warn(`[osint-entity-scan] parent entity ${entity.id} has no tenant_id; refusing to persist associate ${rel.target_entity_name}`);
               continue;
             }
-            targetEntity = newEntity;
+            const candidate = {
+              name: rel.target_entity_name,
+              type: rel.target_entity_type,
+              description: `Entity discovered via OSINT scan of ${entity.name}`,
+              confidence: rel.confidence ?? 0.7,
+              origin: 'llm' as const,
+              context: `OSINT associate of ${entity.name}`,
+              sourceRef: { kind: 'investigation' as const, id: entity.id },
+            };
+            const verdict = await governanceValidateAndClassify(supabase, entity.tenant_id, candidate);
+            if (verdict.verdict === 'auto_link' && verdict.matchedEntityId) {
+              governanceRecordEvent(supabase, { tenantId: entity.tenant_id, sourceWriter: 'other', candidate, result: verdict });
+              targetEntity = { id: verdict.matchedEntityId };
+            } else if (verdict.verdict === 'auto_reject') {
+              governanceRecordEvent(supabase, { tenantId: entity.tenant_id, sourceWriter: 'other', candidate, result: verdict });
+              continue;  // skip associate per governance rejection
+            } else if (verdict.verdict === 'suggestion_queue') {
+              // Persist as suggestion; relationship will be created when human approves
+              const { data: newSugg, error: sErr } = await supabase.from('entity_suggestions').insert({
+                tenant_id: entity.tenant_id,
+                suggested_name: verdict.normalizedName,
+                suggested_type: verdict.resolvedType,
+                source_type: 'investigation',
+                source_id: entity.id,
+                confidence: verdict.effectiveConfidence,
+                context: candidate.description,
+                status: 'pending',
+              }).select('id').single();
+              if (sErr) {
+                console.warn('[osint-entity-scan] suggestion insert failed:', sErr.message);
+                continue;
+              }
+              governanceRecordEvent(supabase, { tenantId: entity.tenant_id, sourceWriter: 'other', candidate, result: verdict, suggestionId: newSugg.id });
+              continue;  // no targetEntity yet — skip relationship creation pending approval
+            } else {
+              continue;
+            }
           }
 
           // Check if relationship already exists

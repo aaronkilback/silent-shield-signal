@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayStream } from "../_shared/ai-gateway.ts";
+// #179 Entity governance — both suggest_entity and create_entity tools route here
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+} from "../_shared/entity-governance.ts";
 import { validateString, validateUUID, validateMessages, validateAll } from "../_shared/input-validation.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
@@ -1737,48 +1742,97 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           if (error) throw error;
           toolResults.push({ tool: 'create_signal', result: { success: true, signal_id: signal?.id, title: signal?.title } });
           
-        } else if (funcName === 'suggest_entity') {
-          // #134: tenant_id required for analyst visibility — derived from agent's tenant
+        } else if (funcName === 'suggest_entity' || funcName === 'create_entity') {
+          // #179 — Both AEGIS entity tools route through governance.
+          // Autonomous agent origin = 'llm' → cannot reach operator_promoted →
+          // best possible outcome is suggestion_queue (human review required).
+          //
+          // Tenant context: agent.tenant_id is the deterministic source.
+          // Per #179 doctrine: no tenant = no persistence.
           if (!agent.tenant_id) {
-            toolResults.push({ tool: 'suggest_entity', result: { success: false, error: 'agent has no tenant_id; suggestion would be invisible' } });
+            toolResults.push({ tool: funcName, result: { success: false, error: 'TENANT_BOUNDARY: agent has no tenant_id; refusing write per #179 doctrine' } });
             continue;
           }
-          const { data: suggestion, error } = await supabase
-            .from('entity_suggestions')
-            .insert({
-              tenant_id: agent.tenant_id,
-              suggested_name: args.suggested_name || 'Unknown Entity',
-              suggested_type: args.suggested_type || 'person',
-              context: args.context || '',
-              suggested_aliases: args.suggested_aliases || [],
-              source_type: 'agent_chat',
-              source_id: agent_id,
-              confidence: 0.75,
-              status: 'pending',
-            })
-            .select('id, suggested_name')
-            .single();
 
-          if (error) throw error;
-          toolResults.push({ tool: 'suggest_entity', result: { success: true, suggestion_id: suggestion?.id, name: suggestion?.suggested_name } });
-          
-        } else if (funcName === 'create_entity') {
-          const { data: entity, error } = await supabase
-            .from('entities')
-            .insert({
-              name: args.name,
-              type: args.type,
-              description: args.description || null,
-              aliases: args.aliases || [],
-              risk_level: args.risk_level || 'medium',
-              client_id: client_id || null,
-            })
-            .select('id, name')
-            .single();
-          
-          if (error) throw error;
-          toolResults.push({ tool: 'create_entity', result: { success: true, entity_id: entity?.id, name: entity?.name } });
-          
+          const isCreateForm = funcName === 'create_entity';
+          const candidate = {
+            name: isCreateForm ? (args.name || '') : (args.suggested_name || ''),
+            type: isCreateForm ? (args.type || 'person') : (args.suggested_type || 'person'),
+            description: isCreateForm ? (args.description ?? null) : (args.context ?? null),
+            aliases: Array.isArray(isCreateForm ? args.aliases : args.suggested_aliases)
+              ? (isCreateForm ? args.aliases : args.suggested_aliases)
+              : null,
+            confidence: 0.7,
+            origin: 'llm' as const,                         // autonomous agent — cannot promote
+            context: typeof args.context === 'string' ? args.context : null,
+            sourceRef: { kind: 'conversation' as const, id: agent_id || crypto.randomUUID() },
+          };
+
+          const verdict = await governanceValidateAndClassify(supabase, agent.tenant_id, candidate);
+
+          // auto_link — entity exists; return the link without new write
+          if (verdict.verdict === 'auto_link') {
+            governanceRecordEvent(supabase, { tenantId: agent.tenant_id, sourceWriter: 'other', candidate, result: verdict });
+            toolResults.push({ tool: funcName, result: { success: true, entity_id: verdict.matchedEntityId, name: verdict.normalizedName, linked: true } });
+            continue;
+          }
+
+          // auto_reject — log + return why
+          if (verdict.verdict === 'auto_reject') {
+            governanceRecordEvent(supabase, { tenantId: agent.tenant_id, sourceWriter: 'other', candidate, result: verdict });
+            toolResults.push({
+              tool: funcName,
+              result: {
+                success: false,
+                governance_rejected: true,
+                rejection_reasons: verdict.rejectionReasons,
+                error: `Entity proposal rejected: ${verdict.rejectionReasons.join(', ')}`,
+              },
+            });
+            continue;
+          }
+
+          // suggestion_queue — persist suggestion (autonomous agent ceiling)
+          if (verdict.verdict === 'suggestion_queue') {
+            const { data: suggestion, error: suggestionError } = await supabase
+              .from('entity_suggestions')
+              .insert({
+                tenant_id: agent.tenant_id,
+                suggested_name: verdict.normalizedName,
+                suggested_type: verdict.resolvedType,
+                suggested_aliases: candidate.aliases || [],
+                context: candidate.context || '',
+                source_type: 'agent_chat',
+                source_id: agent_id,
+                confidence: verdict.effectiveConfidence,
+                status: 'pending',
+              })
+              .select('id, suggested_name')
+              .single();
+
+            if (suggestionError) {
+              governanceRecordEvent(supabase, { tenantId: agent.tenant_id, sourceWriter: 'other', candidate, result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] } });
+              toolResults.push({ tool: funcName, result: { success: false, error: suggestionError.message } });
+              continue;
+            }
+            governanceRecordEvent(supabase, { tenantId: agent.tenant_id, sourceWriter: 'other', candidate, result: verdict, suggestionId: suggestion.id });
+            toolResults.push({
+              tool: funcName,
+              result: {
+                success: true,
+                suggestion_id: suggestion.id,
+                name: suggestion.suggested_name,
+                note: isCreateForm
+                  ? 'Routed to suggestion queue (autonomous agents cannot directly create entities per #179 doctrine). Human review will promote to entity if appropriate.'
+                  : undefined,
+              },
+            });
+            continue;
+          }
+
+          // operator_promoted is unreachable for origin=llm; defensive log
+          toolResults.push({ tool: funcName, result: { success: false, error: `unexpected verdict ${verdict.verdict} for autonomous agent` } });
+
         } else if (funcName === 'create_incident') {
           const { data: incident, error } = await supabase
             .from('incidents')

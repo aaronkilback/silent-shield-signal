@@ -204,7 +204,41 @@ const SINGLE_WORD_COMMON_NOUNS = new Set<string>([
 // TYPES
 // ════════════════════════════════════════════════════════════════════════════
 
-export type EntityVerdict = 'auto_link' | 'suggestion_queue' | 'auto_reject';
+/**
+ * Governance verdicts. ALLOWED_ENTITY_CREATION_VERDICTS below names the subset
+ * that may produce a direct row in `entities`. All other verdicts MUST NOT
+ * write to `entities` — they either write to `entity_suggestions`
+ * (suggestion_queue), link to an existing entity (auto_link), or record an
+ * event with no persistence (auto_reject).
+ *
+ * #179 doctrine: `operator_promoted` is the ONLY new-row-in-entities path
+ * available to governed writers. It requires:
+ *   - candidate.origin === 'human' (operator-mediated, JWT-authenticated)
+ *   - candidate.bypassMetadata with operator_id + reason
+ *   - candidate.requestPromotion === true (explicit ask, not a default)
+ *   - Standard ontology checks must still pass
+ *
+ * Autonomous origins (llm, regex, curated) cannot reach operator_promoted;
+ * they are forced into suggestion_queue → human review → manual promotion.
+ */
+export type EntityVerdict = 'auto_link' | 'suggestion_queue' | 'auto_reject' | 'operator_promoted';
+
+/**
+ * Allowlist of verdicts that may persist a new row into `entities` directly.
+ * Extending this list requires explicit doctrine review.
+ * Mirrors the verdict allowlist concept used by #182 DB trigger backstop.
+ */
+export const ALLOWED_ENTITY_CREATION_VERDICTS: ReadonlySet<EntityVerdict> = new Set([
+  // 'auto_link' does NOT create a new row — it links to existing
+  'operator_promoted',
+]);
+
+export interface BypassMetadata {
+  bypass_type: 'operator_promoted' | 'super_admin_cross_tenant';
+  operator_id: string;
+  reason: string;
+  [key: string]: unknown;
+}
 
 export type GovernanceSourceWriter =
   | 'aegis_create_entity'      // dashboard-ai-assistant create_entity tool
@@ -236,6 +270,18 @@ export interface EntityCandidate {
    * the audit event for forensic traceability.
    */
   sourceRef?: { kind: 'signal' | 'document' | 'investigation' | 'conversation' | 'other'; id: string } | null;
+  /**
+   * #179 — Explicit request for operator-promoted direct entity creation.
+   * Only honored when origin === 'human' AND bypassMetadata is supplied AND
+   * ontology checks pass. Defaults to false.
+   */
+  requestPromotion?: boolean;
+  /**
+   * #179 — Audit metadata for verdicts that bypass the standard review gate.
+   * Required when verdict='operator_promoted'. Persisted to
+   * entity_governance_events.bypass_metadata.
+   */
+  bypassMetadata?: BypassMetadata;
 }
 
 export interface EntityGovernanceResult {
@@ -254,7 +300,8 @@ export interface GovernanceEventPayload {
   sourceWriter: GovernanceSourceWriter;
   candidate: EntityCandidate;
   result: EntityGovernanceResult;
-  suggestionId?: string | null;               // populated by caller after INSERT (when queued)
+  suggestionId?: string | null;               // populated by caller after suggestion INSERT (suggestion_queue)
+  linkedEntityId?: string | null;             // populated by caller after entity INSERT (operator_promoted)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -535,7 +582,28 @@ export async function validateAndClassify(
     };
   }
 
-  // ── Passed all gates → queue for human review ────────────────────────────
+  // ── Passed all gates — decide between operator_promoted and suggestion_queue ───
+  //
+  // #179 doctrine: operator-mediated requests with explicit promotion + audit
+  // may bypass the human-review queue. Everything else queues for review.
+  const isPromotionRequest =
+    candidate.requestPromotion === true
+    && candidate.origin === 'human'
+    && !!candidate.bypassMetadata
+    && !!candidate.bypassMetadata.operator_id
+    && !!candidate.bypassMetadata.reason;
+
+  if (isPromotionRequest) {
+    return {
+      verdict: 'operator_promoted',
+      rejectionReasons: [],
+      normalizedName,
+      resolvedType,
+      effectiveConfidence,
+      warnings,
+    };
+  }
+
   return {
     verdict: 'suggestion_queue',
     rejectionReasons: [],
@@ -575,8 +643,11 @@ export function recordGovernanceEvent(
     source_context: payload.candidate.sourceRef
       ? { kind: payload.candidate.sourceRef.kind, id: payload.candidate.sourceRef.id }
       : null,
-    linked_entity_id: payload.result.matchedEntityId ?? null,
+    linked_entity_id: payload.result.matchedEntityId ?? payload.linkedEntityId ?? null,
     suggestion_id: payload.suggestionId ?? payload.result.duplicateSuggestionId ?? null,
+    // #179 — Audit metadata for operator_promoted and super_admin bypasses.
+    // Schema CHECK constraint enforces presence when verdict='operator_promoted'.
+    bypass_metadata: payload.candidate.bypassMetadata ?? null,
   };
   supabase
     .from('entity_governance_events')
