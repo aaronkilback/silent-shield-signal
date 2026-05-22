@@ -168,7 +168,7 @@ export const EntitySuggestionsPanel = () => {
         clientId = selectedClientId;
       }
 
-      // Create the entity with client_id from source
+      // PROD-C: tenant_id from suggestion so the new row passes the read-layer tenant filter (#133/#134/#135).
       const { data: newEntity, error: createError } = await supabase
         .from('entities')
         .insert([{
@@ -179,6 +179,7 @@ export const EntitySuggestionsPanel = () => {
           is_active: true,
           description: `Created from ${suggestion.source_type} suggestion`,
           client_id: clientId,
+          tenant_id: suggestion.tenant_id,
           visibility_class: 'reviewed',  // #139: analyst approved an entity_suggestion
         }])
         .select()
