@@ -248,6 +248,60 @@ The old `serve()` global was removed from Supabase's Deno runtime. Functions dep
 
 ---
 
+## Staging Load Fixtures & Monitor Validation Policy
+
+Added 2026-05-22 after PROD-G v1 passed staging green and SIGKILLed immediately on prod. Staging with thin clients is not representative — monitor changes must be validated against realistic keyword cardinality before merge to main.
+
+### The canonical high-keyword fixture
+
+Staging carries a permanent realistic-load client. Its identity is stable and must not be deleted or downgraded.
+
+| Field | Value |
+|---|---|
+| Project | `lkvyrvuakzguszbpwnfz` (staging) |
+| Client id | `0f5c809d-60ec-4252-b94b-1f4b6c8ac95d` |
+| Client name | Petronas Canada |
+| Status | `active` |
+| Minimum `array_length(monitoring_keywords, 1)` | **30** |
+
+If this fixture is ever deleted or its keyword count drops, the smoke check fails and monitor deploys are blocked until it is restored. The 30-keyword floor matches the cardinality of real prod clients (PECL 34, BCCH 43) — anything thinner does not exercise per-query budget code paths.
+
+### Mandatory pre-deploy assertion (before any monitor function change)
+
+```bash
+SUPABASE_STAGING_URL=https://lkvyrvuakzguszbpwnfz.supabase.co \
+SUPABASE_STAGING_SERVICE_ROLE_JWT=<staging service role JWT> \
+node scripts/check-staging-load-fixture.mjs
+```
+
+Exit 0 = fixture present + meets cardinality. Exit nonzero = blocker; fix before deploying.
+
+### Mandatory runtime expectations for monitor functions
+
+A staging "pass" is not just HTTP 200. It is HTTP 200 **within a duration that proves the budget exit fired cleanly with safety margin**. Specifically, every monitor function with the budget/cursor pattern (currently `monitor-news-google`; extend as more migrate) must satisfy ALL of:
+
+| Field on the heartbeat row | Pass criterion |
+|---|---|
+| `status` | `succeeded` (never `running` or `failed`) |
+| `duration_ms` | < 135_000 (i.e. ≥15s margin under the 150s platform SIGKILL ceiling) |
+| `result_summary.elapsed_ms` | ≤ `result_summary.budget_ms + 30_000` (the function exits cleanly within ~30s of its declared budget, not coasting up to the kill line) |
+| `result_summary.partial` | a boolean (not null) — partial-exit machinery actually wrote the field |
+| `result_summary.next_cursor` | object `{client_id, query_index}` if partial=true; null if partial=false |
+
+A run that lands `succeeded` with `duration_ms=148000` is **not a pass.** That means budget granularity is still too coarse (the function is riding the platform kill ceiling instead of exiting cleanly under its declared budget). Surface as a defect; do not approve the deploy.
+
+### Realistic-load invocation (use this, not "did it 200")
+
+After deploying a monitor change to staging, validate with at least:
+1. `node scripts/check-staging-load-fixture.mjs` — confirms the fixture is in place
+2. Manual invoke against staging URL with realistic budget (matching prod's `BUDGET_MS`)
+3. SQL check the resulting heartbeat row against the criteria above
+4. At minimum two consecutive invocations to validate cursor resume
+
+`scripts/check-staging-load-fixture.mjs` is not a substitute for steps 2–4; it only confirms staging is *able* to exercise realistic paths.
+
+---
+
 ## Rules for edge functions
 
 ### Scheduled edge functions — definition of done
