@@ -68,34 +68,81 @@ Deno.serve(async (req) => {
     .select()
     .single();
 
-  // PROD-G — deterministic self-budgeting.
+  // PROD-G — deterministic self-budgeting (hotfix granularity rev).
   //
-  // Previously this function relied on the Supabase 150s edge-function kill as
-  // its de-facto termination signal — runs hung in status='running' forever
-  // because the kill happens after JavaScript stops executing, so
-  // completeHeartbeat never fires. That is telemetry theater (Monitor Health
-  // shows 'healthy' because started_at is fresh, even though no run completes).
+  // First cut (initial PROD-G) checked budget only BETWEEN clients. On prod
+  // workloads (PECL has 29 keywords × 2 angles = 58 queries; BCCH has 43 × 2
+  // = 86) a single client can consume >100s internally before the inter-
+  // client budget check next fires. Result: platform SIGKILL at 150s before
+  // any clean exit. Row stuck in status='running' forever — same pathology
+  // the budget was meant to fix.
   //
-  // Instead: track wall-clock budget, exit cleanly under budget with
-  // status='succeeded' + result_summary.partial=true + next_cursor for
-  // the subsequent run to resume from. Per-client cursor, no same-run
-  // wraparound. UI surfaces a PARTIAL pill when partial=true so the
-  // operator distinguishes full-cycle from time-boxed runs.
+  // Hotfix: check budget BEFORE each query (inside the inner loop), not just
+  // between clients. Cursor granularity is (client_id, query_index) so resume
+  // picks up at the exact next un-attempted query within the same client.
+  //
+  // Also: reap stale 'running' heartbeats from prior SIGKILLed runs so the
+  // table doesn't accumulate forever-pending rows. Only rows older than the
+  // platform kill ceiling + 30s buffer qualify — a younger row could be a
+  // legitimately concurrent run (pg_cron may overlap if a run is still
+  // executing at the next tick), so we won't touch it.
   //
   // Heartbeat hoisted above the try so the catch block below can call
   // failHeartbeat on the same handle — otherwise a thrown error during
-  // the scan would leave the row stuck in status='running' indefinitely
-  // (same failure mode the budget is fixing, via a different path).
+  // the scan would leave the row stuck in status='running' indefinitely.
   const STARTED_AT = Date.now();
   const BUDGET_MS = 105_000; // 45s margin under platform 150s kill
+  const JOB_NAME = 'monitor-news-google-hourly';
+
+  // Stale heartbeat recovery. Threshold = 180s = (150s platform kill) + 30s
+  // safety buffer. Anything older than this cannot still be executing
+  // (platform would have killed it). Conditional on status='running' so we
+  // never clobber a 'succeeded' or 'failed' row. Atomic + race-safe even
+  // if a second invocation overlaps — both UPDATEs target the same row but
+  // the operation is idempotent (same fields, same outcome).
+  const STALE_HEARTBEAT_THRESHOLD_MS = 180_000;
+  try {
+    const staleBefore = new Date(Date.now() - STALE_HEARTBEAT_THRESHOLD_MS).toISOString();
+    const { data: reaped } = await supabase
+      .from('cron_heartbeat')
+      .update({
+        status: 'failed',
+        completed_at: new Date().toISOString(),
+        error_message: 'Heartbeat reaped by next invocation — prior run never completed (likely 150s platform SIGKILL or process crash before failHeartbeat could fire)',
+        result_summary: { error: 'stale_running_reaped', reaped_at: new Date().toISOString() },
+      })
+      .eq('job_name', JOB_NAME)
+      .eq('status', 'running')
+      .lt('started_at', staleBefore)
+      .select('id');
+    if (reaped && reaped.length > 0) {
+      console.log(`[monitor-news-google] Reaped ${reaped.length} stale running heartbeat row(s) older than ${STALE_HEARTBEAT_THRESHOLD_MS}ms`);
+    }
+  } catch (e) {
+    console.warn(`[monitor-news-google] stale-heartbeat reap failed (non-fatal):`, e);
+  }
 
   // Read cursor BEFORE writing this run's heartbeat so the read can never
   // return our own in-flight row. Filters status='succeeded' to skip
   // failed/in-flight prior runs that may not carry a meaningful cursor.
-  const priorSummary = await getLatestSucceededResultSummary(supabase, 'monitor-news-google-hourly');
-  const startCursor: string | null = (priorSummary as any)?.next_cursor ?? null;
+  // Cursor shape: { client_id: string, query_index: number }. We also
+  // tolerate the legacy bare-string shape from the initial PROD-G deploy
+  // (treat as client_id with query_index=0) so the first invocation after
+  // hotfix doesn't lose work — though in practice no legacy cursor ever
+  // landed because the old code got SIGKILLed before writing one.
+  const priorSummary = await getLatestSucceededResultSummary(supabase, JOB_NAME);
+  const rawCursor: unknown = (priorSummary as any)?.next_cursor ?? null;
+  let resumeCursor: { client_id: string; query_index: number } | null = null;
+  if (typeof rawCursor === 'string' && rawCursor) {
+    resumeCursor = { client_id: rawCursor, query_index: 0 };
+  } else if (rawCursor && typeof rawCursor === 'object' && (rawCursor as any).client_id) {
+    resumeCursor = {
+      client_id: String((rawCursor as any).client_id),
+      query_index: Number((rawCursor as any).query_index) || 0,
+    };
+  }
 
-  const hb = await startHeartbeat(supabase, 'monitor-news-google-hourly');
+  const hb = await startHeartbeat(supabase, JOB_NAME);
 
   try {
     console.log('Starting Google News API monitoring scan...');
@@ -161,40 +208,46 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${clients?.length || 0} clients to monitor`);
 
-    // PROD-G cursor: resume from the client immediately AT next_cursor (inclusive).
-    // If the cursor refers to a client that's been removed/deactivated since the
-    // last run, fall back to index 0 so we never silently skip the entire list.
+    // PROD-G cursor: resume from the client AT resumeCursor.client_id (inclusive),
+    // and within THAT client, from query index resumeCursor.query_index. If the
+    // cursor refers to a client removed/deactivated since the last run, fall
+    // back to index 0 with a warn log (not silent) and reset query_index too.
+    // startQueryIdx0 applies ONLY to the first iterated client — every
+    // subsequent client starts at query 0 of its own queries array.
     const totalClients = clients?.length ?? 0;
     let startIdx = 0;
-    if (startCursor) {
-      const idx = (clients ?? []).findIndex((c: any) => c.id === startCursor);
+    let startQueryIdx0 = 0;
+    if (resumeCursor) {
+      const idx = (clients ?? []).findIndex((c: any) => c.id === resumeCursor!.client_id);
       if (idx >= 0) {
         startIdx = idx;
+        startQueryIdx0 = resumeCursor.query_index;
       } else {
-        console.warn(`[monitor-news-google] resume cursor ${startCursor} not in active client list (renamed/deactivated?); restarting from index 0`);
+        console.warn(`[monitor-news-google] resume cursor client ${resumeCursor.client_id} not in active client list (renamed/deactivated?); restarting from index 0`);
       }
     }
-    console.log(`[monitor-news-google] resuming at index ${startIdx}/${totalClients} (cursor=${startCursor ?? '<none>'})`);
+    console.log(`[monitor-news-google] resuming at clientIdx=${startIdx}/${totalClients}, queryIdx=${startQueryIdx0} (cursor=${resumeCursor ? `${resumeCursor.client_id}@q${resumeCursor.query_index}` : '<none>'})`);
 
     let signalsCreated = 0;
     let itemsScanned = 0;
     const searchResults: any[] = [];
     let partialExit = false;
-    let nextCursor: string | null = null;
+    let nextCursor: { client_id: string; query_index: number } | null = null;
     let processedCount = 0;
     let stopIdx = totalClients;
 
-    // Build search queries for each client
+    // Build search queries for each client. Labeled outer loop so the
+    // inner per-query budget check can break out of BOTH loops cleanly
+    // when it trips mid-client.
+    clientLoop:
     for (let clientIdx = startIdx; clientIdx < totalClients; clientIdx++) {
-      // Budget check BEFORE the work, not after — the test must be
-      // "is there time for ANOTHER client" so we exit before the kill
-      // line, not at the moment we cross it. Stop cleanly and leave
-      // this client for the next run.
+      // Inter-client budget check (cheap path — skip the whole next client
+      // before building its queries array if we already have no time).
       if (Date.now() - STARTED_AT >= BUDGET_MS) {
         partialExit = true;
-        nextCursor = (clients as any)![clientIdx].id;
+        nextCursor = { client_id: (clients as any)![clientIdx].id, query_index: 0 };
         stopIdx = clientIdx;
-        console.log(`[monitor-news-google] budget exhausted at client ${clientIdx}/${totalClients}; next run resumes at ${nextCursor}`);
+        console.log(`[monitor-news-google] budget exhausted between clients at ${clientIdx}/${totalClients}; next run resumes at ${nextCursor.client_id}@q0`);
         break;
       }
       const client = (clients as any)![clientIdx];
@@ -328,8 +381,28 @@ Deno.serve(async (req) => {
       }
       console.log(`[news-google] ${client.name}: ${namesThisRun.length}/${allPersonNames.length} person-name queries (offset ${offset})`);
 
+      // Resume position WITHIN this client. Only the first iterated client
+      // honors startQueryIdx0 (the cursor). Every subsequent client iterates
+      // its full queries array from 0.
+      const startQueryIdx = (clientIdx === startIdx) ? startQueryIdx0 : 0;
+
       // Execute Google Custom Search for each query
-      for (const query of queries) {
+      for (let qIdx = startQueryIdx; qIdx < queries.length; qIdx++) {
+        // PROD-G hotfix: per-query budget check. Without this, one
+        // high-keyword client (PECL 58 queries × ~700ms = ~40s; BCCH
+        // 86 queries × ~700ms = ~60s, both with rate-limit sleep on
+        // top) could blow past the budget while still inside its
+        // inner loop, never reaching the inter-client check at the
+        // top of clientLoop. Inner-loop check ensures we can exit
+        // cleanly mid-client and resume at the exact next query.
+        if (Date.now() - STARTED_AT >= BUDGET_MS) {
+          partialExit = true;
+          nextCursor = { client_id: client.id, query_index: qIdx };
+          stopIdx = clientIdx;
+          console.log(`[monitor-news-google] budget exhausted mid-client at ${clientIdx}/${totalClients}, queryIdx=${qIdx}/${queries.length}; next run resumes at ${nextCursor.client_id}@q${nextCursor.query_index}`);
+          break clientLoop;
+        }
+        const query = queries[qIdx];
         try {
           const searchUrl = new URL('https://www.googleapis.com/customsearch/v1');
           searchUrl.searchParams.set('key', googleApiKey);
@@ -528,9 +601,10 @@ Deno.serve(async (req) => {
       items_scanned: itemsScanned,
       signals_created: signalsCreated,
       partial: partialExit,
-      next_cursor: nextCursor,
-      started_at_cursor: startCursor,
+      next_cursor: nextCursor,                      // {client_id, query_index} | null
+      started_at_cursor: resumeCursor,              // {client_id, query_index} | null — what THIS run resumed from
       start_idx: startIdx,
+      start_query_idx: startQueryIdx0,
       stop_idx: stopIdx,
       total_clients: totalClients,
       processed_count: processedCount,
@@ -538,7 +612,8 @@ Deno.serve(async (req) => {
       elapsed_ms: elapsedMs,
     });
 
-    console.log(`Google News monitoring ${partialExit ? 'PARTIAL' : 'complete'}. Scanned ${itemsScanned} items, created ${signalsCreated} signals across ${processedCount}/${totalClients} clients in ${elapsedMs}ms.${partialExit ? ` Next run resumes at ${nextCursor}.` : ''}`);
+    const cursorLabel = nextCursor ? `${nextCursor.client_id}@q${nextCursor.query_index}` : 'null';
+    console.log(`Google News monitoring ${partialExit ? 'PARTIAL' : 'complete'}. Scanned ${itemsScanned} items, created ${signalsCreated} signals across ${processedCount}/${totalClients} clients in ${elapsedMs}ms.${partialExit ? ` Next run resumes at ${cursorLabel}.` : ''}`);
 
     return successResponse({
       success: true,
