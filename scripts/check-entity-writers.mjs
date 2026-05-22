@@ -51,9 +51,7 @@ const FILE_EXEMPTIONS = new Map([
 // Removing an entry from this list is part of the PR that wires that writer.
 // Adding an entry requires explicit doctrine review — this is not a free pass.
 const KNOWN_PENDING_WRITERS = [
-  // H-1 + H-2 entries removed (governed). H-3 remaining:
-  { file: 'parse-entities-document/index.ts', line: 227, phase: '#179.H3' },
-  { file: 'process-security-report/index.ts', line: 729, phase: '#179.H3' },
+  // All H-1, H-2, and H-3 writers governed. KNOWN_PENDING_WRITERS is now empty.
 ];
 
 function isKnownPending(relPath, lineNum) {

@@ -1,18 +1,78 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+// #179 H-3 Entity governance — LLM document extractor; suggestion_queue only (origin=llm).
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+  type EntityCandidate,
+} from "../_shared/entity-governance.ts";
+import { assertCallerInTenant } from "../_shared/auth-tenant-guard.ts";
+
+function parseJwtSub(req: Request): string | null {
+  try {
+    const auth = req.headers.get('authorization') || '';
+    const token = auth.replace(/^Bearer\s+/i, '');
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.sub ?? null;
+  } catch { return null; }
+}
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
   try {
-    const { file, filename, mimeType, tenant_id } = await req.json();
+    const body = await req.json();
+
+    // #179 H-3 dry_run: deterministic governance routing without AI/persistence
+    if (body.dry_run && Array.isArray(body.dry_run_candidates)) {
+      const supabaseDR = createServiceClient();
+      const startedAtMs = Date.now();
+      const metrics = {
+        candidate_count: 0,
+        verdict_counts: { suggestion_queue: 0, auto_link: 0, auto_reject: 0, operator_promoted: 0 } as Record<string, number>,
+        skip_count_no_tenant: 0,
+        processing_duration_ms: 0,
+      };
+      const dryResults: any[] = [];
+      for (const c of body.dry_run_candidates) {
+        metrics.candidate_count += 1;
+        if (!c.tenant_id) { metrics.skip_count_no_tenant += 1; dryResults.push({ name: c.name, skip: 'no_tenant' }); continue; }
+        const cand: EntityCandidate = {
+          name: c.name, type: c.type ?? 'organization', description: c.description ?? null,
+          confidence: c.confidence ?? 0.75, origin: 'llm', context: c.context ?? null,
+          sourceRef: { kind: 'document', id: c.source_id ?? crypto.randomUUID() },
+        };
+        const verdict = await governanceValidateAndClassify(supabaseDR, c.tenant_id, cand);
+        metrics.verdict_counts[verdict.verdict] = (metrics.verdict_counts[verdict.verdict] ?? 0) + 1;
+        dryResults.push({ name: c.name, tenant_id: c.tenant_id, verdict: verdict.verdict, rejection_reasons: verdict.rejectionReasons, matched_entity_id: verdict.matchedEntityId, effective_confidence: verdict.effectiveConfidence });
+      }
+      metrics.processing_duration_ms = Date.now() - startedAtMs;
+      return new Response(JSON.stringify({ dry_run: true, metrics, results: dryResults }, null, 2), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 });
+    }
+
+    const { file, filename, mimeType, tenant_id } = body;
 
     if (!file || !filename) {
       return errorResponse('File and filename are required', 400);
     }
     if (!tenant_id) {
       return errorResponse('tenant_id is required (entity suggestions must be tenant-scoped)', 400);
+    }
+
+    // #179 H-3 trust boundary fix: caller must be tenant_users member of the asserted tenant.
+    // Replaces the previous weak-trust assumption (body-asserted tenant_id accepted at face value).
+    const callerSub = parseJwtSub(req);
+    if (!callerSub) {
+      return errorResponse('AUTH_REQUIRED: caller JWT could not be parsed', 401);
+    }
+    const supabaseAuth = createServiceClient();
+    const authCheck = await assertCallerInTenant(supabaseAuth, callerSub, tenant_id, { allowSuperAdmin: true });
+    if (!authCheck.ok) {
+      return errorResponse(`TENANT_BOUNDARY: ${authCheck.reason}`, 403);
     }
 
     console.log('Processing entities document:', filename, mimeType);
@@ -217,18 +277,53 @@ ${text}`
       return Math.min(0.95, base + Math.min(0.2, occurrences * 0.05));
     };
 
+    // #179 H-3 — Governance routing for each extracted entity.
+    // Fail-fast tenant check already done at function entry (line ~70).
+    // origin=llm; verdict path: auto_link / suggestion_queue / auto_reject. operator_promoted unreachable.
     const insertedSuggestions: any[] = [];
+    const startedAtMs = Date.now();
+    const metrics = {
+      candidate_count: 0,
+      verdict_counts: { suggestion_queue: 0, auto_link: 0, auto_reject: 0, operator_promoted: 0 } as Record<string, number>,
+      skip_count_no_tenant: 0,
+      persistence_errors: 0,
+      processing_duration_ms: 0,
+    };
     for (const entity of entities) {
       const originalType = entity.type || 'other';
       const suggestedType = normalizeEntityType(originalType);
       const confidence = computeConfidence(entity.name, originalType);
+      metrics.candidate_count += 1;
 
+      const candidate: EntityCandidate = {
+        name: entity.name,
+        type: suggestedType,
+        description: entity.description || null,
+        aliases: entity.aliases || null,
+        confidence,
+        origin: 'llm',
+        context: getContext(text, entity.name),
+        sourceRef: { kind: 'document', id: uploadId },
+      };
+      const verdict = await governanceValidateAndClassify(supabase, tenant_id, candidate);
+      metrics.verdict_counts[verdict.verdict] = (metrics.verdict_counts[verdict.verdict] ?? 0) + 1;
+
+      // auto_link / auto_reject — record event immediately, no insert
+      if (verdict.verdict === 'auto_link') {
+        governanceRecordEvent(supabase, { tenantId: tenant_id, sourceWriter: 'other', candidate, result: verdict });
+        continue;
+      }
+      if (verdict.verdict === 'auto_reject') {
+        governanceRecordEvent(supabase, { tenantId: tenant_id, sourceWriter: 'other', candidate, result: verdict });
+        continue;
+      }
+      // suggestion_queue — insert THEN record event (per H-2 doctrine: no optimistic audit)
       const { data, error } = await supabase
         .from('entity_suggestions')
         .insert({
           tenant_id,
-          suggested_name: entity.name,
-          suggested_type: suggestedType,
+          suggested_name: verdict.normalizedName,
+          suggested_type: verdict.resolvedType,
           suggested_aliases: entity.aliases || [],
           suggested_attributes: {
             original_type: originalType,
@@ -243,19 +338,24 @@ ${text}`
           },
           source_type: 'document_upload',
           source_id: uploadId,
-          confidence,
-          context: getContext(text, entity.name),
+          confidence: verdict.effectiveConfidence,
+          context: candidate.context,
           status: 'pending',
         })
         .select()
         .single();
 
       if (error) {
+        metrics.persistence_errors += 1;
+        governanceRecordEvent(supabase, { tenantId: tenant_id, sourceWriter: 'other', candidate, result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] } });
         console.error('Error inserting entity suggestion:', entity.name, error);
       } else {
         insertedSuggestions.push(data);
+        governanceRecordEvent(supabase, { tenantId: tenant_id, sourceWriter: 'other', candidate, result: verdict, suggestionId: data.id });
       }
     }
+    metrics.processing_duration_ms = Date.now() - startedAtMs;
+    console.log(`[#179 H-3 parse-entities-document metrics]`, JSON.stringify(metrics));
 
     console.log(`Successfully inserted ${insertedSuggestions.length} entity suggestions`);
 

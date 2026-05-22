@@ -1,6 +1,25 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import JSZip from "npm:jszip@3.10.1";
 import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
+// #179 H-3 Entity governance — LLM extractor; suggestion_queue only (origin=llm).
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+  type EntityCandidate,
+} from "../_shared/entity-governance.ts";
+import { assertCallerInTenant } from "../_shared/auth-tenant-guard.ts";
+
+function parseJwtSub(req: Request): string | null {
+  try {
+    const auth = req.headers.get('authorization') || '';
+    const token = auth.replace(/^Bearer\s+/i, '');
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.sub ?? null;
+  } catch { return null; }
+}
 
 function normalizeExtractedText(input: string): string {
   return input
@@ -249,30 +268,59 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { documentId, textContent } = await req.json();
-    
-    if (!documentId && !textContent) {
-      return new Response(
-        JSON.stringify({ error: 'Either documentId or textContent is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.log(`Processing security report${documentId ? ` for document ${documentId}` : ''}`);
-
+    const body = await req.json();
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // #179 H-3 dry_run: deterministic governance routing without AI/persistence
+    if (body.dry_run && Array.isArray(body.dry_run_candidates)) {
+      const startedAtMs = Date.now();
+      const metrics = {
+        candidate_count: 0,
+        verdict_counts: { suggestion_queue: 0, auto_link: 0, auto_reject: 0, operator_promoted: 0 } as Record<string, number>,
+        skip_count_no_tenant: 0,
+        processing_duration_ms: 0,
+      };
+      const dryResults: any[] = [];
+      for (const c of body.dry_run_candidates) {
+        metrics.candidate_count += 1;
+        if (!c.tenant_id) { metrics.skip_count_no_tenant += 1; dryResults.push({ name: c.name, skip: 'no_tenant' }); continue; }
+        const cand: EntityCandidate = {
+          name: c.name, type: c.type ?? 'organization', description: c.description ?? null,
+          confidence: c.confidence ?? 0.75, origin: 'llm', context: c.context ?? null,
+          sourceRef: { kind: 'document', id: c.source_id ?? crypto.randomUUID() },
+        };
+        const verdict = await governanceValidateAndClassify(supabase, c.tenant_id, cand);
+        metrics.verdict_counts[verdict.verdict] = (metrics.verdict_counts[verdict.verdict] ?? 0) + 1;
+        dryResults.push({ name: c.name, tenant_id: c.tenant_id, verdict: verdict.verdict, rejection_reasons: verdict.rejectionReasons, matched_entity_id: verdict.matchedEntityId, effective_confidence: verdict.effectiveConfidence });
+      }
+      metrics.processing_duration_ms = Date.now() - startedAtMs;
+      return new Response(JSON.stringify({ dry_run: true, metrics, results: dryResults }, null, 2), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 });
+    }
+
+    const { documentId, textContent } = body;
+
+    // #179 H-3 trust boundary fix: require documentId for authoritative tenant derivation.
+    // textContent-only invocations have no authoritative tenant source — REJECT per doctrine.
+    if (!documentId) {
+      return new Response(
+        JSON.stringify({ error: 'TENANT_BOUNDARY: documentId is required (textContent-only invocation cannot derive tenant authoritatively per #179 doctrine)' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log(`Processing security report for document ${documentId}`);
+
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
-    
 
     let content = textContent;
     let document: any = null;
     let clientId: string | null = null;
+    let documentTenantId: string | null = null;
 
-    // If documentId provided, fetch the document
-    if (documentId) {
+    // Fetch the document (always — documentId is now required)
+    {
       const { data: doc, error: docError } = await supabase
         .from('archival_documents')
         .select('*')
@@ -285,6 +333,39 @@ Deno.serve(async (req) => {
 
       document = doc;
       clientId = doc.client_id;
+
+      // #179 H-3 authoritative tenant resolution: document.client_id → clients.tenant_id.
+      // Resolved ONCE here (not per-entity in the loop) per H-2 fail-fast doctrine.
+      if (clientId) {
+        const { data: clientRow } = await supabase
+          .from('clients')
+          .select('tenant_id')
+          .eq('id', clientId)
+          .maybeSingle();
+        documentTenantId = clientRow?.tenant_id ?? null;
+      }
+      if (!documentTenantId) {
+        return new Response(
+          JSON.stringify({ error: `TENANT_BOUNDARY: document ${documentId} has no resolvable tenant (client_id=${clientId})` }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // #179 H-3 caller-membership validation against document-derived tenant
+      const callerSub = parseJwtSub(req);
+      if (!callerSub) {
+        return new Response(
+          JSON.stringify({ error: 'AUTH_REQUIRED: caller JWT could not be parsed' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const authCheck = await assertCallerInTenant(supabase, callerSub, documentTenantId, { allowSuperAdmin: true });
+      if (!authCheck.ok) {
+        return new Response(
+          JSON.stringify({ error: `TENANT_BOUNDARY: ${authCheck.reason} (document tenant ${documentTenantId})` }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
       // Check if content_text exists and is meaningful (not raw PDF binary or garbage)
       // Must have:
@@ -689,30 +770,38 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
           }
         }
 
-        // Create entity suggestion with source_type that matches UI expectations
-        // #134: tenant_id derived via document.client_id → clients.tenant_id
-        // (archival_documents has no tenant_id column).
-        let tenantIdForSuggestion: string | null = null;
-        if (document?.client_id) {
-          const { data: clientRow } = await supabase
-            .from('clients')
-            .select('tenant_id')
-            .eq('id', document.client_id)
-            .maybeSingle();
-          tenantIdForSuggestion = clientRow?.tenant_id ?? null;
+        // #179 H-3 — Tenant pre-resolved at function entry (documentTenantId in scope).
+        // Governance routing replaces both the inline existing-entity check
+        // (validator's auto_link handles that) and the per-entity tenant lookup.
+        const candidate: EntityCandidate = {
+          name: entity.name,
+          type: entity.type,
+          description: entity.description || null,
+          aliases: entity.aliases || null,
+          confidence: entity.confidence,
+          origin: 'llm',
+          context: entity.context || entity.description || null,
+          sourceRef: { kind: 'document', id: documentId },
+        };
+        const verdict = await governanceValidateAndClassify(supabase, documentTenantId!, candidate);
+
+        if (verdict.verdict === 'auto_link') {
+          governanceRecordEvent(supabase, { tenantId: documentTenantId!, sourceWriter: 'other', candidate, result: verdict });
+          continue;  // existing entity matched; no new suggestion row needed
         }
-        if (!tenantIdForSuggestion) {
-          console.warn(`[#134] skipping suggestion for "${entity.name}" — could not derive tenant_id (document client_id=${document?.client_id ?? 'null'})`);
+        if (verdict.verdict === 'auto_reject') {
+          governanceRecordEvent(supabase, { tenantId: documentTenantId!, sourceWriter: 'other', candidate, result: verdict });
           continue;
         }
+        // suggestion_queue — insert then record (no optimistic audit per H-2 doctrine)
         const suggestionData = {
-          tenant_id: tenantIdForSuggestion,
-          source_id: documentId || 'manual',
-          source_type: 'archival_document', // Changed from 'security_report' to match UI
-          suggested_name: entity.name,
-          suggested_type: entity.type,
-          confidence: entity.confidence,
-          context: entity.context || entity.description,
+          tenant_id: documentTenantId,
+          source_id: documentId,
+          source_type: 'archival_document',
+          suggested_name: verdict.normalizedName,
+          suggested_type: verdict.resolvedType,
+          confidence: verdict.effectiveConfidence,
+          context: candidate.context,
           suggested_aliases: entity.aliases || [],
           suggested_attributes: {
             risk_level: entity.risk_level,
@@ -723,15 +812,19 @@ Extract entities, threat signals, risk assessments, and any incidents requiring 
           status: 'pending'
         };
 
-        console.log(`Creating entity suggestion for "${entity.name}" (${entity.type})`);
+        console.log(`[#179 H-3] Creating entity suggestion for "${verdict.normalizedName}" (${verdict.resolvedType})`);
 
-        const { error: suggestionError } = await supabase
+        const { data: insertedSugg, error: suggestionError } = await supabase
           .from('entity_suggestions')
-          .insert(suggestionData);
+          .insert(suggestionData)
+          .select('id')
+          .single();
 
         if (suggestionError) {
+          governanceRecordEvent(supabase, { tenantId: documentTenantId!, sourceWriter: 'other', candidate, result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] } });
           console.error(`Error creating suggestion for "${entity.name}":`, suggestionError);
         } else {
+          governanceRecordEvent(supabase, { tenantId: documentTenantId!, sourceWriter: 'other', candidate, result: verdict, suggestionId: insertedSugg?.id });
           results.entity_suggestions_created++;
           console.log(`Created entity suggestion for "${entity.name}"`);
         }
