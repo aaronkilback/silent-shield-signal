@@ -2,6 +2,13 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 import { callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 import {
+  resolveArchetype,
+  getClientThreatVocab,
+  getClientAiSystemPrompt,
+  isOwnedProfileFor,
+  isFixtureClient,
+} from "../_shared/archetypes.ts";
+import {
   extractMentions,
   extractHashtags,
   parseEngagement,
@@ -89,27 +96,47 @@ Deno.serve(async (req) => {
 
     console.log('[SocialUnified] Starting unified social media monitoring...');
 
-    // Fetch clients and entities in parallel
+    // Fetch clients and entities in parallel.
+    // PROD-H: now SELECTs monitoring_config so the per-client archetype
+    // is available downstream for query generation + AI relevance gate.
     const [clientsResult, entitiesResult] = await Promise.all([
-      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords').eq('status', 'active'),
+      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords, monitoring_config').eq('status', 'active'),
       supabase.from('entities')
         .select('id, name, type, aliases, risk_level, attributes, client_id')
         .eq('active_monitoring_enabled', true)
         .in('type', ['organization', 'person'])
     ]);
 
-    const clients = clientsResult.data || [];
+    // PROD-H: drop fixture / QA / benchmark clients from monitoring loops.
+    // Names starting with underscore are platform fixtures (see CLAUDE.md
+    // for the convention). Diagnostic evidence on 2026-05-22 showed
+    // monitor-social-unified was wasting ~20% of search budget on
+    // `_qa_cipher_test_env` and similar non-production clients.
+    const clients = (clientsResult.data || []).filter(c => !isFixtureClient(c.name));
     const entities = entitiesResult.data || [];
 
     // Build map of client_id → monitoring_keywords for entity query enrichment
     const clientKeywordsMap = new Map<string, string[]>();
+    // PROD-H: parallel map of client_id → monitoring_config so entity-scope
+    // searches inherit their parent client's archetype for AI prompt + filter.
+    const clientConfigMap = new Map<string, any>();
+    // Track whether any active client uses the energy_infrastructure archetype.
+    // Used to gate the Petronas-era CAMPAIGN_QUERIES (pipeline/LNG anti-industry
+    // sweeps) so they don't fire when no energy clients are active.
+    let hasEnergyInfrastructureClient = false;
     for (const c of clients) {
       if (c.id && c.monitoring_keywords?.length) {
         clientKeywordsMap.set(c.id, c.monitoring_keywords);
       }
+      if (c.id) {
+        clientConfigMap.set(c.id, c.monitoring_config ?? null);
+      }
+      if (resolveArchetype(c.monitoring_config) === 'energy_infrastructure') {
+        hasEnergyInfrastructureClient = true;
+      }
     }
 
-    console.log(`[SocialUnified] ${clients.length} clients, ${entities.length} entities`);
+    console.log(`[SocialUnified] ${clients.length} clients, ${entities.length} entities, hasEnergyInfra=${hasEnergyInfrastructureClient}`);
 
     // ═══ META GRAPH API — Facebook & Instagram (runs first when configured) ═══
     // Set FACEBOOK_ACCESS_TOKEN as "{app_id}|{app_secret}" from developers.facebook.com
@@ -268,7 +295,11 @@ Deno.serve(async (req) => {
       }
     };
 
-    // Build search queue: interleave platforms for diversity
+    // Build search queue: interleave platforms for diversity.
+    // PROD-H: each search now carries the client's monitoring_config so
+    // downstream code (query generation, AI relevance gate, profile
+    // filter) can resolve the archetype per-search instead of running
+    // off hardcoded Petronas-era vocab.
     const searchQueue: Array<{
       query: string;
       platform: string;
@@ -276,29 +307,43 @@ Deno.serve(async (req) => {
       sourceType: 'client' | 'entity';
       clientId: string | null;
       entityId: string | null;
+      monitoringConfig: any;  // client.monitoring_config (JSONB) | null
     }> = [];
 
-    // Client queries — one per platform per client (3 queries per client max)
+    // Client queries — one per platform per client (3 queries per client max).
+    // PROD-H: threat-vocab tail is now driven by client.monitoring_config.archetype
+    // via getClientThreatVocab() instead of the hardcoded
+    // (protest OR blockade OR breach OR sabotage OR activist) Petronas terms.
+    // Clients without an archetype configured fall back to energy_infrastructure
+    // (preserves prior behavior for Petronas / BCCH / similar).
     for (const client of clients.slice(0, 4)) {
+      const threatVocab = getClientThreatVocab(client.monitoring_config);
       for (const platform of PLATFORMS) {
         const siteFilter = platform.sites[0];
         searchQueue.push({
-          query: `${siteFilter} "${client.name}" (protest OR blockade OR breach OR sabotage OR activist)`,
+          query: `${siteFilter} "${client.name}" (${threatVocab})`,
           platform: platform.name,
           sourceName: client.name,
           sourceType: 'client',
           clientId: client.id,
           entityId: null,
+          monitoringConfig: client.monitoring_config ?? null,
         });
       }
     }
 
-    // Entity queries — prioritize those with platform handles
+    // Entity queries — prioritize those with platform handles.
+    // PROD-H: each entity search inherits its parent client's
+    // monitoring_config so the AI relevance gate uses the correct
+    // archetype prompt. Entity-scan branch in aiRelevanceGate is
+    // already subject-agnostic, but the profile filter + future
+    // hooks need the archetype context too.
     for (const entity of entities.slice(0, 15)) {
       const attrs = entity.attributes || {};
-      
+      const entityClientConfig = entity.client_id ? (clientConfigMap.get(entity.client_id) ?? null) : null;
+
       // Twitter/X
-      const twitterHandle = attrs.twitter_handle || attrs.x_handle || 
+      const twitterHandle = attrs.twitter_handle || attrs.x_handle ||
         entity.aliases?.find((a: string) => a.startsWith('@'));
       if (twitterHandle) {
         const clean = twitterHandle.replace('@', '');
@@ -309,6 +354,7 @@ Deno.serve(async (req) => {
           sourceType: 'entity',
           clientId: null,
           entityId: entity.id,
+          monitoringConfig: entityClientConfig,
         });
       }
 
@@ -322,6 +368,7 @@ Deno.serve(async (req) => {
           sourceType: 'entity',
           clientId: null,
           entityId: entity.id,
+          monitoringConfig: entityClientConfig,
         });
       }
 
@@ -336,22 +383,23 @@ Deno.serve(async (req) => {
           sourceType: 'entity',
           clientId: null,
           entityId: entity.id,
+          monitoringConfig: entityClientConfig,
         });
       }
 
-      // Generic fallback if no handles — use client-specific or entity-level context terms
+      // Generic fallback if no handles — use entity context > client keywords > archetype vocab.
+      // PROD-H: the legacy hardcoded fallback was `pipeline OR LNG OR protest` (Petronas-era).
+      // Now derives the fallback from the parent client's archetype threat_vocab.
       if (!twitterHandle && !fbHandle && !igHandle) {
-        // Prefer entity-level monitoring_context, then client keywords, then generic fallback
         let contextTerms = attrs.monitoring_context as string | undefined;
         if (!contextTerms && entity.client_id) {
           const clientKws = clientKeywordsMap.get(entity.client_id);
           if (clientKws?.length) {
-            // Use up to 3 most specific client keywords as OR terms
             contextTerms = clientKws.slice(0, 3).map((k: string) => `"${k}"`).join(' OR ');
           }
         }
         if (!contextTerms) {
-          contextTerms = 'pipeline OR LNG OR protest';
+          contextTerms = getClientThreatVocab(entityClientConfig);
         }
         searchQueue.push({
           query: `site:x.com OR site:facebook.com OR site:instagram.com "${entity.name}" (${contextTerms})`,
@@ -360,6 +408,7 @@ Deno.serve(async (req) => {
           sourceType: 'entity',
           clientId: entity.client_id || null,
           entityId: entity.id,
+          monitoringConfig: entityClientConfig,
         });
       }
 
@@ -372,37 +421,47 @@ Deno.serve(async (req) => {
           sourceType: 'entity',
           clientId: entity.client_id || null,
           entityId: entity.id,
+          monitoringConfig: entityClientConfig,
         });
       }
     }
 
-    // ═══ BROAD ACTIVISM CAMPAIGN QUERIES ═══
-    // These catch anti-industry campaigns that don't mention specific clients
-    const CAMPAIGN_QUERIES = [
-      // Anti-pipeline / oil & gas campaigns (generic)
-      '"stop pipelines" OR "ban pipelines" OR "no new pipelines" (Canada OR BC OR Alberta)',
-      '"fossil fuel" campaign (pipeline OR LNG) (Canada OR British Columbia OR Alberta)',
-      // Known activist orgs — broad campaign monitoring
-      'standearth OR "stand.earth" (pipeline OR LNG OR "oil and gas" OR "fossil fuel")',
-      '"Dogwood BC" OR "Dogwood Initiative" (pipeline OR LNG OR campaign)',
-      '"BC Counter Info" OR "Frack Free BC" (pipeline OR action OR blockade)',
-      // Indigenous-led pipeline resistance (broad)
-      '"land defender" OR "land back" (pipeline OR LNG OR "oil and gas") Canada',
-    ];
+    // ═══ BROAD ACTIVISM CAMPAIGN QUERIES (energy-infrastructure only) ═══
+    // PROD-H: these are Petronas-era anti-pipeline / anti-LNG / activist-org
+    // sweeps. They are scope-specific to the energy_infrastructure archetype
+    // and must not fire when no energy clients are active in the rotation
+    // (firing them for a CRT-only tenant would spend budget on
+    // industry-protest content that has no relevance to sports / VIP / event).
+    // Synthetic monitoringConfig pins the AI gate to the energy prompt.
+    if (hasEnergyInfrastructureClient) {
+      const CAMPAIGN_QUERIES = [
+        '"stop pipelines" OR "ban pipelines" OR "no new pipelines" (Canada OR BC OR Alberta)',
+        '"fossil fuel" campaign (pipeline OR LNG) (Canada OR British Columbia OR Alberta)',
+        'standearth OR "stand.earth" (pipeline OR LNG OR "oil and gas" OR "fossil fuel")',
+        '"Dogwood BC" OR "Dogwood Initiative" (pipeline OR LNG OR campaign)',
+        '"BC Counter Info" OR "Frack Free BC" (pipeline OR action OR blockade)',
+        '"land defender" OR "land back" (pipeline OR LNG OR "oil and gas") Canada',
+      ];
 
-    for (const campaignQuery of CAMPAIGN_QUERIES) {
-      if (searchBudgetRemaining <= 0) break;
-      for (const platform of PLATFORMS) {
+      const ENERGY_CAMPAIGN_CONFIG = { archetype: 'energy_infrastructure' as const };
+
+      for (const campaignQuery of CAMPAIGN_QUERIES) {
         if (searchBudgetRemaining <= 0) break;
-        searchQueue.push({
-          query: `${platform.sites[0]} ${campaignQuery}`,
-          platform: platform.name,
-          sourceName: 'Industry Campaign Monitor',
-          sourceType: 'client' as const,
-          clientId: null,
-          entityId: null,
-        });
+        for (const platform of PLATFORMS) {
+          if (searchBudgetRemaining <= 0) break;
+          searchQueue.push({
+            query: `${platform.sites[0]} ${campaignQuery}`,
+            platform: platform.name,
+            sourceName: 'Industry Campaign Monitor',
+            sourceType: 'client' as const,
+            clientId: null,
+            entityId: null,
+            monitoringConfig: ENERGY_CAMPAIGN_CONFIG,
+          });
+        }
       }
+    } else {
+      console.log('[SocialUnified] Skipping CAMPAIGN_QUERIES — no energy_infrastructure clients in active rotation');
     }
 
     // Process search queue
@@ -554,6 +613,7 @@ async function executeSearch(
     sourceType: 'client' | 'entity';
     clientId: string | null;
     entityId: string | null;
+    monitoringConfig?: any;  // PROD-H: archetype context (JSONB) for this search
   },
   processedUrls: Set<string>
 ): Promise<{ signals: number; rejected: number; counters: RejectionCounters; samples: RejectionSample[] }> {
@@ -713,8 +773,17 @@ async function executeSearch(
       // wildfire tweet was the actual intel, but the signal source URL
       // was the profile page. Only entity scans bypass this — those
       // legitimately want bio/contact data from a profile page.
+      //
+      // PROD-H exception: if the URL handle MATCHES the searched
+      // client/source name (e.g. https://x.com/bcplace when searching
+      // for "BC Place"), this is the protected entity's OWN channel
+      // and IS mission-relevant for venue / VIP / event archetypes.
+      // Without this exception, the venue's official feed (the most
+      // important social source for CRT) was being killed. Diagnostic
+      // 2026-05-22 captured @bcplace, @bcplacestadium being rejected.
       if (!isEntityScan) {
-        if (url.includes('facebook.com') && !isSpecificFacebookUrl(url)) {
+        const ownedByClient = isOwnedProfileFor(url, search.sourceName);
+        if (!ownedByClient && url.includes('facebook.com') && !isSpecificFacebookUrl(url)) {
           console.log(`[SocialUnified] ✗ Generic FB profile (campaign scan): ${url}`);
           rejected++;
           counters.generic_fb_profile++;
@@ -725,7 +794,7 @@ async function executeSearch(
           });
           continue;
         }
-        if ((url.includes('x.com') || url.includes('twitter.com')) && !isSpecificXUrl(url)) {
+        if (!ownedByClient && (url.includes('x.com') || url.includes('twitter.com')) && !isSpecificXUrl(url)) {
           console.log(`[SocialUnified] ✗ Generic X profile (campaign scan): ${url}`);
           rejected++;
           counters.generic_x_profile++;
@@ -736,7 +805,7 @@ async function executeSearch(
           });
           continue;
         }
-        if (url.includes('instagram.com') && !isSpecificInstagramUrl(url)) {
+        if (!ownedByClient && url.includes('instagram.com') && !isSpecificInstagramUrl(url)) {
           console.log(`[SocialUnified] ✗ Generic IG profile (campaign scan): ${url}`);
           rejected++;
           counters.generic_ig_profile++;
@@ -750,7 +819,9 @@ async function executeSearch(
       }
 
       // ═══ AI RELEVANCE GATE ═══
-      const aiVerdict = await aiRelevanceGate(title, snippet, url, search.sourceName, search.platform, isEntityScan);
+      // PROD-H: client-scope branch is archetype-keyed via monitoringConfig.
+      // Entity-scope branch keeps the subject-agnostic prompt (unchanged).
+      const aiVerdict = await aiRelevanceGate(title, snippet, url, search.sourceName, search.platform, isEntityScan, search.monitoringConfig ?? null);
       if (!aiVerdict.relevant) {
         console.log(`[SocialUnified] ✗ AI rejected: "${title.substring(0, 60)}" — ${aiVerdict.reason}`);
         rejected++;
@@ -953,7 +1024,12 @@ async function aiRelevanceGate(
   url: string,
   sourceName: string,
   platform: string,
-  isEntityScan: boolean = false
+  isEntityScan: boolean = false,
+  // PROD-H: monitoring_config drives which archetype prompt is used for
+  // CLIENT-scope searches. Null is acceptable and resolves to the default
+  // (energy_infrastructure) inside the archetypes module. The entity-scope
+  // branch is intentionally subject-agnostic and ignores monitoringConfig.
+  monitoringConfig: any = null,
 ): Promise<AiVerdict> {
   const fallback: AiVerdict = { relevant: false, reason: 'AI gate unavailable — defaulting to reject', confidence: 0, category: '', location: '' };
 
@@ -975,31 +1051,12 @@ A result is NOT relevant if it:
 - Is a totally unrelated topic that incidentally matches a keyword
 
 Return JSON: { "relevant": boolean, "reason": string (1 sentence), "confidence": number (0-1), "category": string, "location": string }`
-    : `You are an intelligence analyst filtering social media search results.
-You must determine if this result is OPERATIONALLY RELEVANT to security monitoring for Canadian energy infrastructure clients (pipelines, LNG facilities, energy companies).
-
-TEMPORAL RULE: Reject content where the original post or event date is CLEARLY MORE THAN 180 DAYS OLD. Look for date indicators in the snippet, title, or URL (e.g., "2019", "2021", "6 years ago"). If no date is discernible, DEFAULT TO ACCEPTING (not rejecting) — Google CSE often strips publication dates from snippets, and real recent posts often look undated. The downstream pipeline will dedupe and rescore.
-
-CRITICAL GEOGRAPHIC RULE: Reject content about protests, activism, or events that physically occurred OUTSIDE of Canada, even if the organization name matches (e.g., "Extinction Rebellion Austria", "XR Cape Town", "XR Germany" are NOT relevant). Only Canadian-occurring events or content about Canadian energy companies qualify.
-
-A result is relevant if ANY of the following apply:
-- Describes activism, protests, blockades, sabotage, or organizing activity targeting energy infrastructure in Canada
-- Mentions a specific threat, breach, or security incident related to a monitored entity
-- Is a specific social media POST about a Canadian energy company, pipeline, LNG facility, or related operations
-- Physically references Canadian geography or Canadian energy companies
-- Names a tracked person, group, or campaign known to be active in Canadian energy activism
-- Is undated but otherwise specific and on-topic (DEFAULT ACCEPT — let downstream filtering decide)
-
-A result is NOT relevant if it:
-- Is about unrelated topics that happen to match keywords (e.g., "pipeline" in software, unrelated protests)
-- Is a generic platform homepage with no specific content
-- Is international news with no Canadian connection
-- Is entertainment, marketing, or spam content
-- Has an EXPLICIT date older than 180 days (2019, 2020, 2021, 2022, 2023, early 2024 references in snippet/URL)
-- Is about Extinction Rebellion chapters explicitly outside Canada
-- Is a Wikipedia article or archived snapshot of historical content
-
-Return JSON: { "relevant": boolean, "reason": string (1 sentence), "confidence": number (0-1), "category": string, "location": string }`;
+    // PROD-H: client-scope prompt resolves from monitoringConfig.archetype.
+    // Replaces the hardcoded "Canadian energy infrastructure" framing that
+    // was rejecting real CRT-relevant signals (FIFA protests, BC Place
+    // threats) as off-topic. The archetypes module owns the prompt body
+    // per archetype — see _shared/archetypes.ts.
+    : getClientAiSystemPrompt(monitoringConfig, sourceName);
 
   try {
     const result = await callAiGatewayJson<AiVerdict>({
