@@ -1,6 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { extractOGImage } from "../_shared/og-image.ts";
-import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat, getLatestSucceededResultSummary } from "../_shared/heartbeat.ts";
 import { cleanSignalExcerpt } from "../_shared/signal-text.ts";
 
 // A truncated headline ending in a stray initial — "for the B.",
@@ -68,18 +68,37 @@ Deno.serve(async (req) => {
     .select()
     .single();
 
+  // PROD-G — deterministic self-budgeting.
+  //
+  // Previously this function relied on the Supabase 150s edge-function kill as
+  // its de-facto termination signal — runs hung in status='running' forever
+  // because the kill happens after JavaScript stops executing, so
+  // completeHeartbeat never fires. That is telemetry theater (Monitor Health
+  // shows 'healthy' because started_at is fresh, even though no run completes).
+  //
+  // Instead: track wall-clock budget, exit cleanly under budget with
+  // status='succeeded' + result_summary.partial=true + next_cursor for
+  // the subsequent run to resume from. Per-client cursor, no same-run
+  // wraparound. UI surfaces a PARTIAL pill when partial=true so the
+  // operator distinguishes full-cycle from time-boxed runs.
+  //
+  // Heartbeat hoisted above the try so the catch block below can call
+  // failHeartbeat on the same handle — otherwise a thrown error during
+  // the scan would leave the row stuck in status='running' indefinitely
+  // (same failure mode the budget is fixing, via a different path).
+  const STARTED_AT = Date.now();
+  const BUDGET_MS = 105_000; // 45s margin under platform 150s kill
+
+  // Read cursor BEFORE writing this run's heartbeat so the read can never
+  // return our own in-flight row. Filters status='succeeded' to skip
+  // failed/in-flight prior runs that may not carry a meaningful cursor.
+  const priorSummary = await getLatestSucceededResultSummary(supabase, 'monitor-news-google-hourly');
+  const startCursor: string | null = (priorSummary as any)?.next_cursor ?? null;
+
+  const hb = await startHeartbeat(supabase, 'monitor-news-google-hourly');
+
   try {
     console.log('Starting Google News API monitoring scan...');
-
-    // 2026-05-08: write heartbeat at the START. With 70+ keyword queries
-    // per run (29 Petronas + 43 BCCH client keywords), this function
-    // routinely exceeds the 150s edge-function execution limit and gets
-    // killed before reaching the end-of-function heartbeat at line 278.
-    // The Monitor Health panel was showing 3-day staleness despite the
-    // function actually firing every hour — heartbeat was the missing
-    // signal. Writing 'running' here gives operators visibility even if
-    // the run gets cut short.
-    const hb = await startHeartbeat(supabase, 'monitor-news-google-hourly');
 
     if (!googleApiKey || !googleEngineId) {
       console.warn('Google Search API not configured - using fallback RSS method');
@@ -113,10 +132,14 @@ Deno.serve(async (req) => {
     // this filter, _benchmark_petronas (inactive, identical keywords
     // to Petronas Canada, sorts alphabetically first) won every
     // content_hash dedup race and absorbed ~80% of real signals.
+    // PROD-G: explicit ORDER BY id for cursor semantics. The cursor stores
+    // a client_id; the next run resumes from the client immediately after
+    // that id, which only works if order is stable across runs.
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
       .select('id, name, industry, monitoring_keywords, monitoring_config, tactic_keywords')
-      .eq('status', 'active');
+      .eq('status', 'active')
+      .order('id', { ascending: true });
 
     if (clientsError) throw clientsError;
 
@@ -138,12 +161,43 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${clients?.length || 0} clients to monitor`);
 
+    // PROD-G cursor: resume from the client immediately AT next_cursor (inclusive).
+    // If the cursor refers to a client that's been removed/deactivated since the
+    // last run, fall back to index 0 so we never silently skip the entire list.
+    const totalClients = clients?.length ?? 0;
+    let startIdx = 0;
+    if (startCursor) {
+      const idx = (clients ?? []).findIndex((c: any) => c.id === startCursor);
+      if (idx >= 0) {
+        startIdx = idx;
+      } else {
+        console.warn(`[monitor-news-google] resume cursor ${startCursor} not in active client list (renamed/deactivated?); restarting from index 0`);
+      }
+    }
+    console.log(`[monitor-news-google] resuming at index ${startIdx}/${totalClients} (cursor=${startCursor ?? '<none>'})`);
+
     let signalsCreated = 0;
     let itemsScanned = 0;
     const searchResults: any[] = [];
+    let partialExit = false;
+    let nextCursor: string | null = null;
+    let processedCount = 0;
+    let stopIdx = totalClients;
 
     // Build search queries for each client
-    for (const client of clients || []) {
+    for (let clientIdx = startIdx; clientIdx < totalClients; clientIdx++) {
+      // Budget check BEFORE the work, not after — the test must be
+      // "is there time for ANOTHER client" so we exit before the kill
+      // line, not at the moment we cross it. Stop cleanly and leave
+      // this client for the next run.
+      if (Date.now() - STARTED_AT >= BUDGET_MS) {
+        partialExit = true;
+        nextCursor = (clients as any)![clientIdx].id;
+        stopIdx = clientIdx;
+        console.log(`[monitor-news-google] budget exhausted at client ${clientIdx}/${totalClients}; next run resumes at ${nextCursor}`);
+        break;
+      }
+      const client = (clients as any)![clientIdx];
       const queries: string[] = [];
 
       // Build the negative-keyword suffix once per client. Each
@@ -426,17 +480,23 @@ Deno.serve(async (req) => {
         }
       }
 
+      processedCount++;
+
       // Progress checkpoint: write incremental counts after each client.
-      // The function frequently exceeds the 150s edge runtime limit and
-      // gets killed before reaching the final completeHeartbeat at line
-      // 447. Without this checkpoint the heartbeat row stays in 'running'
-      // state with signals_created=0 even though signals are real (see
-      // watchdog finding 2026-05-13 — "DB has 267 signals, heartbeat
-      // reports 0"). Writing progress per-client keeps the row in sync
-      // with reality up to the last completed client.
+      // The function frequently exceeded the 150s edge runtime limit and
+      // got killed before reaching the final completeHeartbeat — the
+      // budget exit above is the new primary safeguard, but this
+      // checkpoint stays as a defense-in-depth telemetry surface (counts
+      // remain visible mid-run rather than only at completion).
+      //
+      // Note: this write keeps status='running' on the in-flight row.
+      // The cursor reader at the top of the function filters
+      // status='succeeded', so these intermediate writes never get
+      // picked up as a resume point — only completeHeartbeat below
+      // advances the cursor for subsequent runs. Intentional.
       if (hb.id) {
         await supabase.from('cron_heartbeat')
-          .update({ result_summary: { items_scanned: itemsScanned, signals_created: signalsCreated, phase: 'in_progress' } })
+          .update({ result_summary: { items_scanned: itemsScanned, signals_created: signalsCreated, phase: 'in_progress', processed_count: processedCount, total_clients: totalClients } })
           .eq('id', hb.id);
       }
     }
@@ -458,24 +518,51 @@ Deno.serve(async (req) => {
       .eq('id', historyEntry?.id);
 
     // Heartbeat — updates the row started at top of function so signals_created
-    // reflects real yield (not stuck at 0 from the initial 'running' write).
-    await completeHeartbeat(supabase, hb, { items_scanned: itemsScanned, signals_created: signalsCreated });
+    // reflects real yield. status='succeeded' regardless of partial flag; the
+    // partial=true field is what the UI checks to badge the run as incomplete.
+    // (Aaron's challenge: confirm downstream watchdog logic does not interpret
+    // status='succeeded' partial exits as proof of full coverage. UI is gated
+    // on result_summary.partial — see MonitorHealthPanel PARTIAL pill.)
+    const elapsedMs = Date.now() - STARTED_AT;
+    await completeHeartbeat(supabase, hb, {
+      items_scanned: itemsScanned,
+      signals_created: signalsCreated,
+      partial: partialExit,
+      next_cursor: nextCursor,
+      started_at_cursor: startCursor,
+      start_idx: startIdx,
+      stop_idx: stopIdx,
+      total_clients: totalClients,
+      processed_count: processedCount,
+      budget_ms: BUDGET_MS,
+      elapsed_ms: elapsedMs,
+    });
 
-  console.log(`Google News monitoring complete. Scanned ${itemsScanned} items, created ${signalsCreated} signals.`);
+    console.log(`Google News monitoring ${partialExit ? 'PARTIAL' : 'complete'}. Scanned ${itemsScanned} items, created ${signalsCreated} signals across ${processedCount}/${totalClients} clients in ${elapsedMs}ms.${partialExit ? ` Next run resumes at ${nextCursor}.` : ''}`);
 
     return successResponse({
       success: true,
+      partial: partialExit,
+      next_cursor: nextCursor,
       items_scanned: itemsScanned,
       signals_created: signalsCreated,
-      clients_monitored: clients?.length || 0,
+      clients_monitored: totalClients,
+      processed_count: processedCount,
+      elapsed_ms: elapsedMs,
       sample_results: searchResults.slice(0, 5)
     });
 
   } catch (error) {
     console.error('Google News monitoring error:', error);
-    
+
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
+
+    // PROD-G: close out the heartbeat row in status='failed' instead of
+    // leaving it stuck in 'running'. Without this, errors after the
+    // startHeartbeat write produced the same hung-running pathology the
+    // budget exit was meant to eliminate.
+    await failHeartbeat(supabase, hb, error);
+
     await supabase
       .from('monitoring_history')
       .update({

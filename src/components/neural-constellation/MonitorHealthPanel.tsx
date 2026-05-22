@@ -190,6 +190,23 @@ function CronRow({ cron }: { cron: CronHealth }) {
               STALE
             </span>
           )}
+          {/* PROD-G: jobs in PARTIAL_AWARE_JOBS report partial=true in
+              result_summary when they exited under their wall-clock
+              budget with work remaining. The run itself is succeeded
+              (so the row stays 'healthy'/green) but the operator
+              needs to know full coverage wasn't achieved this cycle. */}
+          {cron.lastRunPartial === true && (
+            <span
+              className="text-[8px] uppercase tracking-wider px-1 py-0.5 rounded bg-yellow-900/50 text-yellow-200 border border-yellow-600/40"
+              title={
+                cron.lastRunCoverage
+                  ? `Last run succeeded but only processed ${cron.lastRunCoverage.processed}/${cron.lastRunCoverage.total} units before its wall-clock budget — next run resumes from a cursor.`
+                  : "Last run succeeded but exited under its wall-clock budget with work remaining — next run resumes from a cursor."
+              }
+            >
+              PARTIAL{cron.lastRunCoverage ? ` ${cron.lastRunCoverage.processed}/${cron.lastRunCoverage.total}` : ""}
+            </span>
+          )}
         </div>
         <div className="text-[10px] text-muted-foreground flex items-center gap-2 leading-tight mt-0.5">
           <span>last: {lastRunLabel}</span>

@@ -1125,7 +1125,26 @@ export interface CronHealth {
   description: string | null;
   lastRunStatus: string | null;
   lastErrorMessage: string | null;
+  // PROD-G: true when the most recent SUCCEEDED run exited under its
+  // wall-clock budget with work remaining (result_summary.partial=true).
+  // Only populated for jobs in PARTIAL_AWARE_JOBS — undefined means
+  // "not reported," not "definitely full coverage." Surfaced in the UI
+  // as a yellow PARTIAL pill alongside CRITICAL/STALE so the operator
+  // knows a green run still left work on the floor.
+  lastRunPartial?: boolean;
+  // PROD-G: coverage counts from the latest succeeded run's
+  // result_summary — surfaced in the PARTIAL pill tooltip so the
+  // operator sees "1 of 5 clients processed" rather than just
+  // "work remaining." Only populated for PARTIAL_AWARE_JOBS.
+  lastRunCoverage?: { processed: number; total: number };
 }
+
+// PROD-G: jobs that exit cleanly with status='succeeded' even when
+// they've only processed part of their workload (deterministic budget
+// + cursor pattern). For these jobs alone we look at
+// result_summary.partial to render a PARTIAL pill. Keep this list
+// small — every entry costs one extra round-trip per panel refresh.
+const PARTIAL_AWARE_JOBS = ['monitor-news-google-hourly'] as const;
 
 export function useCronHealth() {
   return useQuery({
@@ -1152,6 +1171,36 @@ export function useCronHealth() {
       const latestByJob = new Map<string, { started_at: string; status: string; error_message: string | null }>();
       for (const h of (heartbeats as any[]) || []) {
         if (!latestByJob.has(h.job_name)) latestByJob.set(h.job_name, h);
+      }
+
+      // PROD-G: targeted second query for jobs that report partial via
+      // result_summary. Lower-blast-radius than modifying the shared
+      // latest_heartbeat_per_job RPC — partial-state surfacing is a
+      // narrow concern, the RPC has other consumers. Filters
+      // status='succeeded' so we only badge runs that completed under
+      // budget rather than runs that crashed mid-iteration (those
+      // surface via the existing status='failed' / stale paths).
+      const partialByJob = new Map<string, boolean>();
+      const coverageByJob = new Map<string, { processed: number; total: number }>();
+      if (PARTIAL_AWARE_JOBS.length > 0) {
+        const { data: partialRows } = await supabase
+          .from("cron_heartbeat")
+          .select("job_name, result_summary, started_at")
+          .in("job_name", PARTIAL_AWARE_JOBS as unknown as string[])
+          .eq("status", "succeeded")
+          .order("started_at", { ascending: false })
+          .limit(PARTIAL_AWARE_JOBS.length * 5);
+        for (const row of (partialRows as any[]) || []) {
+          // First occurrence per job_name wins (ordered DESC by started_at).
+          if (!partialByJob.has(row.job_name)) {
+            partialByJob.set(row.job_name, !!row.result_summary?.partial);
+            const processed = Number(row.result_summary?.processed_count);
+            const total = Number(row.result_summary?.total_clients);
+            if (Number.isFinite(processed) && Number.isFinite(total)) {
+              coverageByJob.set(row.job_name, { processed, total });
+            }
+          }
+        }
       }
 
       // 525600 = minutes in a year — the convention this codebase
@@ -1198,6 +1247,8 @@ export function useCronHealth() {
           description: r.description ?? null,
           lastRunStatus: last.status,
           lastErrorMessage: last.error_message,
+          lastRunPartial: partialByJob.has(r.job_name) ? partialByJob.get(r.job_name) : undefined,
+          lastRunCoverage: coverageByJob.get(r.job_name),
         };
       });
     },
