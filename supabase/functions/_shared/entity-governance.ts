@@ -663,6 +663,183 @@ export function recordGovernanceEvent(
 // EXPORTS FOR TESTING
 // ════════════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════════════
+// #182A — persistGovernanceVerdict
+//
+// Atomic audit-first transactional helper. Routes verdict through SECURITY
+// DEFINER RPCs that:
+//   1. Validate caller_intent against entity_governance_writer_policy
+//   2. Validate intent-specific evidence (operator JWT, service_role, etc.)
+//   3. INSERT entity_governance_events row first
+//   4. INSERT governed row (entities | entity_suggestions) with FK populated
+//   5. Return both IDs in a single transaction
+//
+// Callers must declare caller_intent explicitly. service_role privilege alone
+// is not proof of intent; the policy table is the security boundary.
+// ════════════════════════════════════════════════════════════════════════════
+
+export type GovernanceCallerIntent =
+  | 'operator_action'
+  | 'autonomous_system'
+  | 'migration'
+  | 'maintenance';
+
+export interface PersistGovernanceVerdictInput {
+  tenantId: string;
+  sourceWriter: string;
+  callerIntent: GovernanceCallerIntent;
+  candidate: EntityCandidate;
+  result: EntityGovernanceResult;
+  /** When verdict='suggestion_queue', shape of the entity_suggestion row to create. */
+  suggestionRow?: {
+    suggested_aliases?: string[] | null;
+    suggested_attributes?: Record<string, unknown> | null;
+    source_type: string;
+    source_id: string;
+    context?: string | null;
+    status?: string;
+    matched_entity_id?: string | null;
+  };
+  /** When verdict='operator_promoted', shape of the entities row to create. */
+  entityRow?: {
+    description?: string | null;
+    aliases?: string[] | null;
+    risk_level?: string;
+    threat_score?: number | null;
+    threat_indicators?: string[] | null;
+    associations?: string[] | null;
+    attributes?: Record<string, unknown> | null;
+    address_street?: string | null;
+    address_city?: string | null;
+    address_province?: string | null;
+    address_postal_code?: string | null;
+    address_country?: string | null;
+    current_location?: string | null;
+    active_monitoring_enabled?: boolean;
+    monitoring_radius_km?: number | null;
+    client_id?: string | null;
+    confidence_score?: number;
+    is_active?: boolean;
+    entity_status?: string;
+    visibility_class?: string;
+  };
+}
+
+export interface PersistGovernanceVerdictResult {
+  eventId: string;
+  suggestionId?: string;
+  entityId?: string;
+}
+
+/**
+ * #182A — Audit-first, transactional persistence via SECURITY DEFINER RPCs.
+ * REPLACES the recordGovernanceEvent + caller-side INSERT pattern.
+ */
+export async function persistGovernanceVerdict(
+  supabase: any,
+  input: PersistGovernanceVerdictInput,
+): Promise<PersistGovernanceVerdictResult> {
+  if (!input.tenantId) throw new Error('persistGovernanceVerdict: tenantId required');
+  if (!input.sourceWriter) throw new Error('persistGovernanceVerdict: sourceWriter required');
+  if (!input.callerIntent) throw new Error('persistGovernanceVerdict: callerIntent required (no implicit bypass)');
+
+  const eventPayload = {
+    tenant_id: input.tenantId,
+    source_writer: input.sourceWriter,
+    candidate_name: input.candidate.name?.substring(0, 200) ?? '',
+    candidate_type: input.candidate.type,
+    candidate_origin: input.candidate.origin,
+    verdict: input.result.verdict,
+    rejection_reasons: input.result.rejectionReasons ?? [],
+    warnings: input.result.warnings ?? [],
+    confidence: input.result.effectiveConfidence,
+    source_context: input.candidate.sourceRef
+      ? { kind: input.candidate.sourceRef.kind, id: input.candidate.sourceRef.id }
+      : null,
+    bypass_metadata: input.candidate.bypassMetadata ?? null,
+    caller_intent: input.callerIntent,
+    matched_entity_id: input.result.matchedEntityId ?? null,
+    linked_entity_id: null,
+  };
+
+  const verdict = input.result.verdict;
+
+  // auto_link / auto_reject — event-only
+  if (verdict === 'auto_link' || verdict === 'auto_reject') {
+    const eventOnlyPayload = {
+      ...eventPayload,
+      linked_entity_id: verdict === 'auto_link' ? (input.result.matchedEntityId ?? null) : null,
+    };
+    const { data, error } = await supabase.rpc('governance_persist_event_only', { p_event: eventOnlyPayload });
+    if (error) throw new Error(`#182 governance_persist_event_only failed: ${error.message}`);
+    return { eventId: data as string };
+  }
+
+  // suggestion_queue — event + entity_suggestion atomic
+  if (verdict === 'suggestion_queue') {
+    if (!input.suggestionRow) throw new Error('persistGovernanceVerdict: suggestionRow required for suggestion_queue');
+    const suggestionPayload = {
+      tenant_id: input.tenantId,
+      suggested_name: input.result.normalizedName,
+      suggested_type: input.result.resolvedType,
+      suggested_aliases: input.suggestionRow.suggested_aliases ?? null,
+      suggested_attributes: input.suggestionRow.suggested_attributes ?? null,
+      source_type: input.suggestionRow.source_type,
+      source_id: input.suggestionRow.source_id,
+      confidence: input.result.effectiveConfidence,
+      context: input.suggestionRow.context ?? null,
+      status: input.suggestionRow.status ?? 'pending',
+      matched_entity_id: input.suggestionRow.matched_entity_id ?? null,
+    };
+    const { data, error } = await supabase.rpc('governance_persist_suggestion', {
+      p_event: eventPayload,
+      p_suggestion: suggestionPayload,
+    });
+    if (error) throw new Error(`#182 governance_persist_suggestion failed: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    return { eventId: row?.event_id, suggestionId: row?.suggestion_id };
+  }
+
+  // operator_promoted — event + entity atomic
+  if (verdict === 'operator_promoted') {
+    if (!input.entityRow) throw new Error('persistGovernanceVerdict: entityRow required for operator_promoted');
+    const entityPayload = {
+      tenant_id: input.tenantId,
+      name: input.result.normalizedName,
+      type: input.result.resolvedType,
+      description: input.entityRow.description ?? null,
+      aliases: input.entityRow.aliases ?? null,
+      risk_level: input.entityRow.risk_level ?? 'medium',
+      threat_score: input.entityRow.threat_score ?? null,
+      threat_indicators: input.entityRow.threat_indicators ?? null,
+      associations: input.entityRow.associations ?? null,
+      attributes: input.entityRow.attributes ?? null,
+      address_street: input.entityRow.address_street ?? null,
+      address_city: input.entityRow.address_city ?? null,
+      address_province: input.entityRow.address_province ?? null,
+      address_postal_code: input.entityRow.address_postal_code ?? null,
+      address_country: input.entityRow.address_country ?? null,
+      current_location: input.entityRow.current_location ?? null,
+      active_monitoring_enabled: input.entityRow.active_monitoring_enabled ?? false,
+      monitoring_radius_km: input.entityRow.monitoring_radius_km ?? null,
+      client_id: input.entityRow.client_id ?? null,
+      confidence_score: input.entityRow.confidence_score ?? input.result.effectiveConfidence,
+      is_active: input.entityRow.is_active ?? true,
+      entity_status: input.entityRow.entity_status ?? 'confirmed',
+      visibility_class: input.entityRow.visibility_class ?? 'curated',
+    };
+    const { data, error } = await supabase.rpc('governance_persist_entity', {
+      p_event: eventPayload,
+      p_entity: entityPayload,
+    });
+    if (error) throw new Error(`#182 governance_persist_entity failed: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    return { eventId: row?.event_id, entityId: row?.entity_id };
+  }
+
+  throw new Error(`#182 persistGovernanceVerdict: unsupported verdict ${verdict}`);
+}
+
 export const __test_only = {
   hasIdeologyPattern,
   hasVulnerabilityClassPattern,

@@ -13,9 +13,12 @@ import { aegisToolDefinitions } from "../_shared/aegis-tool-definitions.ts";
 import { extractPlannedTestSignalFromText, extractPlannedFortressQueryFromText, extractPlannedAgentFromText } from "../_shared/aegis-forced-execution.ts";
 import { signalsAndIncidentsHandlers } from "../_shared/handlers-signals-incidents.ts";
 // #171 Entity governance — ontology + verdict routing + audit log
+// #182A CANARY: persistGovernanceVerdict (audit-first atomic RPC) replaces
+// the fire-and-forget recordGovernanceEvent + caller-INSERT pattern.
 import {
   validateAndClassify as governanceValidateAndClassify,
   recordGovernanceEvent as governanceRecordEvent,
+  persistGovernanceVerdict as governancePersist,
 } from "../_shared/entity-governance.ts";
 
 const corsHeaders = {
@@ -2279,88 +2282,80 @@ Be thorough and include every piece of visible text and data.`,
 
       const verdict = await governanceValidateAndClassify(supabaseClient, tenantId, candidate);
 
-      // auto_link — entity already exists; just return the link.
-      if (verdict.verdict === "auto_link") {
-        governanceRecordEvent(supabaseClient, {
-          tenantId,
-          sourceWriter: "aegis_create_entity",
-          candidate,
-          result: verdict,
-        });
+      // #182A CANARY — all 4 verdict paths now route through persistGovernanceVerdict
+      // (atomic, audit-first, transactional). caller_intent='autonomous_system'
+      // because AEGIS makes the decision under service_role context.
+      try {
+        if (verdict.verdict === "auto_link" || verdict.verdict === "auto_reject") {
+          const { eventId } = await governancePersist(supabaseClient, {
+            tenantId,
+            sourceWriter: "aegis_create_entity",
+            callerIntent: "autonomous_system",
+            candidate,
+            result: verdict,
+          });
+          if (verdict.verdict === "auto_link") {
+            return {
+              success: false,
+              message: `Entity "${verdict.normalizedName}" already exists with ID: ${verdict.matchedEntityId}. Use that ID directly instead of re-creating.`,
+              entity_id: verdict.matchedEntityId,
+              _governance_event_id: eventId,
+            };
+          }
+          // auto_reject
+          const reasonsLine = verdict.rejectionReasons.join(", ");
+          return {
+            success: false,
+            governance_rejected: true,
+            rejection_reasons: verdict.rejectionReasons,
+            message: `Entity proposal rejected by governance: ${reasonsLine}. Required: a specific named person/organization/facility/domain with a description ≥20 chars explaining why this entity is relevant to the current tenant. Generic categories ("Militant Far-Left Networks"), vulnerability classes ("Directory Traversal Vulnerability"), event fragments ("World Cup"), and common nouns are not valid entities.`,
+            _governance_event_id: eventId,
+          };
+        }
+
+        if (verdict.verdict === "suggestion_queue") {
+          const { eventId, suggestionId } = await governancePersist(supabaseClient, {
+            tenantId,
+            sourceWriter: "aegis_create_entity",
+            callerIntent: "autonomous_system",
+            candidate,
+            result: verdict,
+            suggestionRow: {
+              suggested_aliases: candidate.aliases || null,
+              suggested_attributes: candidate.description
+                ? { description: candidate.description, relevance_reason: candidate.context ?? null }
+                : null,
+              source_type: "ai_assistant",
+              source_id: crypto.randomUUID(),
+              context: `Created via AI Assistant. Reason: ${candidate.context ?? "(none supplied)"} | Description: ${candidate.description ?? "(none)"}`,
+              status: "pending",
+            },
+          });
+          return {
+            success: true,
+            message: `Created entity suggestion "${verdict.normalizedName}" (${verdict.resolvedType}). It will appear in the Suggestions tab for analyst review.`,
+            suggestion: { id: suggestionId, suggested_name: verdict.normalizedName, suggested_type: verdict.resolvedType },
+            confidence: verdict.effectiveConfidence,
+            warnings: verdict.warnings.length > 0 ? verdict.warnings : undefined,
+            _governance_event_id: eventId,
+            next_step: "The entity suggestion is now pending review. Once approved by an analyst, it will be added to the entities database.",
+          };
+        }
+
+        // operator_promoted unreachable for AEGIS tool path (requestPromotion not set).
+        // Defensive: if reached, fail closed.
         return {
           success: false,
-          message: `Entity "${verdict.normalizedName}" already exists with ID: ${verdict.matchedEntityId}. Use that ID directly instead of re-creating.`,
-          entity_id: verdict.matchedEntityId,
+          message: `Unexpected governance verdict ${verdict.verdict} for AEGIS create_entity tool`,
         };
-      }
-
-      // auto_reject — record + return why (so the LLM gets actionable feedback).
-      if (verdict.verdict === "auto_reject") {
-        governanceRecordEvent(supabaseClient, {
-          tenantId,
-          sourceWriter: "aegis_create_entity",
-          candidate,
-          result: verdict,
-        });
-        const reasonsLine = verdict.rejectionReasons.join(", ");
+      } catch (persistErr) {
+        const errMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+        console.error("[#182A canary] persistGovernanceVerdict failed:", errMsg);
         return {
           success: false,
-          governance_rejected: true,
-          rejection_reasons: verdict.rejectionReasons,
-          message: `Entity proposal rejected by governance: ${reasonsLine}. Required: a specific named person/organization/facility/domain with a description ≥20 chars explaining why this entity is relevant to the current tenant. Generic categories ("Militant Far-Left Networks"), vulnerability classes ("Directory Traversal Vulnerability"), event fragments ("World Cup"), and common nouns are not valid entities.`,
+          message: `Governance persistence failed: ${errMsg}`,
         };
       }
-
-      // suggestion_queue — passed validation; persist.
-      const { data: newSuggestion, error } = await supabaseClient
-        .from("entity_suggestions")
-        .insert({
-          tenant_id: tenantId,
-          suggested_name: verdict.normalizedName,
-          suggested_type: verdict.resolvedType,
-          suggested_aliases: candidate.aliases || null,
-          suggested_attributes: candidate.description
-            ? { description: candidate.description, relevance_reason: candidate.context ?? null }
-            : null,
-          source_type: "ai_assistant",
-          source_id: crypto.randomUUID(),
-          confidence: verdict.effectiveConfidence,
-          context: `Created via AI Assistant. Reason: ${candidate.context ?? "(none supplied)"} | Description: ${candidate.description ?? "(none)"}`,
-          status: "pending",
-        })
-        .select("id, suggested_name, suggested_type")
-        .single();
-
-      if (error) {
-        console.error("[#171] Failed to create entity suggestion:", error);
-        governanceRecordEvent(supabaseClient, {
-          tenantId,
-          sourceWriter: "aegis_create_entity",
-          candidate,
-          result: { ...verdict, verdict: "auto_reject", rejectionReasons: ["persistence_error"] },
-        });
-        return {
-          success: false,
-          message: `Failed to create entity suggestion: ${error.message}`,
-        };
-      }
-
-      governanceRecordEvent(supabaseClient, {
-        tenantId,
-        sourceWriter: "aegis_create_entity",
-        candidate,
-        result: verdict,
-        suggestionId: newSuggestion.id,
-      });
-
-      return {
-        success: true,
-        message: `Created entity suggestion "${newSuggestion.suggested_name}" (${newSuggestion.suggested_type}). It will appear in the Suggestions tab for analyst review.`,
-        suggestion: newSuggestion,
-        confidence: verdict.effectiveConfidence,
-        warnings: verdict.warnings.length > 0 ? verdict.warnings : undefined,
-        next_step: "The entity suggestion is now pending review. Once approved by an analyst, it will be added to the entities database.",
-      };
     }
 
     case "read_intelligence_documents": {
