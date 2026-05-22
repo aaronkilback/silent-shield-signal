@@ -12,6 +12,11 @@ import { FORTRESS_CORE_DIRECTIVE } from "../_shared/fortress-core-directive.ts";
 import { aegisToolDefinitions } from "../_shared/aegis-tool-definitions.ts";
 import { extractPlannedTestSignalFromText, extractPlannedFortressQueryFromText, extractPlannedAgentFromText } from "../_shared/aegis-forced-execution.ts";
 import { signalsAndIncidentsHandlers } from "../_shared/handlers-signals-incidents.ts";
+// #171 Entity governance — ontology + verdict routing + audit log
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+} from "../_shared/entity-governance.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2255,75 +2260,106 @@ Be thorough and include every piece of visible text and data.`,
     case "create_entity": {
       // P0 Phase-C — fail-closed tenant gate
       assertTenantContext("create_entity", tenantId);
-      const { name, type, description, aliases } = args;
-      
-      // Check if entity already exists
-      const { data: existing } = await supabaseClient
-        .from("entities")
-        .select("id, name")
-        .ilike("name", name)
-        .limit(1)
-        .maybeSingle();
-      
-      if (existing) {
+      const { name, type, description, aliases, relevance_reason } = args;
+
+      // #171 — Entity governance: ontology + dedupe + verdict routing.
+      // Removes hardcoded 0.85 confidence. Description ≥20 chars required for
+      // person/organization/location/vehicle. Generic categories, vulnerability
+      // classes, abstract events, and common nouns hard-rejected.
+      const candidate = {
+        name: typeof name === "string" ? name : "",
+        type: typeof type === "string" ? type : "other",
+        description: typeof description === "string" ? description : null,
+        aliases: Array.isArray(aliases) ? aliases : null,
+        confidence: 0.6,                        // baseline for human-mediated tool call; promoted by description quality
+        origin: "human" as const,               // AEGIS tool call mediated by operator dialog
+        context: typeof relevance_reason === "string" ? relevance_reason : null,
+        sourceRef: { kind: "conversation" as const, id: crypto.randomUUID() },
+      };
+
+      const verdict = await governanceValidateAndClassify(supabaseClient, tenantId, candidate);
+
+      // auto_link — entity already exists; just return the link.
+      if (verdict.verdict === "auto_link") {
+        governanceRecordEvent(supabaseClient, {
+          tenantId,
+          sourceWriter: "aegis_create_entity",
+          candidate,
+          result: verdict,
+        });
         return {
           success: false,
-          message: `Entity "${existing.name}" already exists with ID: ${existing.id}`,
-          entity_id: existing.id
+          message: `Entity "${verdict.normalizedName}" already exists with ID: ${verdict.matchedEntityId}. Use that ID directly instead of re-creating.`,
+          entity_id: verdict.matchedEntityId,
         };
       }
 
-      // Check if there's already a pending suggestion for this entity
-      const { data: existingSuggestion } = await supabaseClient
-        .from("entity_suggestions")
-        .select("id, suggested_name, status")
-        .ilike("suggested_name", name)
-        .eq("status", "pending")
-        .limit(1)
-        .maybeSingle();
-
-      if (existingSuggestion) {
+      // auto_reject — record + return why (so the LLM gets actionable feedback).
+      if (verdict.verdict === "auto_reject") {
+        governanceRecordEvent(supabaseClient, {
+          tenantId,
+          sourceWriter: "aegis_create_entity",
+          candidate,
+          result: verdict,
+        });
+        const reasonsLine = verdict.rejectionReasons.join(", ");
         return {
           success: false,
-          message: `A suggestion for entity "${existingSuggestion.suggested_name}" already exists and is pending review.`,
-          suggestion_id: existingSuggestion.id
+          governance_rejected: true,
+          rejection_reasons: verdict.rejectionReasons,
+          message: `Entity proposal rejected by governance: ${reasonsLine}. Required: a specific named person/organization/facility/domain with a description ≥20 chars explaining why this entity is relevant to the current tenant. Generic categories ("Militant Far-Left Networks"), vulnerability classes ("Directory Traversal Vulnerability"), event fragments ("World Cup"), and common nouns are not valid entities.`,
         };
       }
-      
-      // Create as entity_suggestion instead of directly in entities (suggestions-first policy).
-      // #134: tenant_id must be set — RLS for analyst/admin visibility requires
-      // tenant_id IS NOT NULL. assertTenantContext above guarantees tenantId.
+
+      // suggestion_queue — passed validation; persist.
       const { data: newSuggestion, error } = await supabaseClient
         .from("entity_suggestions")
         .insert({
           tenant_id: tenantId,
-          suggested_name: name,
-          suggested_type: type,
-          suggested_aliases: aliases || null,
-          suggested_attributes: description ? { description } : null,
+          suggested_name: verdict.normalizedName,
+          suggested_type: verdict.resolvedType,
+          suggested_aliases: candidate.aliases || null,
+          suggested_attributes: candidate.description
+            ? { description: candidate.description, relevance_reason: candidate.context ?? null }
+            : null,
           source_type: "ai_assistant",
-          // entity_suggestions.source_id is a UUID in the database
           source_id: crypto.randomUUID(),
-          confidence: 0.85,
-          context: `Created via AI Assistant: ${description || 'No description provided'}`,
-          status: "pending"
+          confidence: verdict.effectiveConfidence,
+          context: `Created via AI Assistant. Reason: ${candidate.context ?? "(none supplied)"} | Description: ${candidate.description ?? "(none)"}`,
+          status: "pending",
         })
         .select("id, suggested_name, suggested_type")
         .single();
-      
+
       if (error) {
-        console.error("Failed to create entity suggestion:", error);
+        console.error("[#171] Failed to create entity suggestion:", error);
+        governanceRecordEvent(supabaseClient, {
+          tenantId,
+          sourceWriter: "aegis_create_entity",
+          candidate,
+          result: { ...verdict, verdict: "auto_reject", rejectionReasons: ["persistence_error"] },
+        });
         return {
           success: false,
-          message: `Failed to create entity suggestion: ${error.message}`
+          message: `Failed to create entity suggestion: ${error.message}`,
         };
       }
-      
+
+      governanceRecordEvent(supabaseClient, {
+        tenantId,
+        sourceWriter: "aegis_create_entity",
+        candidate,
+        result: verdict,
+        suggestionId: newSuggestion.id,
+      });
+
       return {
         success: true,
         message: `Created entity suggestion "${newSuggestion.suggested_name}" (${newSuggestion.suggested_type}). It will appear in the Suggestions tab for analyst review.`,
         suggestion: newSuggestion,
-        next_step: "The entity suggestion is now pending review. Once approved by an analyst, it will be added to the entities database."
+        confidence: verdict.effectiveConfidence,
+        warnings: verdict.warnings.length > 0 ? verdict.warnings : undefined,
+        next_step: "The entity suggestion is now pending review. Once approved by an analyst, it will be added to the entities database.",
       };
     }
 

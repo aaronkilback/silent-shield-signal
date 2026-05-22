@@ -1,4 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+// #171 Entity governance — LLM extractor must route through validator (confidence alone insufficient)
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+} from "../_shared/entity-governance.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -69,7 +74,7 @@ Deno.serve(async (req) => {
       // Find signals needing insight extraction
       const { data: signalsNeedingExtraction } = await supabase
         .from('signals')
-        .select('id, normalized_text, raw_json, location, entity_tags, category')
+        .select('id, normalized_text, raw_json, location, entity_tags, category, tenant_id')
         .or('entity_tags.is.null,location.is.null,category.eq.unknown')
         .eq('status', 'new')
         .order('created_at', { ascending: false })
@@ -79,7 +84,7 @@ Deno.serve(async (req) => {
     } else if (signal_id) {
       const { data: signal } = await supabase
         .from('signals')
-        .select('id, normalized_text, raw_json, location, entity_tags, category')
+        .select('id, normalized_text, raw_json, location, entity_tags, category, tenant_id')
         .eq('id', signal_id)
         .single();
 
@@ -284,27 +289,77 @@ ${signalText.substring(0, 4000)}`
             .update(updatePayload)
             .eq('id', signal.id);
 
-          // Create entity suggestions for high-confidence entities
-          // #134: tenant_id derived from source signal — required for analyst visibility.
+          // #171 Entity governance — LLM-extracted entities route through validator.
+          // LLM confidence alone is insufficient; validator enforces ontology, source-aware
+          // sanity (name must appear in source context), duplicate detection, and audit.
           if (!signal.tenant_id) {
             console.warn(`[#134] skipping suggestions for signal ${signal.id} — no tenant_id`);
           } else {
             for (const entity of insights.entities.filter(e => e.confidence >= 0.7)) {
+              const candidate = {
+                name: entity.name,
+                type: entity.type,
+                confidence: entity.confidence,
+                origin: 'llm' as const,
+                context: entity.context || signalText.substring(0, 500),
+                sourceRef: { kind: 'signal' as const, id: signal.id },
+              };
+
+              const verdict = await governanceValidateAndClassify(supabase, signal.tenant_id, candidate);
+
+              // auto_link — entity already exists in tenant. Skip suggestion; signal already has entity_tags update above.
+              if (verdict.verdict === 'auto_link') {
+                governanceRecordEvent(supabase, {
+                  tenantId: signal.tenant_id,
+                  sourceWriter: 'extract_signal_insights',
+                  candidate,
+                  result: verdict,
+                });
+                continue;
+              }
+
+              // auto_reject — log + skip.
+              if (verdict.verdict === 'auto_reject') {
+                governanceRecordEvent(supabase, {
+                  tenantId: signal.tenant_id,
+                  sourceWriter: 'extract_signal_insights',
+                  candidate,
+                  result: verdict,
+                });
+                continue;
+              }
+
+              // suggestion_queue — persist with normalized values.
               try {
-                await supabase
+                const { data: inserted } = await supabase
                   .from('entity_suggestions')
                   .insert({
                     tenant_id: signal.tenant_id,
                     source_type: 'signal',
                     source_id: crypto.randomUUID(),
-                    suggested_name: entity.name,
-                    suggested_type: entity.type,
-                    confidence: entity.confidence,
-                    context: entity.context || `Extracted from signal ${signal.id}`,
-                    status: 'pending'
-                  });
+                    suggested_name: verdict.normalizedName,
+                    suggested_type: verdict.resolvedType,
+                    confidence: verdict.effectiveConfidence,
+                    context: candidate.context,
+                    status: 'pending',
+                  })
+                  .select('id')
+                  .single();
+                governanceRecordEvent(supabase, {
+                  tenantId: signal.tenant_id,
+                  sourceWriter: 'extract_signal_insights',
+                  candidate,
+                  result: verdict,
+                  suggestionId: inserted?.id ?? null,
+                });
               } catch (err) {
-                // Ignore duplicate suggestions
+                console.warn(`[#171] extract-signal-insights suggestion insert failed for "${entity.name}":`, err instanceof Error ? err.message : String(err));
+                governanceRecordEvent(supabase, {
+                  tenantId: signal.tenant_id,
+                  sourceWriter: 'extract_signal_insights',
+                  candidate,
+                  result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] },
+                });
               }
             }
           }

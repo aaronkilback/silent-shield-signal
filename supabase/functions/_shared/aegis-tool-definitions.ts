@@ -604,17 +604,47 @@ Supports files up to 20MB and processes up to 10 pages for PDFs.`,
   {
     type: "function",
     function: {
+      // #171 — Entity governance contract:
+      //   - description ≥20 chars REQUIRED for person/organization/location/vehicle
+      //   - relevance_reason REQUIRED: why THIS entity matters to THIS tenant
+      //   - NO generic categories ("Militant Far-Left Networks", "Cartels")
+      //   - NO vulnerability classes ("Directory Traversal Vulnerability")
+      //   - NO event fragments ("World Cup", "Games Draw")
+      //   - NO common nouns ("Cloud Services", "Social Intelligence")
+      //   - Identifier types (domain/email/phone/ip_address) may omit description.
+      // The governance layer auto-rejects proposals that violate these rules.
       name: "create_entity",
-      description: "Create a new entity (person, organization, location) in the system.",
+      description:
+        "Propose a new entity (specific named person, organization, threat actor, facility, named account, domain). " +
+        "STRICT RULES: " +
+        "(1) Only propose an entity if you can name it specifically AND explain in `relevance_reason` why it matters to THIS tenant's protective scope. " +
+        "(2) For person/organization/location, `description` must be ≥20 characters and substantively describe what the entity is. " +
+        "(3) Do NOT propose generic categories, ideologies, movements, vulnerability classes, abstract events, or common nouns — those are not entities. " +
+        "(4) Threat actors are 'organization' type with role in description. Executives are 'person' type with role in description. " +
+        "If your candidate fails these rules, do NOT call this tool — instead state the limitation to the operator.",
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Entity name" },
-          type: { type: "string", enum: ["person", "organization", "location", "vehicle", "ip_address", "domain", "phone", "email", "cryptocurrency_wallet"], description: "Type of entity" },
-          description: { type: "string", description: "Optional description of the entity" },
+          name: {
+            type: "string",
+            description: "Specific named entity (e.g. 'Trent Reznor', 'Lashkar-e-Taiba', 'BC Place Stadium', 'bcchildrens.ca'). NOT a category, ideology, or noun phrase.",
+          },
+          type: {
+            type: "string",
+            enum: ["person", "organization", "location", "vehicle", "ip_address", "domain", "phone", "email", "cryptocurrency_wallet"],
+            description: "Entity type. threat_actor → 'organization' with role noted in description. executive → 'person' with role noted in description. facility → 'location' with kind noted in description.",
+          },
+          description: {
+            type: "string",
+            description: "REQUIRED for person/organization/location/vehicle (≥20 chars). What is this entity, what role do they play, what context makes them notable? May be omitted for pure identifier types (domain/email/phone/ip_address).",
+          },
+          relevance_reason: {
+            type: "string",
+            description: "REQUIRED. Why is THIS entity relevant to the CURRENT tenant's protective intelligence scope? Cite the signal/document/conversation that motivated the proposal.",
+          },
           aliases: { type: "array", items: { type: "string" }, description: "Optional alternative names or aliases" },
         },
-        required: ["name", "type"],
+        required: ["name", "type", "relevance_reason"],
       },
     },
   },

@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { attenuateConfidence } from "../_shared/calibration.ts";
+// #171 Entity governance — regex extractor must route through validator (heuristic, never authoritative)
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+} from "../_shared/entity-governance.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -289,45 +294,111 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Remaining extracted names -> entity suggestions
+    // Remaining extracted names -> route through entity governance (#171).
+    // Regex extraction is heuristic only; never authoritative.
+    // The legacy `autoApprove` → entities.insert path is removed — all candidates
+    // go through validateAndClassify which can only return auto_link / suggestion_queue / auto_reject.
     const remainingNames = Array.from(extractedNames).slice(0, 5);
-    const MIN_AUTO_CREATE_CONFIDENCE = 0.8;
     const suggestions = [];
 
     for (const name of remainingNames) {
+      // Type heuristic (still useful as a starting guess — validator can demote).
       let suggestedType = 'other';
       let confidence = 0.7;
       if (emailPattern.test(name)) { suggestedType = 'email'; confidence = 0.9; }
       else if (phonePattern.test(name)) { suggestedType = 'phone'; confidence = 0.9; }
       else if (domainPattern.test(name) && !name.includes('@')) { suggestedType = 'domain'; confidence = 0.85; }
       else if (/\b(?:Inc|Corp|LLC|Ltd|Company|Corporation|Group|Systems|Solutions)\b/i.test(name)) {
-        suggestedType = 'organization'; confidence = 0.85;
+        suggestedType = 'organization'; confidence = 0.8;
       } else if (/^[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}/.test(name)) {
+        // Tentative person classification — governance module will demote if no person cue in context.
         suggestedType = 'person';
         const occurrences = (text.match(new RegExp(name, 'g')) || []).length;
-        confidence = Math.min(0.7 + (occurrences * 0.1), 0.95);
+        confidence = Math.min(0.7 + (occurrences * 0.05), 0.85);  // capped lower than before
       }
       const nameIndex = text.indexOf(name);
       const ctx = text.substring(Math.max(0, nameIndex - 100), Math.min(text.length, nameIndex + name.length + 100));
 
-      if (autoApprove && confidence >= MIN_AUTO_CREATE_CONFIDENCE) {
-        const { data: newEntity, error: createError } = await supabase
-          .from('entities')
-          .insert({ name, type: suggestedType, is_active: true,
-            description: `Auto-created from ${sourceType} (confidence: ${confidence.toFixed(2)})` })
-          .select().single();
-        if (!createError && newEntity) {
-          matches.push({ entityId: newEntity.id, entityName: newEntity.name, confidence, matchedOn: [name] });
-        }
-      } else if (sourceTenantId) {
-        const { data: suggestion, error: suggestionError } = await supabase
-          .from('entity_suggestions')
-          .insert({ tenant_id: sourceTenantId, suggested_name: name, suggested_type: suggestedType, source_type: sourceType,
-            source_id: sourceId, confidence, context: ctx, status: 'pending' })
-          .select().single();
-        if (!suggestionError && suggestion) suggestions.push(suggestion);
+      if (!sourceTenantId) {
+        // tenant_id couldn't be resolved → cannot persist or audit. Skip.
+        continue;
       }
-      // else: tenant_id couldn't be resolved → suggestion skipped (warning logged above)
+
+      const candidate = {
+        name,
+        type: suggestedType,
+        confidence,
+        origin: 'regex' as const,
+        context: ctx,
+        sourceRef: { kind: (sourceType as any) || 'other', id: sourceId },
+      };
+
+      const verdict = await governanceValidateAndClassify(supabase, sourceTenantId, candidate);
+
+      // auto_link — name matched an existing tenant entity. Add to matches (links the source record).
+      if (verdict.verdict === 'auto_link' && verdict.matchedEntityId) {
+        if (!matches.some((m) => m.entityId === verdict.matchedEntityId)) {
+          matches.push({
+            entityId: verdict.matchedEntityId,
+            entityName: verdict.normalizedName,
+            confidence: verdict.effectiveConfidence,
+            matchedOn: [name],
+          });
+        }
+        governanceRecordEvent(supabase, {
+          tenantId: sourceTenantId,
+          sourceWriter: 'correlate_entities',
+          candidate,
+          result: verdict,
+        });
+        continue;
+      }
+
+      // auto_reject — log and skip (no entity_suggestions row).
+      if (verdict.verdict === 'auto_reject') {
+        governanceRecordEvent(supabase, {
+          tenantId: sourceTenantId,
+          sourceWriter: 'correlate_entities',
+          candidate,
+          result: verdict,
+        });
+        continue;
+      }
+
+      // suggestion_queue — persist as entity_suggestion, then record event.
+      const { data: suggestion, error: suggestionError } = await supabase
+        .from('entity_suggestions')
+        .insert({
+          tenant_id: sourceTenantId,
+          suggested_name: verdict.normalizedName,
+          suggested_type: verdict.resolvedType,
+          source_type: sourceType,
+          source_id: sourceId,
+          confidence: verdict.effectiveConfidence,
+          context: ctx,
+          status: 'pending',
+        })
+        .select()
+        .single();
+
+      if (!suggestionError && suggestion) {
+        suggestions.push(suggestion);
+        governanceRecordEvent(supabase, {
+          tenantId: sourceTenantId,
+          sourceWriter: 'correlate_entities',
+          candidate,
+          result: verdict,
+          suggestionId: suggestion.id,
+        });
+      } else if (suggestionError) {
+        console.warn(`[#171] correlate-entities suggestion insert failed for "${name}":`, suggestionError.message);
+        governanceRecordEvent(supabase, {
+          tenantId: sourceTenantId,
+          sourceWriter: 'correlate_entities',
+          candidate,
+          result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] },
+        });
+      }
     }
 
     // Write correlated entity IDs back to source record
