@@ -252,6 +252,22 @@ Deno.serve(async (req) => {
     let totalSearches = 0;
     const processedUrls = new Set<string>();
 
+    // Per-stage rejection telemetry — see RejectionCounters/Sample
+    // types above. Existing aiRejected stays for backward compat but is
+    // the SUM of all rejection sites; rejectionCounters breaks it out.
+    const rejectionCounters = newRejectionCounters();
+    const rejectionSamples: RejectionSample[] = [];
+    const addSamplesFromSearch = (incoming: RejectionSample[]) => {
+      for (const s of incoming) {
+        addSampleIfRoom(rejectionSamples, s.stage as keyof RejectionCounters, {
+          reason: s.reason,
+          query: s.query, platform: s.platform,
+          source_name: s.source_name, source_type: s.source_type,
+          url: s.url, title: s.title, snippet: s.snippet,
+        });
+      }
+    };
+
     // Build search queue: interleave platforms for diversity
     const searchQueue: Array<{
       query: string;
@@ -406,6 +422,8 @@ Deno.serve(async (req) => {
         const result = await executeSearch(supabase, apiKey, engineId, search, processedUrls);
         signalsCreated += result.signals;
         aiRejected += result.rejected;
+        mergeCounters(rejectionCounters, result.counters);
+        addSamplesFromSearch(result.samples);
 
       } catch (error) {
         if (error instanceof RateLimitError) {
@@ -417,12 +435,15 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[SocialUnified] Complete. Searches: ${totalSearches}, Signals: ${signalsCreated}, AI-rejected: ${aiRejected}`);
+    console.log(`[SocialUnified] Rejection breakdown:`, rejectionCounters);
 
     await completeHeartbeat(supabase, hb, {
       signals_created: signalsCreated,
       searches: totalSearches,
-      ai_rejected: aiRejected,
+      ai_rejected: aiRejected,                     // legacy aggregate — keep for backward compat
       budget_remaining: searchBudgetRemaining,
+      rejection_counters: rejectionCounters,       // NEW — per-stage breakdown
+      rejection_samples: rejectionSamples,         // NEW — up to 3 examples per stage
     });
 
     return successResponse({
@@ -431,6 +452,8 @@ Deno.serve(async (req) => {
       signals_created: signalsCreated,
       ai_rejected: aiRejected,
       budget_remaining: searchBudgetRemaining,
+      rejection_counters: rejectionCounters,
+      rejection_samples: rejectionSamples,
       source: 'social-unified'
     });
 
@@ -440,6 +463,81 @@ Deno.serve(async (req) => {
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// Diagnostic instrumentation (added 2026-05-22 — Petronas-era scope
+// audit). Purely additive: the existing `signals` and `rejected`
+// returns are preserved; new typed counters + per-stage samples are
+// returned alongside them. No threshold or filter behavior changes.
+// All call sites of executeSearch must aggregate the new fields.
+//
+// Goal: empirically attribute every dropped candidate to a specific
+// stage, with a sampled query/URL/snippet so the operator can see
+// what is actually being rejected and where.
+// ═══════════════════════════════════════════════════════════════
+
+interface RejectionCounters {
+  items_returned: number;       // CSE items returned (pre-filter)
+  empty_payload: number;        // searches that returned 0 items
+  http_error: number;           // CSE non-200 (excluding 429 which throws)
+  short_or_dup_url: number;     // line ~491: !url || dup || content<30
+  blocked_domain: number;       // line ~497: BLOCKED_DOMAINS hit
+  wikipedia: number;            // line ~520
+  old_url_year: number;         // line ~531: URL contains pre-2025 year
+  old_snippet_date: number;     // line ~536: snippet has pre-2025 date
+  non_canadian_xr: number;      // line ~546
+  generic_fb_profile: number;   // line ~561
+  generic_x_profile: number;    // line ~566
+  generic_ig_profile: number;   // line ~571
+  ai_rejected: number;          // line ~580: AI gate verdict.relevant=false
+  duplicate_db: number;         // line ~592: ingested_documents already has URL
+  signals_created: number;      // mirrors signals counter, for completeness
+}
+
+interface RejectionSample {
+  stage: string;
+  reason?: string;
+  query: string;
+  platform: string;
+  source_name: string;
+  source_type: 'client' | 'entity';
+  url: string;
+  title: string;     // truncated to 80 chars
+  snippet: string;   // truncated to 200 chars
+}
+
+const MAX_SAMPLES_PER_STAGE = 3;
+
+function newRejectionCounters(): RejectionCounters {
+  return {
+    items_returned: 0, empty_payload: 0, http_error: 0,
+    short_or_dup_url: 0, blocked_domain: 0, wikipedia: 0,
+    old_url_year: 0, old_snippet_date: 0, non_canadian_xr: 0,
+    generic_fb_profile: 0, generic_x_profile: 0, generic_ig_profile: 0,
+    ai_rejected: 0, duplicate_db: 0, signals_created: 0,
+  };
+}
+
+function mergeCounters(into: RejectionCounters, from: RejectionCounters): void {
+  for (const k of Object.keys(into) as (keyof RejectionCounters)[]) {
+    into[k] += from[k];
+  }
+}
+
+function addSampleIfRoom(
+  bucket: RejectionSample[],
+  stage: keyof RejectionCounters,
+  fields: Omit<RejectionSample, 'stage'>,
+): void {
+  const existingForStage = bucket.filter(s => s.stage === stage).length;
+  if (existingForStage >= MAX_SAMPLES_PER_STAGE) return;
+  bucket.push({
+    stage,
+    ...fields,
+    title: (fields.title || '').substring(0, 80),
+    snippet: (fields.snippet || '').substring(0, 200),
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Core search + ingest pipeline
@@ -458,11 +556,13 @@ async function executeSearch(
     entityId: string | null;
   },
   processedUrls: Set<string>
-): Promise<{ signals: number; rejected: number }> {
+): Promise<{ signals: number; rejected: number; counters: RejectionCounters; samples: RejectionSample[] }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   let signals = 0;
   let rejected = 0;
+  const counters = newRejectionCounters();
+  const samples: RejectionSample[] = [];
 
   try {
     const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${engineId}&q=${encodeURIComponent(search.query)}&num=5`;
@@ -472,11 +572,28 @@ async function executeSearch(
     if (!response.ok) {
       if (response.status === 429) throw new RateLimitError();
       console.log(`[SocialUnified] Search failed: ${response.status}`);
-      return { signals: 0, rejected: 0 };
+      counters.http_error++;
+      addSampleIfRoom(samples, 'http_error', {
+        reason: `HTTP ${response.status}`,
+        query: search.query, platform: search.platform,
+        source_name: search.sourceName, source_type: search.sourceType,
+        url: '', title: '', snippet: '',
+      });
+      return { signals: 0, rejected: 0, counters, samples };
     }
 
     const data = await response.json();
     const items = data.items || [];
+    counters.items_returned += items.length;
+    if (items.length === 0) {
+      counters.empty_payload++;
+      addSampleIfRoom(samples, 'empty_payload', {
+        reason: 'CSE returned 0 items',
+        query: search.query, platform: search.platform,
+        source_name: search.sourceName, source_type: search.sourceType,
+        url: '', title: '', snippet: '',
+      });
+    }
 
     for (const item of items.slice(0, 5)) {
       if (isTimeUp()) break;
@@ -488,12 +605,28 @@ async function executeSearch(
       const content = `${title} ${snippet}`.trim();
 
       // Skip if already processed or too short
-      if (!url || processedUrls.has(url) || content.length < 30) continue;
+      if (!url || processedUrls.has(url) || content.length < 30) {
+        counters.short_or_dup_url++;
+        addSampleIfRoom(samples, 'short_or_dup_url', {
+          reason: !url ? 'empty url' : (processedUrls.has(url) ? 'already processed this run' : `content.length=${content.length} < 30`),
+          query: search.query, platform: search.platform,
+          source_name: search.sourceName, source_type: search.sourceType,
+          url, title, snippet,
+        });
+        continue;
+      }
       processedUrls.add(url);
 
       // Domain blocklist
       if (BLOCKED_DOMAINS.some(d => domain.includes(d))) {
         console.log(`[SocialUnified] Blocked domain: ${domain}`);
+        counters.blocked_domain++;
+        addSampleIfRoom(samples, 'blocked_domain', {
+          reason: `blocklist match: ${domain}`,
+          query: search.query, platform: search.platform,
+          source_name: search.sourceName, source_type: search.sourceType,
+          url, title, snippet,
+        });
         continue;
       }
 
@@ -517,6 +650,12 @@ async function executeSearch(
       if (hasWikipedia) {
         console.log(`[SocialUnified] ✗ Wikipedia filtered: "${title.substring(0, 50)}"`);
         rejected++;
+        counters.wikipedia++;
+        addSampleIfRoom(samples, 'wikipedia', {
+          query: search.query, platform: search.platform,
+          source_name: search.sourceName, source_type: search.sourceType,
+          url, title, snippet,
+        });
         continue;
       }
 
@@ -528,11 +667,25 @@ async function executeSearch(
         if (urlHasOldYear && !url.includes('2025') && !url.includes('2026')) {
           console.log(`[SocialUnified] ✗ Old content filtered (campaign scan): "${title.substring(0, 50)}"`);
           rejected++;
+          counters.old_url_year++;
+          addSampleIfRoom(samples, 'old_url_year', {
+            reason: 'URL contains pre-2025 year token',
+            query: search.query, platform: search.platform,
+            source_name: search.sourceName, source_type: search.sourceType,
+            url, title, snippet,
+          });
           continue;
         }
         if (snippetDateContext) {
           console.log(`[SocialUnified] ✗ Old snippet date (campaign scan): "${snippetDateContext[0]}" in "${title.substring(0, 50)}"`);
           rejected++;
+          counters.old_snippet_date++;
+          addSampleIfRoom(samples, 'old_snippet_date', {
+            reason: `snippet date match: ${snippetDateContext[0]}`,
+            query: search.query, platform: search.platform,
+            source_name: search.sourceName, source_type: search.sourceType,
+            url, title, snippet,
+          });
           continue;
         }
       }
@@ -543,6 +696,12 @@ async function executeSearch(
       if (nonCanadianXR.test(content)) {
         console.log(`[SocialUnified] ✗ Non-Canadian XR: "${title.substring(0, 50)}"`);
         rejected++;
+        counters.non_canadian_xr++;
+        addSampleIfRoom(samples, 'non_canadian_xr', {
+          query: search.query, platform: search.platform,
+          source_name: search.sourceName, source_type: search.sourceType,
+          url, title, snippet,
+        });
         continue;
       }
 
@@ -558,16 +717,34 @@ async function executeSearch(
         if (url.includes('facebook.com') && !isSpecificFacebookUrl(url)) {
           console.log(`[SocialUnified] ✗ Generic FB profile (campaign scan): ${url}`);
           rejected++;
+          counters.generic_fb_profile++;
+          addSampleIfRoom(samples, 'generic_fb_profile', {
+            query: search.query, platform: search.platform,
+            source_name: search.sourceName, source_type: search.sourceType,
+            url, title, snippet,
+          });
           continue;
         }
         if ((url.includes('x.com') || url.includes('twitter.com')) && !isSpecificXUrl(url)) {
           console.log(`[SocialUnified] ✗ Generic X profile (campaign scan): ${url}`);
           rejected++;
+          counters.generic_x_profile++;
+          addSampleIfRoom(samples, 'generic_x_profile', {
+            query: search.query, platform: search.platform,
+            source_name: search.sourceName, source_type: search.sourceType,
+            url, title, snippet,
+          });
           continue;
         }
         if (url.includes('instagram.com') && !isSpecificInstagramUrl(url)) {
           console.log(`[SocialUnified] ✗ Generic IG profile (campaign scan): ${url}`);
           rejected++;
+          counters.generic_ig_profile++;
+          addSampleIfRoom(samples, 'generic_ig_profile', {
+            query: search.query, platform: search.platform,
+            source_name: search.sourceName, source_type: search.sourceType,
+            url, title, snippet,
+          });
           continue;
         }
       }
@@ -577,6 +754,13 @@ async function executeSearch(
       if (!aiVerdict.relevant) {
         console.log(`[SocialUnified] ✗ AI rejected: "${title.substring(0, 60)}" — ${aiVerdict.reason}`);
         rejected++;
+        counters.ai_rejected++;
+        addSampleIfRoom(samples, 'ai_rejected', {
+          reason: aiVerdict.reason,
+          query: search.query, platform: search.platform,
+          source_name: search.sourceName, source_type: search.sourceType,
+          url, title, snippet,
+        });
         continue;
       }
 
@@ -589,6 +773,13 @@ async function executeSearch(
 
       if (existing && existing.length > 0) {
         console.log('[SocialUnified] Duplicate URL, skipping');
+        counters.duplicate_db++;
+        addSampleIfRoom(samples, 'duplicate_db', {
+          reason: 'URL already in ingested_documents',
+          query: search.query, platform: search.platform,
+          source_name: search.sourceName, source_type: search.sourceType,
+          url, title, snippet,
+        });
         continue;
       }
 
@@ -727,6 +918,7 @@ async function executeSearch(
         }
 
         signals++;
+        counters.signals_created++;
         console.log(`[SocialUnified] ✓ Ingested ${platform} ${postType}: "${title.substring(0, 60)}"${isHistorical ? ' [historical]' : ''}`);
       }
     }
@@ -740,7 +932,7 @@ async function executeSearch(
     }
   }
 
-  return { signals, rejected };
+  return { signals, rejected, counters, samples };
 }
 
 // ═══════════════════════════════════════════════════════════════
