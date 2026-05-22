@@ -31,9 +31,16 @@ interface Message {
 interface AgentInteractionProps {
   agent: AIAgent;
   initialMessage?: string;
+  /**
+   * Override the outer Card sizing. Default `h-[calc(100vh-10rem)]` fills the
+   * viewport for full-page contexts (CommandCenter, Workspace, ThreatRadar inline).
+   * Dialog-mounted callers should pass `h-full` so the Card respects the
+   * dialog's bounded height instead of overflowing it (PROD-D).
+   */
+  className?: string;
 }
 
-export function AgentInteraction({ agent, initialMessage }: AgentInteractionProps) {
+export function AgentInteraction({ agent, initialMessage, className }: AgentInteractionProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -459,7 +466,7 @@ export function AgentInteraction({ agent, initialMessage }: AgentInteractionProp
   };
 
   return (
-    <Card className="flex flex-col h-[calc(100vh-10rem)] overflow-hidden">
+    <Card className={cn("flex flex-col overflow-hidden", className ?? "h-[calc(100vh-10rem)]")}>
       <CardHeader className="pb-3 flex-shrink-0">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="text-lg flex items-center gap-2">

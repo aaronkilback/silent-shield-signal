@@ -70,7 +70,7 @@ export function AskAegisButton({
                 <Loader2 className="w-6 h-6 animate-spin text-primary" />
               </div>
             )}
-            {agent && <AgentInteraction agent={agent} initialMessage={initialMessage} />}
+            {agent && <AgentInteraction agent={agent} initialMessage={initialMessage} className="h-full" />}
           </div>
         </DialogContent>
       </Dialog>
