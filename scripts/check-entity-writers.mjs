@@ -51,12 +51,9 @@ const FILE_EXEMPTIONS = new Map([
 // Removing an entry from this list is part of the PR that wires that writer.
 // Adding an entry requires explicit doctrine review — this is not a free pass.
 const KNOWN_PENDING_WRITERS = [
-  // H-1 entries removed (now governed): agent-chat, create-entity, extract-predicted-events,
-  // osint-entity-scan, process-intelligence-document, vip-deep-scan
-  { file: 'auto-enrich-entities/index.ts',    line: 223,  phase: '#179.H2' },
-  { file: 'process-stored-document/index.ts', line: 1360, phase: '#179.H2' },
-  { file: 'parse-entities-document/index.ts', line: 227,  phase: '#179.H3' },
-  { file: 'process-security-report/index.ts', line: 729,  phase: '#179.H3' },
+  // H-1 + H-2 entries removed (governed). H-3 remaining:
+  { file: 'parse-entities-document/index.ts', line: 227, phase: '#179.H3' },
+  { file: 'process-security-report/index.ts', line: 729, phase: '#179.H3' },
 ];
 
 function isKnownPending(relPath, lineNum) {

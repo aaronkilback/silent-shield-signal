@@ -1,5 +1,14 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+// #179 H-2 Entity governance — origin=llm (autonomous cron); cannot reach operator_promoted.
+// Note: enrichment proposals target existing entities (matched_entity_id always set);
+// validator returns auto_link on name match — we still persist the suggestion because
+// the row encodes proposed changes, not a new entity.
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+  type EntityCandidate,
+} from "../_shared/entity-governance.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,15 +42,72 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { 
-      entity_id, 
-      batch_mode = false, 
-      auto_apply = false, 
+    const {
+      entity_id,
+      batch_mode = false,
+      auto_apply = false,
       limit = 10,
-      min_confidence = 0.7
+      min_confidence = 0.7,
+      // #179 H-2 dry_run mode: skip AI call + persistence, exercise governance on injected candidates
+      dry_run = false,
+      dry_run_candidates = [] as Array<{ entity_id: string; mock_enrichment: any }>,
     } = await req.json();
 
-    console.log(`[auto-enrich-entities] Mode: ${batch_mode ? 'batch' : 'single'}, Auto-apply: ${auto_apply}`);
+    console.log(`[auto-enrich-entities] Mode: ${batch_mode ? 'batch' : 'single'}, Auto-apply: ${auto_apply}, dry_run: ${dry_run}`);
+
+    // #179 H-2 observability counters
+    const startedAtMs = Date.now();
+    const metrics = {
+      candidate_count: 0,
+      verdict_counts: { suggestion_queue: 0, auto_link: 0, auto_reject: 0, operator_promoted: 0 },
+      skip_count_no_tenant: 0,
+      persistence_errors: 0,
+      processing_duration_ms: 0,
+    };
+
+    // #179 H-2 dry_run: skip AI + persistence; exercise governance routing only.
+    if (dry_run) {
+      const dryResults: any[] = [];
+      for (const c of dry_run_candidates) {
+        metrics.candidate_count += 1;
+        const { data: ent } = await supabase
+          .from('entities')
+          .select('id, name, type, tenant_id')
+          .eq('id', c.entity_id)
+          .maybeSingle();
+        if (!ent) { dryResults.push({ entity_id: c.entity_id, error: 'entity_not_found' }); continue; }
+        // Fail-fast tenant check BEFORE governance call (per #179 H-2 doctrine refinement)
+        if (!ent.tenant_id) {
+          metrics.skip_count_no_tenant += 1;
+          dryResults.push({ entity_id: ent.id, name: ent.name, skip: 'no_tenant' });
+          continue;
+        }
+        const candidate: EntityCandidate = {
+          name: c.mock_enrichment?.name ?? ent.name,
+          type: c.mock_enrichment?.type ?? ent.type,
+          description: c.mock_enrichment?.description ?? null,
+          confidence: c.mock_enrichment?.confidence ?? 0.75,
+          origin: 'llm',
+          context: c.mock_enrichment?.context ?? null,
+          sourceRef: { kind: 'investigation', id: ent.id },
+        };
+        const verdict = await governanceValidateAndClassify(supabase, ent.tenant_id, candidate);
+        metrics.verdict_counts[verdict.verdict] = (metrics.verdict_counts[verdict.verdict] ?? 0) + 1;
+        dryResults.push({
+          entity_id: ent.id,
+          tenant_id: ent.tenant_id,
+          verdict: verdict.verdict,
+          rejection_reasons: verdict.rejectionReasons,
+          warnings: verdict.warnings,
+          matched_entity_id: verdict.matchedEntityId,
+          effective_confidence: verdict.effectiveConfidence,
+        });
+      }
+      metrics.processing_duration_ms = Date.now() - startedAtMs;
+      return new Response(JSON.stringify({ dry_run: true, metrics, results: dryResults }, null, 2), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
+      });
+    }
 
     let entitiesToProcess: any[] = [];
 
@@ -215,31 +281,70 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
           console.log(`[auto-enrich-entities] Applied enrichment to ${entity.name}`);
 
         } else {
-          // #134: propagate the entity's tenant_id to the suggestion
+          // #179 H-2 — Governance routing for enrichment proposal.
+          // Fail-fast tenant check BEFORE governance call (per H-2 refinement).
+          metrics.candidate_count += 1;
           if (!entity.tenant_id) {
-            console.warn(`[#134] skipping enrichment suggestion for entity ${entity.id} — no tenant_id`);
+            metrics.skip_count_no_tenant += 1;
+            console.warn(`[#179 H-2] skip enrichment for entity ${entity.id} — no tenant context per doctrine`);
           } else {
-            await supabase
-              .from('entity_suggestions')
-              .insert({
-                tenant_id: entity.tenant_id,
-                source_type: 'auto_enrichment',
-                source_id: crypto.randomUUID(),
-                suggested_name: entity.name,
-                suggested_type: entity.type,
-                matched_entity_id: entity.id,
-                suggested_attributes: {
-                  proposed_description: enrichment.description,
-                  proposed_risk_level: enrichment.risk_level,
-                  proposed_aliases: enrichment.aliases,
-                  proposed_threat_indicators: enrichment.threat_indicators,
-                  risk_justification: enrichment.risk_justification,
-                  associations: enrichment.associations
-                },
-                confidence: enrichment.confidence,
-                context: `Auto-enrichment proposal: ${enrichment.needs_human_review ? 'Needs verification' : 'High confidence'}`,
-                status: 'pending'
-              });
+            const candidate: EntityCandidate = {
+              name: entity.name,
+              type: entity.type,
+              description: enrichment.description ?? null,
+              confidence: enrichment.confidence,
+              origin: 'llm',
+              context: `Auto-enrichment proposal: ${enrichment.needs_human_review ? 'Needs verification' : 'High confidence'}`,
+              sourceRef: { kind: 'investigation', id: entity.id },
+            };
+            const verdict = await governanceValidateAndClassify(supabase, entity.tenant_id, candidate);
+            metrics.verdict_counts[verdict.verdict] = (metrics.verdict_counts[verdict.verdict] ?? 0) + 1;
+            // Enrichment semantics: validator will typically return auto_link (the entity exists).
+            // We still persist the suggestion row because it carries the proposed changes —
+            // this is an enrichment-of-existing pattern, distinct from new-entity proposals.
+            // auto_reject (e.g., entity name became invalid by ontology) skips persistence + records event.
+            if (verdict.verdict === 'auto_reject') {
+              governanceRecordEvent(supabase, { tenantId: entity.tenant_id, sourceWriter: 'other', candidate, result: verdict });
+              console.warn(`[#179 H-2] enrichment rejected for ${entity.id}: ${verdict.rejectionReasons.join(',')}`);
+            } else {
+              const { data: newSugg, error: sErr } = await supabase
+                .from('entity_suggestions')
+                .insert({
+                  tenant_id: entity.tenant_id,
+                  source_type: 'auto_enrichment',
+                  source_id: crypto.randomUUID(),
+                  suggested_name: verdict.normalizedName,
+                  suggested_type: verdict.resolvedType,
+                  matched_entity_id: entity.id,
+                  suggested_attributes: {
+                    proposed_description: enrichment.description,
+                    proposed_risk_level: enrichment.risk_level,
+                    proposed_aliases: enrichment.aliases,
+                    proposed_threat_indicators: enrichment.threat_indicators,
+                    risk_justification: enrichment.risk_justification,
+                    associations: enrichment.associations,
+                  },
+                  confidence: verdict.effectiveConfidence,
+                  context: candidate.context,
+                  status: 'pending',
+                })
+                .select('id')
+                .single();
+              if (sErr) {
+                metrics.persistence_errors += 1;
+                governanceRecordEvent(supabase, { tenantId: entity.tenant_id, sourceWriter: 'other', candidate, result: { ...verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] } });
+                console.error(`[#179 H-2] enrichment persistence failed for ${entity.id}:`, sErr.message);
+              } else {
+                governanceRecordEvent(supabase, {
+                  tenantId: entity.tenant_id,
+                  sourceWriter: 'other',
+                  candidate,
+                  result: verdict,
+                  suggestionId: newSugg.id,
+                  linkedEntityId: entity.id,
+                });
+              }
+            }
           }
 
           results.push({
@@ -269,6 +374,7 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
       }
     }
 
+    metrics.processing_duration_ms = Date.now() - startedAtMs;
     return new Response(
       JSON.stringify({
         success: true,
@@ -276,7 +382,8 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
         applied: results.filter(r => r.applied).length,
         pending_review: results.filter(r => r.success && !r.applied).length,
         failed: results.filter(r => !r.success).length,
-        results
+        results,
+        metrics,  // #179 H-2 observability
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

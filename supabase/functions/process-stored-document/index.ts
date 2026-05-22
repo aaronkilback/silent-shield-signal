@@ -1,6 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
+// #179 H-2 Entity governance — LLM document extractor; suggestion_queue only (origin=llm).
+// Per H-2 refinement: defer suggestion_queue events until after successful bulk insert.
+import {
+  validateAndClassify as governanceValidateAndClassify,
+  recordGovernanceEvent as governanceRecordEvent,
+  type EntityCandidate,
+} from "../_shared/entity-governance.ts";
 // NOTE: pdfjs-dist is loaded dynamically inside the PDF extraction block to avoid
 // crashing the entire function on cold start if the CDN import is slow or fails.
 
@@ -1346,24 +1353,102 @@ Think like a professional intelligence analyst reading an opposition research do
 
     console.log(`Found ${entitySuggestions.length} high-confidence entities`);
 
-    // Insert entity suggestions
-    // #134: drop any rows whose tenant_id couldn't be resolved — RLS requires
-    // tenant_id NOT NULL, and a NULL row would be invisible to analysts.
+    // #179 H-2 — Governance routing for document-extracted entities.
+    // Doctrine refinements applied here:
+    //   - Fail-fast tenant check BEFORE governance call (drop NULL-tenant)
+    //   - auto_link / auto_reject events recorded IMMEDIATELY (no row to wait for)
+    //   - suggestion_queue events deferred until AFTER successful bulk insert
+    //     returns concrete row IDs — NO optimistic audit events
+    const governanceMetrics = {
+      candidate_count: 0,
+      verdict_counts: { suggestion_queue: 0, auto_link: 0, auto_reject: 0, operator_promoted: 0 },
+      skip_count_no_tenant: 0,
+      persistence_errors: 0,
+    };
+
     if (entitySuggestions.length > 0) {
-      const filtered = entitySuggestions.filter(s => s.tenant_id);
-      const dropped = entitySuggestions.length - filtered.length;
+      // Fail-fast tenant filter (no NULL fallback per #179 doctrine)
+      const dropped = entitySuggestions.filter(s => !s.tenant_id).length;
+      governanceMetrics.skip_count_no_tenant = dropped;
       if (dropped > 0) {
-        console.warn(`[#134] dropped ${dropped} suggestion(s) with NULL tenant_id (document ${documentId} has no tenant)`);
+        console.warn(`[#179 H-2] dropped ${dropped} suggestion(s) — no tenant context (document ${documentId})`);
       }
-      if (filtered.length > 0) {
-        const { error: suggestError } = await supabase
+
+      // Per-candidate governance routing
+      const queuePending: Array<{ row: any; candidate: EntityCandidate; verdict: any }> = [];
+      for (const s of entitySuggestions) {
+        if (!s.tenant_id) continue;  // already counted in skip_count_no_tenant
+        governanceMetrics.candidate_count += 1;
+        const candidate: EntityCandidate = {
+          name: s.suggested_name,
+          type: s.suggested_type,
+          confidence: s.confidence,
+          origin: 'llm',
+          context: typeof s.context === 'string' ? s.context : null,
+          sourceRef: { kind: 'document', id: documentId },
+        };
+        const verdict = await governanceValidateAndClassify(supabase, s.tenant_id, candidate);
+        governanceMetrics.verdict_counts[verdict.verdict] = (governanceMetrics.verdict_counts[verdict.verdict] ?? 0) + 1;
+
+        if (verdict.verdict === 'auto_link') {
+          // Record immediately — no entity_suggestions row to wait for
+          governanceRecordEvent(supabase, { tenantId: s.tenant_id, sourceWriter: 'other', candidate, result: verdict });
+          continue;
+        }
+        if (verdict.verdict === 'auto_reject') {
+          governanceRecordEvent(supabase, { tenantId: s.tenant_id, sourceWriter: 'other', candidate, result: verdict });
+          continue;
+        }
+        // suggestion_queue — defer audit until bulk insert returns IDs
+        queuePending.push({
+          row: {
+            ...s,
+            suggested_name: verdict.normalizedName,
+            suggested_type: verdict.resolvedType,
+            confidence: verdict.effectiveConfidence,
+          },
+          candidate,
+          verdict,
+        });
+      }
+
+      // Bulk insert + deferred audit per row
+      if (queuePending.length > 0) {
+        const { data: inserted, error: suggestError } = await supabase
           .from('entity_suggestions')
-          .insert(filtered);
+          .insert(queuePending.map(q => q.row))
+          .select('id');
 
         if (suggestError) {
-          console.error('Error inserting entity suggestions:', suggestError);
+          governanceMetrics.persistence_errors = queuePending.length;
+          // Record persistence_error events for the batch (no IDs available)
+          for (const q of queuePending) {
+            governanceRecordEvent(supabase, {
+              tenantId: q.row.tenant_id,
+              sourceWriter: 'other',
+              candidate: q.candidate,
+              result: { ...q.verdict, verdict: 'auto_reject', rejectionReasons: ['persistence_error'] },
+            });
+          }
+          console.error('[#179 H-2] bulk suggestion insert failed:', suggestError);
+        } else {
+          // Match returned IDs back to candidates by index (Supabase preserves insert order)
+          const insertedRows = inserted ?? [];
+          for (let i = 0; i < queuePending.length; i++) {
+            const q = queuePending[i];
+            const inj = insertedRows[i];
+            if (!inj) continue;
+            governanceRecordEvent(supabase, {
+              tenantId: q.row.tenant_id,
+              sourceWriter: 'other',
+              candidate: q.candidate,
+              result: q.verdict,
+              suggestionId: inj.id,
+            });
+          }
         }
       }
+      console.log(`[#179 H-2 metrics]`, JSON.stringify(governanceMetrics));
     }
 
     // Update document with entity mentions AND extracted text content
@@ -1714,6 +1799,54 @@ Deno.serve(async (req) => {
         JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // #179 H-2 dry_run: exercise governance routing on injected candidates without AI/persistence.
+    // Allows deterministic behavioral validation of suggestion_queue / auto_link / auto_reject /
+    // missing-tenant-skip paths even when AI keys are unavailable (#185).
+    if (body.dry_run && Array.isArray(body.dry_run_candidates)) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+      const startedAtMs = Date.now();
+      const metrics = {
+        candidate_count: 0,
+        verdict_counts: { suggestion_queue: 0, auto_link: 0, auto_reject: 0, operator_promoted: 0 } as Record<string, number>,
+        skip_count_no_tenant: 0,
+        processing_duration_ms: 0,
+      };
+      const dryResults: any[] = [];
+      for (const c of body.dry_run_candidates) {
+        metrics.candidate_count += 1;
+        if (!c.tenant_id) {
+          metrics.skip_count_no_tenant += 1;
+          dryResults.push({ name: c.name, skip: 'no_tenant' });
+          continue;
+        }
+        const candidate: EntityCandidate = {
+          name: c.name,
+          type: c.type ?? 'organization',
+          description: c.description ?? null,
+          confidence: c.confidence ?? 0.75,
+          origin: 'llm',
+          context: c.context ?? null,
+          sourceRef: { kind: 'document', id: c.source_id ?? crypto.randomUUID() },
+        };
+        const verdict = await governanceValidateAndClassify(supabase, c.tenant_id, candidate);
+        metrics.verdict_counts[verdict.verdict] = (metrics.verdict_counts[verdict.verdict] ?? 0) + 1;
+        dryResults.push({
+          name: c.name,
+          tenant_id: c.tenant_id,
+          verdict: verdict.verdict,
+          rejection_reasons: verdict.rejectionReasons,
+          matched_entity_id: verdict.matchedEntityId,
+          effective_confidence: verdict.effectiveConfidence,
+        });
+      }
+      metrics.processing_duration_ms = Date.now() - startedAtMs;
+      return new Response(JSON.stringify({ dry_run: true, metrics, results: dryResults }, null, 2), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
+      });
     }
     // ── kb_backfill: re-run knowledge bank extraction for processed documents ──
     // Finds archival_documents that don't yet have a 'library_document' entry in
