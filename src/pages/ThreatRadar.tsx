@@ -458,7 +458,7 @@ const ThreatRadar = () => {
             </DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-hidden px-6 pb-6">
-            {aegisAgent && <AgentInteraction agent={aegisAgent} />}
+            {aegisAgent && <AgentInteraction agent={aegisAgent} className="h-full" />}
           </div>
         </DialogContent>
       </Dialog>
