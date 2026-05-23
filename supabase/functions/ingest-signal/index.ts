@@ -8,6 +8,7 @@ import { enqueueJob } from '../_shared/queue.ts';
 import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
 import { getCallerIdentity, getAccessibleClientIds } from '../_shared/supabase-client.ts';
 import { upsertHostileHandleOnSignal, extractHandleFromRawJson } from '../_shared/hostile-attribution.ts';
+import { recordTelemetry } from '../_shared/observability.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -119,6 +120,7 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const requestStartedAt = Date.now();
   try {
     // F-026 (2026-05-14) — auth gate at true handler entry. Locked rules:
     //   anonymous (no auth / anon publishable key) → 401
@@ -285,6 +287,22 @@ Deno.serve(async (req) => {
     if (!validatedExplicitClientId && !tenant_broadcast) {
       const previewText = (text || JSON.stringify(event) || '').toString().substring(0, 200);
       console.warn(`[#256 Phase 1] REJECTED: signal lacks client_id and tenant_broadcast. source_key=${source_key ?? 'none'} preview="${previewText}"`);
+      // Branch 2A.0 — surface contract rejections on the canonical watchdog
+      // telemetry source (function_telemetry). P0.4 watchdog rule reads this.
+      await recordTelemetry(supabase, {
+        functionName: 'ingest-signal',
+        durationMs: Date.now() - requestStartedAt,
+        status: 'error',
+        errorClass: 'other',
+        errorMessage: 'contract_rejected:missing_client_id',
+        context: {
+          rejection_reason: 'missing_client_id',
+          ticket: '#256',
+          phase: 1,
+          source_key: source_key ?? null,
+          caller_kind: caller.kind,
+        },
+      });
       return new Response(
         JSON.stringify({
           status: 'rejected',
@@ -299,6 +317,21 @@ Deno.serve(async (req) => {
     }
     if (!validatedExplicitClientId && tenant_broadcast) {
       console.warn(`[#256 Phase 1] tenant_broadcast rejected: routing not yet implemented (scope=${tenant_broadcast.scope})`);
+      await recordTelemetry(supabase, {
+        functionName: 'ingest-signal',
+        durationMs: Date.now() - requestStartedAt,
+        status: 'error',
+        errorClass: 'other',
+        errorMessage: 'contract_rejected:broadcast_not_implemented',
+        context: {
+          rejection_reason: 'broadcast_not_implemented',
+          ticket: '#256',
+          phase: 1,
+          broadcast_scope: tenant_broadcast.scope,
+          source_key: source_key ?? null,
+          caller_kind: caller.kind,
+        },
+      });
       return new Response(
         JSON.stringify({
           status: 'rejected',
