@@ -123,23 +123,39 @@ export const ClientSelector = ({
       const { data, error } = await query;
 
       if (error) throw error;
-      setClients(data || []);
+      // PROD-J fix A (2026-05-23): exclude underscore-prefixed fixture /
+      // QA / invariant-test clients (e.g. _invariant_client_a,
+      // _benchmark_petronas, _qa_cipher_test_env). The status='active'
+      // filter alone doesn't catch these — invariant tests need
+      // status='active' to exercise real RLS paths in CI. Aligns this
+      // dropdown with the fixture doctrine in
+      // RiskSnapshotExport.tsx:48 and the new _shared/archetypes.ts
+      // isFixtureClient() helper. Operator-facing surface only —
+      // fixtures still exist in the table and still drive their tests.
+      const filtered = (data || []).filter(
+        (c) => typeof c.name === 'string' && !c.name.startsWith('_')
+      );
+      setClients(filtered);
 
       // Auto-select operates over a tenant-scoped list now, so any
       // selection that survives is guaranteed to belong to the
       // current tenant.
+      // PROD-J fix A: use the fixture-filtered list so auto-select
+      // can't pick a fixture (_invariant_client_a) as the first
+      // option for a freshly-arrived operator.
       if (mode === 'filter') {
-        if (data && data.length > 0) {
+        if (filtered.length > 0) {
           if (!selectedClientId) {
-            setSelectedClientId(data[0].id);
+            setSelectedClientId(filtered[0].id);
           } else {
-            const isValid = data.some(client => client.id === selectedClientId);
+            const isValid = filtered.some(client => client.id === selectedClientId);
             if (!isValid) {
               // Stored selection isn't in the current tenant's clients
-              // — clear rather than auto-pick a different tenant's
-              // first client. useClientSelection's validation effect
-              // is the canonical clearer, but doing it here too
-              // prevents a flash of cross-tenant data between fetches.
+              // (or is now a fixture being filtered out) — clear rather
+              // than auto-pick a different tenant's first client.
+              // useClientSelection's validation effect is the canonical
+              // clearer, but doing it here too prevents a flash of
+              // cross-tenant data between fetches.
               setSelectedClientId(null);
             }
           }
