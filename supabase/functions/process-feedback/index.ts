@@ -345,6 +345,22 @@ async function handleEntitySuggestionFeedback(supabase: ReturnType<typeof create
 // ═══════════════════════════════════════════════════════════
 
 async function updateSignalLearning(supabase: ReturnType<typeof createServiceClient>, objectId: string, feedback: string, context?: Record<string, unknown>): Promise<string[]> {
+  // Branch 1A (2026-05-23) — intentionally NOT patched with
+  // applyAnalystSignalFilter / .maybeSingle conversion.
+  //
+  // Reason: this function is an INTERNAL service-role learning pipeline,
+  // invoked from the feedback-processing flow with service-role credentials.
+  // It is never reached by an analyst-tier caller. The .single() failure
+  // mode is intentional: when the FK from feedback_events.object_id no
+  // longer resolves to a valid signal row, that's a pipeline-integrity
+  // anomaly (orphan feedback) and should surface as an error rather than
+  // be silently swallowed by .maybeSingle. Operator forensics rely on
+  // this error to detect broken FK state.
+  //
+  // Quarantine filter also intentionally omitted: the learning pipeline
+  // needs to process feedback for ALL signals including quarantined ones
+  // (an analyst marking a now-quarantined signal as false_positive before
+  // quarantine still needs that feedback to train the gate).
   const { data } = await supabase.from('signals').select('title, description, signal_type, severity_score, normalized_text, rule_category, category, source_id').eq('id', objectId).single();
   if (!data) return [];
 

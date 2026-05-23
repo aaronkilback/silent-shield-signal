@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Activity, Radio, Cpu, AlertTriangle, GripHorizontal } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
 import { DraggablePanel } from "./DraggablePanel";
 import type { SignalBurstEvent, MessageBurstEvent } from "@/hooks/useConstellationData";
 
@@ -118,8 +119,13 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
       onSignalClick(item.rawSignal);
       return;
     }
+    // Branch 1A (2026-05-23) — analyst quarantine visibility boundary on
+    // explicit click-to-fetch. .single() → .maybeSingle() + filter so a
+    // quarantined row produces null without throwing a 406 error that would
+    // surface via console / network panel.
     const signalId = item.id.replace("sig-", "");
-    const { data } = await supabase.from("signals").select("*").eq("id", signalId).single();
+    const baseQuery = supabase.from("signals").select("*").eq("id", signalId);
+    const { data } = await applyAnalystSignalFilter(baseQuery).maybeSingle();
     if (data) onSignalClick({ ...data, primary_signal_id: data.id });
   };
 

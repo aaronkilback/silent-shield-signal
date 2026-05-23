@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { ReportPdfDownload } from "@/components/chat/ReportPdfDownload";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
+import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
 import { useTenant } from "@/hooks/useTenant";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -978,15 +979,21 @@ This command **bypasses the AI entirely** and directly injects a test signal int
         console.log('[/inject-test] Ingest result:', ingestResult);
 
         // Step 3: Verify signal exists in database
+        // Branch 1A (2026-05-23) — applyAnalystSignalFilter ensures a
+        // quarantined-on-create signal returns null indistinguishably from
+        // not-found (analyst sees the same "Could not verify" UX as if the
+        // row simply didn't exist). .single() → .maybeSingle() to prevent
+        // 406-error existence leak via PostgrestError when filter excludes
+        // the row.
         const signalId = ingestResult?.signal_id;
         let verificationResult = null;
 
         if (signalId) {
-          const { data: signalCheck } = await supabase
+          const baseQuery = supabase
             .from('signals')
             .select('id, normalized_text, client_id, status, created_at')
-            .eq('id', signalId)
-            .single();
+            .eq('id', signalId);
+          const { data: signalCheck } = await applyAnalystSignalFilter(baseQuery).maybeSingle();
           verificationResult = signalCheck;
         }
 

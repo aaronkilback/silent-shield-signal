@@ -58,6 +58,31 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ── Branch 1A V1 (2026-05-23) — per-action operator authorization gate ──
+    // Privileged diagnostic actions read internal signal raw_json /
+    // platform-internal vulnerability state. They must not be invokable by
+    // analyst-tier callers regardless of whether the upstream user JWT is
+    // valid. Per Aaron-approved doctrine: only service-role / operator may
+    // dispatch these.
+    //
+    // INDISTINGUISHABILITY (Aaron 2026-05-23): the response when an
+    // analyst attempts a privileged action MUST be byte-identical to the
+    // response when an analyst requests a non-existent action. Otherwise
+    // the 403 vs 400 status code differential becomes a privilege oracle:
+    // an attacker probing actions can learn which exist and are privileged
+    // by status comparison. We return 404 + {"error":"Action not found"}
+    // for both privileged-denied and unknown-action cases. Server-side
+    // logs retain the distinction for operator forensics.
+    const OPERATOR_ONLY_ACTIONS = new Set<string>([
+      'analyze_signal_threat_dna',
+      'run_vulnerability_scan',
+      'detect_prompt_injection',
+    ]);
+    if (OPERATOR_ONLY_ACTIONS.has(action) && !isServiceRole) {
+      console.warn(`[WraithSecurityAdvisor] privileged action "${action}" rejected for non-service-role caller (userId=${userId}) — returning 404 for indistinguishability`);
+      return errorResponse('Action not found', 404);
+    }
+
     console.log(`[WraithSecurityAdvisor] Dispatching action: ${action}`);
     const supabase = createServiceClient();
 
@@ -92,10 +117,15 @@ Deno.serve(async (req) => {
         return successResponse(await detectPromptInjection(supabase, body as any));
 
       default:
-        return errorResponse(
-          `Unknown action: ${action}. Valid actions: analyze_url, analyze_email, check_breaches, full_security_audit, get_threat_feed, get_security_score, scan_ip_exposure, check_dns_leaks, check_ssl, check_webrtc`,
-          400
-        );
+        // Branch 1A V1 (2026-05-23) — must be byte-identical to the
+        // privileged-action 404 above. Do NOT echo the requested action
+        // name (leaks API surface) and do NOT list valid actions (creates
+        // an attack-surface inventory and breaks the indistinguishability
+        // with the privileged-rejected case). Legitimate callers know
+        // valid actions from documentation; server-side log retains the
+        // attempted action for operator forensics.
+        console.warn(`[WraithSecurityAdvisor] unknown action "${action}" attempted (userId=${userId}) — returning 404`);
+        return errorResponse('Action not found', 404);
     }
   } catch (error) {
     console.error('[WraithSecurityAdvisor] Router error:', error);

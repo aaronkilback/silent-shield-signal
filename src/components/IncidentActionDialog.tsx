@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Swords, Target } from "lucide-react";
 import { IncidentLocationMap } from "./IncidentLocationMap";
@@ -93,18 +94,24 @@ export const IncidentActionDialog = ({
   useEffect(() => {
     const fetchSignalData = async () => {
       if (!incident.signal_id) return;
-      
+
       try {
-        const { data, error } = await supabase
+        // Branch 1A (2026-05-23) — analyst quarantine visibility boundary.
+        // .single() → .maybeSingle() + applyAnalystSignalFilter ensures that
+        // a quarantined signal is treated as not-found here: the dialog
+        // simply shows no location / text, identical to the path where the
+        // FK ever pointed to a deleted row. No error message, no console
+        // leak revealing existence.
+        const baseQuery = supabase
           .from("signals")
           .select("location, normalized_text")
-          .eq("id", incident.signal_id)
-          .single();
-
-        if (error) throw error;
-        setSignalLocation(data?.location || null);
-        setSignalText(data?.normalized_text || "");
+          .eq("id", incident.signal_id);
+        const { data } = await applyAnalystSignalFilter(baseQuery).maybeSingle();
+        setSignalLocation(data?.location ?? null);
+        setSignalText(data?.normalized_text ?? "");
       } catch (error) {
+        // Generic console only; no user-visible toast that could reveal
+        // whether the row exists.
         console.error("Error fetching signal data:", error);
       }
     };
