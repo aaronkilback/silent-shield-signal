@@ -3470,6 +3470,70 @@ Deno.serve(async (req) => {
         console.warn('[Watchdog] PROD-N classification block failed:', prodNErr);
       }
 
+      // ─── Branch 2A.3 (#256 Phase 1 regression telemetry) ───────────────
+      // Watch the ingest-signal contract surface. Phase 1 hardened the
+      // tenant-boundary contract so that signals without an explicit
+      // client_id (or tenant_broadcast) are rejected at 400 / 501 before
+      // any AI cost. A SURGE in rejections means an upstream caller has
+      // regressed and is again emitting tenant-blind signals — the kind of
+      // silent regression Branch 2A exists to surface in the morning email
+      // rather than during manual QA.
+      //
+      // Source: function_telemetry rows written by ingest-signal's
+      // recordTelemetry() calls in the two rejection branches. Canonical
+      // existing surface, not net._http_response (per Branch 2A spec).
+      //
+      // Thresholds (rolling 15-minute window):
+      //   >0  rejections → warning (any sustained rejection is regression)
+      //   >5  rejections → critical (caller flood; immediate triage)
+      try {
+        const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+        const { data: rejRows, error: rejErr } = await supabase
+          .from('function_telemetry')
+          .select('id, started_at, error_message, context')
+          .eq('function_name', 'ingest-signal')
+          .eq('status', 'error')
+          .gte('started_at', fifteenMinAgo);
+
+        if (rejErr) {
+          console.warn('[Watchdog] Branch 2A.3 ingest-signal rejection scan failed:', rejErr.message);
+        } else {
+          const contractRows = (rejRows || []).filter((r: any) => {
+            const reason = r?.context?.rejection_reason;
+            return reason === 'missing_client_id' || reason === 'broadcast_not_implemented';
+          });
+          const total = contractRows.length;
+          const byReason = contractRows.reduce((acc: Record<string, number>, r: any) => {
+            const k = String(r?.context?.rejection_reason || 'unknown');
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+          }, {});
+          const byCaller = contractRows.reduce((acc: Record<string, number>, r: any) => {
+            const k = String(r?.context?.caller_kind || 'unknown');
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+          }, {});
+
+          if (total > 0) {
+            const severity = total > 5 ? 'critical' : 'warning';
+            const reasonBreakdown = Object.entries(byReason).map(([k, v]) => `${k}=${v}`).join(', ');
+            const callerBreakdown = Object.entries(byCaller).map(([k, v]) => `${k}=${v}`).join(', ');
+            behavioralFindings.push({
+              severity,
+              category: 'Attribution Integrity (#256)',
+              title: `ingest-signal contract: ${total} rejection(s) in last 15min (${reasonBreakdown})`,
+              analysis: `#256 Phase 1 hardened ingest-signal to reject signals missing client_id or invoking tenant_broadcast. A surge here means an upstream caller has regressed and is emitting tenant-blind signals. Caller mix: ${callerBreakdown}. Telemetry source: function_telemetry rows written by ingest-signal recordTelemetry().`,
+              plainEnglish: `Something is sending signals without saying which tenant they belong to. The contract guard caught ${total} attempt(s) in the last 15 minutes — none reached storage, but the upstream caller is broken.`,
+              action: `Query function_telemetry for function_name='ingest-signal' status='error' context->>'rejection_reason' IN ('missing_client_id','broadcast_not_implemented') in the last 15min to find the offending caller (source_key field in context). Likely a recently-deployed monitor that omits client_id. Fix by routing the caller to the explicit-ownership-or-skip path.`,
+              canAutoRemediate: false,
+              remediationAction: 'none',
+            });
+          }
+        }
+      } catch (contractErr) {
+        console.warn('[Watchdog] Branch 2A.3 ingest-signal contract scan failed:', contractErr);
+      }
+
       console.log(`[Watchdog] Behavioral health: ${behavioralFindings.length} findings`);
     } catch (behavioralErr) {
       console.warn('[Watchdog] Behavioral health check failed:', behavioralErr);
