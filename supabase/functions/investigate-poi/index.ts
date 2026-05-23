@@ -420,26 +420,37 @@ Deno.serve(async (req) => {
     // ── Create signals for threat/activist findings ───────────────────────────
     // These go through ingest-signal so they appear in the signals feed and
     // are available to AEGIS — not just buried in entity_content.
-    for (const candidate of signalCandidates.slice(0, 10)) {
-      try {
-        await supabase.functions.invoke('ingest-signal', {
-          body: {
-            text: `${candidate.title}\n\n${candidate.snippet}\n\nSource: ${candidate.url}`,
-            source_url: candidate.url,
-            source_name: hostname(candidate.url),
-            client_id: entity.client_id || null,
-            image_url: candidate.imageUrl || null,
-            metadata: {
-              entity_id,
-              entity_name: entity.name,
-              signal_origin: 'investigate-poi',
-              is_threat_relevant: true,
+    //
+    // #256 Phase 2 (2026-05-23) — explicit ownership or skip.
+    // Pre-fix, this passed `entity.client_id || null` which fell into
+    // ingest-signal's cross-tenant scoring loop when the entity wasn't bound
+    // to a client. Per Aaron-approved #256 hard rule: never silently
+    // misattribute. Findings on orphan entities stay in entity_content; they
+    // do not enter the signals feed until the entity is given a client.
+    if (!entity.client_id) {
+      console.warn(`[investigate-poi][#256] skipping signal creation for entity "${entity.name}" (id=${entity.id}): no client_id. ${signalCandidates.length} threat candidates remain in entity_content only.`);
+    } else {
+      for (const candidate of signalCandidates.slice(0, 10)) {
+        try {
+          await supabase.functions.invoke('ingest-signal', {
+            body: {
+              text: `${candidate.title}\n\n${candidate.snippet}\n\nSource: ${candidate.url}`,
+              source_url: candidate.url,
+              source_name: hostname(candidate.url),
+              client_id: entity.client_id,
+              image_url: candidate.imageUrl || null,
+              metadata: {
+                entity_id,
+                entity_name: entity.name,
+                signal_origin: 'investigate-poi',
+                is_threat_relevant: true,
+              },
             },
-          },
-        });
-        console.log(`[investigate-poi] Signal created for threat finding: ${candidate.title.substring(0, 60)}`);
-      } catch (sigErr) {
-        console.warn(`[investigate-poi] Signal creation failed for ${candidate.url}:`, sigErr);
+          });
+          console.log(`[investigate-poi] Signal created for threat finding: ${candidate.title.substring(0, 60)}`);
+        } catch (sigErr) {
+          console.warn(`[investigate-poi] Signal creation failed for ${candidate.url}:`, sigErr);
+        }
       }
     }
 

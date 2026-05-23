@@ -248,15 +248,43 @@ Deno.serve(async (req) => {
 
       // Step 3: Instagram hashtag monitoring via Graph API
       // Requires INSTAGRAM_BUSINESS_ACCOUNT_ID env var alongside FACEBOOK_ACCESS_TOKEN
+      //
+      // #256 Phase 2 (2026-05-23) — EXPLICIT-OWNERSHIP HASHTAG ATTRIBUTION
+      // Pre-#256 code derived hashtags from each client's monitoring_keywords,
+      // then deduped (`new Set(...)`) which discarded attribution — the
+      // subsequent ingest call omitted client_id, falling into the cross-tenant
+      // scoring loop in ingest-signal. Empirical risk: Tenant A's "#pipeline"
+      // and Tenant B's "#pipeline" merged into one untracked hashtag string;
+      // every signal landed in whichever tenant's keywords scored highest.
+      //
+      // Fix: track (hashtag → Set<owning client_id>). For each matching media
+      // post, emit ONE signal per owning client with explicit client_id. When
+      // a hashtag is shared across tenants, fan out (one signal per owner) so
+      // each owning client sees its own copy. Per #256 hard rule: explicit
+      // ownership OR skip — never "let AI match" or "pick a winner".
       const igAccountId = Deno.env.get('INSTAGRAM_BUSINESS_ACCOUNT_ID');
       if (igAccountId) {
-        const igHashtags: string[] = [];
+        const hashtagOwners = new Map<string, Set<string>>();
         for (const client of clients.slice(0, 3)) {
           for (const kw of (client.monitoring_keywords || []).slice(0, 3)) {
-            igHashtags.push(kw.replace(/\s+/g, '').toLowerCase());
+            const hashtag = kw.replace(/\s+/g, '').toLowerCase();
+            if (!hashtag) continue;
+            let owners = hashtagOwners.get(hashtag);
+            if (!owners) {
+              owners = new Set();
+              hashtagOwners.set(hashtag, owners);
+            }
+            owners.add(client.id);
           }
         }
-        for (const hashtag of [...new Set(igHashtags)].slice(0, 8)) {
+        const hashtagEntries = [...hashtagOwners.entries()].slice(0, 8);
+        for (const [hashtag, ownerSet] of hashtagEntries) {
+          // Skip (don't query Graph API) if attribution somehow empty — never
+          // emit unattributed signals.
+          if (ownerSet.size === 0) {
+            console.warn(`[SocialUnified][#256] skipping hashtag #${hashtag}: no owning client`);
+            continue;
+          }
           try {
             const hashtagSearchUrl = `https://graph.facebook.com/v21.0/ig-hashtag-search?q=${encodeURIComponent(hashtag)}&user_id=${igAccountId}&access_token=${metaToken}`;
             queriesExecuted++; // PROD-N: upstream attempt initiated (counted before fetch)
@@ -275,17 +303,24 @@ Deno.serve(async (req) => {
             for (const media of mediaData.data || []) {
               const caption = (media.caption || '').trim();
               if (caption.length < 40) continue;
-              await supabase.functions.invoke('ingest-signal', {
-                body: {
-                  text: `#${hashtag}\n\n${caption}`,
-                  source_url: media.permalink,
-                  raw_json: {
-                    source: 'instagram_graph_api',
-                    hashtag,
-                    timestamp: media.timestamp,
+              // Fan out: one signal per owning client (explicit attribution).
+              for (const ownerClientId of ownerSet) {
+                await supabase.functions.invoke('ingest-signal', {
+                  body: {
+                    text: `#${hashtag}\n\n${caption}`,
+                    source_url: media.permalink,
+                    client_id: ownerClientId,
+                    raw_json: {
+                      source: 'instagram_graph_api',
+                      hashtag,
+                      timestamp: media.timestamp,
+                      // Visibility into fan-out: if the same hashtag is owned
+                      // by multiple clients, each gets its own signal copy.
+                      hashtag_owner_count: ownerSet.size,
+                    },
                   },
-                },
-              });
+                });
+              }
             }
             await new Promise(r => setTimeout(r, 500));
           } catch (e) {

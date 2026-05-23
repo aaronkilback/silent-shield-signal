@@ -21,7 +21,35 @@ Deno.serve(async (req) => {
     const { data: clients } = await supabaseClient.from('clients').select('*');
     const { data: entities } = await supabaseClient.from('entities').select('*');
 
+    // #256 Phase 2 (2026-05-23) — pre-resolve entity → owning-client map.
+    // Pre-fix, entity-match branches sent signals with no client_id, which
+    // routed through ingest-signal's cross-tenant scoring loop. New contract
+    // (Aaron-approved Option D) requires explicit ownership OR skip.
+    //
+    // Owners are the UNION of two sources:
+    //   1. entity_clients junction (canonical many-to-many table)
+    //   2. entities.client_id (legacy single-owner column on some rows)
+    // Fan out one signal per owning client; skip entirely when no owners.
+    const { data: entityClientsRows } = await supabaseClient
+      .from('entity_clients')
+      .select('entity_id, client_id');
+    const entityOwners = new Map<string, Set<string>>();
+    for (const row of entityClientsRows || []) {
+      let owners = entityOwners.get(row.entity_id);
+      if (!owners) {
+        owners = new Set();
+        entityOwners.set(row.entity_id, owners);
+      }
+      owners.add(row.client_id);
+    }
+    const resolveEntityOwners = (entity: any): string[] => {
+      const owners = new Set<string>(entityOwners.get(entity.id) ?? []);
+      if (entity.client_id) owners.add(entity.client_id);
+      return [...owners];
+    };
+
     let signalsCreated = 0;
+    let entityMatchesSkipped = 0;
     const sources = [];
 
     // 1. BC Court Services Daily Court Lists
@@ -51,14 +79,29 @@ Deno.serve(async (req) => {
             }
           }
 
-          // Check against entities (ingest without explicit client — let AI match)
+          // #256 Phase 2 — entity-match branch with explicit owner attribution.
           for (const entity of entities || []) {
-            if (content.includes(entity.name.toLowerCase())) {
+            if (!content.includes(entity.name.toLowerCase())) continue;
+            const owners = resolveEntityOwners(entity);
+            if (owners.length === 0) {
+              entityMatchesSkipped++;
+              console.warn(`[CourtRegistry][#256] BC: skipping entity "${entity.name}" (id=${entity.id}) — no owning client`);
+              continue;
+            }
+            for (const ownerClientId of owners) {
               const { error } = await supabaseClient.functions.invoke('ingest-signal', {
                 body: {
                   text: `${item.title}\n\n${item.description}`,
                   source_url: item.link || undefined,
+                  client_id: ownerClientId,
                   location: 'British Columbia, Canada',
+                  raw_json: {
+                    signal_origin: 'monitor-court-registry',
+                    source: 'BC Courthouse Library',
+                    entity_id: entity.id,
+                    entity_name: entity.name,
+                    entity_owner_count: owners.length,
+                  },
                 },
               });
               if (!error) signalsCreated++;
@@ -100,14 +143,29 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Check against entities
+            // #256 Phase 2 — entity-match branch with explicit owner attribution.
             for (const entity of entities || []) {
-              if (content.includes(entity.name.toLowerCase())) {
+              if (!content.includes(entity.name.toLowerCase())) continue;
+              const owners = resolveEntityOwners(entity);
+              if (owners.length === 0) {
+                entityMatchesSkipped++;
+                console.warn(`[CourtRegistry][#256] SCC: skipping entity "${entity.name}" (id=${entity.id}) — no owning client`);
+                continue;
+              }
+              for (const ownerClientId of owners) {
                 const { error } = await supabaseClient.functions.invoke('ingest-signal', {
                   body: {
                     text: `${item.title}\n\n${item.description}`,
                     source_url: item.link || undefined,
+                    client_id: ownerClientId,
                     location: 'Canada',
+                    raw_json: {
+                      signal_origin: 'monitor-court-registry',
+                      source: 'Supreme Court of Canada',
+                      entity_id: entity.id,
+                      entity_name: entity.name,
+                      entity_owner_count: owners.length,
+                    },
                   },
                 });
                 if (!error) signalsCreated++;
@@ -129,17 +187,19 @@ Deno.serve(async (req) => {
       console.error('Error checking court databases:', error);
     }
 
-    console.log(`Court registry monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources`);
+    console.log(`Court registry monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources. Entity matches skipped (no owning client, #256 Phase 2): ${entityMatchesSkipped}`);
 
     await completeHeartbeat(supabaseClient, hb, {
       signals_created: signalsCreated,
       sources_scanned: sources.length,
+      entity_matches_skipped_no_owner: entityMatchesSkipped,
     });
 
     return successResponse({
       success: true,
       message: `Scanned ${sources.length} court registry sources`,
       signalsCreated,
+      entity_matches_skipped_no_owner: entityMatchesSkipped,
       sources
     });
 
