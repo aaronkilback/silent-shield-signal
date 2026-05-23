@@ -8,6 +8,7 @@ import {
   isOwnedProfileFor,
   isFixtureClient,
 } from "../_shared/archetypes.ts";
+import { pickActiveClients } from "../_shared/pick-active-clients.ts";
 import {
   extractMentions,
   extractHashtags,
@@ -90,29 +91,52 @@ Deno.serve(async (req) => {
 
     if (!apiKey || !engineId) {
       console.log('Google Search API not configured, skipping unified social monitor');
-      await completeHeartbeat(supabase, hb, { signals_created: 0, note: 'GOOGLE_SEARCH_API_KEY/ENGINE_ID not configured' });
+      // PROD-N Tranche A: shape-compliance even on early exit. Zero
+      // queries / clients because we exited before pickActiveClients
+      // and the search loop. fixture_clients_iterated=[] communicates
+      // "filter is wired but didn't run this cycle", distinct from
+      // `undefined` which would imply the filter isn't wired at all.
+      await completeHeartbeat(supabase, hb, {
+        signals_created: 0,
+        note: 'GOOGLE_SEARCH_API_KEY/ENGINE_ID not configured',
+        queries_executed: 0,
+        distinct_clients_iterated: 0,
+        fixture_clients_iterated: [],
+      });
       return successResponse({ success: true, message: 'Google Search API not configured', signals_created: 0 });
     }
 
     console.log('[SocialUnified] Starting unified social media monitoring...');
 
     // Fetch clients and entities in parallel.
-    // PROD-H: now SELECTs monitoring_config so the per-client archetype
-    // is available downstream for query generation + AI relevance gate.
-    const [clientsResult, entitiesResult] = await Promise.all([
-      supabase.from('clients').select('id, name, organization, industry, monitoring_keywords, monitoring_config').eq('status', 'active'),
+    // PROD-H: SELECTs monitoring_config so the per-client archetype is
+    // available downstream for query generation + AI relevance gate.
+    //
+    // PROD-N Tranche A (2026-05-22): centralized fixture-isolation via
+    // _shared/pick-active-clients.ts. The previous inline isFixtureClient
+    // filter at this site is now inside the helper. The change captures
+    // `excluded_fixtures` so we can feed it into fixture_clients_iterated
+    // on completeHeartbeat — watchdog Rule D (PROD-N Phase 1) will then
+    // detect any regression that bypasses the helper.
+    const [activeClientsResult, entitiesResult] = await Promise.all([
+      pickActiveClients<{
+        id: string;
+        name: string;
+        organization?: string | null;
+        industry?: string | null;
+        monitoring_keywords?: string[] | null;
+        monitoring_config?: any;
+      }>(supabase, {
+        select: 'id, name, organization, industry, monitoring_keywords, monitoring_config',
+      }),
       supabase.from('entities')
         .select('id, name, type, aliases, risk_level, attributes, client_id')
         .eq('active_monitoring_enabled', true)
         .in('type', ['organization', 'person'])
     ]);
 
-    // PROD-H: drop fixture / QA / benchmark clients from monitoring loops.
-    // Names starting with underscore are platform fixtures (see CLAUDE.md
-    // for the convention). Diagnostic evidence on 2026-05-22 showed
-    // monitor-social-unified was wasting ~20% of search budget on
-    // `_qa_cipher_test_env` and similar non-production clients.
-    const clients = (clientsResult.data || []).filter(c => !isFixtureClient(c.name));
+    const clients = activeClientsResult.active;
+    const excludedFixtures = activeClientsResult.excluded_fixtures;
     const entities = entitiesResult.data || [];
 
     // Build map of client_id → monitoring_keywords for entity query enrichment
@@ -163,6 +187,7 @@ Deno.serve(async (req) => {
       for (const { term } of metaSearchTerms.slice(0, 10)) {
         try {
           const pageSearchUrl = `https://graph.facebook.com/v21.0/pages/search?q=${encodeURIComponent(term)}&fields=id,name,link&limit=5&access_token=${metaToken}`;
+          queriesExecuted++; // PROD-N: upstream attempt initiated (counted before fetch)
           const pageResp = await fetch(pageSearchUrl);
           if (!pageResp.ok) continue;
           const pageData = await pageResp.json();
@@ -180,6 +205,7 @@ Deno.serve(async (req) => {
       for (const pageId of Array.from(discoveredPageIds).slice(0, 15)) {
         try {
           const postsUrl = `https://graph.facebook.com/v21.0/${pageId}/posts?fields=message,story,permalink_url,created_time&limit=10&since=${since24h}&access_token=${metaToken}`;
+          queriesExecuted++; // PROD-N: upstream attempt initiated (counted before fetch)
           const postsResp = await fetch(postsUrl);
           if (!postsResp.ok) continue;
           const postsData = await postsResp.json();
@@ -233,6 +259,7 @@ Deno.serve(async (req) => {
         for (const hashtag of [...new Set(igHashtags)].slice(0, 8)) {
           try {
             const hashtagSearchUrl = `https://graph.facebook.com/v21.0/ig-hashtag-search?q=${encodeURIComponent(hashtag)}&user_id=${igAccountId}&access_token=${metaToken}`;
+            queriesExecuted++; // PROD-N: upstream attempt initiated (counted before fetch)
             const hashtagResp = await fetch(hashtagSearchUrl);
             if (!hashtagResp.ok) continue;
             const hashtagData = await hashtagResp.json();
@@ -240,6 +267,7 @@ Deno.serve(async (req) => {
             if (!hashtagId) continue;
 
             const topMediaUrl = `https://graph.facebook.com/v21.0/${hashtagId}/recent_media?fields=caption,permalink,timestamp&limit=10&user_id=${igAccountId}&access_token=${metaToken}`;
+            queriesExecuted++; // PROD-N: upstream attempt initiated (counted before fetch)
             const mediaResp = await fetch(topMediaUrl);
             if (!mediaResp.ok) continue;
             const mediaData = await mediaResp.json();
@@ -277,6 +305,28 @@ Deno.serve(async (req) => {
     let signalsCreated = 0;
     let aiRejected = 0;
     let totalSearches = 0;
+
+    // PROD-N Tranche A (2026-05-22): "upstream attempt initiated" counter.
+    //
+    // Distinct semantic from `totalSearches`/`searches`:
+    //   - `totalSearches` counts CSE search-queue iterations (incremented
+    //     at line 478 BEFORE the budget check is finalized, includes
+    //     attempts that never reach upstream).
+    //   - `queriesExecuted` counts every fetch() to an external service
+    //     where the request was actually initiated — incremented
+    //     IMMEDIATELY BEFORE each fetch call (CSE + every Meta Graph
+    //     endpoint). Includes HTTP errors, 429s, timeouts, network
+    //     exceptions, AND successful responses; excludes calls that
+    //     never get sent because the function exited or branched before
+    //     the fetch.
+    //
+    // Why distinct: watchdog Rule C (PROD-N Phase 1) classifies "scope
+    // generation failing" on queries_executed=0. If we incremented after
+    // fetch() returns, network failures would undercount and produce
+    // false Rule C classifications. The "initiated" semantic is
+    // crash-resilient.
+    let queriesExecuted = 0;
+
     const processedUrls = new Set<string>();
 
     // Per-stage rejection telemetry — see RejectionCounters/Sample
@@ -483,12 +533,29 @@ Deno.serve(async (req) => {
         aiRejected += result.rejected;
         mergeCounters(rejectionCounters, result.counters);
         addSamplesFromSearch(result.samples);
+        // PROD-N Tranche A: accumulate "upstream attempt initiated" count
+        // from executeSearch's return. This is the success path; the
+        // catch block below has a fallback +1 to preserve count when
+        // executeSearch throws after its internal increment.
+        queriesExecuted += result.queries_executed;
 
       } catch (error) {
         if (error instanceof RateLimitError) {
+          // PROD-N Tranche A: rate-limit thrown AFTER the fetch returned
+          // a 429 — the upstream attempt was initiated, so count it.
+          // executeSearch's return value was lost in the throw path.
+          queriesExecuted++;
           console.log('[SocialUnified] Rate limited — stopping all searches');
           break;
         }
+        // PROD-N Tranche A: other error path (timeout, network). By
+        // contract executeSearch sets queriesExecutedThisCall=1 right
+        // before the fetch; if it throws after that, the value is lost.
+        // Add 1 to preserve the "attempt initiated" semantic. (Risk of
+        // over-count is only if executeSearch throws BEFORE reaching
+        // its increment site — synchronous error in URL construction —
+        // which has no observed path today.)
+        queriesExecuted++;
         console.error(`[SocialUnified] Search error for ${search.sourceName}:`, error);
       }
     }
@@ -501,8 +568,27 @@ Deno.serve(async (req) => {
       searches: totalSearches,
       ai_rejected: aiRejected,                     // legacy aggregate — keep for backward compat
       budget_remaining: searchBudgetRemaining,
-      rejection_counters: rejectionCounters,       // NEW — per-stage breakdown
-      rejection_samples: rejectionSamples,         // NEW — up to 3 examples per stage
+      rejection_counters: rejectionCounters,       // PROD-H — per-stage breakdown
+      rejection_samples: rejectionSamples,         // PROD-H — up to 3 examples per stage
+      // PROD-N Tranche A (2026-05-22) — typed telemetry shape fields.
+      //
+      // INTENTIONAL semantic separation from `searches`:
+      //   - `searches` (= totalSearches) counts CSE search-queue iterations
+      //     incremented at line 478 BEFORE the actual fetch attempt.
+      //     Reflects "search slots consumed" including any that broke
+      //     pre-fetch.
+      //   - `queries_executed` counts every upstream fetch ACTUALLY
+      //     INITIATED — incremented immediately BEFORE the fetch call
+      //     (CSE + 4 Meta Graph endpoints). Includes HTTP errors, 429s,
+      //     timeouts, network exceptions, and successes. Excludes calls
+      //     that never reached the fetch site.
+      //
+      // Watchdog Rule C ("scope gap, 0 queries built") fires on
+      // queries_executed = 0 specifically. Initiated semantic prevents
+      // false Rule C classifications from transient network failures.
+      queries_executed: queriesExecuted,
+      distinct_clients_iterated: clients.slice(0, 4).length,
+      fixture_clients_iterated: excludedFixtures,
     });
 
     return successResponse({
@@ -616,17 +702,26 @@ async function executeSearch(
     monitoringConfig?: any;  // PROD-H: archetype context (JSONB) for this search
   },
   processedUrls: Set<string>
-): Promise<{ signals: number; rejected: number; counters: RejectionCounters; samples: RejectionSample[] }> {
+): Promise<{ signals: number; rejected: number; counters: RejectionCounters; samples: RejectionSample[]; queries_executed: number }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   let signals = 0;
   let rejected = 0;
   const counters = newRejectionCounters();
   const samples: RejectionSample[] = [];
+  // PROD-N Tranche A (2026-05-22): "upstream attempt initiated" counter.
+  // Set to 1 IMMEDIATELY BEFORE the fetch call so it survives every
+  // outcome — HTTP error, 429 (which throws), timeout, network exception,
+  // or success. Returned to the caller for accumulation. If the function
+  // throws before reaching the return statement (rate-limit / network),
+  // the caller adds a fallback +1 in its catch block to preserve count
+  // integrity (see outer loop).
+  let queriesExecutedThisCall = 0;
 
   try {
     const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${engineId}&q=${encodeURIComponent(search.query)}&num=5`;
 
+    queriesExecutedThisCall = 1;
     const response = await fetch(apiUrl, { signal: controller.signal }).finally(() => clearTimeout(timeout));
 
     if (!response.ok) {
@@ -639,7 +734,7 @@ async function executeSearch(
         source_name: search.sourceName, source_type: search.sourceType,
         url: '', title: '', snippet: '',
       });
-      return { signals: 0, rejected: 0, counters, samples };
+      return { signals: 0, rejected: 0, counters, samples, queries_executed: queriesExecutedThisCall };
     }
 
     const data = await response.json();
@@ -1003,7 +1098,7 @@ async function executeSearch(
     }
   }
 
-  return { signals, rejected, counters, samples };
+  return { signals, rejected, counters, samples, queries_executed: queriesExecutedThisCall };
 }
 
 // ═══════════════════════════════════════════════════════════════
