@@ -25,6 +25,8 @@ Deno.serve(async (req) => {
     if (clientsError) throw clientsError;
 
     let signalsCreated = 0;
+    let csisFallbackSkipped = 0;
+    let psFallbackSkipped = 0;
     const sources = [];
 
     // 1. CSIS Public Reports atom feed.
@@ -77,23 +79,15 @@ Deno.serve(async (req) => {
             }
           }
 
-          if (!perClientHit && clients[0]) {
-            const { error } = await supabaseClient.functions.invoke('ingest-signal', {
-              body: {
-                text: `[CSIS Advisory] ${item.title}\n\n${item.description}`,
-                source_url: item.link || undefined,
-                client_id: clients[0].id,
-                location: 'Canada',
-                source_key: 'csis-public-reports',
-                skip_relevance_gate: true,
-                raw_json: {
-                  signal_origin: 'monitor-csis',
-                  source: 'CSIS Public Reports',
-                  category_hint: 'cyber_advisory',
-                },
-              },
-            });
-            if (!error) signalsCreated++;
+          // #256 Phase 4 (2026-05-23) — pre-#256 fallback at this site
+          // attributed the CSIS advisory to clients[0] when no per-client
+          // relevance match fired. Removed: that was silent cross-tenant
+          // misattribution. Per doctrine: explicit ownership or skip.
+          // If no client matched, the advisory is not actionable for any
+          // tenant; do not manufacture an owner.
+          if (!perClientHit) {
+            csisFallbackSkipped++;
+            console.log(`[CSIS][#256] no per-client match for "${item.title?.substring(0, 60)}" — skipping (no fallback attribution).`);
           }
         }
         sources.push('CSIS Public Reports');
@@ -218,23 +212,14 @@ Deno.serve(async (req) => {
               perClientHit = true;
             }
           }
-          if (!perClientHit && hasHighPrioritySeverity(content) && clients[0]) {
-            const { error } = await supabaseClient.functions.invoke('ingest-signal', {
-              body: {
-                text: `[Public Safety Canada] ${item.title}\n\n${item.description}`,
-                source_url: item.link || undefined,
-                client_id: clients[0].id,
-                location: 'Canada',
-                source_key: 'public-safety-canada',
-                skip_relevance_gate: true,
-                raw_json: {
-                  signal_origin: 'monitor-csis',
-                  source: 'Public Safety Canada',
-                  category_hint: 'cyber_advisory',
-                },
-              },
-            });
-            if (!error) signalsCreated++;
+          // #256 Phase 4 (2026-05-23) — pre-#256 fallback at this site
+          // attributed Public Safety Canada advisories to clients[0]
+          // when no per-client relevance match fired AND content had
+          // high-priority severity hints. Same removal rationale as the
+          // CSIS branch above: explicit ownership or skip.
+          if (!perClientHit && hasHighPrioritySeverity(content)) {
+            psFallbackSkipped++;
+            console.log(`[PSCanada][#256] high-severity advisory with no per-client match for "${item.title?.substring(0, 60)}" — skipping (no fallback attribution).`);
           }
         }
         sources.push('Public Safety Canada');
@@ -243,17 +228,21 @@ Deno.serve(async (req) => {
       console.error('Error monitoring Public Safety Canada:', error);
     }
 
-    console.log(`CSIS monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources`);
+    console.log(`CSIS monitoring complete. Created ${signalsCreated} signals from ${sources.length} sources. Fallback skipped (#256 Phase 4): csis=${csisFallbackSkipped}, ps=${psFallbackSkipped}`);
 
     await completeHeartbeat(supabaseClient, hb, {
       signals_created: signalsCreated,
       sources_scanned: sources.length,
+      csis_fallback_skipped_no_per_client_match: csisFallbackSkipped,
+      ps_fallback_skipped_no_per_client_match: psFallbackSkipped,
     });
 
     return successResponse({
       success: true,
       message: `Scanned ${sources.length} CSIS/security intelligence sources`,
       signalsCreated,
+      csis_fallback_skipped_no_per_client_match: csisFallbackSkipped,
+      ps_fallback_skipped_no_per_client_match: psFallbackSkipped,
       sources
     });
 
