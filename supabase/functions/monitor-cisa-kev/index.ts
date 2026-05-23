@@ -124,6 +124,7 @@ Deno.serve(async (req) => {
 
     let signalsCreated = 0;
     let signalsFailed = 0;
+    let clientsSkippedEmptyTechStack = 0;
 
     for (const v of recent) {
       const ransomwareNote = v.knownRansomwareCampaignUse === "Known"
@@ -152,18 +153,25 @@ Deno.serve(async (req) => {
       for (const client of clients) {
         const stack: string[] = Array.isArray((client as any).tech_stack) ? (client as any).tech_stack : [];
         if (stack.length === 0) {
-          // Client without tech_stack configured — preserve the old
-          // attribute-to-all behavior so we don't silently drop
-          // signals for newly onboarded clients.
-        } else {
-          const matched = stack.some((entry: string) => {
-            const norm = (entry || '').toLowerCase().trim();
-            return norm.length >= 3 && kevHaystack.includes(norm);
-          });
-          if (!matched) {
-            console.log(`[CISA-KEV] ${v.cveID} (${v.vendorProject}/${v.product}) — no tech_stack match for ${client.name}, skipping`);
-            continue;
-          }
+          // #256 Phase 4 (2026-05-23) — empty tech_stack = SKIP, not
+          // attribute-to-all. The pre-#256 fallback dispatched every KEV
+          // CVE to every client lacking a configured tech_stack, which
+          // is the source of the CRT cisa_not_applicable contamination
+          // quarantined by Track H1. Per Aaron-approved doctrine:
+          // explicit ownership only. Tenants who want broad CVE coverage
+          // will later opt in via accepts_global_cve_feed (not in this
+          // release — see #256 follow-up backlog).
+          clientsSkippedEmptyTechStack++;
+          console.log(`[CISA-KEV][#256] skipping ${v.cveID} (${v.vendorProject}/${v.product}) → ${client.name}: empty tech_stack (no opt-in to global CVE feed)`);
+          continue;
+        }
+        const matched = stack.some((entry: string) => {
+          const norm = (entry || '').toLowerCase().trim();
+          return norm.length >= 3 && kevHaystack.includes(norm);
+        });
+        if (!matched) {
+          console.log(`[CISA-KEV] ${v.cveID} (${v.vendorProject}/${v.product}) — no tech_stack match for ${client.name}, skipping`);
+          continue;
         }
         try {
           const { error: ingestError } = await supabase.functions.invoke("ingest-signal", {
@@ -204,11 +212,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[CISA-KEV] Complete. Created ${signalsCreated} / failed ${signalsFailed} / scanned ${recent.length} recent entries.`);
+    console.log(`[CISA-KEV] Complete. Created ${signalsCreated} / failed ${signalsFailed} / scanned ${recent.length} recent entries. Skipped (empty tech_stack, #256 Phase 4): ${clientsSkippedEmptyTechStack}`);
 
     await completeHeartbeat(supabase, hb, {
       signals_created: signalsCreated,
       signals_failed: signalsFailed,
+      clients_skipped_empty_tech_stack: clientsSkippedEmptyTechStack,
       catalog_version: feed.catalogVersion,
       recent_kev_entries: recent.length,
       lookback_days: DAYS_LOOKBACK,
@@ -218,6 +227,7 @@ Deno.serve(async (req) => {
       success: true,
       signals_created: signalsCreated,
       signals_failed: signalsFailed,
+      clients_skipped_empty_tech_stack: clientsSkippedEmptyTechStack,
       recent_kev_entries: recent.length,
       catalog_version: feed.catalogVersion,
     });
