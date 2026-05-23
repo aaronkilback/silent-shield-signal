@@ -132,6 +132,55 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
     };
   }, [selectedClientId, currentTenant?.id, isAllTenantsView]);
 
+  // PROD-J fix C (2026-05-22): all-tenants self-healing validation.
+  // The cross-tenant effect above intentionally skips when
+  // isAllTenantsView=true, since super_admin's global mode legitimately
+  // spans tenants — so a stale localStorage selectedClientId can
+  // persist there indefinitely. That gap caused the blank /signals
+  // feed: localStorage carried _invariant_client_a (or any
+  // deleted/inactive/fixture client) into all-tenants mode, where
+  // SignalHistory's fail-closed filter cascade returned 0 rows.
+  //
+  // This effect runs ONLY in all-tenants mode and validates that the
+  // currently selected client (a) still exists, (b) has status='active',
+  // and (c) is not a fixture (underscore-prefixed). On any failure it
+  // clears the selection, which routes through the main effect above
+  // and triggers a query invalidation so SignalHistory re-fetches
+  // unfiltered. The status='active' + not-fixture constraint mirrors
+  // ClientSelector.fetchClients(), so an "unselectable" client can't
+  // remain "selected".
+  useEffect(() => {
+    if (!selectedClientId || !isAllTenantsView) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('clients')
+        .select('id, name, status')
+        .eq('id', selectedClientId)
+        .maybeSingle();
+      if (cancelled) return;
+      const isValid =
+        !!data &&
+        data.status === 'active' &&
+        typeof data.name === 'string' &&
+        !data.name.startsWith('_');
+      if (!isValid) {
+        console.warn('[ClientContext] Discarding invalid client in all-tenants mode', {
+          selectedClientId,
+          reason: !data
+            ? 'not_found'
+            : data.status !== 'active'
+              ? `status=${data.status}`
+              : 'fixture_prefix',
+        });
+        setSelectedClientId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClientId, isAllTenantsView]);
+
   return (
     <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId, isContextReady }}>
       {children}
