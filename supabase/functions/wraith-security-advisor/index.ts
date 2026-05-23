@@ -682,17 +682,45 @@ async function runVulnerabilityScan(supabase: any) {
     }
   }
 
-  // Auto-create signal for critical findings
+  // #256 Phase 4 (2026-05-23) — Auto-create signal for critical platform-
+  // security findings, routed to the dedicated __platform_security__ client
+  // inside the Silent Shield Operations tenant. Pre-#256 code picked the
+  // first active client globally, which arbitrarily contaminated whichever
+  // customer happened to be returned first.
+  //
+  // LOOKUP INVARIANT (provisioned by migration 20260524040000)
+  //   (tenants.name = 'Silent Shield Operations'
+  //    AND clients.name = '__platform_security__'
+  //    AND clients.status = 'active')
+  //
+  // Fail-fast: if sentinel absent (e.g., staging where SSO tenant doesn't
+  // exist), log error + skip. No fallback to any other client.
   if (criticalCount > 0) {
-    const { data: clients } = await supabase.from('clients').select('id').eq('status', 'active').limit(1);
-    if (clients?.[0]) {
+    const { data: sentinelClient } = await supabase
+      .from('clients')
+      .select('id, tenants!inner(name)')
+      .eq('name', '__platform_security__')
+      .eq('status', 'active')
+      .eq('tenants.name', 'Silent Shield Operations')
+      .maybeSingle();
+
+    if (!sentinelClient?.id) {
+      console.error('[WRAITH][#256] platform-security sentinel client not found (tenant=Silent Shield Operations, client=__platform_security__, status=active). Skipping signal emission — apply migration 20260524040000 to provision.');
+    } else {
       const criticals = allFindings.filter(f => f.severity === 'critical');
       await supabase.functions.invoke('ingest-signal', {
         body: {
           text: `WRAITH SECURITY ALERT: ${criticalCount} critical vulnerabilit${criticalCount > 1 ? 'ies' : 'y'} detected in Fortress platform code. Top finding: ${criticals[0]?.title}. Files: ${[...new Set(criticals.map((f:any) => f.file))].join(', ')}.`,
-          client_id: clients[0].id,
+          client_id: sentinelClient.id,
           source_key: 'wraith-vulnerability-scanner',
-          raw_json: { scan_id: scanId, critical_count: criticalCount, findings: criticals, source: 'WRAITH AI Defense' },
+          raw_json: {
+            scan_id: scanId,
+            critical_count: criticalCount,
+            findings: criticals,
+            source: 'WRAITH AI Defense',
+            signal_origin: 'wraith-security-advisor',
+            routed_to: '__platform_security__',
+          },
         }
       });
     }
