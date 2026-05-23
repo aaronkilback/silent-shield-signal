@@ -1770,16 +1770,106 @@ async function executeRemediation(
       }
 
       case 'fix_orphaned_entities': {
-        // Instead of deactivating, assign orphaned entities to the default active client
-        const { data: defaultClient } = await supabase.from('clients').select('id, name').eq('status', 'active').limit(1).maybeSingle();
-        if (!defaultClient) return { action, finding, success: false, details: 'No active client found to assign orphaned entities to' };
+        // PROD-O Step 2 (2026-05-23): tenant-aware orphan assignment.
+        //
+        // Previous behavior: SELECT one arbitrary active client (LIMIT 1,
+        // no ORDER BY) → bulk UPDATE all orphan entities' client_id to
+        // that one client.id, irrespective of the orphan's tenant_id.
+        // That would fail the PROD-O tenant-client consistency trigger
+        // (migration 20260524000000) whenever an orphan's tenant differs
+        // from the chosen default's tenant.
+        //
+        // New behavior:
+        //   1. Build per-tenant default-client map with DETERMINISTIC
+        //      ordering (created_at ASC, id ASC). First stable client
+        //      per tenant becomes that tenant's default. No arbitrary
+        //      LIMIT 1.
+        //   2. Group orphans by their own tenant_id (orphans with NULL
+        //      tenant_id are out of scope — task #203 handles that).
+        //   3. Assign each orphan to its own tenant's default. Skip
+        //      orphans whose tenant has no active client; do not fail
+        //      the whole action.
+        //
+        // Handler is dormant in prod (0 lifetime invocations as of
+        // 2026-05-23); rewrite ships in the same release as the trigger
+        // to avoid leaving a future cross-tenant write path latent.
+        const { data: activeClients, error: clientsErr } = await supabase
+          .from('clients')
+          .select('id, name, tenant_id, created_at')
+          .eq('status', 'active')
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true });
 
-        const { data: orphaned } = await supabase.from('entities').select('id').is('client_id', null).eq('is_active', true).limit(200);
-        if (!orphaned || orphaned.length === 0) return { action, finding, success: true, details: 'No orphaned entities found' };
+        if (clientsErr) {
+          return { action, finding, success: false, details: `Client lookup failed: ${clientsErr.message}` };
+        }
 
-        const ids = orphaned.map((e: any) => e.id);
-        const { error } = await supabase.from('entities').update({ client_id: defaultClient.id }).in('id', ids);
-        return { action, finding, success: !error, details: error ? `Fix failed: ${error.message}` : `Assigned ${ids.length} orphaned entities to client "${defaultClient.name}"` };
+        // Deterministic per-tenant default: first client per tenant
+        // under (created_at ASC, id ASC). Identical input → identical
+        // assignment across runs.
+        const defaultPerTenant = new Map<string, { id: string; name: string }>();
+        for (const c of activeClients || []) {
+          if (c.tenant_id && c.id && !defaultPerTenant.has(c.tenant_id)) {
+            defaultPerTenant.set(c.tenant_id, { id: c.id, name: c.name });
+          }
+        }
+
+        if (defaultPerTenant.size === 0) {
+          return { action, finding, success: false, details: 'No active clients found in any tenant — cannot assign orphans' };
+        }
+
+        // Orphans must have a known tenant_id; NULL-tenant orphans are
+        // explicitly out of scope (task #203).
+        const { data: orphaned, error: orphansErr } = await supabase
+          .from('entities')
+          .select('id, tenant_id')
+          .is('client_id', null)
+          .eq('is_active', true)
+          .not('tenant_id', 'is', null)
+          .limit(200);
+
+        if (orphansErr) {
+          return { action, finding, success: false, details: `Orphan lookup failed: ${orphansErr.message}` };
+        }
+
+        if (!orphaned || orphaned.length === 0) {
+          return { action, finding, success: true, details: 'No orphaned entities found (with known tenant)' };
+        }
+
+        let assigned = 0;
+        const tenantAssigned = new Map<string, number>();
+        const skippedTenants = new Map<string, number>();
+
+        for (const orphan of orphaned) {
+          const def = defaultPerTenant.get(orphan.tenant_id);
+          if (!def) {
+            skippedTenants.set(orphan.tenant_id, (skippedTenants.get(orphan.tenant_id) || 0) + 1);
+            continue;
+          }
+          const { error } = await supabase
+            .from('entities')
+            .update({ client_id: def.id })
+            .eq('id', orphan.id);
+          if (!error) {
+            assigned++;
+            tenantAssigned.set(orphan.tenant_id, (tenantAssigned.get(orphan.tenant_id) || 0) + 1);
+          }
+        }
+
+        const breakdown = Array.from(tenantAssigned.entries())
+          .map(([tid, n]) => `${defaultPerTenant.get(tid)?.name ?? tid}: ${n}`)
+          .join(', ') || 'none';
+        const skippedTotal = Array.from(skippedTenants.values()).reduce((a, n) => a + n, 0);
+        const skippedNote = skippedTenants.size > 0
+          ? ` (skipped ${skippedTotal} orphan(s) across ${skippedTenants.size} tenant(s) with no active client)`
+          : '';
+
+        return {
+          action,
+          finding,
+          success: true,
+          details: `Assigned ${assigned}/${orphaned.length} orphans within-tenant — ${breakdown}${skippedNote}`,
+        };
       }
 
       case 'close_stale_bugs': {
