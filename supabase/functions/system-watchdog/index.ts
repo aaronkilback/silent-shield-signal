@@ -3053,6 +3053,71 @@ Deno.serve(async (req) => {
         }
       }
 
+      // 2c. PROD-S Track G (2026-05-23) — total domain rejection check.
+      // Alerts if any tenant has 100% domain-allowlist rejection over the
+      // last 2 consecutive monitor-news-google cycles. Indicates either:
+      //   - tenant overlay is empty AND baseline doesn't match the actual
+      //     news mix monitor-news-google is generating queries against
+      //   - tenant overlay was misconfigured / cleared accidentally
+      //   - upstream Google CSE has shifted to social/content-farm-only
+      //     URLs the allowlist deliberately excludes
+      // The watchdog reads track_g_per_tenant from cron_heartbeat
+      // result_summary, computed in monitor-news-google.
+      {
+        const { data: trackGRuns } = await supabase
+          .from('cron_heartbeat')
+          .select('result_summary, completed_at')
+          .eq('job_name', 'monitor-news-google-hourly')
+          .eq('status', 'succeeded')
+          .gte('completed_at', new Date(Date.now() - 6 * 3600000).toISOString())
+          .order('completed_at', { ascending: false })
+          .limit(4);
+
+        if (trackGRuns && trackGRuns.length >= 2) {
+          // For each tenant_id seen in last 2 runs, check if both runs
+          // had urls_received > 0 AND urls_rejected_domain === urls_received.
+          const recent = trackGRuns.slice(0, 2);
+          const tenantIdsSeen = new Set<string>();
+          for (const r of recent) {
+            const perTenant = (r.result_summary?.track_g_per_tenant ?? {}) as Record<string, any>;
+            for (const tid of Object.keys(perTenant)) tenantIdsSeen.add(tid);
+          }
+
+          const totalRejectionTenants: Array<{ tenant_id: string; samples: string }> = [];
+          for (const tid of tenantIdsSeen) {
+            const cyclesForTenant = recent.map((r) => {
+              const t = (r.result_summary?.track_g_per_tenant ?? {})[tid];
+              if (!t) return null;
+              return {
+                received: Number(t.urls_received ?? 0),
+                rejected: Number(t.urls_rejected_domain ?? 0),
+              };
+            }).filter(Boolean) as Array<{ received: number; rejected: number }>;
+
+            if (cyclesForTenant.length < 2) continue;
+            const allFullReject = cyclesForTenant.every((c) => c.received > 0 && c.rejected === c.received);
+            if (allFullReject) {
+              totalRejectionTenants.push({
+                tenant_id: tid,
+                samples: cyclesForTenant.map((c) => `${c.rejected}/${c.received}`).join(', '),
+              });
+            }
+          }
+
+          if (totalRejectionTenants.length > 0) {
+            behavioralFindings.push({
+              category: 'behavioral_health',
+              severity: 'high',
+              title: `Track G: ${totalRejectionTenants.length} tenant(s) with 100% news domain rejection over 2 consecutive cycles`,
+              analysis: totalRejectionTenants.map((t) => `tenant=${t.tenant_id}: rejection rate ${t.samples}`).join('; ') +
+                `. Likely causes: empty/misconfigured overlay, baseline mismatch against upstream URL mix, or overlay lookup failures forcing baseline-only mode.`,
+              plainEnglish: `One or more tenants are rejecting every single news URL the monitor finds. They will receive zero Google News signals until the allowlist is corrected.`,
+              action: `Inspect tenants.settings.news_domain_allowlist for the affected tenants. Cross-reference against rejection samples in filtered_signals (filter_reason='source_domain_not_allowlisted') to see which hosts are being rejected. Add legitimate sources to the overlay or escalate to GLOBAL_NEWS_BASELINE if universally authoritative.`,
+            });
+          }
+        }
+      }
+
       // 3. Entity content freshness — entities with active monitoring should have recent content
       const { data: staleEntities } = await supabase
         .from('entities')
