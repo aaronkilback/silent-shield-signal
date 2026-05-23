@@ -137,9 +137,16 @@ const HEARTBEAT_NO_CRON_ALLOWLIST = new Set([
   // Deprecated per project_cyber_pipeline memory; pastebin source dropped.
   // Heartbeat call should be removed once the function itself is deleted.
   'monitor-pastebin',
-  // Paused under Phase X-1 budget controls (May 2026 — X API cost runaway).
-  // Replaced by per-tenant monitor-x-single under event-flag gating. Function
-  // code still writes a heartbeat but the cron is intentionally absent.
+  // Retired 2026-05-22 (PROD-M Option B). The cron job and registry
+  // entry were removed in migration 20260523020000_retire_x_monitor_scaffolding.sql.
+  // The function file at supabase/functions/monitor-twitter/index.ts is
+  // preserved as inventory and still writes a heartbeat (startHeartbeat
+  // at line 49), which is why this entry remains here — the validation
+  // script would otherwise flag "heartbeat with no cron." The per-tenant
+  // monitor-x-single successor referenced in earlier comments was never
+  // implemented; if X coverage is ever resumed, write a new migration
+  // to schedule cron + register, and re-evaluate whether this allowlist
+  // entry should stay.
   'monitor-twitter',
   // Function logic was consolidated into self-improvement-orchestrator. The
   // orchestrator now writes the 'self-improvement-nightly' heartbeat itself
