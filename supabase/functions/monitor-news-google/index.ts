@@ -2,6 +2,13 @@ import { createServiceClient, corsHeaders, handleCors, successResponse, errorRes
 import { extractOGImage } from "../_shared/og-image.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat, getLatestSucceededResultSummary } from "../_shared/heartbeat.ts";
 import { cleanSignalExcerpt } from "../_shared/signal-text.ts";
+import { getTenantNewsAllowlist, extractHost, isAllowedDomain } from "../_shared/news-domain-allowlist.ts";
+
+// PROD-S Track G (2026-05-23) — cap forensic `filtered_signals` inserts per
+// tenant per cycle to avoid write amplification on junk-volume spikes.
+// Aggregate rejection counts continue (in result_summary), so the
+// observability denominator is preserved.
+const TRACK_G_FILTERED_INSERT_CAP_PER_TENANT_PER_CYCLE = 10;
 
 // A truncated headline ending in a stray initial — "for the B.",
 // "criticized U.", "the U." — signals the source title was clipped
@@ -184,7 +191,7 @@ Deno.serve(async (req) => {
     // that id, which only works if order is stable across runs.
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, industry, monitoring_keywords, monitoring_config, tactic_keywords')
+      .select('id, name, tenant_id, industry, monitoring_keywords, monitoring_config, tactic_keywords')
       .eq('status', 'active')
       .order('id', { ascending: true });
 
@@ -236,6 +243,19 @@ Deno.serve(async (req) => {
     let processedCount = 0;
     let stopIdx = totalClients;
 
+    // PROD-S Track G (2026-05-23) — per-tenant aggregate stats for the
+    // allowlist enforcement pass. Watchdog reads from result_summary.
+    // track_g_per_tenant.<tenant_id> to detect 100% rejection over
+    // consecutive cycles.
+    const trackGPerTenant: Record<string, {
+      urls_received: number;
+      urls_rejected_domain: number;
+      urls_passed_allowlist: number;
+      overlay_failed: boolean;
+      used_overlay: boolean;
+      allowlist_size: number;
+    }> = {};
+
     // Build search queries for each client. Labeled outer loop so the
     // inner per-query budget check can break out of BOTH loops cleanly
     // when it trips mid-client.
@@ -251,6 +271,23 @@ Deno.serve(async (req) => {
         break;
       }
       const client = (clients as any)![clientIdx];
+
+      // PROD-S Track G (2026-05-23) — resolve per-tenant news-domain allowlist
+      // ONCE per client iteration. Effective allowlist = GLOBAL_NEWS_BASELINE
+      // ∪ tenants.settings.news_domain_allowlist overlay. Failure mode: helper
+      // falls back to baseline-only with overlay_failed=true; we surface that
+      // in telemetry but never silently admit everything or skip the tenant.
+      const allowlistResolution = await getTenantNewsAllowlist(supabase, client.tenant_id);
+      const cycleStats = {
+        urls_received: 0,
+        urls_rejected_domain: 0,
+        urls_passed_allowlist: 0,
+        filtered_signals_inserted: 0,
+      };
+      if (allowlistResolution.overlay_failed) {
+        console.warn(`[Track G] tenant=${client.tenant_id} overlay lookup failed; using GLOBAL_NEWS_BASELINE only (size=${allowlistResolution.allowlist.size})`);
+      }
+
       const queries: string[] = [];
 
       // Build the negative-keyword suffix once per client. Each
@@ -490,6 +527,33 @@ Deno.serve(async (req) => {
               ?? meta['pubdate']
               ?? null;
 
+            // PROD-S Track G (2026-05-23) — pre-ingest domain allowlist enforcement.
+            // Reject URLs whose host is not in the tenant's effective allowlist
+            // (baseline ∪ overlay) BEFORE ingest-signal is invoked. Saves
+            // AI-gate cost, telemetry pollution, and analyst-feed noise.
+            cycleStats.urls_received += 1;
+            const candidateHost = extractHost(item.link);
+            if (!isAllowedDomain(candidateHost, allowlistResolution.allowlist)) {
+              cycleStats.urls_rejected_domain += 1;
+              // Cap forensic inserts per tenant per cycle. Aggregate counts
+              // continue in cycleStats so the observability denominator is
+              // preserved even if we stop writing rows.
+              if (cycleStats.filtered_signals_inserted < TRACK_G_FILTERED_INSERT_CAP_PER_TENANT_PER_CYCLE) {
+                cycleStats.filtered_signals_inserted += 1;
+                supabase.from('filtered_signals').insert({
+                  raw_text: (item.title || '').substring(0, 500),
+                  source_url: item.link || null,
+                  source_name: 'monitor-news-google',
+                  client_id: client.id,
+                  filter_reason: 'source_domain_not_allowlisted',
+                  relevance_score: null,
+                  relevance_reason: `host=${candidateHost ?? '(unparseable)'} not in tenant allowlist (size=${allowlistResolution.allowlist.size}, used_overlay=${allowlistResolution.used_overlay})`,
+                }).then(() => {}).catch(() => {});
+              }
+              continue;
+            }
+            cycleStats.urls_passed_allowlist += 1;
+
             // Route through ingest-signal for PECL classification, relevance gate, and dedup
             const ingestResult = await supabase.functions.invoke('ingest-signal', {
               body: {
@@ -553,6 +617,28 @@ Deno.serve(async (req) => {
         }
       }
 
+      // PROD-S Track G — fold this client's cycleStats into the per-tenant
+      // aggregate. Same tenant across multiple clients accumulates. Watchdog
+      // checks per-tenant rejection ratio against this object.
+      {
+        const t = client.tenant_id as string;
+        const acc = trackGPerTenant[t] ?? {
+          urls_received: 0,
+          urls_rejected_domain: 0,
+          urls_passed_allowlist: 0,
+          overlay_failed: false,
+          used_overlay: false,
+          allowlist_size: allowlistResolution.allowlist.size,
+        };
+        acc.urls_received += cycleStats.urls_received;
+        acc.urls_rejected_domain += cycleStats.urls_rejected_domain;
+        acc.urls_passed_allowlist += cycleStats.urls_passed_allowlist;
+        acc.overlay_failed = acc.overlay_failed || allowlistResolution.overlay_failed;
+        acc.used_overlay = acc.used_overlay || allowlistResolution.used_overlay;
+        acc.allowlist_size = allowlistResolution.allowlist.size;
+        trackGPerTenant[t] = acc;
+      }
+
       processedCount++;
 
       // Progress checkpoint: write incremental counts after each client.
@@ -610,6 +696,9 @@ Deno.serve(async (req) => {
       processed_count: processedCount,
       budget_ms: BUDGET_MS,
       elapsed_ms: elapsedMs,
+      // PROD-S Track G — per-tenant allowlist enforcement aggregate.
+      // Watchdog rule `track_g_total_domain_rejection` reads from here.
+      track_g_per_tenant: trackGPerTenant,
     });
 
     const cursorLabel = nextCursor ? `${nextCursor.client_id}@q${nextCursor.query_index}` : 'null';
