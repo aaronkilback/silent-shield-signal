@@ -324,13 +324,27 @@ async function runOSINTMonitorsInBackground(supabase: any, currentServiceKey: st
     //
     // Deliberately NOT touched in Phase 1 (require product/architecture
     // decisions, not defect containment):
-    //   - 'monitor-community'   — direct cron (jobid 201) is currently INACTIVE;
-    //                              orchestrator is the de-facto sole driver.
-    //                              Decide cadence intent before changing ownership.
-    //                              (Source of Petronas Site-C 7×-duplicate signals
-    //                              from 2026-05-22 diagnosis.)
     //   - 'monitor-social'      — legacy/demoted per registry; retire vs keep TBD
     //   - 'monitor-linkedin'    — demoted per registry; retire vs keep TBD
+    //
+    // 2026-05-22 (PROD-K Phase 1, T0): 'monitor-community' REMOVED from
+    // the orchestrator. Diagnosis showed monitor-community-outreach was
+    // producing ~14% duplicate-title pollution (Site C newswire 7× in 8h,
+    // Njoyn job postings 3×, etc.) and ~50% non-actionable items (job
+    // postings, bid aggregators, mainstream newswire). The direct cron
+    // (jobid 201) is INACTIVE since 2026-05-21, which made the
+    // orchestrator the de-facto sole driver — so this removal is now
+    // the single source of truth for "monitor-community-outreach is
+    // paused." Single-owner doctrine: function-level kill switches
+    // would split the control plane.
+    //
+    // Re-enable path (conscious decision, not silent):
+    //   1. add 'monitor-community' back into this array, OR
+    //   2. re-enable the direct cron via:
+    //      SELECT cron.alter_job(job_id := 201, active := true);
+    // T1/T2/T3 hygiene fixes (domain blocks, 72h title dedup, URL
+    // canonicalization) are in place in monitor-community-outreach,
+    // so re-enabling will run with the corpus-poison guards.
     //
     // Retained entries below remain orchestrator-owned because they have NO
     // direct pg_cron and rely on the orchestrator's circuit-breaker:
@@ -343,7 +357,7 @@ async function runOSINTMonitorsInBackground(supabase: any, currentServiceKey: st
       'monitor-linkedin',
       // 'monitor-darkweb',    // Disabled: consistently returns 0 results — saves ~2 function invocations/cycle
       'monitor-domains',
-      'monitor-community',
+      // 'monitor-community', // PROD-K T0 (2026-05-22): removed — see comment block above
     ];
 
     // ═══ CIRCUIT BREAKER ═══

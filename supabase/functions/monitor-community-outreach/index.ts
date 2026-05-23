@@ -86,12 +86,96 @@ const EXCLUDED_DOMAINS = [
   // Job boards & recruitment sites
   'experiencehub.ca', 'jobs.ca', 'workbc.ca', 'jobbank.gc.ca',
   'glassdoor.com', 'ziprecruiter.com', 'careerbuilder.com',
+  // PROD-K T1 (2026-05-22): job-board domains seen in prod corpus —
+  // FANU07-25 Assistant Professor (3×), Administrative Assistant -
+  // Corrpro Canada | BeBee, Silviculture Forester | JobLeads.com,
+  // SPO/STO BC Public Service. All passed the keyword scorer because
+  // job postings include First Nations / employment-equity language.
+  'njoyn.com', 'bebee.com', 'jobleads.com', 'joboptionsbc.ca',
+  'careers.gov.bc.ca', 'unbc.njoyn.com',
+  // PROD-K T1: bid / RFP aggregators (passed as "First Nations
+  // contract" matches). British Columbia Bids aggregator titled
+  // "Find Contracts, Tenders & RFP Opportunities".
+  'bcbid.gov.bc.ca', 'bidsandtenders.ca', 'merx.com',
   // Obituary sites
   'shortenandryan.com', 'legacy.com', 'arbormemorial.ca',
   'dignitymemorial.com', 'remembering.ca',
   // Generic health/institutional portals
   'phsa.ca', 'interiorhealth.ca',
 ];
+
+// PROD-K T1 (2026-05-22): URL-path patterns that indicate job listings,
+// newswire syndication, or generic listing pages — regardless of host.
+// The Site C newswire flood (7× CP wire story in 8h) came in via 7
+// different syndicate hosts (infonews.ca, timminstoday.com, etc.) so
+// host-only blocking can't catch it; path-pattern matching can.
+const BLOCKED_URL_PATH_PATTERNS: RegExp[] = [
+  /\/cp-newsalert/i,             // Canadian Press wire (multi-host syndication)
+  /\/national-news\//i,           // generic news aggregator path
+  /xweb\.asp/i,                  // Njoyn job-board permalinks
+  /[?&]tbtoken=/i,               // Njoyn rotating session token (causes URL-hash churn)
+  /\/(jobs?|careers?)\//i,       // /job/, /jobs/, /career/, /careers/
+  /\/job-postings?\//i,
+  /\/tenders?\//i,
+];
+
+// PROD-K T1: title prefixes that mark content as job-posting / newswire
+// / aggregator regardless of source. Belt-and-suspenders with the
+// domain + path blocks.
+const BLOCKED_TITLE_PATTERNS: RegExp[] = [
+  /^CP NewsAlert/i,
+  /^CP Newsalert/i,
+  /^FANU\d+/i,                    // Njoyn job IDs (FANU07-25 Assistant Professor)
+  /\bAssistant Professor\b/i,     // academic job postings
+  /\bLicensed Practical Nurse\b/i,
+  /\bAdministrative Assistant\b/i,
+  /\bSilviculture Forester\b/i,
+  /\bFind Contracts,? Tenders/i,  // BC Bids aggregator landing page
+];
+
+// PROD-K T1: shared block-source helper. Used by all three ingestion
+// paths (RSS, Google CSE, band sites) so a job posting or wire-story
+// can't sneak in via the path that doesn't apply EXCLUDED_DOMAINS.
+function isBlockedSource(url: string | null | undefined, title: string | null | undefined): { blocked: boolean; reason?: string } {
+  const u = (url || '').toLowerCase();
+  const t = (title || '').trim();
+  if (u && EXCLUDED_DOMAINS.some((d) => u.includes(d))) {
+    return { blocked: true, reason: 'excluded_domain' };
+  }
+  if (u && BLOCKED_URL_PATH_PATTERNS.some((re) => re.test(u))) {
+    return { blocked: true, reason: 'blocked_path_pattern' };
+  }
+  if (t && BLOCKED_TITLE_PATTERNS.some((re) => re.test(t))) {
+    return { blocked: true, reason: 'blocked_title_pattern' };
+  }
+  return { blocked: false };
+}
+
+// PROD-K T3 (2026-05-22): URL canonicalization. The dedup hash was
+// keyed on `${url}|${title}` — but URL forms vary across fetches even
+// for the same article: rotating query tokens (tbtoken=, utm_*),
+// session IDs, fragments, trailing slashes, and host casing all
+// produce different hashes for the same content. Canonicalize to:
+// lowercase host, strip query string entirely (Phase 1 takes the
+// safe-but-blunt approach — no whitelist), strip fragment, strip
+// trailing slash. Preserves the original URL on the stored signal
+// (`raw_json.url`) for analyst attribution; only the hash input is
+// canonicalized.
+function canonicalizeUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    const host = u.host.toLowerCase();
+    const path = u.pathname.replace(/\/+$/, '');
+    return `${u.protocol}//${host}${path}`;
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+// PROD-K (2026-05-22): community-outreach source_id, referenced by the
+// title-only dedup query. Single source of truth.
+const COMMUNITY_OUTREACH_SOURCE_ID = 'b604b8c8-8a19-4ddc-a0e6-9ea422af474f';
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -149,6 +233,17 @@ Deno.serve(async (req) => {
         itemsScanned += items.length;
 
         for (const item of items.slice(0, 15)) {
+          // PROD-K T1 (2026-05-22): apply shared source block-list to
+          // the RSS path. Previously this path had NO domain/path/title
+          // filtering, so a CP-NewsAlert syndicated story arriving via
+          // an Energetic City re-publish path could land here. Belt
+          // with the equivalent Google-CSE guard added below.
+          const rssBlock = isBlockedSource(item.link, item.title);
+          if (rssBlock.blocked) {
+            console.log(`[PROD-K T1] RSS block (${rssBlock.reason}): ${(item.title || '').substring(0, 80)}`);
+            continue;
+          }
+
           const content = `${item.title} ${item.description}`.toLowerCase();
 
           // Geographic gate: for broad-coverage feeds (e.g. BC Gov News), require at least one
@@ -226,10 +321,20 @@ Deno.serve(async (req) => {
           itemsScanned += data.items?.length || 0;
 
           for (const item of data.items || []) {
-            // Skip excluded domains
-            const itemUrl = (item.link || '').toLowerCase();
-            if (EXCLUDED_DOMAINS.some(d => itemUrl.includes(d))) {
-              console.log(`Skipping excluded domain: ${item.link?.substring(0, 60)}`);
+            // PROD-K T1 (2026-05-22): broadened from domain-only block
+            // to the shared isBlockedSource() helper. Catches:
+            //   - extended job-board domains (njoyn, bebee, jobleads,
+            //     joboptionsbc, careers.gov.bc.ca, bcbid)
+            //   - URL-path patterns for job listings / CP newswire
+            //     syndication (/cp-newsalert, /national-news,
+            //     xweb.asp, tbtoken=, /job/, /career/, /tenders/)
+            //   - title prefixes (CP NewsAlert, FANU job IDs, common
+            //     job-posting titles, "Find Contracts, Tenders")
+            // Closes the path that produced the Site C newswire flood
+            // (7× in 8h from 7 syndicate hosts) and Njoyn job dupes.
+            const cseBlock = isBlockedSource(item.link, item.title);
+            if (cseBlock.blocked) {
+              console.log(`[PROD-K T1] CSE block (${cseBlock.reason}): ${(item.title || '').substring(0, 80)}`);
               continue;
             }
 
@@ -349,11 +454,23 @@ Deno.serve(async (req) => {
           let match;
           while ((match = pattern.exec(textContent)) !== null && bandSignalsCreated < MAX_BAND_SIGNALS) {
             const snippet = match[0].trim();
-            
+
             // Skip very short or navigation-like text
             if (snippet.length < 40) continue;
             if (/^(public works|community development|band economic|agricultural planning|cultural tourism|urban)/i.test(snippet)) continue;
-            
+
+            // PROD-K T1 (2026-05-22): block-list check on the band-site
+            // path too. Band sites mostly publish their own content but
+            // sometimes re-publish CP newswire / job postings on
+            // "careers" or "news" pages; the title-pattern check
+            // catches those without needing per-site rules.
+            const bandTitle = `${band.name}: ${snippet.substring(0, 80)}`;
+            const bandBlock = isBlockedSource(band.url, bandTitle);
+            if (bandBlock.blocked) {
+              console.log(`[PROD-K T1] BandSite block (${bandBlock.reason}): ${bandTitle.substring(0, 80)}`);
+              continue;
+            }
+
             const relevance = scoreOutreachRelevance(snippet.toLowerCase());
 
             if (relevance.score >= 35) {
@@ -583,23 +700,76 @@ async function createOutreachSignal(supabase: any, data: {
   outreachType: string;
 }): Promise<boolean> {
   try {
-    // Generate content hash for deduplication
-    const contentToHash = `${data.url || ''}|${data.title}`;
+    // PROD-K T2 (2026-05-22): title-only dedup window (72h).
+    //
+    // The content_hash dedup keys on `${url}|${title}`. Because URLs
+    // vary across fetches (rotating tokens, multi-syndicate hosts,
+    // title-truncation variants), the same article was admitted up to
+    // 7× in 8h (Site C newswire flood). An exact-title match scoped
+    // to this monitor's source_id over 72h catches the syndicated-
+    // newswire and Njoyn-job-rotation cases without affecting
+    // legitimately-distinct articles (which never share an exact
+    // title verbatim).
+    //
+    // Uses .maybeSingle() not .single() to avoid the silent admit
+    // when 2+ historical rows already share the title.
+    const normalizedTitle = (data.title || '').trim();
+    if (normalizedTitle.length > 0) {
+      const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+      const { data: existingByTitle } = await supabase
+        .from('signals')
+        .select('id, created_at')
+        .eq('source_id', COMMUNITY_OUTREACH_SOURCE_ID)
+        .eq('title', normalizedTitle)
+        .gte('created_at', seventyTwoHoursAgo)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingByTitle) {
+        console.log(`[PROD-K T2] Title dedup 72h hit (existing ${existingByTitle.id}): "${normalizedTitle.substring(0, 60)}"`);
+        return false;
+      }
+    }
+
+    // PROD-K T3 (2026-05-22): URL-canonical hash. The original
+    // `${data.url}|${data.title}` hash was defeated by:
+    //   * rotating query strings (Njoyn tbtoken=)
+    //   * fragment churn
+    //   * trailing-slash variance
+    //   * host-case variance
+    //   * title-text variance (CSE truncation "..." vs full title)
+    // canonicalizeUrl() strips query+fragment, lowercases host, strips
+    // trailing slash. We hash on the canonical URL alone when one
+    // exists — title is intentionally excluded from the hash now
+    // because T2 above already provides title-equivalence dedup, and
+    // url-with-title was producing more collisions than it prevented.
+    // Falls back to title-only hash for items without a URL.
+    const canonicalUrl = canonicalizeUrl(data.url);
+    const contentToHash = canonicalUrl
+      ? `url:${canonicalUrl}`
+      : `title:${normalizedTitle}`;
     const encoder = new TextEncoder();
     const hashData = encoder.encode(contentToHash);
     const hashBuffer = await crypto.subtle.digest('SHA-256', hashData);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-    // Check for existing signal
+    // Check for existing signal (URL-canonical hash dedup).
+    // PROD-K (2026-05-22): switched .single() → .maybeSingle(). The
+    // old .single() returned `data=null` AND an error when 2+ rows
+    // shared the same hash (legacy race), which the destructured
+    // `existing` check then treated as falsy — silently re-admitting
+    // duplicates. maybeSingle() is tolerant of 0-or-1 row, which is
+    // the actual contract here.
     const { data: existing } = await supabase
       .from('signals')
       .select('id')
       .eq('content_hash', contentHash)
-      .single();
+      .maybeSingle();
 
     if (existing) {
-      console.log(`Skipping duplicate outreach signal: ${data.title.substring(0, 50)}`);
+      console.log(`[PROD-K T3] URL-canonical hash dedup hit (existing ${existing.id}): ${(data.url || '').substring(0, 80)}`);
       return false;
     }
 
@@ -637,7 +807,7 @@ async function createOutreachSignal(supabase: any, data: {
         client_id: data.clientId,
         // 2026-05-08: source_id populated for watchdog source-coverage
         // tracking. Maps to public.sources WHERE name='Community Outreach Monitor'.
-        source_id: 'b604b8c8-8a19-4ddc-a0e6-9ea422af474f',
+        source_id: COMMUNITY_OUTREACH_SOURCE_ID,
         category: 'community_outreach',
         severity: 'low',
         status: 'new',
