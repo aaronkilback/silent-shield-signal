@@ -6,6 +6,59 @@ Supabase keys updated and validated.
 
 <!-- last-deploy: 2026-04-24 -->
 
+## Quarantine Doctrine (2026-05-23, Branch 1A merged)
+
+**Quarantine (`signals.quality_status = 'quarantined'`) is an ANALYST VISIBILITY BOUNDARY, not a presentation filter.**
+
+### Rules
+
+1. **Analysts NEVER retrieve quarantined rows by any path** — including point lookup by UUID or `signal_number`, list query, realtime emit, aggregate, or join.
+2. **Operators / super_admin retain explicit access** for audit, dedup, system-health, and forensic purposes.
+3. **Denied responses to analysts MUST be indistinguishable from row-not-found.** No error toast, console message, telemetry field, or status code differential may reveal that a quarantined row exists in any state.
+
+### Three centralized primitives (use one — never write inline `quality_status` predicates)
+
+- `applyAnalystSignalFilter(query)` — always filters. Use in unambiguously analyst-facing components/hooks.
+- `applySignalFilterForRole(query, role)` — conditional. Use in mixed-role contexts where caller role is determined at runtime.
+- `isQuarantineHiddenForRole(row, role)` — post-fetch / realtime guard. Returns `true` when the row must be suppressed. Caller MUST short-circuit on `true` **before any side effect** — no render, no toast, no log, no ref update, no optimistic insert, no invalidate. Doing any of those first reintroduces the existence leak.
+
+Frontend helper: `src/lib/signal-query-filters.ts`. Edge-function mirror: `supabase/functions/_shared/signal-query-filters.ts`.
+
+### Operator-only surfaces
+
+Operator / super_admin diagnostic surfaces (`MonitoringDiagnostics`, `LearningDashboard`, `AutonomousSystemStatus`, `DatabaseSettings`, `DeleteClientDialog`, `DuplicateDetectionPanel`) intentionally bypass the filter. Tag each such call site with:
+```ts
+// @qa-allow:operator-surface-unfiltered <reason>
+```
+so future static-grep audits distinguish intentional unfiltered queries from new defects.
+
+### Intentional service-role exclusion
+
+`supabase/functions/process-feedback/index.ts:347` (`updateSignalLearning`) intentionally uses `.single()` without the quarantine filter. Reason: this is an internal service-role learning pipeline invoked via the feedback-processing flow with service-role credentials. It is never reached by an analyst-tier caller. The `.single()` failure mode is the intentional FK-anomaly signal (orphan feedback should surface as an error, not be silently swallowed). The learning pipeline also needs to process feedback for **all** signals including quarantined ones — analyst feedback marking a now-quarantined signal as false_positive before quarantine still needs to train the gate.
+
+### Branch 1B — committed follow-on (NOT vague backlog)
+
+Branch 1A (this entry) closed the immediate exploit paths: realtime emit, explicit point lookups (`agent-chat`, `DashboardAIAssistant`, `IncidentActionDialog`, `ActivityFeedPanel`), wraith per-action authorization gate with 404 indistinguishability, `/wildfire` public route, `.single()→.maybeSingle()` defensive sweep.
+
+Branch 1B is **committed work**, scheduled to start immediately after Branch 1A burns in clean. Scope:
+- Analyst list-query patches (~24 frontend sites: `SignalHistory`, `LiveEventFeed`, `ThreatGlobe`, `RiskSnapshot`, `MetricsPanel`, `SecurityBulletinGenerator`, `EntityUnifiedProfile`, `EntitySuggestionsPanel` correlation lookup, `SignalDetailDialog` correlation, neural-constellation, wildfire components)
+- Edge function analyst-read inline filtering (~15–20 sites including `dashboard-ai-assistant` service-role-client paths that bypass RLS)
+- Mixed-role role-aware refactor (~3–5 sites: `LearningDashboard`, `useFortressHealth`, `useGodsEyeData`)
+- Operator-only `@qa-allow` annotations on the ~4 surfaces above
+
+Total estimate: ~30h. Doctrine is intentionally not promoted to "fully enforced" status until Branch 1B ships.
+
+### Branch 2 (QA framework) — committed follow-on, sequenced after Branch 1B
+
+- **Branch 2A** (can ship before 1B if needed for regression-risk reduction): P0.1 ingest-signal contract tests, P0.2 static grep guards, P0.4 watchdog alerting, P0.5 raw provider leak detection.
+- **Branch 2B** (requires Branch 1B complete): P0.3 doctrine integration assertions, P0.6 analyst/operator visibility enforcement tests.
+
+### Wraith env-var key drift (open follow-up: task #111)
+
+`wraith-security-advisor` rejects the `vault.decrypted_secrets.service_role_key` with 401 because the function's env-var auth gate compares against `SUPABASE_SERVICE_ROLE_KEY` and `SERVICE_ROLE_JWT` env vars which are sourced separately. This blocks direct HTTP-level service-role probing of wraith's per-action gate from in-DB pg_net contexts. The 404 indistinguishability claim is therefore code-verified (wraith lines 83 + 128 both call `errorResponse('Action not found', 404)` with identical args) rather than HTTP-verified. Full HTTP probe requires operator credentials.
+
+---
+
 ## Entity Intelligence & Monitoring Changes (April 23–24, 2026)
 
 ### Root cause of recurring issues — behavioral health monitoring (April 24, 2026)
