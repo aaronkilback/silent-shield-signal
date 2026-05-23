@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { applyAnalystSignalFilter } from '@/lib/signal-query-filters';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -37,15 +38,20 @@ export function WildfireDataPanel() {
   const [selectedRegion, setSelectedRegion] = useState('all');
 
   // Fetch recent wildfire signals
+  // Branch 1A (2026-05-23) — /wildfire is a public anonymous route (see
+  // src/App.tsx:136-138). Apply the always-filter helper so anonymous
+  // viewers never receive quarantined wildfire rows. Anonymous tier =
+  // strictest; no super_admin bypass possible here.
   const { data: wildfireSignals, isLoading: signalsLoading } = useQuery({
     queryKey: ['wildfire-signals'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const baseQuery = supabase
         .from('signals')
         .select('*')
         .eq('category', 'wildfire')
         .order('created_at', { ascending: false })
         .limit(50);
+      const { data, error } = await applyAnalystSignalFilter(baseQuery);
       if (error) throw error;
       return data;
     },

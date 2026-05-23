@@ -3154,9 +3154,17 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               // here and the whole query 42703-errored ("column does not
               // exist"), making every lookup return empty and producing
               // the "Need either incident_id or signal_id" loop.
+              // Branch 1A (2026-05-23) — quarantine visibility boundary on
+              // explicit signal lookups from agent-chat. Without this filter
+              // an analyst could resolve a quarantined signal by pasting a
+              // SIG-XXXX or UUID. Quarantine doctrine: indistinguishable
+              // not-found for analyst. The downstream `if (sig)` guard
+              // (line ~3200) naturally treats null as "no signal" — same
+              // behavior as if the row simply did not exist.
               const sigQuery = supabase
                 .from('signals')
-                .select('id, title, severity, client_id, normalized_text, signal_number');
+                .select('id, title, severity, client_id, normalized_text, signal_number')
+                .eq('quality_status', 'active');
               let sig: any = null;
               if (isFullSignalNumber) {
                 const { data } = await sigQuery.eq('signal_number', trimmed.toUpperCase()).maybeSingle();

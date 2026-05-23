@@ -3,6 +3,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { differenceInDays } from 'date-fns';
+import { useIsSuperAdmin } from '@/hooks/useIsSuperAdmin';
+import { isQuarantineHiddenForRole } from '@/lib/signal-query-filters';
 
 /** Returns true if a signal's event_date is older than 90 days (historical). */
 const isHistoricalSignal = (signal: { event_date?: string | null; created_at?: string }): boolean => {
@@ -23,6 +25,15 @@ const VISIBILITY_REFETCH_KEYS = [
 export const useRealtimeNotifications = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { isSuperAdmin } = useIsSuperAdmin();
+  // Branch 1A R1 (2026-05-23) — current role captured for realtime
+  // quarantine-suppression. Ref-mirrored so the channel handler always reads
+  // the latest role without channel teardown when role changes mid-session
+  // (e.g., after impersonation toggle).
+  const roleRef = useRef<'analyst' | 'operator'>(isSuperAdmin ? 'operator' : 'analyst');
+  useEffect(() => {
+    roleRef.current = isSuperAdmin ? 'operator' : 'analyst';
+  }, [isSuperAdmin]);
   const lastSeenSignalAt = useRef<string>(new Date().toISOString());
   const lastSeenIncidentAt = useRef<string>(new Date().toISOString());
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -109,6 +120,17 @@ export const useRealtimeNotifications = () => {
         { event: 'INSERT', schema: 'public', table: 'signals' },
         (payload) => {
           const signal = payload.new as any;
+          // Branch 1A R1 (2026-05-23) — quarantine visibility boundary on
+          // realtime emit. Supabase realtime does NOT apply RLS; quarantined
+          // rows arrive here regardless of analyst filters elsewhere. This
+          // suppression MUST be the FIRST decision in the handler — before
+          // ref updates, before toast, before invalidateAll(), before any
+          // logging — or the analyst observes row arrival via side effect
+          // even when the UI eventually hides the row. See doctrine note in
+          // src/lib/signal-query-filters.ts.
+          if (isQuarantineHiddenForRole(signal, roleRef.current)) {
+            return;
+          }
           if (!signal.is_test) {
             lastSeenSignalAt.current = signal.created_at || new Date().toISOString();
 
