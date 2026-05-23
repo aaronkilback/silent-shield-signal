@@ -41,6 +41,19 @@ const SignalInputSchema = z.object({
   // platform-scoped analysis). Optional; when present, written to
   // signals.platform on insert.
   platform: z.enum(['x','reddit','instagram','facebook','telegram_public','youtube','rss','other']).optional(),
+  // #256 Phase 1 (2026-05-23) — explicit opt-in for tenant-fan-out signals.
+  // Schema is accepted in Phase 1 but actual broadcast routing is NOT
+  // implemented — broadcast requests return 501 NotImplemented until Phase 3
+  // re-introduces a vetted fan-out path. Callers MUST either pass an explicit
+  // `client_id` (single-tenant) or `tenant_broadcast` (multi-tenant intent).
+  // Object shape (vs boolean) forces an explicit scope declaration; future
+  // scopes can extend the enum without breaking callers.
+  tenant_broadcast: z.object({
+    scope: z.enum(['all_active_tenants']),
+    // future Phase 3+: 'tenant_ids' (z.array(z.string().uuid())),
+    //                  'tenant_filter' (industry / role / capability),
+    //                  'exclude_tenants' (z.array(z.string().uuid())).
+  }).optional(),
 }).refine(data => data.text || data.event || data.url, {
   message: "Either 'text', 'event', or 'url' must be provided"
 });
@@ -174,7 +187,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity, platform } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity, platform, tenant_broadcast } = validationResult.data;
     // Auto-flag any signal whose source URL points at example.com / qa.test / localhost
     // as is_test=true, regardless of caller. These domains are always test fixtures and
     // must never appear in the production live feed (operators have mistaken them for
@@ -262,7 +275,42 @@ Deno.serve(async (req) => {
       validatedExplicitClientId = clientCheck.id;
       console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id}) status=${clientCheck.status}`);
     }
-    
+
+    // #256 Phase 1 (2026-05-23) — TENANT-BOUNDARY CONTRACT (EARLY REJECT)
+    // Fires BEFORE the AI classifier, the URL fetcher, the F-034 gates, and
+    // any downstream cost. See block comment near the matching block below
+    // for full rationale. The reject is positioned here so callers that omit
+    // client_id burn ~0 OpenAI tokens and ~0 outbound HTTP — the failure
+    // mode is visible and cheap.
+    if (!validatedExplicitClientId && !tenant_broadcast) {
+      const previewText = (text || JSON.stringify(event) || '').toString().substring(0, 200);
+      console.warn(`[#256 Phase 1] REJECTED: signal lacks client_id and tenant_broadcast. source_key=${source_key ?? 'none'} preview="${previewText}"`);
+      return new Response(
+        JSON.stringify({
+          status: 'rejected',
+          reason: 'missing_client_id',
+          message: 'client_id is required. Cross-tenant signal scoring was removed 2026-05-23 (#256) — callers must pass an explicit client_id or use tenant_broadcast (Phase 3, not yet implemented).',
+          ticket: '#256',
+          phase: 1,
+          source_key: source_key ?? null,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    if (!validatedExplicitClientId && tenant_broadcast) {
+      console.warn(`[#256 Phase 1] tenant_broadcast rejected: routing not yet implemented (scope=${tenant_broadcast.scope})`);
+      return new Response(
+        JSON.stringify({
+          status: 'rejected',
+          reason: 'broadcast_not_implemented',
+          message: `tenant_broadcast routing (scope=${tenant_broadcast.scope}) is reserved for #256 Phase 3 and not yet implemented. Until then, pass an explicit client_id.`,
+          ticket: '#256',
+          phase: 1,
+        }),
+        { status: 501, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     let signalText = text || JSON.stringify(event);
 
     // ════════════════════════════════════════════════════════════════════
@@ -905,185 +953,40 @@ Respond ONLY with valid JSON.`
     let matchedKeywords: string[] = [];
     let matchConfidence: 'explicit' | 'high' | 'medium' | 'low' | 'ai' | 'none' = 'none';
     
-    // If explicit client_id provided (e.g., from inject_test_signal), skip matching and use it directly
-    if (validatedExplicitClientId) {
-      console.log(`✓ EXPLICIT CLIENT OVERRIDE: Using validated client_id ${validatedExplicitClientId}`);
-      matchedKeywords.push('explicit_client_override');
-      matchConfidence = 'explicit';
-    } else {
-      // Only perform client matching if no explicit client_id provided
-      const { data: clients } = await supabase
-        .from('clients')
-        .select('id, name, organization, industry, locations, high_value_assets, monitoring_keywords');
-      
-      if (clients && clients.length > 0) {
-      const textLower = signalText.toLowerCase();
-      
-      // IMPROVED MATCHING: Score all clients and pick the best match
-      // This prevents generic keywords from incorrectly matching before specific ones
-      interface ClientScore {
-        client: typeof clients[0];
-        score: number;
-        matchedKeywords: string[];
-        matchType: 'name' | 'keyword' | 'asset' | 'location';
-      }
-      
-      const clientScores: ClientScore[] = [];
-      
-      for (const client of clients) {
-        let score = 0;
-        const foundKeywords: string[] = [];
-        let matchType: 'name' | 'keyword' | 'asset' | 'location' = 'keyword';
-        
-        // Check client name (highest priority - 1000 points base + length bonus)
-        if (textLower.includes(client.name.toLowerCase())) {
-          score += 1000 + client.name.length;
-          foundKeywords.push(`client_name:${client.name}`);
-          matchType = 'name';
-        }
-        
-        // Check monitoring keywords - score by specificity (length) and count
-        if (client.monitoring_keywords && Array.isArray(client.monitoring_keywords)) {
-          for (const keyword of client.monitoring_keywords) {
-            if (keyword && textLower.includes(keyword.toLowerCase())) {
-              // Longer keywords are more specific, worth more points
-              // Also count word count - multi-word phrases are more specific
-              const wordCount = keyword.split(/\s+/).length;
-              const keywordScore = keyword.length + (wordCount * 10);
-              score += keywordScore;
-              foundKeywords.push(keyword);
-            }
-          }
-        }
-        
-        // Check high value assets (slightly lower priority than keywords)
-        if (client.high_value_assets && Array.isArray(client.high_value_assets)) {
-          for (const asset of client.high_value_assets) {
-            if (asset && textLower.includes(asset.toLowerCase())) {
-              const assetScore = asset.length + 5;
-              score += assetScore;
-              foundKeywords.push(`asset:${asset}`);
-              if (matchType === 'keyword') matchType = 'asset';
-            }
-          }
-        }
-        
-        // Check locations
-        if (client.locations && Array.isArray(client.locations)) {
-          for (const location of client.locations) {
-            if (location && textLower.includes(location.toLowerCase())) {
-              score += 15; // Location match bonus
-              foundKeywords.push(`location:${location}`);
-              if (matchType === 'keyword') matchType = 'location';
-            }
-          }
-        }
-        
-        if (score > 0) {
-          clientScores.push({
-            client,
-            score,
-            matchedKeywords: foundKeywords,
-            matchType
-          });
-        }
-      }
-      
-      // Sort by score descending and pick the best match
-      if (clientScores.length > 0) {
-        clientScores.sort((a, b) => b.score - a.score);
-        const bestMatch = clientScores[0];
-        clientId = bestMatch.client.id;
-        matchedKeywords = bestMatch.matchedKeywords;
-        
-        // Determine match confidence based on score and match type
-        if (bestMatch.matchType === 'name' || bestMatch.score >= 1000) {
-          matchConfidence = 'high';
-        } else if (bestMatch.score >= 50) {
-          matchConfidence = 'medium';
-        } else {
-          matchConfidence = 'low';
-        }
-        
-        console.log(`✓ BEST MATCH: ${bestMatch.client.name} (score: ${bestMatch.score}, type: ${bestMatch.matchType}, confidence: ${matchConfidence})`);
-        console.log(`  Matched keywords: ${matchedKeywords.join(', ')}`);
-        
-        // Log runner-up if there was competition
-        if (clientScores.length > 1) {
-          const runnerUp = clientScores[1];
-          console.log(`  Runner-up: ${runnerUp.client.name} (score: ${runnerUp.score})`);
-          
-          // Warn if scores are close - potential misattribution risk
-          if (bestMatch.score > 0 && runnerUp.score / bestMatch.score > 0.7) {
-            console.warn(`⚠ CLOSE MATCH WARNING: Runner-up score is ${Math.round(runnerUp.score / bestMatch.score * 100)}% of best match. Review may be needed.`);
-          }
-        }
-      }
-      
-      // If no keyword match, try AI matching as fallback
-      if (!clientId) {
-        console.log('No keyword match found, trying AI matching...');
-        
-        // Build client context for AI matching
-        const clientsContext = clients.map(c => ({
-          id: c.id,
-          name: c.name,
-          organization: c.organization,
-          industry: c.industry,
-          locations: c.locations,
-          assets: c.high_value_assets,
-          keywords: c.monitoring_keywords
-        }));
+    // #256 Phase 1 (2026-05-23) — TENANT-BOUNDARY CONTRACT HARDENING
+    //
+    // BACKGROUND
+    //   The prior cross-tenant scoring loop (formerly at this site, removed
+    //   2026-05-23) read ALL clients across ALL tenants without a tenant
+    //   filter, scored each on keyword/asset/location match against the
+    //   inbound signal text, and assigned the signal to the single highest-
+    //   scoring client. This silently misattributed signals when multiple
+    //   tenants had overlapping keywords — empirical proof: 3 prod CISA-KEV
+    //   signals from monitor-threat-intel all landed in Petronas Canada
+    //   despite being generic infrastructure CVEs. The "losing" tenants
+    //   silently never saw signals they had legitimate interest in.
+    //
+    // NEW CONTRACT (Aaron-approved, Option D, 2026-05-23)
+    //   Default: reject any signal arriving with neither `client_id` nor
+    //   `tenant_broadcast`. The reject fires EARLY (right after explicit
+    //   client_id validation, before any AI / URL-fetch / F-034 work) —
+    //   see the early-reject block at ~line 278. By the time we reach this
+    //   site, `validatedExplicitClientId` is guaranteed truthy.
+    //
+    //   Phase 3 will introduce broadcast routing for legitimate fan-out
+    //   feeds. In Phase 1, broadcast is accepted at the schema layer but
+    //   the routing is not implemented; broadcast requests return 501.
+    //
+    //   The old scoring loop is REMOVED entirely (not gated by a flag) so
+    //   it cannot accidentally come back. To re-introduce ambiguous matching
+    //   would require an intentional new feature, not a flag flip.
+    console.log(`✓ EXPLICIT CLIENT: Using validated client_id ${validatedExplicitClientId}`);
+    matchedKeywords.push('explicit_client_override');
+    matchConfidence = 'explicit';
 
-        try {
-          const { data: matchResult, error: matchErr } = await callAiGatewayJson({
-            model: 'gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a client matching specialist. Match security signals to clients based on:
-- Direct mentions of client names or organizations
-- Monitoring keywords configured for each client
-- Industry relevance (e.g., pipeline activism → energy companies)
-- Geographic overlap (locations mentioned)
-- Asset relevance (e.g., "CGL" or "Coastal GasLink" → pipeline assets)
-- Project connections (e.g., LNG projects → energy sector)
-
-Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": null} if no match.`
-              },
-              {
-                role: 'user',
-                content: `Signal content:\n${signalText.substring(0, 2000)}\n\nAvailable clients:\n${JSON.stringify(clientsContext, null, 2)}\n\nWhich client does this signal relate to?`
-              }
-            ],
-            extraBody: { max_completion_tokens: 150 },
-            functionName: 'ingest-signal',
-          });
-
-          if (!matchErr && matchResult?.client_id) {
-              // Validate AI-suggested client_id exists
-              const aiSuggestedClient = clients.find(c => c.id === matchResult.client_id);
-              if (aiSuggestedClient) {
-                clientId = matchResult.client_id;
-                matchedKeywords.push('ai_contextual_match');
-                matchConfidence = 'ai';
-                console.log(`✓ AI MATCH: Signal matched to client ${aiSuggestedClient.name}`);
-              } else {
-                console.warn(`⚠ AI suggested invalid client_id: ${matchResult.client_id}`);
-              }
-          }
-        } catch (error) {
-          console.error('AI client matching failed:', error);
-        }
-      }
-      
-      // Log unmatched signals for audit trail
-      if (!clientId) {
-        console.warn(`⚠ UNMATCHED SIGNAL: No client could be matched for signal. Text preview: ${signalText.substring(0, 200)}`);
-        matchConfidence = 'none';
-      }
-    }
-    } // Close the validatedExplicitClientId else block
+    // (#256 Phase 1 — pre-#256 cross-tenant scoring + AI-match loop deleted
+    //  2026-05-23. See block comment above for context. Any future
+    //  multi-tenant fan-out must go through Phase 3 broadcast routing.)
 
     // Calculate content hash BEFORE insertion for duplicate detection.
     // Hash on source_url when available — AI paraphrases snippet text each run, so
