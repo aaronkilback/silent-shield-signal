@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveServiceRoleKey } from "../_shared/current-service-key.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { classifyUserSafeError } from "../_shared/user-safe-errors.ts";
 import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
 import { classifySignalIntoStoryline } from "../_shared/storyline-engine.ts";
 import { computeComposite } from "../_shared/signal-scores.ts";
@@ -1456,8 +1457,12 @@ Generated: ${new Date().toISOString()}
       );
     }
     
+    // PROD-Q (2026-05-23): never return raw provider/internal error in
+    // HTTP body. Supabase-JS already wraps non-2xx as "Edge Function
+    // returned a non-2xx status code" — defense-in-depth for any caller
+    // that surfaces JSON body directly. Raw stays in console.error above.
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ error: classifyUserSafeError(errorMessage) }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

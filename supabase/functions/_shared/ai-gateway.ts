@@ -160,6 +160,71 @@ const MODEL_NORMALIZATION: Record<string, string> = {
   // 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-image', 'gemini-3-pro-image-preview'
 };
 
+// ═══════════════════════════════════════════════════════════════
+//  PROD-Q (2026-05-23) — Gemini OpenAI-compat fallback payload sanitization
+//
+//  Default-deny allowlist. Only fields explicitly known to be
+//  Gemini-compatible pass through. Unknown fields (including any future
+//  OpenAI-only params like reasoning_effort, parallel_tool_calls, verbosity,
+//  max_completion_tokens, etc.) are dropped at the provider boundary.
+//
+//  Rationale: provider boundary must NOT silently pass unknown fields.
+//  Without this, a future caller adding an OpenAI-only field would succeed
+//  on primary OpenAI and 400 on Gemini — exactly the hidden second failure
+//  mode PROD-Q eliminates.
+//
+//  Applies to BOTH non-streaming `callAiGateway` fallback AND streaming
+//  `callAiGatewayStream` fallback. model/messages/stream are constructed
+//  by the gateway directly, not via extraBody — they are never in input
+//  to this function.
+// ═══════════════════════════════════════════════════════════════
+const GEMINI_FALLBACK_ALLOWED_FIELDS = new Set([
+  'temperature',
+  'top_p',
+  'top_k',
+  'max_tokens',
+  'stop',
+  'presence_penalty',
+  'frequency_penalty',
+  'tools',
+  'tool_choice',
+  'response_format',
+  'n',
+]);
+
+interface SanitizedFallbackPayload {
+  cleaned: Record<string, unknown>;
+  dropped_fields: string[];
+  fallback_payload_sanitized: boolean;
+}
+
+function sanitizeExtraBodyForGemini(
+  extra: Record<string, unknown> | undefined,
+): SanitizedFallbackPayload {
+  if (!extra) {
+    return { cleaned: {}, dropped_fields: [], fallback_payload_sanitized: false };
+  }
+  const cleaned: Record<string, unknown> = {};
+  const dropped_fields: string[] = [];
+  for (const [k, v] of Object.entries(extra)) {
+    if (GEMINI_FALLBACK_ALLOWED_FIELDS.has(k)) {
+      cleaned[k] = v;
+    } else {
+      dropped_fields.push(k);
+    }
+  }
+  if (dropped_fields.length > 0) {
+    console.warn(
+      `[ai-gateway] Gemini fallback sanitization dropped fields: ${dropped_fields.join(', ')}`,
+    );
+  }
+  return {
+    cleaned,
+    dropped_fields,
+    fallback_payload_sanitized: dropped_fields.length > 0,
+  };
+}
+
 function getProviderConfig(model: string): ProviderConfig {
   // Normalize broken/deprecated model names before routing
   const normalizedModel = MODEL_NORMALIZATION[model] ?? MODEL_NORMALIZATION[model.replace(/^(?:google|openai)\//, '')] ?? model;
@@ -348,22 +413,20 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
         // to `gemini-1.5-flash` (widely available, not in MODEL_NORMALIZATION
         // redirects) and is overridable via OPENAI_FALLBACK_GEMINI_MODEL.
         //
-        // #113 (2026-05-21) — full fallback observability. Records four
-        // distinct telemetry events so we can reconstruct what the fallback
-        // path did under sustained primary failures (see May 16-18 incident
-        // RCA in #102):
-        //   * fallback_event='attempted'       — fired before the fetch, so a
-        //                                        hung fallback still leaves a
-        //                                        trail
-        //   * fallback_event='success'         — Gemini returned 200; signal
-        //                                        recovered
-        //   * fallback_event='non_ok_response' — Gemini returned non-2xx
-        //   * fallback_event='exception'       — Gemini fetch threw (network,
-        //                                        timeout, malformed response)
-        // All four rows include primary_provider, primary_model,
-        // primary_failure_reason, primary_status_code, primary_duration_ms,
-        // and (where applicable) fallback_duration_ms +
-        // fallback_request_id + fallback_status_code.
+        // #113 (2026-05-21) — fallback observability.
+        // PROD-Q (2026-05-23) — dropped 'attempted' telemetry row. The
+        // attempted row used status='success' which polluted success
+        // telemetry and destroyed observability integrity. Forensic-evidence
+        // intent of pre-fetch tracking is preserved via the console.warn
+        // immediately before the fetch (line ~415). Telemetry now emits
+        // ONLY for outcomes: success / non_ok_response / exception.
+        //
+        // PROD-Q: payload sanitization. extraBody is filtered through a
+        // default-deny allowlist before being forwarded to Gemini's
+        // OpenAI-compat endpoint. Closes the hidden-failure-mode where a
+        // future OpenAI-only field would succeed on primary and 400 on
+        // fallback. dropped_fields + fallback_payload_sanitized are recorded
+        // in every fallback telemetry context for forensic canary visibility.
         const isOpenAi429 = aiProvider === 'openai' && status === 429;
         const geminiKey = Deno.env.get('GEMINI_API_KEY');
         if (isOpenAi429 && geminiKey) {
@@ -377,6 +440,7 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
           const fallbackStartedAt = Date.now();
           const primaryDurationMs = fallbackStartedAt - callStartedAt;
           const primaryFailureReason = errMsg.substring(0, 300);
+          const sanitized = sanitizeExtraBodyForGemini(request.extraBody);
           const fallbackContextBase = {
             fallback_from: `${aiProvider}_${status ?? 'unknown'}`,
             primary_provider: aiProvider,
@@ -385,21 +449,9 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
             primary_status_code: status ?? null,
             primary_duration_ms: primaryDurationMs,
             fallback_model: fallbackModel,
+            fallback_payload_sanitized: sanitized.fallback_payload_sanitized,
+            dropped_fields: sanitized.dropped_fields,
           };
-
-          // 'attempted' row — written BEFORE the fetch so a hung/never-returning
-          // fallback still produces forensic evidence. Telemetry insert is
-          // awaited because we want it durable before initiating the call.
-          if (telemetryClient) {
-            await recordTelemetry(telemetryClient, {
-              functionName: request.functionName,
-              durationMs: primaryDurationMs,
-              status: 'success',
-              aiProvider: 'gemini',
-              aiModel: fallbackModel,
-              context: { ...fallbackContextBase, fallback_event: 'attempted' },
-            });
-          }
 
           try {
             console.warn(`[${request.functionName}] OpenAI 429 → falling back to Gemini ${fallbackModel}`);
@@ -411,7 +463,7 @@ export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewa
                   'Authorization': `Bearer ${geminiKey}`,
                   'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ model: fallbackModel, messages, ...request.extraBody }),
+                body: JSON.stringify({ model: fallbackModel, messages, ...sanitized.cleaned }),
               },
             );
             const fallbackDurationMs = Date.now() - fallbackStartedAt;
@@ -548,6 +600,14 @@ export async function callAiGatewayStream(request: AiGatewayRequest & {
     return { stream: null, error: `${provider.keyName} not configured`, circuitOpen: false };
   }
 
+  // PROD-Q (2026-05-23) — streaming fallback parity with callAiGateway.
+  // Track callStartedAt + telemetryClient at function scope so the OpenAI
+  // 429 → Gemini fallback path below can record outcome telemetry.
+  const callStartedAt = Date.now();
+  const telemetryClient = (() => {
+    try { return createServiceClient(); } catch { return null; }
+  })();
+
   const timeoutMs = request.timeoutMs ?? 45000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -578,8 +638,129 @@ export async function callAiGatewayStream(request: AiGatewayRequest & {
 
     if (!resp.ok) {
       const errorText = await resp.text();
+      const aiProvider: 'openai' | 'gemini' | 'perplexity' =
+        provider.url.includes('googleapis.com') ? 'gemini'
+        : provider.url.includes('perplexity.ai') ? 'perplexity' : 'openai';
       const errMsg = `${provider.keyName} stream ${resp.status}: ${errorText.substring(0, 200)}`;
       console.error(`[${request.functionName}] ${errMsg}`);
+
+      // PROD-Q (2026-05-23) — streaming OpenAI 429 → Gemini fallback.
+      // Mirrors the non-streaming fallback in callAiGateway. Payload is
+      // sanitized through the GEMINI_FALLBACK_ALLOWED_FIELDS allowlist;
+      // unknown fields (incl. any future OpenAI-only params) are dropped.
+      // Telemetry emits only outcome events (success / non_ok_response /
+      // exception) — no 'attempted' row to preserve success-channel
+      // observability integrity.
+      const geminiKey = Deno.env.get('GEMINI_API_KEY');
+      if (aiProvider === 'openai' && resp.status === 429 && geminiKey) {
+        const fallbackModel = Deno.env.get('OPENAI_FALLBACK_GEMINI_MODEL') ?? 'gemini-2.5-flash';
+        const fallbackStartedAt = Date.now();
+        const primaryDurationMs = fallbackStartedAt - callStartedAt;
+        const sanitized = sanitizeExtraBodyForGemini(request.extraBody);
+        const fallbackContextBase = {
+          fallback_from: `openai_${resp.status}`,
+          primary_provider: 'openai' as const,
+          primary_model: provider.model,
+          primary_failure_reason: errorText.substring(0, 300),
+          primary_status_code: resp.status,
+          primary_duration_ms: primaryDurationMs,
+          fallback_model: fallbackModel,
+          stream: true,
+          fallback_payload_sanitized: sanitized.fallback_payload_sanitized,
+          dropped_fields: sanitized.dropped_fields,
+        };
+
+        try {
+          console.warn(`[${request.functionName}] OpenAI 429 stream → falling back to Gemini ${fallbackModel}`);
+          const fbResp = await fetch(
+            'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${geminiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: fallbackModel,
+                messages: guardedMessages,
+                stream: true,
+                ...sanitized.cleaned,
+              }),
+              signal: controller.signal,
+            },
+          );
+          const fallbackDurationMs = Date.now() - fallbackStartedAt;
+          const fbRequestId =
+            fbResp.headers.get('x-request-id') ??
+            fbResp.headers.get('x-goog-request-id') ??
+            null;
+
+          if (fbResp.ok) {
+            if (telemetryClient) {
+              await recordTelemetry(telemetryClient, {
+                functionName: request.functionName,
+                durationMs: Date.now() - callStartedAt,
+                status: 'success',
+                aiProvider: 'gemini',
+                aiModel: fallbackModel,
+                context: {
+                  ...fallbackContextBase,
+                  fallback_event: 'success',
+                  fallback_status_code: fbResp.status,
+                  fallback_duration_ms: fallbackDurationMs,
+                  fallback_request_id: fbRequestId,
+                },
+              });
+            }
+            return { stream: fbResp.body!, error: null, circuitOpen: false };
+          } else {
+            const fbErrText = await fbResp.text();
+            const fbErrSnippet = fbErrText.substring(0, 250);
+            console.warn(
+              `[${request.functionName}] Gemini stream fallback ${fbResp.status}: ${fbErrSnippet}`,
+            );
+            if (telemetryClient) {
+              await recordTelemetry(telemetryClient, {
+                functionName: request.functionName,
+                durationMs: Date.now() - callStartedAt,
+                status: 'error',
+                aiProvider: 'gemini',
+                aiModel: fallbackModel,
+                errorClass: classifyError(new Error(fbErrSnippet), fbResp.status),
+                errorMessage: `Gemini stream fallback ${fbResp.status}: ${fbErrSnippet}`,
+                context: {
+                  ...fallbackContextBase,
+                  fallback_event: 'non_ok_response',
+                  fallback_status_code: fbResp.status,
+                  fallback_duration_ms: fallbackDurationMs,
+                  fallback_request_id: fbRequestId,
+                },
+              });
+            }
+          }
+        } catch (fbErr) {
+          const fallbackDurationMs = Date.now() - fallbackStartedAt;
+          const fbErrMsg = fbErr instanceof Error ? fbErr.message : String(fbErr);
+          console.warn(`[${request.functionName}] Gemini stream fallback threw: ${fbErrMsg}`);
+          if (telemetryClient) {
+            await recordTelemetry(telemetryClient, {
+              functionName: request.functionName,
+              durationMs: Date.now() - callStartedAt,
+              status: 'error',
+              aiProvider: 'gemini',
+              aiModel: fallbackModel,
+              errorClass: classifyError(fbErr, undefined),
+              errorMessage: `Gemini stream fallback threw: ${fbErrMsg.substring(0, 250)}`,
+              context: {
+                ...fallbackContextBase,
+                fallback_event: 'exception',
+                fallback_duration_ms: fallbackDurationMs,
+              },
+            });
+          }
+        }
+      }
+
       return { stream: null, error: errMsg, circuitOpen: false };
     }
 

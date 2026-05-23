@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayStream, getUniversalGuardrails } from "../_shared/ai-gateway.ts";
+import { classifyUserSafeError } from "../_shared/user-safe-errors.ts";
 import { validateMessages } from "../_shared/input-validation.ts";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 import { logError } from "../_shared/error-logger.ts";
@@ -10970,12 +10971,16 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     await writeDone();
 
       } catch (bgErr) {
+        // PROD-Q (2026-05-23): never embed raw provider/internal error text
+        // into SSE content. Raw remains in console.error + logError for ops
+        // triage. User-visible chat bubble gets a canonical safe message.
         console.error("[dashboard-ai-assistant] Background pipeline error:", bgErr);
         await logError(bgErr, { functionName: 'dashboard-ai-assistant', severity: 'error' });
-        const errMsg = bgErr instanceof Error ? bgErr.message : 'Unknown error';
+        const rawMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+        const userMsg = classifyUserSafeError(rawMsg);
         try {
-          const safeMsg = errMsg.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-          await writeSSEText(`data: {"choices":[{"delta":{"content":"\\n\\n[Error: ${safeMsg}]"}}]}\n\ndata: [DONE]\n\n`);
+          const payload = JSON.stringify({ choices: [{ delta: { content: `\n\n${userMsg}` } }] });
+          await writeSSEText(`data: ${payload}\n\ndata: [DONE]\n\n`);
         } catch {}
       } finally {
         try { await sseWriter.close(); } catch {}

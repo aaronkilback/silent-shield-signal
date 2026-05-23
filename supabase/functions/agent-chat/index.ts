@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayStream } from "../_shared/ai-gateway.ts";
+import { classifyUserSafeError } from "../_shared/user-safe-errors.ts";
 import { validateString, validateUUID, validateMessages, validateAll } from "../_shared/input-validation.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
@@ -3890,9 +3891,14 @@ To include geopolitical or external news context, please ask me to perform an ex
     await sendSSE('[DONE]');
 
     } catch (pipelineError) {
+      // PROD-Q (2026-05-23): emit user-safe error envelope only. Raw text
+      // stays in console.error for ops triage; the SSE error event carries
+      // a canonical classification, not the underlying provider message.
       console.error('[agent-chat] Pipeline error:', pipelineError);
       try {
-        await sendSSE({ type: 'error', error: pipelineError instanceof Error ? pipelineError.message : String(pipelineError) });
+        const rawMsg = pipelineError instanceof Error ? pipelineError.message : String(pipelineError);
+        const userMsg = classifyUserSafeError(rawMsg);
+        await sendSSE({ type: 'error', error: userMsg });
         await sendSSE('[DONE]');
       } catch { /* writer may already be closed */ }
     } finally {
