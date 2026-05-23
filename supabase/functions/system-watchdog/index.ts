@@ -3090,6 +3090,231 @@ Deno.serve(async (req) => {
         console.warn('[Watchdog] Fleet dormancy check failed:', fleetErr);
       }
 
+      // ═══════════════════════════════════════════════════════════════
+      //   PROD-N Phase 1 (2026-05-22) — typed zero-yield classification
+      //   + per-client coverage SLO.
+      //
+      //   Closes the "Operational Health != Mission Effectiveness"
+      //   class: prior watchdog rules only fired on signals_created=0
+      //   regardless of which of 5+ failure modes was actually
+      //   occurring. These rules consume rejection_counters /
+      //   queries_executed / fixture_clients_iterated (defined in
+      //   _shared/monitor-telemetry-shape.ts) to classify mode, so
+      //   future zero-yield incidents self-name on the first alert.
+      //
+      //   Monitors that haven't yet migrated to the typed shape (only
+      //   monitor-social-unified writes it today) are gracefully
+      //   skipped — the optional-field reads return undefined and the
+      //   rule short-circuits. G2 (scripts/validate-monitor-telemetry-
+      //   shape.mjs) surfaces the gap separately.
+      //
+      //   Retired monitors (PROD-M monitor-twitter retirement) cannot
+      //   appear in this block because they have no heartbeats; the
+      //   explicit RETIRED_MONITORS set below is belt-and-suspenders
+      //   to guarantee Success Criterion #3 (no false references to
+      //   retired X infrastructure).
+      // ═══════════════════════════════════════════════════════════════
+      try {
+        const ZERO_YIELD_WINDOW_HOURS = 3;
+        const ZERO_YIELD_MIN_RUNS = 5;
+        const OVER_FILTER_ITEMS_THRESHOLD = 50;
+        const UPSTREAM_BROKEN_RUNS = 3;
+        const UPSTREAM_BROKEN_WINDOW_HOURS = 1;
+        const COVERAGE_WINDOW_HOURS = 24;
+
+        // PROD-M retired infrastructure — guarantee these never appear
+        // in PROD-N findings even if a stale heartbeat row exists.
+        const RETIRED_MONITORS = new Set<string>([
+          'monitor-twitter',
+          'monitor-twitter-30min',
+          'monitor-x-crt-bcplace-event',
+          'monitor-x-petronas-daily',
+        ]);
+
+        const zeroYieldStart = new Date(Date.now() - ZERO_YIELD_WINDOW_HOURS * 3600000).toISOString();
+
+        // Pull all heartbeats in the largest window we need (3h covers
+        // both the over-filter and upstream-broken rules; coverage
+        // gap uses its own 24h query below).
+        const { data: hbWindow } = await supabase
+          .from('cron_heartbeat')
+          .select('job_name, result_summary, started_at, status')
+          .gte('started_at', zeroYieldStart)
+          .order('started_at', { ascending: false });
+
+        const runsByMonitor = new Map<string, any[]>();
+        for (const r of hbWindow || []) {
+          if (!r.job_name) continue;
+          if (RETIRED_MONITORS.has(r.job_name)) continue;
+          // Only inspect monitors that write the typed shape. Other
+          // monitors are gracefully skipped — G2 CI surfaces the gap.
+          if (!r.result_summary?.rejection_counters) continue;
+          if (!runsByMonitor.has(r.job_name)) runsByMonitor.set(r.job_name, []);
+          runsByMonitor.get(r.job_name)!.push(r);
+        }
+
+        const oneHourAgo = new Date(Date.now() - UPSTREAM_BROKEN_WINDOW_HOURS * 3600000);
+
+        for (const [jobName, runs] of runsByMonitor) {
+          // ── Rule A: over-filtering ──
+          // items_returned >= threshold AND signals_created = 0 over N runs in 3h window
+          if (runs.length >= ZERO_YIELD_MIN_RUNS) {
+            const recent = runs.slice(0, ZERO_YIELD_MIN_RUNS);
+            const allOverfilter = recent.every((r: any) => {
+              const items = Number(r.result_summary?.rejection_counters?.items_returned ?? 0);
+              const sigs = Number(r.result_summary?.signals_created ?? 0);
+              return items >= OVER_FILTER_ITEMS_THRESHOLD && sigs === 0;
+            });
+            if (allOverfilter) {
+              const totalItems = recent.reduce(
+                (a: number, r: any) => a + Number(r.result_summary?.rejection_counters?.items_returned ?? 0),
+                0,
+              );
+              const avgItems = Math.round(totalItems / recent.length);
+              behavioralFindings.push({
+                category: 'behavioral_health',
+                severity: 'medium',
+                title: `Monitor ${jobName}: items present, 0 surviving over ${recent.length} runs — over-filtering or AI-gate misconfiguration`,
+                analysis: `Last ${recent.length} runs in ${ZERO_YIELD_WINDOW_HOURS}h averaged ${avgItems} items_returned/run but produced 0 signals. One of: (a) pre-AI filter dropping items it shouldn't, (b) AI gate rejecting correctly during a quiet operational window, (c) scope mis-targeted. Pull rejection_counters + rejection_samples from cron_heartbeat to disambiguate.`,
+                plainEnglish: `Search results are coming back, but nothing reaches the signals feed. Either filtering is too aggressive, or there's genuinely no actionable activity right now.`,
+                action: `Query: SELECT result_summary->'rejection_counters' AS counters, result_summary->'rejection_samples' AS samples FROM cron_heartbeat WHERE job_name='${jobName}' ORDER BY started_at DESC LIMIT 1; — verify (1) generic_*_profile drops are appropriate, (2) AI rejection reasons are valid, (3) the scope query targets correct entities.`,
+              });
+            }
+          }
+
+          // ── Rule B: upstream broken ──
+          // items_returned = 0 over N runs in 1h window
+          const oneHourRuns = runs.filter((r: any) => new Date(r.started_at) >= oneHourAgo);
+          if (oneHourRuns.length >= UPSTREAM_BROKEN_RUNS) {
+            const recent = oneHourRuns.slice(0, UPSTREAM_BROKEN_RUNS);
+            const allZeroItems = recent.every((r: any) =>
+              Number(r.result_summary?.rejection_counters?.items_returned ?? 0) === 0
+            );
+            if (allZeroItems) {
+              behavioralFindings.push({
+                category: 'behavioral_health',
+                severity: 'high',
+                title: `Monitor ${jobName}: 0 upstream items over ${recent.length} runs — likely API/scope outage`,
+                analysis: `Last ${recent.length} runs in the past hour all returned 0 items from upstream. Either the upstream API is unreachable, credentials are stale, the rate limit is exhausted, or the scope generator is producing zero matchable queries.`,
+                plainEnglish: `The monitor is firing, but its upstream search/API is returning nothing. Either the API is broken, our credentials are bad, or we're searching for terms that don't exist anywhere.`,
+                action: `Check (1) upstream service status, (2) credentials/secrets, (3) recent rate-limit errors in function logs for ${jobName}.`,
+              });
+            }
+          }
+
+          // ── Rule C: scope gap (queries_executed = 0) ──
+          // Only fires once monitors migrate to the typed shape that
+          // includes queries_executed (Phase 2). Until then, the
+          // `typeof === 'number'` check skips every monitor.
+          if (oneHourRuns.length >= UPSTREAM_BROKEN_RUNS) {
+            const recent = oneHourRuns.slice(0, UPSTREAM_BROKEN_RUNS);
+            const allHaveField = recent.every((r: any) => typeof r.result_summary?.queries_executed === 'number');
+            if (allHaveField) {
+              const allZeroQueries = recent.every((r: any) => Number(r.result_summary?.queries_executed ?? 0) === 0);
+              if (allZeroQueries) {
+                behavioralFindings.push({
+                  category: 'behavioral_health',
+                  severity: 'high',
+                  title: `Monitor ${jobName}: 0 queries built over ${recent.length} runs — scope generation failing`,
+                  analysis: `Last ${recent.length} runs in the past hour all had queries_executed=0. The scope generator (client iteration, entity iteration, archetype vocab lookup) is producing no queries to send upstream. Likely causes: client iteration cap excluding all real clients, entity loop empty, archetype lookup failing.`,
+                  plainEnglish: `The monitor is running but not actually searching anything. Its scope generator is producing nothing to look for.`,
+                  action: `Verify (1) clients.slice(0,N) is reaching real clients (not just fixtures), (2) entities table has rows with active_monitoring_enabled, (3) archetype lookup returns valid threat_vocab.`,
+                });
+              }
+            }
+          }
+
+          // ── Rule D: fixture leak canary ──
+          // Per-run check. Fires whenever fixture_clients_iterated has
+          // entries — i.e., the iteration loop touched a fixture
+          // client. Until Phase 2 wires pickActiveClients(), this
+          // field is undefined on every run and the rule produces no
+          // findings; that's expected behavior in Phase 1.
+          for (const r of runs.slice(0, 3)) {
+            const fixtures = r.result_summary?.fixture_clients_iterated;
+            if (Array.isArray(fixtures) && fixtures.length > 0) {
+              const list = fixtures.slice(0, 5).join(', ') + (fixtures.length > 5 ? ` (+${fixtures.length - 5} more)` : '');
+              behavioralFindings.push({
+                category: 'behavioral_health',
+                severity: 'medium',
+                title: `Monitor ${jobName}: fixture clients in iteration — ${list}`,
+                analysis: `Run at ${r.started_at} iterated over ${fixtures.length} fixture client(s): ${fixtures.join(', ')}. Fixture clients (name starting with '_') should be filtered before reaching monitor iteration. This canary catches regressions.`,
+                plainEnglish: `Test/QA fixture clients are leaking into real monitor activity. They consume budget without producing operational value.`,
+                action: `Verify pickActiveClients() is in use and isFixtureClient() filter is applied at the iteration boundary. Tracked: PROD-N Phase 2 architectural review gate.`,
+              });
+              break; // one finding per monitor per cycle is enough
+            }
+          }
+        }
+
+        // ── Rule T3: per-client coverage SLO ──
+        // For each active non-fixture client, verify at least one
+        // monitor processed an item attributable to them in the last
+        // 24h. "Processed" = appears in rejection_samples.source_name
+        // OR has a signal with client_id set in the window. Grace
+        // period: clients created inside the window are exempt.
+        try {
+          const coverageWindowStart = new Date(Date.now() - COVERAGE_WINDOW_HOURS * 3600000);
+          const coverageWindowStartIso = coverageWindowStart.toISOString();
+
+          const { data: activeClients } = await supabase
+            .from('clients')
+            .select('id, name, created_at')
+            .eq('status', 'active');
+
+          const eligible = (activeClients || []).filter((c: any) =>
+            typeof c.name === 'string' &&
+            !c.name.startsWith('_') &&
+            c.created_at && new Date(c.created_at) < coverageWindowStart
+          );
+
+          // Source 1: rejection_samples.source_name across all heartbeats in window
+          const { data: hbCov } = await supabase
+            .from('cron_heartbeat')
+            .select('result_summary')
+            .gte('started_at', coverageWindowStartIso);
+
+          const seenNames = new Set<string>();
+          for (const hb of hbCov || []) {
+            const samples = hb.result_summary?.rejection_samples;
+            if (Array.isArray(samples)) {
+              for (const s of samples) {
+                if (s && typeof s.source_name === 'string' && s.source_name) {
+                  seenNames.add(s.source_name);
+                }
+              }
+            }
+          }
+
+          // Source 2: signals.client_id in window
+          const { data: signalClients } = await supabase
+            .from('signals')
+            .select('client_id')
+            .gte('created_at', coverageWindowStartIso)
+            .not('client_id', 'is', null);
+          const seenIds = new Set<string>(
+            (signalClients || []).map((s: any) => s.client_id).filter((id: any) => !!id)
+          );
+
+          const gaps = eligible.filter((c: any) => !seenNames.has(c.name) && !seenIds.has(c.id));
+
+          for (const c of gaps) {
+            behavioralFindings.push({
+              category: 'mission_effectiveness',
+              severity: 'medium',
+              title: `Client coverage gap: ${c.name} not processed by any monitor in ${COVERAGE_WINDOW_HOURS}h`,
+              analysis: `Client "${c.name}" (id=${c.id}) is active and non-fixture, but no monitor's rejection_samples or signal output references them in the last ${COVERAGE_WINDOW_HOURS}h. Likely causes: (a) client missing monitoring_keywords/entities/archetype, (b) clients.slice(0,N) cap excluding them, (c) all queries for this client produced empty payloads and never landed in samples.`,
+              plainEnglish: `This client may be invisible to monitors right now. Operator-configured intent may not be reaching runtime, or the client is being deprioritized by iteration caps.`,
+              action: `Check (1) client.monitoring_keywords + monitoring_config.archetype populated, (2) entities under this client have active_monitoring_enabled=true, (3) the client appears in clients ordering before the slice(0,4) cap. Tracked: PROD-N architectural review gate (client prioritization).`,
+            });
+          }
+        } catch (covErr) {
+          console.warn('[Watchdog] PROD-N coverage gap check failed:', covErr);
+        }
+      } catch (prodNErr) {
+        console.warn('[Watchdog] PROD-N classification block failed:', prodNErr);
+      }
+
       console.log(`[Watchdog] Behavioral health: ${behavioralFindings.length} findings`);
     } catch (behavioralErr) {
       console.warn('[Watchdog] Behavioral health check failed:', behavioralErr);
