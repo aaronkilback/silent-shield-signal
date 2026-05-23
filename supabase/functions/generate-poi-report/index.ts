@@ -159,6 +159,9 @@ Deno.serve(async (req) => {
       .from('signals')
       .select('id, title, signal_type, severity, severity_score, source_name, event_date, normalized_text')
       .or(`related_entity_names.cs.{"${entity.name}"},entity_tags.cs.{"${entity.name}"},normalized_text.ilike.%${entity.name}%`)
+      // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
+      // POI reports. See src/lib/signal-query-filters.ts.
+      .eq('quality_status', 'active')
       .order('event_date', { ascending: false })
       .limit(20);
 

@@ -5982,7 +5982,9 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query signals
       if (query_type === 'signals' || query_type === 'comprehensive') {
-        let signalsQ = supabaseClient.from('signals').eq("tenant_id", tenantId).select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json').neq('is_test', true);
+        // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from AEGIS
+        // reasoning context. See src/lib/signal-query-filters.ts.
+        let signalsQ = supabaseClient.from('signals').eq("tenant_id", tenantId).select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json').neq('is_test', true).eq('quality_status', 'active');
         signalsQ = applyFilters(signalsQ);
         if (filters.severity?.length) signalsQ = signalsQ.in('severity', filters.severity);
         if (filters.status?.length) signalsQ = signalsQ.in('status', filters.status);
