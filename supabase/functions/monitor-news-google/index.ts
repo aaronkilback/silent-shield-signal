@@ -10,6 +10,15 @@ import { getTenantNewsAllowlist, extractHost, isAllowedDomain } from "../_shared
 // observability denominator is preserved.
 const TRACK_G_FILTERED_INSERT_CAP_PER_TENANT_PER_CYCLE = 10;
 
+// PROD-S Track G (2026-05-23) — staging-only test harness gate.
+// SUPABASE_URL contains the project ref; staging is lkvyrvuakzguszbpwnfz,
+// prod is kpuqukppbmwebiptqmog. Prod URL structurally cannot match staging,
+// so the harness path is inert in prod by construction. No env var needed.
+const TRACK_G_STAGING_PROJECT_REF = 'lkvyrvuakzguszbpwnfz';
+function isStagingEnvironment(): boolean {
+  return (Deno.env.get('SUPABASE_URL') ?? '').includes(TRACK_G_STAGING_PROJECT_REF);
+}
+
 // A truncated headline ending in a stray initial — "for the B.",
 // "criticized U.", "the U." — signals the source title was clipped
 // by Google CSE's preview machinery. The underlying content can still
@@ -60,6 +69,82 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
+
+  // PROD-S Track G (2026-05-23) — staging-only synthetic harness.
+  // Validates allowlist + filtered_signals + cap-at-10 path with
+  // a deterministic injected URL set, bypassing Google CSE entirely.
+  // Gated by isStagingEnvironment() which structurally inspects
+  // SUPABASE_URL — prod URL cannot match staging project ref, so this
+  // branch is inert in prod by construction. Skipping ingest-signal
+  // invocation: harness validates G's filtering behavior only, not
+  // downstream pipeline.
+  if (req.method === 'POST') {
+    try {
+      const peek = await req.clone().json().catch(() => null) as any;
+      if (peek?.track_g_test_mode === true && isStagingEnvironment()) {
+        const tenantId: string | undefined = peek.tenant_id;
+        const clientId: string | undefined = peek.client_id; // used as filtered_signals.client_id
+        const urls: Array<{ link: string; title?: string }> = Array.isArray(peek.urls) ? peek.urls : [];
+
+        if (!tenantId || typeof tenantId !== 'string') {
+          return errorResponse('track_g_test_mode requires tenant_id (uuid string) in body', 400);
+        }
+        if (!clientId || typeof clientId !== 'string') {
+          return errorResponse('track_g_test_mode requires client_id (uuid string) in body for filtered_signals attribution', 400);
+        }
+
+        const allowlistResolution = await getTenantNewsAllowlist(supabase, tenantId);
+        const stats = {
+          urls_received: 0,
+          urls_rejected_domain: 0,
+          urls_passed_allowlist: 0,
+          filtered_signals_inserted: 0,
+        };
+        const rejectedSamples: Array<{ host: string | null; link: string; inserted: boolean }> = [];
+        const passedSamples: Array<{ host: string | null; link: string }> = [];
+
+        for (const item of urls) {
+          stats.urls_received += 1;
+          const host = extractHost(item.link);
+          if (!isAllowedDomain(host, allowlistResolution.allowlist)) {
+            stats.urls_rejected_domain += 1;
+            let inserted = false;
+            if (stats.filtered_signals_inserted < TRACK_G_FILTERED_INSERT_CAP_PER_TENANT_PER_CYCLE) {
+              stats.filtered_signals_inserted += 1;
+              inserted = true;
+              await supabase.from('filtered_signals').insert({
+                raw_text: `[TRACK G TEST MODE] ${(item.title || '').substring(0, 480)}`,
+                source_url: item.link || null,
+                source_name: 'monitor-news-google',
+                client_id: clientId,
+                filter_reason: 'source_domain_not_allowlisted',
+                relevance_score: null,
+                relevance_reason: `host=${host ?? '(unparseable)'} not in tenant allowlist (size=${allowlistResolution.allowlist.size}, used_overlay=${allowlistResolution.used_overlay}) [test_mode]`,
+              }).then(() => {}).catch(() => {});
+            }
+            rejectedSamples.push({ host, link: item.link, inserted });
+          } else {
+            stats.urls_passed_allowlist += 1;
+            passedSamples.push({ host, link: item.link });
+          }
+        }
+
+        return successResponse({
+          track_g_test_mode: true,
+          tenant_id: tenantId,
+          allowlist_size: allowlistResolution.allowlist.size,
+          used_overlay: allowlistResolution.used_overlay,
+          overlay_failed: allowlistResolution.overlay_failed,
+          cap: TRACK_G_FILTERED_INSERT_CAP_PER_TENANT_PER_CYCLE,
+          stats,
+          rejected_samples: rejectedSamples,
+          passed_samples: passedSamples,
+        });
+      }
+    } catch {
+      // body parse failure — fall through to normal monitor-news-google path
+    }
+  }
 
   const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
   const googleEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
