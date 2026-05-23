@@ -13,13 +13,11 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
-import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
 
 export const EntitySuggestionsPanel = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { selectedClientId } = useClientSelection();
   const { currentTenant, isAllTenantsView } = useTenant();
   const queryClient = useQueryClient();
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
@@ -143,10 +141,23 @@ export const EntitySuggestionsPanel = () => {
         throw new Error(`Potential duplicate entities found: ${duplicateNames}. Please use Merge instead or verify this is unique.`);
       }
 
-      // Try to get client_id from the source (signal or archival document)
-      // Fall back to currently selected client if source doesn't have one
+      // Derive client_id ONLY from the suggestion's source (signal or
+      // archival document). If the source cannot supply a client_id,
+      // leave it NULL.
+      //
+      // PROD-O Step 1 (2026-05-23): removed the prior selectedClientId
+      // fallback. Diagnosis showed it produced tenant-internally-
+      // inconsistent rows (entity in tenant A with client_id pointing
+      // at a client owned by tenant B) when a super-admin approved
+      // suggestions in ALL TENANTS mode while a different tenant's
+      // client was selected in the chrome.
+      //
+      // Doctrine: unknown is acceptable, guessed is not. tenant_id is
+      // still SAFE (line below, derived from suggestion.tenant_id).
+      // NULL client_id is an established shape on entities; downstream
+      // readers must handle it.
       let clientId: string | null = null;
-      
+
       if (suggestion.source_type === 'signal' && suggestion.source_id) {
         const { data: signal } = await supabase
           .from('signals')
@@ -161,11 +172,6 @@ export const EntitySuggestionsPanel = () => {
           .eq('id', suggestion.source_id)
           .maybeSingle();
         clientId = doc?.client_id || null;
-      }
-      
-      // If no client from source, use currently selected client
-      if (!clientId && selectedClientId) {
-        clientId = selectedClientId;
       }
 
       // PROD-C: tenant_id from suggestion so the new row passes the read-layer tenant filter (#133/#134/#135).
