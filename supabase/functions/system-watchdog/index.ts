@@ -2725,10 +2725,15 @@ Deno.serve(async (req) => {
       }
 
       // 2. Social monitor effectiveness — each social source should produce results
+      // PROD-M (2026-05-22): monitor-twitter retired in migration
+      // 20260523020000 (Option B). Function preserved as inventory, but
+      // the cron + registry are gone, so it cannot heartbeat. Removed
+      // from this list so the social-monitor check doesn't query a name
+      // that will permanently return empty.
       const { data: socialHeartbeats } = await supabase
         .from('cron_heartbeat')
         .select('job_name, result_summary, completed_at')
-        .in('job_name', ['monitor-twitter', 'monitor-social-unified', 'monitor-social-hourly', 'monitor-social'])
+        .in('job_name', ['monitor-social-unified', 'monitor-social-hourly', 'monitor-social'])
         .gte('completed_at', new Date(Date.now() - 24 * 3600000).toISOString())
         .order('completed_at', { ascending: false })
         .limit(20);
@@ -2790,18 +2795,17 @@ Deno.serve(async (req) => {
         'monitor-github-6h',
         'monitor-github',
         'monitor-pastebin',           // similar — paste leaks are rare
-        // 2026-05-10: monitor-twitter blocked on X API budget. Cron
-        // fires every 30 min, function returns 429 and exits without
-        // writing a heartbeat. Watchdog sees no recent heartbeat and
-        // flags critical. Treat as quiet-OK until budget refills —
-        // when X API is funded again, signals will start flowing and
-        // we should remove this entry.
-        'monitor-twitter-30min',
-        'monitor-twitter',
+        // PROD-M (2026-05-22): monitor-twitter / monitor-twitter-30min
+        // removed from this allowlist when the cron + registry were
+        // retired in migration 20260523020000. No cron → no heartbeat
+        // expected → no false-positive surface for the watchdog to
+        // suppress. If X monitoring is ever re-enabled, re-add here
+        // (or remove this comment if the new architecture uses a
+        // different naming convention).
         'monitor-pastebin-6h',
       ]);
       const SOCIAL_ALREADY_CHECKED = new Set([
-        'monitor-twitter', 'monitor-social-unified',
+        'monitor-social-unified',
         'monitor-social-hourly', 'monitor-social',
       ]);
 
@@ -3118,23 +3122,25 @@ Deno.serve(async (req) => {
         // Same mapping the constellation uses (kept inline rather
         // than imported because edge functions don't share src/).
         //
-        // 2026-05-09: re-attributed monitor-social-* + monitor-twitter
-        // from ECHO-WATCH to RYAN-INTEL. ECHO-WATCH's specialty is
-        // social ENGINEERING (phishing, CIB, influence ops, narrative
-        // manipulation) — it consumes signals across many sources for
-        // behavioral pattern detection, it is NOT the downstream owner
-        // of any single feed. RYAN-INTEL's specialty is "Threat
-        // Detection, OSINT Analysis, Behavioral Signal Mapping, Source
-        // Reliability Evaluation" — the right owner when a social-
-        // media-firehose monitor goes silent. Conflated by older
-        // mapping that treated "social" the verb the same as "social"
-        // the medium.
+        // 2026-05-09: re-attributed monitor-social-* from ECHO-WATCH
+        // to RYAN-INTEL. ECHO-WATCH's specialty is social ENGINEERING
+        // (phishing, CIB, influence ops, narrative manipulation) — it
+        // consumes signals across many sources for behavioral pattern
+        // detection, it is NOT the downstream owner of any single
+        // feed. RYAN-INTEL's specialty is "Threat Detection, OSINT
+        // Analysis, Behavioral Signal Mapping, Source Reliability
+        // Evaluation" — the right owner when a social-media-firehose
+        // monitor goes silent. Conflated by older mapping that
+        // treated "social" the verb the same as "social" the medium.
+        //
+        // PROD-M (2026-05-22): monitor-twitter / monitor-twitter-30min
+        // entries removed when retired in migration 20260523020000.
+        // No cron → watchdog will never generate a finding naming
+        // those jobs, so the mapping had nothing to dispatch.
         const CRON_TO_AGENT: Record<string, string> = {
           'monitor-wildfires':              'WILDFIRE',
           'monitor-social-unified':         'RYAN-INTEL',
           'monitor-social-hourly':          'RYAN-INTEL',
-          'monitor-twitter':                'RYAN-INTEL',
-          'monitor-twitter-30min':          'RYAN-INTEL',
           'snapshot-bcws-ratings-daily':    'WILDFIRE',
           'monitor-cisa-kev-12h':           'NEO',
           'monitor-darkweb-6h':             'NEO',

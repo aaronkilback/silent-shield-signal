@@ -25,21 +25,28 @@ Every monitoring function (`monitor-news-google`, `monitor-social-unified`, `mon
 
 ---
 
-### Twitter API v2 (`monitor-twitter`)
+### Twitter API v2 (`monitor-twitter`) — RETIRED 2026-05-22 (PROD-M)
 
-`monitor-twitter` was completely rewritten from a broken Google CSE scraper to real Twitter API v2 `GET /2/tweets/search/recent`.
+**Status:** scheduler scaffolding retired; function code preserved as inventory.
 
-**Required Supabase secret:** `TWITTER_BEARER_TOKEN` (app-only Bearer Token from developer.twitter.com)
+The function at `supabase/functions/monitor-twitter/index.ts` is intact — it was rewritten in April from a broken Google CSE scraper to real Twitter API v2 `GET /2/tweets/search/recent` and is the correct shape if X coverage is ever resumed. But:
 
-**Cron schedule:** every 30 minutes (migration `20260423000012_schedule_twitter_monitor.sql`)
+- **Cron job removed** (migration `20260523020000_retire_x_monitor_scaffolding.sql`)
+- **Registry entry removed**
+- **Watchdog references trimmed** (`system-watchdog/index.ts`, `scripts/validate-cron-alignment.mjs`)
+- **0 lifetime invocations** before retirement; 30+ days inactive
+- Pause reason: X API budget (Phase X-1 controls, 2026-05-19)
 
-**What it does:**
-- Query A: all `active_monitoring_enabled = true` person entity names OR'd together + threat terms (`threat`, `harass`, `dox`, `doxxing`, `doxxed`, `"home address"`, `protest`, `"at risk"`, etc.)
-- Query B: all client `monitoring_keywords` + activism terms (`protest`, `activist`, `campaign`, `oppose`, `direct action`, etc.)
-- Free tier: 1 request per 15 min, 500k reads/month. Rate-limit 429s are logged with reset time and skipped gracefully.
-- Each tweet match is routed through `process-intelligence-document` → creates a signal linked to matched entity/client.
+**Required Supabase secret if re-enabled:** `TWITTER_BEARER_TOKEN` (app-only Bearer Token from developer.twitter.com)
 
-**DO NOT revert to Google CSE for Twitter** — X blocked CSE indexing in 2023. The old code always returned 0 results.
+**Re-enable path** (deliberate, not silent — separate decision):
+1. Confirm budget is funded for the next billing window.
+2. Set `TWITTER_BEARER_TOKEN` Supabase secret.
+3. Write a new migration to schedule cron (every 30 min) + register in `cron_job_registry`.
+4. Re-add the entries removed from `system-watchdog` (`QUIET_MONITORS_OK`, `SOCIAL_ALREADY_CHECKED`, `CRON_TO_AGENT`, social-effectiveness `.in()` list).
+5. Decide whether the function's existing query strategy (entity-name OR + threat-term query, client-keyword + activism query, wildfire/evac query) is still appropriate or whether the per-tenant `monitor-x-single` successor architecture is preferred.
+
+**DO NOT revert to Google CSE for Twitter** — X blocked CSE indexing in 2023. The old code always returned 0 results. The API v2 rewrite is correct and should be the starting point on any re-enable.
 
 ---
 
