@@ -130,6 +130,9 @@ Deno.serve(async (req) => {
       .neq('status', 'archived')
       .neq('is_test', true)
       .is('deleted_at', null)
+      // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
+      // executive reports. See src/lib/signal-query-filters.ts.
+      .eq('quality_status', 'active')
       .or('signal_type.is.null,signal_type.neq.historical')
       .or('triage_override.is.null,triage_override.neq.historical')
       .order('received_at', { ascending: false });

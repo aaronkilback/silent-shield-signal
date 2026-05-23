@@ -489,6 +489,9 @@ Respond naturally and briefly.`
       const { data: signals } = await supabase
         .from('signals')
         .select('id, title, source_id, severity, created_at, rule_category, raw_json, source_url')
+        // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
+        // agent reasoning context. See src/lib/signal-query-filters.ts.
+        .eq('quality_status', 'active')
         .order('created_at', { ascending: false })
         .limit(10);
       
@@ -1810,6 +1813,9 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               .from('signals')
               .select('id, title, severity, source_id, created_at, rule_category')
               .gte('created_at', cutoffDate)
+              // PROD-S Track H1 (2026-05-23) — exclude quarantined signals
+              // from agent-chat reasoning. See src/lib/signal-query-filters.ts.
+              .eq('quality_status', 'active')
               .order('created_at', { ascending: false })
               .limit(limit);
             if (args.severity_filter && args.severity_filter !== 'all') {
@@ -1927,6 +1933,9 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           let signalsQuery = supabase.from('signals')
             .select('id, title, severity, source_id, created_at, rule_category, normalized_text, client_id, description, signal_type, source_url, raw_json')
             .gte('created_at', cutoff)
+            // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
+            // intelligence briefings. See src/lib/signal-query-filters.ts.
+            .eq('quality_status', 'active')
             .order('created_at', { ascending: false })
             .limit(50);
           

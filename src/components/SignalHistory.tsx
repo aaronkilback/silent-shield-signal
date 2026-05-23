@@ -264,6 +264,9 @@ export const SignalHistory = () => {
         .neq('status', 'false_positive')
         .or('signal_type.neq.pattern,signal_type.is.null')
         .neq('is_test', true)
+        // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
+        // analyst feed. See src/lib/signal-query-filters.ts.
+        .eq('quality_status', 'active')
         .order('created_at', { ascending: false })
         .limit(50);
 
