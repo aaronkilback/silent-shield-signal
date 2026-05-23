@@ -307,6 +307,25 @@ After deploying a monitor change to staging, validate with at least:
 
 `scripts/check-staging-load-fixture.mjs` is not a substitute for steps 2–4; it only confirms staging is *able* to exercise realistic paths.
 
+### Fixture-isolation validation canary
+
+`_qa_fixture_social_monitor` (status=active) must exist on staging as a permanent fixture client. Its purpose is empirical validation of `pickActiveClients()` — proves the underscore-prefix filter actually excludes a real DB row during monitor runs, not just by code inspection. Without this row, staging fixture-isolation validation can only infer behavior from code path rather than observed exclusion.
+
+If deleted, recreate with status='active' via direct SQL on staging (this is staging-only data, NOT a repo migration — production must not have this row):
+
+```sql
+INSERT INTO clients (id, name, status, tenant_id)
+SELECT
+  'f1c70000-0000-4000-8000-000000000001'::uuid,
+  '_qa_fixture_social_monitor',
+  'active',
+  tenant_id
+FROM clients WHERE id = '0f5c809d-60ec-4252-b94b-1f4b6c8ac95d'  -- staging Petronas (tenant carrier)
+ON CONFLICT (id) DO NOTHING;
+```
+
+`scripts/check-staging-load-fixture.mjs` asserts the canary's presence (status=active). If absent, the script exits 1 and the canary must be re-seeded before any monitor-change deploy. Note: `clients.name` has no unique constraint, so the seed uses a stable UUID `f1c70000-...-000000000001` with `ON CONFLICT (id)` for idempotency.
+
 ---
 
 ## Rules for edge functions

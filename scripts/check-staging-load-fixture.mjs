@@ -85,4 +85,45 @@ if (kwCount < MIN_KEYWORDS) {
 }
 
 console.log(`check-staging-load-fixture: ✓ ${data.name} (${kwCount} keywords, status=active)`);
+
+// PROD-N Tranche A (2026-05-22) — fixture-isolation canary.
+//
+// Permanent active underscore-prefixed staging client used to empirically
+// validate pickActiveClients() filtering. Without this row present,
+// staging validation of fixture-isolation can only infer behavior from
+// code inspection — not from observed exclusion. The canary must:
+//   * exist with name='_qa_fixture_social_monitor'
+//   * have status='active' (so it would be picked up by status='active'
+//     queries; only the name-prefix filter should exclude it)
+//
+// If deleted, recreate via direct SQL on staging (this is staging-only
+// data, not a migration — production must not have this row):
+//   INSERT INTO clients (id, name, status, tenant_id)
+//   SELECT '<stable-uuid>', '_qa_fixture_social_monitor', 'active', tenant_id
+//   FROM clients WHERE id = '0f5c809d-60ec-4252-b94b-1f4b6c8ac95d'
+//   ON CONFLICT (id) DO NOTHING;
+//
+// See CLAUDE.md > Staging Load Fixtures > Fixture-isolation validation
+// canary for the convention.
+const FIXTURE_ISOLATION_CANARY_NAME = '_qa_fixture_social_monitor';
+
+const { data: canaryRows, error: canaryErr } = await supabase
+  .from('clients')
+  .select('id, name, status')
+  .eq('name', FIXTURE_ISOLATION_CANARY_NAME);
+
+if (canaryErr) {
+  console.error('check-staging-load-fixture: query failed (canary):', canaryErr.message);
+  process.exit(2);
+}
+
+const canary = (canaryRows || []).find((r) => r.status === 'active');
+if (!canary) {
+  console.error('check-staging-load-fixture: FAIL — fixture-isolation canary missing or inactive');
+  console.error(`  Expected name='${FIXTURE_ISOLATION_CANARY_NAME}', status='active'`);
+  console.error('  See CLAUDE.md > Staging Load Fixtures > Fixture-isolation validation canary for re-seed SQL.');
+  process.exit(1);
+}
+
+console.log(`check-staging-load-fixture: ✓ ${canary.name} (canary, status=active, id=${canary.id})`);
 process.exit(0);

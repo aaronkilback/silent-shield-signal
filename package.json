@@ -18,7 +18,8 @@
     "check:types-drift": "node scripts/gen-db-types.mjs --check",
     "check:undef": "node scripts/check-undefined-identifiers.mjs",
     "check:staging-fixture": "node scripts/check-staging-load-fixture.mjs",
-    "check:monitor-telemetry": "node scripts/validate-monitor-telemetry-shape.mjs"
+    "check:monitor-telemetry": "node scripts/validate-monitor-telemetry-shape.mjs",
+    "check:fixture-isolation": "node scripts/validate-fixture-isolation.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
