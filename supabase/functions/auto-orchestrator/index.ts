@@ -305,19 +305,44 @@ async function runOSINTMonitorsInBackground(supabase: any, currentServiceKey: st
   try {
     console.log('Starting OSINT monitors...');
     
-    // OSINT actions routed through osint-collector domain service
+    // OSINT actions routed through osint-collector domain service.
+    //
+    // PROD-I Phase 1 (2026-05-23) — surgical containment of scheduler-ownership
+    // drift. Four monitors removed from this list because each has an explicit,
+    // active direct pg_cron entry that already owns its cadence. Auto-orchestrator
+    // was double-firing them at :16,:46 in addition to their own ticks, causing
+    // ~192 duplicate invocations/day across the four.
+    //
+    // Removed (each with its authoritative pg_cron owner):
+    //   - 'monitor-wildfires'       → jobid 178 ('6,21,36,51 * * * *'),  every 15 min, CRITICAL (BCWS)
+    //   - 'monitor-news'            → jobid 113 ('4,34 * * * *'),         every 30 min
+    //   - 'monitor-github'          → jobid 176 ('45 */6 * * *'),         every 6 hours
+    //   - 'monitor-social-unified'  → jobid 181 ('13,43 * * * *'),        every 30 min
+    //
+    // Principle (single-owner doctrine): a monitor should have exactly ONE
+    // scheduler owner unless redundancy is intentional and documented.
+    //
+    // Deliberately NOT touched in Phase 1 (require product/architecture
+    // decisions, not defect containment):
+    //   - 'monitor-community'   — direct cron (jobid 201) is currently INACTIVE;
+    //                              orchestrator is the de-facto sole driver.
+    //                              Decide cadence intent before changing ownership.
+    //                              (Source of Petronas Site-C 7×-duplicate signals
+    //                              from 2026-05-22 diagnosis.)
+    //   - 'monitor-social'      — legacy/demoted per registry; retire vs keep TBD
+    //   - 'monitor-linkedin'    — demoted per registry; retire vs keep TBD
+    //
+    // Retained entries below remain orchestrator-owned because they have NO
+    // direct pg_cron and rely on the orchestrator's circuit-breaker:
+    //   monitor-weather, monitor-earthquakes, monitor-domains.
     const monitorActions = [
       'monitor-weather',
-      'monitor-wildfires', 
       'monitor-earthquakes',
-      'monitor-news',
       'monitor-social',
-      'monitor-github',
       // 'monitor-pastebin',   // Disabled: consistently returns 0 results — saves ~2 function invocations/cycle
       'monitor-linkedin',
       // 'monitor-darkweb',    // Disabled: consistently returns 0 results — saves ~2 function invocations/cycle
       'monitor-domains',
-      'monitor-social-unified',
       'monitor-community',
     ];
 
