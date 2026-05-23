@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PageLayout } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CreateEntityDialog } from "@/components/CreateEntityDialog";
@@ -309,7 +309,37 @@ export default function Entities() {
 
   return (
     <PageLayout loading={authLoading}>
-      <DashboardClientSelector />
+      {/*
+        PROD-O Step 3 (2026-05-23): scope-truth chrome on /entities.
+        In ALL TENANTS view (super_admin platform mode), the entity-
+        suggestions data path returns platform-wide rows regardless of
+        which client is selected in localStorage. Showing the live
+        ClientSelector here would imply per-client scope that the data
+        layer does not honor — operator trust failure. Replace with a
+        disabled, muted card carrying the literal truth.
+
+        Surgical: this conditional applies ONLY on /entities ONLY when
+        isAllTenantsView=true. Single-tenant view and every other page
+        (Signals, Incidents, ThreatRadar, Clients) continue to render
+        the live DashboardClientSelector unchanged. selectedClientId
+        state in useClientSelection persists across pages and is honored
+        by every other surface that actually queries against it.
+      */}
+      {isAllTenantsView ? (
+        <Card className="opacity-60" aria-disabled="true">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-muted-foreground">
+              <Building2 className="w-5 h-5" />
+              All Tenants View
+            </CardTitle>
+            <CardDescription>
+              Entity suggestions are platform-wide in ALL TENANTS mode
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
+        <DashboardClientSelector />
+      )}
       <div className="flex items-center justify-between mb-6 mt-6">
         <div>
           <h1 className="text-3xl font-bold">Entity Management</h1>
