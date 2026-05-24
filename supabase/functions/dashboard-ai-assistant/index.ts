@@ -7997,7 +7997,12 @@ Return a JSON object (no markdown, only valid JSON):
             try {
               const imgPrompt = image_prompt || `A wide cinematic header image for a corporate security intelligence bulletin titled "${bulletin_title}". Dark moody atmosphere, deep navy and charcoal tones with subtle cyan accent lighting. Abstract geometric grid patterns suggesting digital surveillance networks and data analysis. No text, no words, no letters. Photorealistic, ultra high resolution, 16:9 aspect ratio.`;
               console.log("Generating bulletin header image via Gemini Flash Image...");
-              
+
+              // @qa-allow:openai-direct image-gen-no-gemini-fallback
+              // PROD-X scope EXCLUDED this site (Aaron 2026-05-24). Gemini's
+              // OpenAI-compat endpoint does not support `modalities: ["image","text"]`
+              // image generation, so ai-gateway has no equivalent fallback path here.
+              // Keep direct OpenAI; failure mode is a missing header image, not a chat outage.
               const imgResponse = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -10690,12 +10695,24 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           ...(bulletinImages.length > 0 ? { bulletin_images: bulletinImages } : {}),
         }, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
         const forcedToolResults1 = [{ tool_call_id: "forced_generate_fortress_report", role: "tool", name: "generate_fortress_report", content: truncateToolResult(forcedResult, 25000) }];
-        const finalResp1 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_REPORT_PRESENTER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_generate_fortress_report", type: "function", function: { name: "generate_fortress_report", arguments: "{}" } }] }, ...forcedToolResults1], stream: true }),
-        }, AI_TIMEOUT_MS);
-        if (finalResp1.ok) await pipeResponseBody(finalResp1.body!);
+        // PROD-X (2026-05-24) — synthesis routed through ai-gateway so OpenAI 429
+        // gets Gemini fallback automatically. skipGuardrails preserves the exact
+        // pre-migration prompt content (caller already includes getUniversalGuardrails).
+        const finalResult1 = await callAiGatewayStream({
+          model: "gpt-4o-mini",
+          messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_REPORT_PRESENTER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_generate_fortress_report", type: "function", function: { name: "generate_fortress_report", arguments: "{}" } }] }, ...forcedToolResults1] as any,
+          functionName: 'dashboard-ai-assistant',
+          extraContext: { call_site: 'forced-synthesis-bulletin' },
+          skipGuardrails: true,
+          timeoutMs: AI_TIMEOUT_MS,
+        });
+        if (finalResult1.stream) {
+          await pipeResponseBody(finalResult1.stream);
+        } else {
+          const safeMsg = classifyUserSafeError(finalResult1.error ?? 'circuit_open');
+          await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\n`);
+          await writeDone();
+        }
         return;
       }
 
@@ -10705,12 +10722,22 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         console.log("FORCING inject_test_signal (model described injection but returned no tool_calls)");
         const forcedResult2 = await executeTool("inject_test_signal", forcedSignal, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
         const forcedToolResults2 = [{ tool_call_id: "forced_inject_test_signal", role: "tool", name: "inject_test_signal", content: truncateToolResult(forcedResult2, 25000) }];
-        const finalResp2 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_TOOL_SUMMARIZER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_inject_test_signal", type: "function", function: { name: "inject_test_signal", arguments: "{}" } }] }, ...forcedToolResults2], stream: true }),
-        }, AI_TIMEOUT_MS);
-        if (finalResp2.ok) await pipeResponseBody(finalResp2.body!);
+        // PROD-X (2026-05-24) — routed through ai-gateway for OpenAI 429 → Gemini fallback.
+        const finalResult2 = await callAiGatewayStream({
+          model: "gpt-4o-mini",
+          messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_TOOL_SUMMARIZER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_inject_test_signal", type: "function", function: { name: "inject_test_signal", arguments: "{}" } }] }, ...forcedToolResults2] as any,
+          functionName: 'dashboard-ai-assistant',
+          extraContext: { call_site: 'forced-synthesis-inject-test-signal' },
+          skipGuardrails: true,
+          timeoutMs: AI_TIMEOUT_MS,
+        });
+        if (finalResult2.stream) {
+          await pipeResponseBody(finalResult2.stream);
+        } else {
+          const safeMsg = classifyUserSafeError(finalResult2.error ?? 'circuit_open');
+          await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\n`);
+          await writeDone();
+        }
         return;
       }
 
@@ -10784,12 +10811,22 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             ...(bulletinImages3.length > 0 ? { bulletin_images: bulletinImages3 } : {}),
           }, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
           const forcedToolResults3 = [{ tool_call_id: "forced_generate_report", role: "tool", name: "generate_fortress_report", content: truncateToolResult(forcedResult3, 25000) }];
-          const finalResp3 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_REPORT_PRESENTER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_generate_report", type: "function", function: { name: "generate_fortress_report", arguments: "{}" } }] }, ...forcedToolResults3], stream: true }),
-          }, AI_TIMEOUT_MS);
-          if (finalResp3.ok) await pipeResponseBody(finalResp3.body!);
+          // PROD-X (2026-05-24) — routed through ai-gateway for OpenAI 429 → Gemini fallback.
+          const finalResult3 = await callAiGatewayStream({
+            model: "gpt-4o-mini",
+            messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_REPORT_PRESENTER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_generate_report", type: "function", function: { name: "generate_fortress_report", arguments: "{}" } }] }, ...forcedToolResults3] as any,
+            functionName: 'dashboard-ai-assistant',
+            extraContext: { call_site: 'forced-synthesis-user-requested-report' },
+            skipGuardrails: true,
+            timeoutMs: AI_TIMEOUT_MS,
+          });
+          if (finalResult3.stream) {
+            await pipeResponseBody(finalResult3.stream);
+          } else {
+            const safeMsg = classifyUserSafeError(finalResult3.error ?? 'circuit_open');
+            await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\n`);
+            await writeDone();
+          }
           return;
         }
       }
@@ -10800,12 +10837,22 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         console.log("FORCING create_agent (model described agent creation but returned no tool_calls)");
         const forcedResult4 = await executeTool("create_agent", forcedAgent, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
         const forcedToolResults4 = [{ tool_call_id: "forced_create_agent", role: "tool", name: "create_agent", content: truncateToolResult(forcedResult4, 25000) }];
-        const finalResp4 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_AGENT_CREATION_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_create_agent", type: "function", function: { name: "create_agent", arguments: "{}" } }] }, ...forcedToolResults4], stream: true }),
-        }, AI_TIMEOUT_MS);
-        if (finalResp4.ok) await pipeResponseBody(finalResp4.body!);
+        // PROD-X (2026-05-24) — routed through ai-gateway for OpenAI 429 → Gemini fallback.
+        const finalResult4 = await callAiGatewayStream({
+          model: "gpt-4o-mini",
+          messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_AGENT_CREATION_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_create_agent", type: "function", function: { name: "create_agent", arguments: "{}" } }] }, ...forcedToolResults4] as any,
+          functionName: 'dashboard-ai-assistant',
+          extraContext: { call_site: 'forced-synthesis-create-agent' },
+          skipGuardrails: true,
+          timeoutMs: AI_TIMEOUT_MS,
+        });
+        if (finalResult4.stream) {
+          await pipeResponseBody(finalResult4.stream);
+        } else {
+          const safeMsg = classifyUserSafeError(finalResult4.error ?? 'circuit_open');
+          await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\n`);
+          await writeDone();
+        }
         return;
       }
 
@@ -10823,12 +10870,22 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         console.log("FORCING query_fortress_data (model described query but returned no tool_calls)");
         const forcedResult5 = await executeTool("query_fortress_data", forcedQuery, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
         const forcedToolResults5 = [{ tool_call_id: "forced_query_fortress_data", role: "tool", name: "query_fortress_data", content: truncateToolResult(forcedResult5, 30000) }];
-        const finalResp5 = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_DATA_PRESENTER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_query_fortress_data", type: "function", function: { name: "query_fortress_data", arguments: "{}" } }] }, ...forcedToolResults5], stream: true }),
-        }, AI_TIMEOUT_MS);
-        if (finalResp5.ok) await pipeResponseBody(finalResp5.body!);
+        // PROD-X (2026-05-24) — routed through ai-gateway for OpenAI 429 → Gemini fallback.
+        const finalResult5 = await callAiGatewayStream({
+          model: "gpt-4o-mini",
+          messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_DATA_PRESENTER_PROMPT}` }, ...processedMessages, { role: "assistant", content: null, tool_calls: [{ id: "forced_query_fortress_data", type: "function", function: { name: "query_fortress_data", arguments: "{}" } }] }, ...forcedToolResults5] as any,
+          functionName: 'dashboard-ai-assistant',
+          extraContext: { call_site: 'forced-synthesis-query-fortress' },
+          skipGuardrails: true,
+          timeoutMs: AI_TIMEOUT_MS,
+        });
+        if (finalResult5.stream) {
+          await pipeResponseBody(finalResult5.stream);
+        } else {
+          const safeMsg = classifyUserSafeError(finalResult5.error ?? 'circuit_open');
+          await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\n`);
+          await writeDone();
+        }
         return;
       }
 
@@ -10957,24 +11014,34 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         })
       );
 
-      const finalResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_TOOL_SUMMARIZER_PROMPT}` }, ...processedMessages, firstMessage, ...toolResults],
-          stream: true,
-        }),
-      }, AI_TIMEOUT_MS);
+      // PROD-X (2026-05-24) — standard post-tool synthesis now routes through ai-gateway.
+      // Replaces the direct OpenAI fetch that was the documented PROD-X root cause:
+      // when OpenAI returned 429 (sustained quota exhaustion under PROD-R), the synthesis
+      // call had NO Gemini fallback and the non-429/non-402 error branch silently wrote
+      // [DONE] with no content — producing the frontend "I'm having trouble..." empty-stream
+      // fallback. callAiGatewayStream has built-in OpenAI 429 → Gemini fallback per PROD-Q,
+      // closing the gap. skipGuardrails preserves the exact pre-migration system prompt
+      // content (per Aaron's "no guardrail refactor during hotfix" constraint).
+      const finalResult = await callAiGatewayStream({
+        model: "gpt-4o-mini",
+        messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_TOOL_SUMMARIZER_PROMPT}` }, ...processedMessages, firstMessage, ...toolResults] as any,
+        functionName: 'dashboard-ai-assistant',
+        extraContext: { call_site: 'tool-synthesis-standard' },
+        skipGuardrails: true,
+        timeoutMs: AI_TIMEOUT_MS,
+      });
 
-      if (!finalResp.ok) {
-        const errStatus = finalResp.status;
-        if (errStatus === 429) await writeSSEText(`data: {"choices":[{"delta":{"content":"Rate limit exceeded. Please wait a moment before trying again."}}]}\n\n`);
-        else if (errStatus === 402) await writeSSEText(`data: {"choices":[{"delta":{"content":"AI service credits exhausted. Please contact support."}}]}\n\n`);
-        else console.error("Follow-up AI call failed:", errStatus);
-        await writeDone();
+      if (finalResult.stream) {
+        await pipeResponseBody(finalResult.stream);
       } else {
-        await pipeResponseBody(finalResp.body!);
+        // Both OpenAI primary AND Gemini fallback failed (or circuit-open).
+        // classifyUserSafeError maps any provider error to a canonical user-safe message;
+        // the rate-limit text from the pre-migration code is preserved when the error class
+        // matches that category, while other failure classes (auth/timeout/circuit) now get
+        // their own canonical messages instead of the previous silent [DONE].
+        const safeMsg = classifyUserSafeError(finalResult.error ?? 'circuit_open');
+        await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\n`);
+        await writeDone();
       }
       return;
     }
