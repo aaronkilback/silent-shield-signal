@@ -38,7 +38,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isSuperAdmin } = useUserRole();
-  const { currentTenant } = useTenant();
+  const { currentTenant, isAllTenantsView } = useTenant();
   // PROD-AA (2026-05-24) — derive explicit tenant_id for chat tool dispatch.
   // Super_admin users can be owner of multiple tenants; the backend lottery
   // (tenant_users.limit(1).single()) is non-deterministic. The frontend already
@@ -486,6 +486,22 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         explicitTenantId = (clientRow?.tenant_id as string | null) ?? null;
       }
 
+      // PROD-BB (2026-05-24) — instrumentation-first diagnosis. Per-request
+      // debug_trace_id threaded frontend→backend→telemetry so a failed
+      // request can be diffed against a successful one. Slated for cleanup
+      // after diagnosis closes (tracked task — do NOT leave permanently).
+      const debug_trace_id = crypto.randomUUID();
+      console.log('[PROD-AA-DEBUG/frontend]', {
+        debug_trace_id,
+        selectedClientId,
+        currentTenant_id: currentTenant?.id ?? null,
+        currentTenant_name: currentTenant?.name ?? null,
+        isAllTenantsView,
+        derivedTenantId: explicitTenantId,
+        bundle_marker: 'prod-bb-instrumentation',
+        ts: new Date().toISOString(),
+      });
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dashboard-ai-assistant`,
         {
@@ -494,7 +510,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             "Content-Type": "application/json",
             Authorization: `Bearer ${authToken}`,
           },
-          body: JSON.stringify({ messages: contextMessages, tenant_id: explicitTenantId }),
+          body: JSON.stringify({ messages: contextMessages, tenant_id: explicitTenantId, debug_trace_id }),
         }
       );
 
