@@ -233,7 +233,14 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     };
 
     loadMessages();
-  }, [user, authLoading, location.pathname, viewMode, currentTenant?.id]); // Re-run when view mode or tenant changes
+    // PROD-U (2026-05-23) — dep on user?.id (primitive), NOT user (object reference).
+    // Supabase fires onAuthStateChange → setUser(session.user) on every TOKEN_REFRESHED
+    // event with a fresh User object reference even when the user's identity is
+    // unchanged. Subscribing to `user` re-fires this effect mid-chat-response, calling
+    // setMessages([defaultMessage]) at line 173 and wiping the in-progress response.
+    // Only re-load when user identity actually changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: user?.id, not user
+  }, [user?.id, authLoading, location.pathname, viewMode, currentTenant?.id]); // Re-run when view mode or tenant changes
 
   // Helper function to save a new message to database immediately
   const saveMessageToDb = async (message: Message, conversationId?: string): Promise<boolean> => {
