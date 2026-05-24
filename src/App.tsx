@@ -20,6 +20,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { redactProviderLeak } from "@/lib/user-safe-errors";
 
 // Reload on chunk load failure (stale bundle after new deploy)
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -101,7 +102,13 @@ const App = () => {
       },
       mutations: {
         onError: (error) => {
-          toast.error(error instanceof Error ? error.message : "An unexpected error occurred");
+          // PROD-T.2 (2026-05-23) — global toast must NOT pipe raw provider
+          // text. redactProviderLeak passes validation/business errors through
+          // unchanged ("Name is required", "Tenant not found"); only raw
+          // provider signatures (OPENAI_API_KEY, 429/quota, RESOURCE_EXHAUSTED,
+          // etc.) are replaced with the canonical "service at capacity" message.
+          const rawMsg = error instanceof Error ? error.message : "An unexpected error occurred";
+          toast.error(redactProviderLeak(rawMsg));
         },
       },
     },
