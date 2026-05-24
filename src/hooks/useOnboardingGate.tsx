@@ -1,5 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+
+// PROD-GG (2026-05-24) — remount diagnosis instrumentation. Remove with the
+// rest of the PROD-GG logging once the live trace confirms the fix.
+const ggLog = (...args: unknown[]) => console.log('[PROD-GG]', ...args);
 
 interface UseOnboardingGateArgs {
   userId: string | undefined;
@@ -35,11 +39,27 @@ export function useOnboardingGate({
   const [error, setError] = useState<string | null>(null);
   const [refreshIdx, setRefreshIdx] = useState(0);
 
+  // PROD-GG (2026-05-24) — gate stabilization. Identical rationale to
+  // useMfaEnforcement: ProtectedRoute unmounts the authed subtree (incl. the
+  // DashboardAIAssistant chat) whenever `loading` is true. This effect re-runs
+  // on tenantId/skip changes (routine tenant/scope transitions) and previously
+  // called setLoading(true) every time. Fix: block ONLY on the genuine first
+  // resolution for a given user; afterwards re-validate in the BACKGROUND while
+  // keeping the last resolved `upToDate`. Keyed on user (not tenant) so a tenant
+  // switch re-checks WITHOUT a blocking loader; a new user re-arms first-load.
+  const hasResolvedRef = useRef(false);
+  const lastUserIdRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
+    if (lastUserIdRef.current !== userId) {
+      hasResolvedRef.current = false;
+      lastUserIdRef.current = userId;
+    }
     if (skip) {
       setLoading(false);
       setUpToDate(true);
       setError(null);
+      hasResolvedRef.current = true;
       return;
     }
     if (!userId || !tenantId) {
@@ -48,7 +68,13 @@ export function useOnboardingGate({
     }
 
     let cancelled = false;
-    setLoading(true);
+    const isFirstLoad = !hasResolvedRef.current;
+    if (isFirstLoad) {
+      ggLog(`useOnboardingGate: blocking first-load check userId=${userId?.slice(0, 8)} tenantId=${tenantId?.slice(0, 8)}`);
+      setLoading(true);
+    } else {
+      ggLog(`useOnboardingGate: background re-validate (no loader) userId=${userId?.slice(0, 8)} tenantId=${tenantId?.slice(0, 8)}`);
+    }
 
     (async () => {
       const { data, error } = await supabase
@@ -61,11 +87,19 @@ export function useOnboardingGate({
       if (cancelled) return;
 
       if (error) {
-        // Fail-closed on real errors (force the gate so user can't proceed).
         console.error("[useOnboardingGate] query error:", error);
         setError(error.message);
-        setUpToDate(false);
+        // Fail-closed on the FIRST load (force the gate so user can't proceed
+        // with no trusted acceptance state). On a BACKGROUND re-validate,
+        // keep the last resolved `upToDate` — a transient query error must not
+        // flip the agreement gate and unmount an active session (PROD-GG).
+        if (isFirstLoad) {
+          setUpToDate(false);
+        } else {
+          ggLog(`useOnboardingGate: background re-validate errored — keeping prior upToDate`);
+        }
         setLoading(false);
+        hasResolvedRef.current = true;
         return;
       }
 
@@ -73,6 +107,8 @@ export function useOnboardingGate({
       // never accepted. Either way, force the gate.
       setUpToDate(Boolean(data?.up_to_date));
       setLoading(false);
+      hasResolvedRef.current = true;
+      ggLog(`useOnboardingGate: resolved upToDate=${Boolean(data?.up_to_date)} (loading=false)`);
     })();
 
     return () => {

@@ -11,6 +11,13 @@ import { MandatoryMFAEnrollment } from "@/components/MandatoryMFAEnrollment";
 import { Loader2 } from "lucide-react";
 import { RecoverableLoader } from "@/components/RecoverableLoader";
 
+// PROD-GG (2026-05-24) — remount diagnosis. Any loader returned below REPLACES
+// the gated subtree (incl. <Index> → <DashboardAIAssistant>), unmounting it and
+// destroying the in-memory chat. This logs every loader entry so a chat loss can
+// be correlated to the exact gate that flipped. Remove with the rest of the
+// PROD-GG instrumentation once the live trace confirms the fix.
+const ggLog = (...args: unknown[]) => console.log('[PROD-GG]', ...args);
+
 /**
  * Route guard. Decisions are derived purely from context state at
  * render time — no memoization, no closures, no event handlers — so
@@ -93,6 +100,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }, [decisionKey, location.pathname, user, isLoading, currentTenant, isAllTenantsView, profile, tenantObservation, routeAccessible, accessible]);
 
   if (isLoading) {
+    ggLog(`ProtectedRoute LOADER (isLoading) authLoading=${authLoading} tenantLoading=${tenantLoading} path=${location.pathname} — UNMOUNTS subtree`);
     return <RecoverableLoader label="Loading session…" />;
   }
 
@@ -183,6 +191,7 @@ const OnboardingChecks = ({
   // gets a session without going through Auth.tsx's signup-form MFA trigger.
   // Fires BEFORE the onboarding gate because MFA is the security floor.
   if (mfaLoading) {
+    ggLog(`OnboardingChecks LOADER (mfaLoading) tenant=${currentTenant?.id ?? 'null'} — UNMOUNTS subtree`);
     return <RecoverableLoader label="Verifying MFA…" />;
   }
 
@@ -196,10 +205,12 @@ const OnboardingChecks = ({
   // RecoverableLoader so a future state-deadlock here can self-recover
   // instead of spinning forever (see 2026-05-21 P0 incident).
   if (!currentTenant) {
+    ggLog(`OnboardingChecks LOADER (!currentTenant) — UNMOUNTS subtree`);
     return <RecoverableLoader label="Loading tenant context…" />;
   }
 
   if (gateLoading) {
+    ggLog(`OnboardingChecks LOADER (gateLoading) tenant=${currentTenant?.id ?? 'null'} — UNMOUNTS subtree`);
     return <RecoverableLoader label="Checking onboarding gate…" />;
   }
 

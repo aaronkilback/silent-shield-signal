@@ -33,6 +33,29 @@ type Message = {
 
 const debug = (...args: unknown[]) => { if (import.meta.env.DEV) console.log(...args); };
 
+// PROD-GG (2026-05-24) — remount/wipe diagnosis. UNCONDITIONAL console (NOT
+// gated on DEV) so it surfaces in the production browser session where the
+// "assistant answer appears then disappears" repro lives. Pairs with the
+// gate-stabilization (useMfaEnforcement/useOnboardingGate) + loadMessages
+// hardening shipped in the same change. The hypothesis under test: the chat
+// vanishes because an ancestor loader (ProtectedRoute/OnboardingChecks) flips
+// loading=true on a tenant/scope transition and UNMOUNTS this component, OR a
+// background loadMessages re-fire takes a destructive branch. A MOUNT/UNMOUNT
+// pair around a chat loss proves remount; a same-instance messages→[default]
+// transition proves in-place wipe. Remove once the live trace confirms the fix
+// (tracked follow-up — do NOT leave permanently).
+const ggLog = (...args: unknown[]) => console.log('[PROD-GG]', ...args);
+
+// PROD-GG/FF — a chat is "pristine" (safe for a BACKGROUND loadMessages
+// re-fire to overwrite) only when it is empty (first mount) or a single
+// welcome/fallback bubble. Active conversations are length>=2 (a user turn
+// plus a response), and single DB-loaded rows carry an `id`; a lone in-memory
+// welcome/fallback has no id. A non-pristine chat must NEVER be overwritten by
+// a background reload — only by an explicit user reset (clearHistory /
+// startNewChat / History toggle), which do not route through loadMessages.
+const isPristineChat = (msgs: Message[]) =>
+  msgs.length === 0 || (msgs.length === 1 && msgs[0]?.id === undefined);
+
 export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: boolean }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -84,15 +107,42 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   // Keep refs for callback data to avoid stale closures
   const messagesRef = useRef<Message[]>([]);
   const saveMessageRef = useRef<((msg: Message) => Promise<boolean>) | null>(null);
-  
+
+  // PROD-GG — stable per-mount instance id. A new id after a chat loss proves
+  // the component was unmounted + remounted (state reset to []); a stable id
+  // across the loss proves an in-place setMessages wipe.
+  const instanceIdRef = useRef<string>(Math.random().toString(36).slice(2, 8));
+
   // Update refs when values change
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
-  
+
   useEffect(() => {
     voiceAgentResponseRef.current = voiceAgentResponse;
   }, [voiceAgentResponse]);
+
+  // ── PROD-GG instrumentation ─────────────────────────────────────────────
+  // Mount / unmount with instance id — the decisive remount probe.
+  useEffect(() => {
+    ggLog(`MOUNT   instance=${instanceIdRef.current}`);
+    return () => ggLog(`UNMOUNT instance=${instanceIdRef.current}`);
+  }, []);
+  // Every committed messages mutation (captures every setMessages result).
+  useEffect(() => {
+    ggLog(`messages instance=${instanceIdRef.current} len=${messages.length} roles=[${messages.map(m => m.role).join(',')}] lastContentLen=${messages[messages.length - 1]?.content?.length ?? 0}`);
+  }, [messages]);
+  // Context transitions suspected of triggering the unmount/re-fire.
+  useEffect(() => {
+    ggLog(`currentTenant instance=${instanceIdRef.current} id=${currentTenant?.id ?? 'null'} name=${currentTenant?.name ?? 'null'}`);
+  }, [currentTenant?.id]);
+  useEffect(() => {
+    ggLog(`selectedClientId instance=${instanceIdRef.current} id=${selectedClientId ?? 'null'}`);
+  }, [selectedClientId]);
+  useEffect(() => {
+    ggLog(`currentConversationId instance=${instanceIdRef.current} id=${currentConversationId ?? 'null'}`);
+  }, [currentConversationId]);
+  // ────────────────────────────────────────────────────────────────────────
   
   // Pick up deep-dive prompts passed via navigation state
   useEffect(() => {
@@ -118,6 +168,20 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Upload documents for analysis or ask me anything!",
       };
 
+      // PROD-GG — non-destructive fallback writer for EVERY loadMessages exit
+      // that would otherwise replace the chat. If the current chat is active
+      // (non-pristine), a background re-fire preserves it instead of wiping it.
+      const writeFallback = (next: Message[], reason: string) => {
+        setMessages(prev => {
+          if (!isPristineChat(prev)) {
+            ggLog(`loadMessages(${reason}) PRESERVED ${prev.length} active msgs instance=${instanceIdRef.current}`);
+            return prev;
+          }
+          ggLog(`loadMessages(${reason}) applied fallback (was pristine len=${prev.length}) instance=${instanceIdRef.current}`);
+          return next;
+        });
+      };
+
       // Wait for auth to complete before trying to load messages
       if (authLoading) {
         debug("⏳ Waiting for authentication to complete...");
@@ -126,7 +190,9 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
       if (!user) {
         debug("❌ No user session found - messages will not persist");
-        setMessages([defaultMessage]);
+        // PROD-GG — a transient null-user (e.g. mid token-refresh) must not
+        // wipe an active chat. A genuine logout unmounts via ProtectedRoute.
+        writeFallback([defaultMessage], 'no-user');
         setIsLoadingHistory(false);
         if (!hasLoadedOnceRef.current) {
           toast.error("Please log in to save chat history");
@@ -153,7 +219,13 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
       try {
         debug(`🔄 Loading chat history for user ${user.id}, mode: ${viewMode}`);
-        setIsLoadingHistory(true);
+        // PROD-GG — the history spinner REPLACES MessageList + streamingContent
+        // at render (line ~1660). Only blank the view when there's no active
+        // chat to hide; a background re-fire over an active/streaming chat must
+        // not flash a spinner over it.
+        if (isPristineChat(messagesRef.current)) {
+          setIsLoadingHistory(true);
+        }
         setShowHistory(false);
         setHistoryMessages([]);
         
@@ -184,8 +256,9 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
         if (error) {
           console.error("❌ Error loading messages from database:", error);
-          // Don't show error toast — just start fresh so the user can keep working
-          setMessages([defaultMessage]);
+          // Don't show error toast — just start fresh so the user can keep working.
+          // PROD-GG — but never wipe an active chat on a background query error.
+          writeFallback([defaultMessage], 'query-error');
           setIsLoadingHistory(false);
           return;
         }
@@ -199,30 +272,16 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             user_id: msg.user_id,
             conversation_id: msg.conversation_id || undefined,
           }));
-          // Store history separately — don't auto-populate the chat on load
+          // Store history separately — don't auto-populate the chat on load.
           setHistoryMessages(formattedMessages);
-          // PROD-FF (2026-05-24) — non-destructive hydration. The prior unconditional
-          // setMessages([defaultMessage]) here destroyed successful streamed responses
-          // when loadMessages re-fired after a stream completed. PROD-DD instrumentation
-          // proved the stream succeeded (contentLength 2952, deltaCount 26, finishReason
-          // stop) yet the UI reset to the welcome state — because this branch clobbered
-          // the live `messages` with the default welcome. Only reset to the welcome
-          // message when the chat is still in its pristine default state; otherwise
-          // preserve whatever is active. NOTE: heuristics like
-          // `prev.length > 1 || prev.some(m => m.role === 'user')` were intentionally
-          // rejected — identity is the pristine-default check, not message-count.
-          setMessages(prev => {
-            const isOnlyDefaultWelcome =
-              prev.length === 1 &&
-              prev[0]?.id === defaultMessage.id;
-
-            if (!isOnlyDefaultWelcome) {
-              debug(`PROD-FF: preserving ${prev.length} active messages — hydration non-destructive`);
-              return prev;
-            }
-
-            return [defaultMessage];
-          });
+          // PROD-FF/GG — non-destructive hydration. The prior unconditional
+          // setMessages([defaultMessage]) here destroyed successful streamed
+          // responses when loadMessages re-fired after a stream completed
+          // (PROD-DD proved the stream succeeded yet the UI reset to welcome).
+          // writeFallback preserves any active chat and only shows the welcome
+          // when the chat is pristine (including the first-load empty state,
+          // which the earlier PROD-FF inline check left blank).
+          writeFallback([defaultMessage], 'populated-history');
           // Set current conversation from last message so new messages append to it —
           // but never clobber an already-active conversation id (the active chat owns it).
           setCurrentConversationId(prev => {
@@ -254,32 +313,39 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
               
               if (insertError) {
                 console.error("❌ Failed to migrate messages:", insertError);
-                setMessages(parsed);
+                // PROD-GG — restore migrated content only over a pristine chat.
+                writeFallback(parsed, 'localstorage-migrate-insert-error');
               } else {
-                setMessages(parsed);
-                setCurrentConversationId(newConvId);
+                writeFallback(parsed, 'localstorage-migrate');
+                setCurrentConversationId(prev => prev ?? newConvId);
                 localStorage.removeItem(STORAGE_KEY);
                 debug("✅ Successfully migrated messages to database");
               }
             } catch (parseError) {
               console.error("❌ Failed to parse localStorage:", parseError);
-              setMessages([defaultMessage]);
+              writeFallback([defaultMessage], 'localstorage-parse-error');
             }
           } else {
-            setMessages([defaultMessage]);
-            // Save default message to DB
-            await saveMessageToDb(defaultMessage);
+            // PROD-GG — pristine first-load with empty DB: show + persist the
+            // welcome. Guarded so a background re-fire over an active chat
+            // neither wipes it nor writes a spurious welcome row to the DB.
+            if (isPristineChat(messagesRef.current)) {
+              setMessages([defaultMessage]);
+              await saveMessageToDb(defaultMessage);
+            } else {
+              ggLog(`loadMessages(no-localstorage) PRESERVED active chat instance=${instanceIdRef.current}`);
+            }
           }
         } else {
           // Team view with no shared messages
-          setMessages([{
+          writeFallback([{
             role: "assistant",
             content: "No shared team conversations yet. Switch to personal mode or share a conversation with your team!",
-          }]);
+          }], 'team-empty');
         }
       } catch (error) {
         console.error("❌ Failed to load chat history:", error);
-        setMessages([defaultMessage]);
+        writeFallback([defaultMessage], 'catch');
       } finally {
         setIsLoadingHistory(false);
       }
