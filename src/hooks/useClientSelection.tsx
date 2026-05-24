@@ -6,6 +6,15 @@ import { useTenant } from './useTenant';
 interface ClientSelectionContextType {
   selectedClientId: string | null;
   setSelectedClientId: (id: string | null) => void;
+  /**
+   * PROD-CC fix A (2026-05-24): user-intent-gated setter. Picker-driven
+   * selection MUST go through this so self-healing validation effects
+   * know the selection carries explicit user intent and is allowed to
+   * be corrected. System-initiated mutations (tenant switch, initial
+   * hydration from localStorage) keep using setSelectedClientId and are
+   * NOT auto-cleared by the validation effects.
+   */
+  selectByUser: (id: string | null) => void;
   isContextReady: boolean;
 }
 
@@ -22,8 +31,18 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const hasSetInitialContext = useRef(false);
   const previousClientId = useRef<string | null>(selectedClientId);
+  // PROD-CC fix A: ref defaults false. Selection hydrated from
+  // localStorage at mount is NOT user intent for this session — only
+  // an explicit picker action sets this true. Self-healing effects
+  // below gate destructive clears on this ref.
+  const userIntentRef = useRef(false);
   const queryClient = useQueryClient();
   const { currentTenant, isAllTenantsView } = useTenant();
+
+  const selectByUser = (id: string | null) => {
+    userIntentRef.current = true;
+    setSelectedClientId(id);
+  };
 
   // Track authentication state
   useEffect(() => {
@@ -120,6 +139,18 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
       if (cancelled) return;
       if (!data) {
+        // PROD-CC fix A: only auto-clear when the selection was set
+        // by an explicit picker action. System-set selections (initial
+        // localStorage hydration, tenant-switch helper) log a warning
+        // and leave state alone — bouncing was caused by validation
+        // effects mutating state during routine refetches.
+        if (!userIntentRef.current) {
+          console.warn('[ClientContext] Cross-tenant client detected (system-set, skipping clear)', {
+            selectedClientId,
+            expectedTenant: currentTenant.id,
+          });
+          return;
+        }
         console.warn('[ClientContext] Discarding cross-tenant client', {
           selectedClientId,
           expectedTenant: currentTenant.id,
@@ -165,13 +196,28 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
         typeof data.name === 'string' &&
         !data.name.startsWith('_');
       if (!isValid) {
+        const reason = !data
+          ? 'not_found'
+          : data.status !== 'active'
+            ? `status=${data.status}`
+            : 'fixture_prefix';
+        // PROD-CC fix A: same user-intent gate as cross-tenant
+        // validation above. PROD-J fix C's slow-burn stale-selection
+        // case (localStorage carries a now-invalid client into
+        // all-tenants mode) is intentionally degraded to log-only
+        // for system-set selections. Operator opens the dropdown
+        // and re-picks if a query returns empty. Acute bouncing
+        // (chat disappearing) takes priority over the slow-burn UX.
+        if (!userIntentRef.current) {
+          console.warn('[ClientContext] Invalid client in all-tenants mode (system-set, skipping clear)', {
+            selectedClientId,
+            reason,
+          });
+          return;
+        }
         console.warn('[ClientContext] Discarding invalid client in all-tenants mode', {
           selectedClientId,
-          reason: !data
-            ? 'not_found'
-            : data.status !== 'active'
-              ? `status=${data.status}`
-              : 'fixture_prefix',
+          reason,
         });
         setSelectedClientId(null);
       }
@@ -182,7 +228,7 @@ export function ClientSelectionProvider({ children }: { children: ReactNode }) {
   }, [selectedClientId, isAllTenantsView]);
 
   return (
-    <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId, isContextReady }}>
+    <ClientSelectionContext.Provider value={{ selectedClientId, setSelectedClientId, selectByUser, isContextReady }}>
       {children}
     </ClientSelectionContext.Provider>
   );

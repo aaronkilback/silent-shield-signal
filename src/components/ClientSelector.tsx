@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import {
@@ -50,11 +50,27 @@ export const ClientSelector = ({
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const { selectedClientId, setSelectedClientId } = useClientSelection();
+  // Both setters exposed: setSelectedClientId is the system-intent
+  // setter used only for the initial-mount auto-pick below;
+  // selectByUser carries explicit user intent and is the channel
+  // the validation effects in useClientSelection respect (fix A).
+  const { selectedClientId, setSelectedClientId, selectByUser } = useClientSelection();
   const { currentTenant, isAllTenantsView } = useTenant();
+  // PROD-CC fix A: gate auto-select-first-client to the first
+  // fetchClients per mount. Subsequent refetches (realtime channel,
+  // tenant switch) update the dropdown list but MUST NOT auto-mutate
+  // selectedClientId — that was the cascading-bounce trigger.
+  const hasAutoSelectedRef = useRef(false);
 
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | null = null;
+    // PROD-CC fix D: track the user-id this effect was initialized
+    // with so we can ignore auth events (TOKEN_REFRESHED, etc.) that
+    // arrive for the same user. Mirrors PROD-U's user→user?.id fix
+    // for DashboardAIAssistant. Without this, every ~50min token
+    // refresh tore down + recreated the realtime channel + refetched
+    // clients, which fed the auto-select cascade fixed in A.
+    let lastUserId: string | null = null;
 
     const init = async (session: any) => {
       if (!session?.user) {
@@ -81,9 +97,18 @@ export const ClientSelector = ({
     };
 
     // Check current session first, then listen for auth changes
-    supabase.auth.getSession().then(({ data: { session } }) => init(session));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      lastUserId = session?.user?.id ?? null;
+      init(session);
+    });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      const currentUserId = session?.user?.id ?? null;
+      if (currentUserId === lastUserId) {
+        // PROD-CC fix D: same user, no re-init. PROD-U pattern.
+        return;
+      }
+      lastUserId = currentUserId;
       init(session);
     });
 
@@ -137,32 +162,33 @@ export const ClientSelector = ({
       );
       setClients(filtered);
 
-      // Auto-select operates over a tenant-scoped list now, so any
-      // selection that survives is guaranteed to belong to the
-      // current tenant.
-      // PROD-J fix A: use the fixture-filtered list so auto-select
-      // can't pick a fixture (_invariant_client_a) as the first
-      // option for a freshly-arrived operator.
-      if (mode === 'filter') {
-        if (filtered.length > 0) {
-          if (!selectedClientId) {
-            setSelectedClientId(filtered[0].id);
-          } else {
-            const isValid = filtered.some(client => client.id === selectedClientId);
-            if (!isValid) {
-              // Stored selection isn't in the current tenant's clients
-              // (or is now a fixture being filtered out) — clear rather
-              // than auto-pick a different tenant's first client.
-              // useClientSelection's validation effect is the canonical
-              // clearer, but doing it here too prevents a flash of
-              // cross-tenant data between fetches.
-              setSelectedClientId(null);
-            }
-          }
-        } else if (selectedClientId) {
-          // Tenant has zero clients in scope (e.g. a freshly-onboarded
-          // tenant). Clear the stale selection so the dropdown is honest.
-          setSelectedClientId(null);
+      // PROD-CC fix A (2026-05-24): auto-select-first-client now fires
+      // ONLY on the first fetchClients per component mount. Subsequent
+      // refetches — from the realtime channel, from a tenant switch,
+      // from any other trigger — update the dropdown list but MUST
+      // NOT auto-mutate selectedClientId.
+      //
+      // The previous auto-CLEAR branches (stale selection / zero
+      // clients in scope) were removed: their job is now owned by the
+      // user-intent-gated validation effects in useClientSelection
+      // (cross-tenant + all-tenants self-heal). Keeping a duplicate
+      // here re-introduced the bouncing cascade because realtime
+      // events on the clients table fired fetchClients on every
+      // upstream change, which then auto-cleared selectedClientId,
+      // which fired the main effect, which invalidated queries, which
+      // refetched tenant context, which re-triggered this effect, etc.
+      //
+      // PROD-J fix A (fixture filtering) is preserved because filtered
+      // is what feeds the dropdown — fixtures still can't be picked.
+      if (mode === 'filter' && !hasAutoSelectedRef.current) {
+        hasAutoSelectedRef.current = true;
+        if (filtered.length > 0 && !selectedClientId) {
+          // No prior selection at all (fresh session, cleared localStorage):
+          // auto-pick the first listed client so the dashboard has scope.
+          // This is the only auto-mutation; intentionally NOT routed
+          // through selectByUser — it is system intent, so any later
+          // validation failure won't auto-clear it (per Fix A doctrine).
+          setSelectedClientId(filtered[0].id);
         }
       }
     } catch (error) {
@@ -176,7 +202,12 @@ export const ClientSelector = ({
     if (mode === 'navigate') {
       navigate(`/client/${value}`);
     } else {
-      setSelectedClientId(value);
+      // PROD-CC fix A: route picker changes through selectByUser so
+      // the validation effects in useClientSelection are allowed to
+      // self-heal this selection if it later becomes invalid (cross-
+      // tenant, deleted, fixture, etc.). System-set selections stay
+      // sticky and are only warning-logged.
+      selectByUser(value);
     }
   };
 
@@ -191,9 +222,20 @@ export const ClientSelector = ({
       : `View signals and data for selected ${noun.singularLower}`
   );
 
+  // PROD-CC fix C (2026-05-24): keep the Select always-controlled in
+  // filter mode. Previously this oscillated between `string` and
+  // `undefined` whenever selectedClientId flipped between a uuid and
+  // null, which is the canonical React controlled/uncontrolled
+  // warning trigger Aaron observed in the prod console. A constant
+  // sentinel keeps the value prop always a string in filter mode.
+  // Radix Select treats a value that doesn't match any SelectItem as
+  // "no selection" — the placeholder renders. Navigate mode is
+  // intentionally left always-uncontrolled (value={undefined}) since
+  // navigation triggers immediately on pick; no state lives here.
+  const NO_CLIENT_SENTINEL = '__no_client_selected__';
   const selectElement = (
-    <Select 
-      value={mode === 'filter' ? (selectedClientId || undefined) : undefined}
+    <Select
+      value={mode === 'filter' ? (selectedClientId ?? NO_CLIENT_SENTINEL) : undefined}
       onValueChange={handleValueChange}
     >
       <SelectTrigger className="w-full">
