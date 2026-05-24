@@ -511,6 +511,16 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
   const streamChat = async (userMessage: string) => {
     debug("streamChat called with:", userMessage);
+    // PROD-GG (2026-05-24) — clientRequestId hoisted to fn scope so every
+    // send-path log line (entry → payload → fetch → response → parse → catch →
+    // fallback) and the catch block can correlate to one request. Threaded to
+    // the backend as debug_trace_id. Staging trace proved the frontend state
+    // machine is stable (no remount / no destructive reset) — the len=5 bubble
+    // is a SEND FAILURE fallback, not a lost success. This instruments WHY the
+    // send fails (and is exactly what we need on a real success to confirm a
+    // success isn't mis-rendered as a fallback).
+    const clientRequestId = crypto.randomUUID();
+    ggLog(`streamChat ENTRY reqId=${clientRequestId} instance=${instanceIdRef.current} msgLen=${messages.length} convId=${currentConversationId ?? 'null'} input="${userMessage.slice(0, 80)}"`);
     const userMsg = { role: "user" as const, content: userMessage };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
@@ -575,20 +585,26 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       // Null is acceptable — backend retains the existing tenant_users lottery
       // fallback for legacy callers that don't supply this field.
       let explicitTenantId: string | null = currentTenant?.id ?? null;
+      let selectedClientTenantId: string | null = null;
       if (!explicitTenantId && selectedClientId) {
         const { data: clientRow } = await supabase
           .from("clients")
           .select("tenant_id")
           .eq("id", selectedClientId)
           .maybeSingle();
-        explicitTenantId = (clientRow?.tenant_id as string | null) ?? null;
+        selectedClientTenantId = (clientRow?.tenant_id as string | null) ?? null;
+        explicitTenantId = selectedClientTenantId;
       }
+
+      // PROD-GG — resolved payload snapshot (items 5–8: tenant resolution,
+      // selectedClient + its tenant_id, derived tenant, conversation id).
+      ggLog(`streamChat PAYLOAD reqId=${clientRequestId} currentTenantId=${currentTenant?.id ?? 'null'} selectedClientId=${selectedClientId ?? 'null'} selectedClientTenantId=${selectedClientTenantId ?? '(n/a)'} derivedTenantId=${explicitTenantId ?? 'null'} isAllTenantsView=${isAllTenantsView} contextMsgs=${contextMessages.length} convId=${currentConversationId ?? 'null'}`);
 
       // PROD-BB (2026-05-24) — instrumentation-first diagnosis. Per-request
       // debug_trace_id threaded frontend→backend→telemetry so a failed
       // request can be diffed against a successful one. Slated for cleanup
       // after diagnosis closes (tracked task — do NOT leave permanently).
-      const debug_trace_id = crypto.randomUUID();
+      const debug_trace_id = clientRequestId; // PROD-GG — unify trace id across [PROD-GG]/[PROD-AA-DEBUG]/backend
       console.log('[PROD-AA-DEBUG/frontend]', {
         debug_trace_id,
         selectedClientId,
@@ -600,8 +616,10 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         ts: new Date().toISOString(),
       });
 
+      const endpoint = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dashboard-ai-assistant`;
+      ggLog(`streamChat FETCH start reqId=${clientRequestId} endpoint=${endpoint}`);
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dashboard-ai-assistant`,
+        endpoint,
         {
           method: "POST",
           headers: {
@@ -613,13 +631,16 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       );
 
       debug("Response status:", response.status);
+      ggLog(`streamChat FETCH response reqId=${clientRequestId} status=${response.status} ok=${response.ok} hasBody=${!!response.body}`);
 
       if (response.status === 429) {
+        ggLog(`streamChat ABORT reqId=${clientRequestId} reason=rate-limit-429 (no message appended)`);
         toast.error("Rate limit exceeded. Please try again later.");
         return;
       }
 
       if (response.status === 402) {
+        ggLog(`streamChat ABORT reqId=${clientRequestId} reason=payment-required-402 (no message appended)`);
         toast.error("Payment required. Please add funds to your workspace.");
         return;
       }
@@ -627,6 +648,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       if (!response.ok || !response.body) {
         const errorText = await response.text();
         console.error("Response not ok:", response.status, errorText);
+        ggLog(`streamChat FALLBACK reqId=${clientRequestId} reason=response-not-ok status=${response.status} bodyPreview="${(errorText || '').slice(0, 500)}"`);
         // Add user-friendly error message instead of throwing
         const errorMsg = { role: "assistant" as const, content: `I encountered an issue connecting to the AI service. Please try again in a moment.\n\n_Error: ${response.status}_` };
         setMessages([...newMessages, errorMsg]);
@@ -733,6 +755,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       // Ensure we add the final complete message
       const finalContent = contentBuffer.trim();
       if (finalContent) {
+        ggLog(`streamChat SUCCESS reqId=${clientRequestId} contentLen=${finalContent.length} finishReason=${sawFinishReason} — appending assistant message`);
         const assistantMsg = { role: "assistant" as const, content: finalContent };
         setMessages([...newMessages, assistantMsg]);
 
@@ -741,6 +764,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         if (!assistantSaved && user) {
           toast.warning("AI response wasn't saved to history");
         }
+        ggLog(`streamChat SUCCESS reqId=${clientRequestId} saved=${assistantSaved} — message committed (watch for any later UNMOUNT/reset)`);
 
         // Track AI interaction (excludes super_admin)
         trackAIInteraction('Aegis AI', 'user', currentConversationId || undefined);
@@ -762,6 +786,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
           sawFinishReason,
           parseErrors,
         });
+        ggLog(`streamChat FALLBACK reqId=${clientRequestId} reason=deltas-but-empty-buffer deltaCount=${deltaCount} sawDeltaContent=${sawDeltaContent} sawFinishReason=${sawFinishReason} parseErrors=${parseErrors}`);
         const errorMsg = {
           role: "assistant" as const,
           content:
@@ -775,24 +800,26 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         // Truly empty stream — no deltas at all. This is the rare
         // legitimate "provider returned no content" case.
         debug("No content received from stream");
+        ggLog(`streamChat FALLBACK reqId=${clientRequestId} reason=empty-stream deltaCount=0 sawDoneMarker=${sawDoneMarker} sawFinishReason=${sawFinishReason} — backend wrote [DONE] with no content`);
         const errorMsg = { role: "assistant" as const, content: "I'm having trouble generating a response. Please try again." };
         setMessages([...newMessages, errorMsg]);
         await saveMessageToDb(errorMsg);
       }
-      
+
       setStreamingContent("");
     } catch (error) {
       console.error("Chat error:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      
+      ggLog(`streamChat CATCH reqId=${clientRequestId} error="${errorMessage}" name=${error instanceof Error ? error.name : typeof error} — appending connection-error fallback`);
+
       // Add error message to chat instead of just showing toast
-      const errorMsg = { 
-        role: "assistant" as const, 
+      const errorMsg = {
+        role: "assistant" as const,
         content: `I'm having trouble connecting. This could be a network issue or the service may be temporarily unavailable.\n\nPlease try again. If the problem persists, try refreshing the page.\n\n_Technical details: ${errorMessage}_`
       };
       setMessages([...newMessages, errorMsg]);
       await saveMessageToDb(errorMsg);
-      
+
       toast.error("Connection issue - see message for details");
       setStreamingContent("");
       
