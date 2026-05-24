@@ -168,23 +168,41 @@ export const ClientSelector = ({
       // from any other trigger — update the dropdown list but MUST
       // NOT auto-mutate selectedClientId.
       //
+      // PROD-CC fix A2 (2026-05-24, post-real-user-failure): also
+      // skip auto-select entirely when isAllTenantsView === true.
+      //
+      // PROD-CC test surfaced that even with the one-shot gate, the
+      // alphabetical fallback (filtered[0]) lands the super_admin on
+      // BC Place (0bbbbbbb-...) which belongs to a DIFFERENT tenant
+      // (0aaaaaaa-... CRT) than the operator's working context
+      // (Petronas / feff5c44-... Silent Shield Operations). PROD-CC
+      // fix A then makes that wrong pick sticky.
+      //
+      // Doctrine: ambiguous scope fails closed, not "guesses
+      // alphabetical first". In all-tenants mode no per-tenant
+      // boundary exists to constrain the candidate list — so any
+      // automatic pick is a tenant-contamination risk. Operator must
+      // pick explicitly. Dropdown renders the placeholder until they
+      // do. Aligns with Fortress quarantine doctrine ("indistinguishable
+      // from row-not-found") and FORTRESS_DATA doctrine ("explicit
+      // ownership or skip").
+      //
       // The previous auto-CLEAR branches (stale selection / zero
       // clients in scope) were removed: their job is now owned by the
       // user-intent-gated validation effects in useClientSelection
       // (cross-tenant + all-tenants self-heal). Keeping a duplicate
-      // here re-introduced the bouncing cascade because realtime
-      // events on the clients table fired fetchClients on every
-      // upstream change, which then auto-cleared selectedClientId,
-      // which fired the main effect, which invalidated queries, which
-      // refetched tenant context, which re-triggered this effect, etc.
+      // here re-introduced the bouncing cascade.
       //
       // PROD-J fix A (fixture filtering) is preserved because filtered
       // is what feeds the dropdown — fixtures still can't be picked.
-      if (mode === 'filter' && !hasAutoSelectedRef.current) {
+      if (mode === 'filter' && !hasAutoSelectedRef.current && !isAllTenantsView) {
         hasAutoSelectedRef.current = true;
         if (filtered.length > 0 && !selectedClientId) {
           // No prior selection at all (fresh session, cleared localStorage):
           // auto-pick the first listed client so the dashboard has scope.
+          // SAFE in non-all-tenants mode because filtered is already
+          // tenant-scoped by the query above — filtered[0] is guaranteed
+          // to belong to the operator's current tenant.
           // This is the only auto-mutation; intentionally NOT routed
           // through selectByUser — it is system intent, so any later
           // validation failure won't auto-clear it (per Fix A doctrine).
