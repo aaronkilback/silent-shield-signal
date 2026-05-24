@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayStream, getUniversalGuardrails } from "../_shared/ai-gateway.ts";
-import { classifyUserSafeError } from "../_shared/user-safe-errors.ts";
+import { classifyUserSafeError, redactProviderLeak } from "../_shared/user-safe-errors.ts";
 import { validateMessages } from "../_shared/input-validation.ts";
 import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, upsertProject, touchProject } from "../_shared/user-memory.ts";
 import { logError } from "../_shared/error-logger.ts";
@@ -10936,12 +10936,22 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+            // PROD-T.3 (2026-05-23) — sanitize tool error before LLM exposure.
+            // Raw provider text (OPENAI_API_KEY, quota, RESOURCE_EXHAUSTED, etc.)
+            // must not be embedded in tool-call results, because the model can
+            // (and does) echo tool error content verbatim into its final reply.
+            // redactProviderLeak preserves legitimate tool errors
+            // ("Entity not found", "Permission denied") so the model can still
+            // self-correct. error.stack is dropped entirely — stack traces are
+            // never useful for model self-correction and carry internal
+            // function names / file paths. Raw error remains in console.error
+            // for ops triage.
             console.error(`Tool execution error for ${toolCall.function.name}:`, errorMessage, error);
             return {
               tool_call_id: toolCall.id,
               role: "tool",
               name: toolCall.function.name,
-              content: JSON.stringify({ success: false, error: errorMessage, error_details: error instanceof Error ? error.stack : String(error) }),
+              content: JSON.stringify({ success: false, error: redactProviderLeak(errorMessage) }),
             };
           }
         })
