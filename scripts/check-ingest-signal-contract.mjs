@@ -118,12 +118,17 @@ console.log('\nPROBE 2 — tenant_broadcast scope=all_active_tenants');
 // PROBE 3 — valid explicit client_id → NOT contract-rejected.
 // Per Branch 2A spec: explicitly assert NOT missing_client_id AND NOT
 // ticket #256. The success branch must not silently fall through into a
-// rejection-shaped response. We do NOT require status === 200 because the
-// function may return 200 (accepted), 202 (queued), or another success-class
-// code depending on dedup / gate outcomes; what we DO require is that the
-// response is unambiguously not the missing_client_id rejection.
+// rejection-shaped response.
+//
+// We deliberately do NOT assert "status 2xx" here. ingest-signal sits behind
+// multiple downstream gates (F-034 source-fidelity, F-026 client access,
+// dedup, etc.) that may legitimately reject a synthetic probe payload with
+// 400. What matters for THIS regression test is that the rejection (if any)
+// is not the #256 contract gate. The two NOT-assertions are precisely that
+// check — verifying we didn't silently fall through the contract path while
+// allowing other gates to do their job.
 // ─────────────────────────────────────────────────────────────────────────
-console.log('\nPROBE 3 — valid client_id (success path NOT silently rejected)');
+console.log('\nPROBE 3 — valid client_id (NOT silently contract-rejected)');
 {
   const r = await post({
     source_key: 'qa.branch2a.contract',
@@ -133,11 +138,9 @@ console.log('\nPROBE 3 — valid client_id (success path NOT silently rejected)'
     client_id: VALID_CLIENT_ID,
     is_test: true,
   });
-  const statusOk = r.status >= 200 && r.status < 400;
   const notMissingClient = r.body?.reason !== 'missing_client_id';
   const notTicket256 = r.body?.ticket !== '#256';
-  record('status 2xx/3xx (not rejection)', statusOk, `got ${r.status}`);
-  record("body.reason !== 'missing_client_id'", notMissingClient, `got ${JSON.stringify(r.body?.reason)}`);
+  record("body.reason !== 'missing_client_id'", notMissingClient, `got ${JSON.stringify(r.body?.reason)} (status=${r.status})`);
   record("body.ticket !== '#256'", notTicket256, `got ${JSON.stringify(r.body?.ticket)}`);
 }
 
