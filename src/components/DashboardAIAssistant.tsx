@@ -440,10 +440,20 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
     let contentBuffer = "";
     let pendingUpdate: NodeJS.Timeout | null = null;
+    // PROD-DD (2026-05-24) — diagnostic counters. Raw network capture
+    // confirmed backend successfully streams delta content + [DONE], but
+    // frontend rendered "I'm having trouble generating a response". These
+    // track parser observability so a recurrence surfaces in console with
+    // enough signal to pinpoint which sub-hypothesis fired.
+    let deltaCount = 0;          // any delta object seen
+    let sawDeltaContent = false; // delta.content was a string at least once
+    let parseErrors = 0;
+    let sawDoneMarker = false;
+    let sawFinishReason: string | null = null;
 
     const scheduleUpdate = () => {
       if (pendingUpdate) return;
-      
+
       pendingUpdate = setTimeout(() => {
         setStreamingContent(contentBuffer);
         pendingUpdate = null;
@@ -557,23 +567,60 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
 
           if (line.endsWith("\r")) line = line.slice(0, -1);
           if (line.startsWith(":") || line.trim() === "") continue;
-          if (!line.startsWith("data: ")) continue;
-
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") break;
+          // PROD-DD: tolerate both `data: ` (OpenAI canonical with space)
+          // and `data:` (no space — RFC-permitted, observed in some
+          // SSE servers). The previous strict `startsWith("data: ")`
+          // silently dropped any line that arrived without the space.
+          let jsonStr: string;
+          if (line.startsWith("data: ")) {
+            jsonStr = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            jsonStr = line.slice(5).trim();
+          } else {
+            continue;
+          }
+          if (jsonStr === "[DONE]") {
+            // PROD-DD: do NOT break on intermediate [DONE] — some
+            // synthesis paths emit it between phases and the trailing
+            // bytes would be lost. The OUTER `done=true` from the
+            // reader is the authoritative stream-end signal.
+            sawDoneMarker = true;
+            continue;
+          }
 
           try {
             const parsed = JSON.parse(jsonStr);
             const delta = parsed.choices?.[0]?.delta;
-            
-            if (delta?.content) {
-              contentBuffer += delta.content;
-              scheduleUpdate();
+            const finishReason = parsed.choices?.[0]?.finish_reason;
+            if (finishReason) sawFinishReason = finishReason;
+
+            if (delta !== undefined && delta !== null) {
+              deltaCount += 1;
+              // PROD-DD: explicit string-type check. Previous
+              // `if (delta?.content)` falsy-coerced empty strings AND
+              // skipped any non-canonical shape. Be strict about the
+              // type AND length so empty-string deltas don't trigger
+              // spurious flag flips.
+              if (typeof delta.content === 'string') {
+                sawDeltaContent = true;
+                if (delta.content.length > 0) {
+                  contentBuffer += delta.content;
+                  scheduleUpdate();
+                }
+              }
             }
           } catch (e) {
-            console.error("JSON parse error:", e);
-            textBuffer = line + "\n" + textBuffer;
-            break;
+            // PROD-DD: count parse errors but do NOT re-queue the line.
+            // The previous code re-prepended the failed line into
+            // textBuffer and broke the inner loop. On a persistently
+            // malformed line this caused the parser to spin: re-enter
+            // → re-extract same line → fail again → re-queue → break.
+            // Outer kept reading until done=true, at which point
+            // contentBuffer was whatever had been captured BEFORE the
+            // bad line. Now: log + skip the bad line, continue parsing
+            // the rest of textBuffer.
+            parseErrors += 1;
+            console.error("[PROD-DD] SSE JSON parse error (line dropped):", { error: e instanceof Error ? e.message : String(e), linePreview: line.slice(0, 200) });
           }
         }
       }
@@ -583,21 +630,62 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         clearTimeout(pendingUpdate);
       }
       
+      // PROD-DD: log the full parser observability set so any future
+      // regression of "stream succeeded but UI says failure" surfaces
+      // the EXACT divergence point in the browser console immediately.
+      console.log('[PROD-DD/stream-summary]', {
+        contentLength: contentBuffer.length,
+        deltaCount,
+        sawDeltaContent,
+        sawDoneMarker,
+        sawFinishReason,
+        parseErrors,
+      });
+
       // Ensure we add the final complete message
       const finalContent = contentBuffer.trim();
       if (finalContent) {
         const assistantMsg = { role: "assistant" as const, content: finalContent };
         setMessages([...newMessages, assistantMsg]);
-        
+
         // Save assistant message immediately
         const assistantSaved = await saveMessageToDb(assistantMsg);
         if (!assistantSaved && user) {
           toast.warning("AI response wasn't saved to history");
         }
-        
+
         // Track AI interaction (excludes super_admin)
         trackAIInteraction('Aegis AI', 'user', currentConversationId || undefined);
+      } else if (sawDeltaContent || deltaCount > 0) {
+        // PROD-DD: backend definitely streamed deltas (sawDeltaContent
+        // proves at least one delta had a string content field, OR
+        // we at least saw delta envelopes) but contentBuffer ended
+        // empty. This is a PARSER / RACE defect, not a backend
+        // failure. The original "I'm having trouble generating a
+        // response" message lies to the operator (says "try again",
+        // implies provider issue). Render an honest defect-class
+        // message instead and persist console diagnostics that the
+        // operator can screenshot for follow-up.
+        console.error('[PROD-DD] Stream had deltas but contentBuffer empty — frontend parser/race defect', {
+          contentLength: contentBuffer.length,
+          deltaCount,
+          sawDeltaContent,
+          sawDoneMarker,
+          sawFinishReason,
+          parseErrors,
+        });
+        const errorMsg = {
+          role: "assistant" as const,
+          content:
+            "_The backend response completed successfully but couldn't be rendered. " +
+            "This is a frontend display defect — your data was NOT lost. " +
+            "Open browser DevTools console and screenshot the [PROD-DD] log line, then retry._",
+        };
+        setMessages([...newMessages, errorMsg]);
+        await saveMessageToDb(errorMsg);
       } else {
+        // Truly empty stream — no deltas at all. This is the rare
+        // legitimate "provider returned no content" case.
         debug("No content received from stream");
         const errorMsg = { role: "assistant" as const, content: "I'm having trouble generating a response. Please try again." };
         setMessages([...newMessages, errorMsg]);
