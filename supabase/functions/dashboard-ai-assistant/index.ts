@@ -10543,39 +10543,41 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // ─────────────────────────────────────────────────────────────────────
 
         // ── FIRST AI CALL — streaming ─────────────────────────────────────────
-        const firstResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? ""),
-              },
-              ...processedMessages,
-            ],
-            tools,
-            tool_choice: "auto",
-            stream: true,
-          }),
-        }, AI_TIMEOUT_MS);
+        // PROD-X (2026-05-24, scope expansion) — primary classifier routed through
+        // ai-gateway for OpenAI 429 → Gemini fallback (PROD-Q). Previously hit OpenAI
+        // directly; under sustained OpenAI quota exhaustion this was the FIRST gate
+        // that prevented tool synthesis paths from ever executing, masking the value
+        // of the PROD-X synthesis migrations downstream. tools + tool_choice forwarded
+        // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
+        // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
+        // verbatim (per "no broader refactor" constraint).
+        const firstResult = await callAiGatewayStream({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? ""),
+            },
+            ...processedMessages,
+          ] as any,
+          functionName: 'dashboard-ai-assistant',
+          extraBody: { tools, tool_choice: "auto" },
+          extraContext: { call_site: 'primary-classifier' },
+          skipGuardrails: true,
+          timeoutMs: AI_TIMEOUT_MS,
+        });
 
-        if (!firstResp.ok) {
-          if (firstResp.status === 429) {
-            await writeSSEText(`data: {"choices":[{"delta":{"content":"Rate limits exceeded, please try again later."}}]}\n\ndata: [DONE]\n\n`);
-          } else if (firstResp.status === 402) {
-            await writeSSEText(`data: {"choices":[{"delta":{"content":"Payment required, please add funds to your AI workspace."}}]}\n\ndata: [DONE]\n\n`);
-          } else {
-            const errText = await firstResp.text();
-            console.error("AI gateway error:", firstResp.status, errText);
-            await writeSSEText(`data: {"choices":[{"delta":{"content":"AI service error (${firstResp.status}). Please try again."}}]}\n\ndata: [DONE]\n\n`);
-          }
+        if (!firstResult.stream) {
+          // Both OpenAI primary AND Gemini fallback failed (or circuit-open).
+          // classifyUserSafeError maps the error class to a canonical user-safe message;
+          // replaces the previous 429/402/other branch which would write raw status codes.
+          const safeMsg = classifyUserSafeError(firstResult.error ?? 'circuit_open');
+          await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\ndata: [DONE]\n\n`);
           return;
         }
 
         // ── PARSE FIRST STREAM — forward content chunks, accumulate tool calls ─
-        const firstReader = firstResp.body!.getReader();
+        const firstReader = firstResult.stream.getReader();
         const dec = new TextDecoder();
         let parseBuf = '';
         let streamedContent = '';
