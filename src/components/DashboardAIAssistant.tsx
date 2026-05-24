@@ -15,6 +15,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
 import { useTenant } from "@/hooks/useTenant";
+import { useClientSelection } from "@/hooks/useClientSelection";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +39,12 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isSuperAdmin } = useUserRole();
   const { currentTenant } = useTenant();
+  // PROD-AA (2026-05-24) — derive explicit tenant_id for chat tool dispatch.
+  // Super_admin users can be owner of multiple tenants; the backend lottery
+  // (tenant_users.limit(1).single()) is non-deterministic. The frontend already
+  // knows the operating tenant context (via selectedClient OR currentTenant)
+  // and passes it server-side so tool execution is deterministic.
+  const { selectedClientId } = useClientSelection();
   const { trackAIInteraction } = useActivityTracking();
   const STORAGE_KEY = "fortress-ai-chat-history";
   
@@ -461,7 +468,24 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         return;
       }
       const authToken = session.access_token;
-      
+
+      // PROD-AA (2026-05-24) — explicit tenant_id contract.
+      // Derive authoritative tenant context for backend tool execution:
+      // prefer currentTenant.id (set when user has explicitly chosen a tenant);
+      // fall back to selectedClient.tenant_id (one DB lookup, ~30ms) for the
+      // super_admin "client picked, no tenant chosen" path that PROD-AA root-caused.
+      // Null is acceptable — backend retains the existing tenant_users lottery
+      // fallback for legacy callers that don't supply this field.
+      let explicitTenantId: string | null = currentTenant?.id ?? null;
+      if (!explicitTenantId && selectedClientId) {
+        const { data: clientRow } = await supabase
+          .from("clients")
+          .select("tenant_id")
+          .eq("id", selectedClientId)
+          .maybeSingle();
+        explicitTenantId = (clientRow?.tenant_id as string | null) ?? null;
+      }
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dashboard-ai-assistant`,
         {
@@ -470,7 +494,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             "Content-Type": "application/json",
             Authorization: `Bearer ${authToken}`,
           },
-          body: JSON.stringify({ messages: contextMessages }),
+          body: JSON.stringify({ messages: contextMessages, tenant_id: explicitTenantId }),
         }
       );
 
