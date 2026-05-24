@@ -24,7 +24,8 @@
     "check:ingest-signal-contract": "node scripts/check-ingest-signal-contract.mjs",
     "check:provider-leak": "node scripts/check-provider-leak.mjs",
     "check:signal-single-regression": "node scripts/check-signal-single-regression.mjs",
-    "check:toast-raw-error": "node scripts/check-toast-raw-error.mjs"
+    "check:toast-raw-error": "node scripts/check-toast-raw-error.mjs",
+    "check:openai-direct": "node scripts/check-no-direct-openai-fetch.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
