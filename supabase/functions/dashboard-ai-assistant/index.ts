@@ -10993,10 +10993,17 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (error) {
+    // PROD-T.1 (2026-05-23) — outer catch must NOT return raw provider text.
+    // Inner SSE catch already routes through classifyUserSafeError; this outer
+    // path was the bypass that surfaced raw OPENAI_API_KEY quota text into the
+    // frontend global toast handler (App.tsx mutation onError). Raw is logged
+    // to console + logError for ops triage; only the sanitized form reaches
+    // the response body.
     console.error("Dashboard AI assistant error:", error);
     await logError(error, { functionName: 'dashboard-ai-assistant', severity: 'error' });
+    const rawMsg = error instanceof Error ? error.message : String(error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ error: classifyUserSafeError(rawMsg) }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
