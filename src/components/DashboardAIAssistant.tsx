@@ -520,7 +520,8 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     // send fails (and is exactly what we need on a real success to confirm a
     // success isn't mis-rendered as a fallback).
     const clientRequestId = crypto.randomUUID();
-    ggLog(`streamChat ENTRY reqId=${clientRequestId} instance=${instanceIdRef.current} msgLen=${messages.length} convId=${currentConversationId ?? 'null'} input="${userMessage.slice(0, 80)}"`);
+    // PROD-GG privacy rule: log ONLY length/roles/ids — never message content.
+    ggLog(`streamChat ENTRY reqId=${clientRequestId} instance=${instanceIdRef.current} msgLen=${messages.length} inputLen=${userMessage.length} convId=${currentConversationId ?? 'null'}`);
     const userMsg = { role: "user" as const, content: userMessage };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
