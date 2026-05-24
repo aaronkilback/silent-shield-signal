@@ -54,8 +54,12 @@ const EXCLUDE_DIRS = new Set([
 // patterns. Each addition shrinks the audit's value — review carefully.
 const ALLOWED_FILES = new Set([
   'supabase/functions/_shared/ai-gateway.ts',
-  'supabase/functions/_shared/observability.ts', // classifyError() inspects error strings
-  'scripts/check-provider-leak.mjs',              // this script's own pattern definitions
+  'supabase/functions/_shared/observability.ts',      // classifyError() inspects error strings
+  'supabase/functions/_shared/user-safe-errors.ts',   // PROD-T: regex patterns for redactProviderLeak
+  'src/lib/user-safe-errors.ts',                      // PROD-T: frontend mirror, same regex patterns
+  'src/test/lib/user-safe-errors.test.ts',            // PROD-T: tests assert the same patterns
+  'scripts/check-provider-leak.mjs',                  // this script's own pattern definitions
+  'scripts/check-toast-raw-error.mjs',                // Branch 2A.5b sibling detector
 ]);
 
 const args = new Set(process.argv.slice(2));
