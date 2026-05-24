@@ -9979,7 +9979,16 @@ Deno.serve(async (req) => {
     // (super_admin owning multiple tenants). Validated below against the user's
     // tenant_users membership; falls back to the legacy lottery when missing
     // or invalid, preserving behavior for unchanged callers.
-    const { messages, tenant_id: requestedTenantId } = body;
+    // PROD-BB (2026-05-24) — debug_trace_id threaded for instrumentation-first
+    // diagnosis. Slated for removal once diagnosis closes.
+    const { messages, tenant_id: requestedTenantId, debug_trace_id: debugTraceId } = body;
+    console.log('[PROD-AA-DEBUG/req]', JSON.stringify({
+      debug_trace_id: debugTraceId ?? null,
+      requestedTenantId: requestedTenantId ?? null,
+      hasMessages: Array.isArray(messages),
+      messageCount: Array.isArray(messages) ? messages.length : 0,
+      ts: new Date().toISOString(),
+    }));
 
     // Input validation
     const msgValidation = validateMessages(messages, 'messages', { required: true, maxMessages: 100 });
@@ -10044,6 +10053,15 @@ Deno.serve(async (req) => {
         const { data: tenantUserData } = await tenantUserQuery
           .limit(1)
           .maybeSingle();
+        // PROD-BB instrumentation — log the tenant resolution outcome with the
+        // request's debug_trace_id so failed vs successful requests can be diffed.
+        console.log('[PROD-AA-DEBUG/tenant]', JSON.stringify({
+          debug_trace_id: debugTraceId ?? null,
+          requestedTenantId: requestedTenantId ?? null,
+          resolvedUserTenantId: tenantUserData?.tenant_id ?? null,
+          resolvedTenantName: (tenantUserData?.tenants as any)?.name ?? null,
+          user_id: user.id,
+        }));
         
         if (tenantUserData?.tenant_id) {
           userTenantId = tenantUserData.tenant_id;
@@ -10578,7 +10596,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           ] as any,
           functionName: 'dashboard-ai-assistant',
           extraBody: { tools, tool_choice: "auto" },
-          extraContext: { call_site: 'primary-classifier' },
+          extraContext: { call_site: 'primary-classifier', debug_trace_id: debugTraceId ?? null, requestedTenantId: requestedTenantId ?? null, resolvedUserTenantId: userTenantId ?? null },
           skipGuardrails: true,
           timeoutMs: AI_TIMEOUT_MS,
         });
@@ -11002,7 +11020,21 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             }
             // ─────────────────────────────────────────────────────────────────────
 
+            // PROD-BB instrumentation — tool dispatch log
+            console.log('[PROD-AA-DEBUG/tool_dispatch]', JSON.stringify({
+              debug_trace_id: debugTraceId ?? null,
+              toolName: toolCall.function.name,
+              argsPreview: JSON.stringify(args).slice(0, 300),
+              userTenantId: userTenantId ?? null,
+            }));
             const result = await executeTool(toolCall.function.name, args, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
+            const _resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+            console.log('[PROD-AA-DEBUG/tool_result]', JSON.stringify({
+              debug_trace_id: debugTraceId ?? null,
+              toolName: toolCall.function.name,
+              resultLen: _resultStr.length,
+              resultPreview: _resultStr.slice(0, 400),
+            }));
             return {
               tool_call_id: toolCall.id,
               role: "tool",
@@ -11011,6 +11043,11 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+            console.log('[PROD-AA-DEBUG/tool_error]', JSON.stringify({
+              debug_trace_id: debugTraceId ?? null,
+              toolName: toolCall.function.name,
+              error: errorMessage.slice(0, 300),
+            }));
             // PROD-T.3 (2026-05-23) — sanitize tool error before LLM exposure.
             // Raw provider text (OPENAI_API_KEY, quota, RESOURCE_EXHAUSTED, etc.)
             // must not be embedded in tool-call results, because the model can
@@ -11040,14 +11077,26 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       // fallback. callAiGatewayStream has built-in OpenAI 429 → Gemini fallback per PROD-Q,
       // closing the gap. skipGuardrails preserves the exact pre-migration system prompt
       // content (per Aaron's "no guardrail refactor during hotfix" constraint).
+      // PROD-BB instrumentation — synthesis attempt
+      console.log('[PROD-AA-DEBUG/synthesis_attempt]', JSON.stringify({
+        debug_trace_id: debugTraceId ?? null,
+        toolResultsCount: toolResults.length,
+        userTenantId: userTenantId ?? null,
+      }));
       const finalResult = await callAiGatewayStream({
         model: "gpt-4o-mini",
         messages: [{ role: "system", content: `${getUniversalGuardrails()}\n\n${AEGIS_TOOL_SUMMARIZER_PROMPT}` }, ...processedMessages, firstMessage, ...toolResults] as any,
         functionName: 'dashboard-ai-assistant',
-        extraContext: { call_site: 'tool-synthesis-standard' },
+        extraContext: { call_site: 'tool-synthesis-standard', debug_trace_id: debugTraceId ?? null, requestedTenantId: requestedTenantId ?? null, resolvedUserTenantId: userTenantId ?? null },
         skipGuardrails: true,
         timeoutMs: AI_TIMEOUT_MS,
       });
+      console.log('[PROD-AA-DEBUG/synthesis_result]', JSON.stringify({
+        debug_trace_id: debugTraceId ?? null,
+        hasStream: !!finalResult.stream,
+        error: finalResult.error ?? null,
+        circuitOpen: finalResult.circuitOpen ?? false,
+      }));
 
       if (finalResult.stream) {
         await pipeResponseBody(finalResult.stream);
