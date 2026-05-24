@@ -27,6 +27,8 @@ export function classifyUserSafeError(raw: string): string {
     return "The AI service didn't respond in time. Please try again.";
   if (/circuit/i.test(raw))
     return "AI service is in protective backoff. Please retry in a minute.";
+  if (/empty.?stream|empty.?completion|no.?content/i.test(raw))
+    return "The AI service returned an empty response — this is usually transient. Please try again.";
   return "I ran into an issue generating a response. Please try again. If it persists, refresh the page.";
 }
 

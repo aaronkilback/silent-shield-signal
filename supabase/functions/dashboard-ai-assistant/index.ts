@@ -10492,6 +10492,76 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       }
     };
 
+    // ── Empty-stream containment (Track A) ────────────────────────────────
+    // Root cause: callAiGatewayStream returns { stream } as soon as the
+    // upstream HTTP response is 200, WITHOUT reading it. An intermittent
+    // empty 200 completion (no content delta, no tool_calls) was therefore
+    // forwarded as a bare [DONE], which the frontend rendered as "I'm having
+    // trouble generating a response." Confirmed in prod via PROD-GG
+    // (debug_trace_id d18cd5ea-…: status=200, deltaCount=0, sawDoneMarker=true).
+    // Scope here is the FIRST (primary-classifier) call only — the proven
+    // failure path. Synthesis (pipeResponseBody) is intentionally NOT changed.
+    // Long-term this detection belongs in callAiGatewayStream; this is caller-
+    // side containment.
+    const logStreamOutcome = (o: {
+      phase: string; provider: string; model: string; upstream_stream: boolean;
+      contentDeltaCount: number; toolCallCount: number; empty_stream: boolean;
+      retry_attempt: number; debug_trace_id: string | null; error?: string | null;
+    }) => console.log('[AI-STREAM]', JSON.stringify({ ...o, error: o.error ?? null }));
+
+    // Parse a primary-classifier stream: forward content deltas live (OpenAI
+    // SSE format, mirroring the proven first-call forwarding), accumulate tool
+    // calls, and report whether the completion was empty. Forwards ONLY when
+    // content is present, so an empty result forwards nothing and is safe to retry.
+    const consumeFirstStream = async (stream: ReadableStream<Uint8Array>) => {
+      const reader = stream.getReader();
+      const dec = new TextDecoder();
+      let parseBuf = '';
+      let streamedContent = '';
+      let contentDeltaCount = 0;
+      const tcAccum: Record<number, { id: string; name: string; args: string }> = {};
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parseBuf += dec.decode(value, { stream: true });
+        const lines = parseBuf.split('\n');
+        parseBuf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') continue;
+          try {
+            const delta = JSON.parse(raw).choices?.[0]?.delta;
+            if (!delta) continue;
+            if (delta.content) {
+              streamedContent += delta.content;
+              contentDeltaCount++;
+              await writeSSEText(`${line}\n\n`); // forward in OpenAI SSE format
+            }
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const i = tc.index ?? 0;
+                if (!tcAccum[i]) tcAccum[i] = { id: '', name: '', args: '' };
+                if (tc.id) tcAccum[i].id = tc.id;
+                if (tc.function?.name) tcAccum[i].name += tc.function.name;
+                if (tc.function?.arguments) tcAccum[i].args += tc.function.arguments;
+              }
+            }
+          } catch { /* skip malformed SSE chunks */ }
+        }
+      }
+      const toolCalls = Object.values(tcAccum).map((tc, idx) => ({
+        index: idx, id: tc.id, type: 'function' as const,
+        function: { name: tc.name, arguments: tc.args },
+      }));
+      return {
+        streamedContent,
+        contentDeltaCount,
+        toolCalls,
+        empty: streamedContent === '' && toolCalls.length === 0,
+      };
+    };
+
     // Helper for forced report content extraction (used by both hallucination + explicit request paths)
     const extractBulletinImages = (msgs: any[]): string[] => {
       const images: string[] = [];
@@ -10600,79 +10670,76 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
+        const firstMessagesPayload = [
+          {
+            role: "system",
+            content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? ""),
+          },
+          ...processedMessages,
+        ] as any;
+
+        // Attempt 1 — OpenAI primary classifier.
         const firstResult = await callAiGatewayStream({
           model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? ""),
-            },
-            ...processedMessages,
-          ] as any,
+          messages: firstMessagesPayload,
           functionName: 'dashboard-ai-assistant',
           extraBody: { tools, tool_choice: "auto" },
-          extraContext: { call_site: 'primary-classifier', debug_trace_id: debugTraceId ?? null, requestedTenantId: requestedTenantId ?? null, resolvedUserTenantId: userTenantId ?? null },
+          extraContext: { call_site: 'primary-classifier', debug_trace_id: debugTraceId ?? null, retry_attempt: 0, requestedTenantId: requestedTenantId ?? null, resolvedUserTenantId: userTenantId ?? null },
           skipGuardrails: true,
           timeoutMs: AI_TIMEOUT_MS,
         });
 
+        let firstMessage: { role: 'assistant'; content: string | null; tool_calls?: any[] } | null = null;
+
         if (!firstResult.stream) {
-          // Both OpenAI primary AND Gemini fallback failed (or circuit-open).
-          // classifyUserSafeError maps the error class to a canonical user-safe message;
-          // replaces the previous 429/402/other branch which would write raw status codes.
+          // Total gateway failure (timeout / circuit / non-429). Unchanged behavior:
+          // the gateway already does OpenAI 429 → Gemini internally; other hard
+          // failures surface a canonical safe message. (NOT the empty-200 case.)
           const safeMsg = classifyUserSafeError(firstResult.error ?? 'circuit_open');
+          logStreamOutcome({ phase: 'first', provider: 'openai', model: 'gpt-4o-mini', upstream_stream: false, contentDeltaCount: 0, toolCallCount: 0, empty_stream: false, retry_attempt: 0, debug_trace_id: debugTraceId ?? null, error: firstResult.error });
           await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: safeMsg } }] })}\n\ndata: [DONE]\n\n`);
           return;
         }
 
-        // ── PARSE FIRST STREAM — forward content chunks, accumulate tool calls ─
-        const firstReader = firstResult.stream.getReader();
-        const dec = new TextDecoder();
-        let parseBuf = '';
-        let streamedContent = '';
-        const tcAccum: Record<number, { id: string; name: string; args: string }> = {};
+        const primary = await consumeFirstStream(firstResult.stream);
+        logStreamOutcome({ phase: 'first', provider: 'openai', model: 'gpt-4o-mini', upstream_stream: true, contentDeltaCount: primary.contentDeltaCount, toolCallCount: primary.toolCalls.length, empty_stream: primary.empty, retry_attempt: 0, debug_trace_id: debugTraceId ?? null });
 
-        while (true) {
-          const { done, value } = await firstReader.read();
-          if (done) break;
-          parseBuf += dec.decode(value, { stream: true });
-          const lines = parseBuf.split('\n');
-          parseBuf = lines.pop() ?? '';
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const raw = line.slice(6).trim();
-            if (raw === '[DONE]') continue;
-            try {
-              const chunk = JSON.parse(raw);
-              const delta = chunk.choices?.[0]?.delta;
-              if (!delta) continue;
-              if (delta.content) {
-                streamedContent += delta.content;
-                await writeSSEText(`${line}\n\n`); // forward in OpenAI SSE format
-              }
-              if (delta.tool_calls) {
-                for (const tc of delta.tool_calls) {
-                  const i = tc.index ?? 0;
-                  if (!tcAccum[i]) tcAccum[i] = { id: '', name: '', args: '' };
-                  if (tc.id) tcAccum[i].id = tc.id;
-                  if (tc.function?.name) tcAccum[i].name += tc.function.name;
-                  if (tc.function?.arguments) tcAccum[i].args += tc.function.arguments;
-                }
-              }
-            } catch { /* skip malformed SSE chunks */ }
+        if (!primary.empty) {
+          firstMessage = { role: 'assistant', content: primary.streamedContent || null, tool_calls: primary.toolCalls.length ? primary.toolCalls : undefined };
+        } else {
+          // CONTAINMENT — OpenAI returned an empty 200 completion. Because empty
+          // means we forwarded NOTHING, it is safe to retry. Per design, retry via
+          // GEMINI (provider diversity against OpenAI-specific empties), not OpenAI.
+          await new Promise((r) => setTimeout(r, 300 + Math.floor(Math.random() * 400))); // jitter
+          const geminiModel = Deno.env.get('OPENAI_FALLBACK_GEMINI_MODEL') ?? 'gemini-2.5-flash';
+          const retryResult = await callAiGatewayStream({
+            model: geminiModel,
+            messages: firstMessagesPayload,
+            functionName: 'dashboard-ai-assistant',
+            extraBody: { tools, tool_choice: "auto" },
+            extraContext: { call_site: 'primary-classifier-empty-retry', debug_trace_id: debugTraceId ?? null, retry_attempt: 1, requestedTenantId: requestedTenantId ?? null, resolvedUserTenantId: userTenantId ?? null },
+            skipGuardrails: true,
+            timeoutMs: AI_TIMEOUT_MS,
+          });
+
+          if (!retryResult.stream) {
+            // Gemini unavailable (e.g. GEMINI_API_KEY not configured / error). Surface
+            // an explicit transient message — never a silent [DONE].
+            logStreamOutcome({ phase: 'first', provider: 'gemini', model: geminiModel, upstream_stream: false, contentDeltaCount: 0, toolCallCount: 0, empty_stream: false, retry_attempt: 1, debug_trace_id: debugTraceId ?? null, error: retryResult.error });
+            await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: classifyUserSafeError('empty_stream') } }] })}\n\ndata: [DONE]\n\n`);
+            return;
           }
-        }
 
-        // Reconstruct firstMessage from streamed data
-        const streamedToolCalls = Object.values(tcAccum).map((tc, idx) => ({
-          index: idx, id: tc.id, type: 'function' as const,
-          function: { name: tc.name, arguments: tc.args },
-        }));
-        const firstMessage = {
-          role: 'assistant' as const,
-          content: streamedContent || null,
-          tool_calls: streamedToolCalls.length > 0 ? streamedToolCalls : undefined,
-        };
+          const retry = await consumeFirstStream(retryResult.stream);
+          logStreamOutcome({ phase: 'first', provider: 'gemini', model: geminiModel, upstream_stream: true, contentDeltaCount: retry.contentDeltaCount, toolCallCount: retry.toolCalls.length, empty_stream: retry.empty, retry_attempt: 1, debug_trace_id: debugTraceId ?? null });
+
+          if (retry.empty) {
+            // Both providers returned an empty completion — explicit transient message.
+            await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: classifyUserSafeError('empty_stream') } }] })}\n\ndata: [DONE]\n\n`);
+            return;
+          }
+          firstMessage = { role: 'assistant', content: retry.streamedContent || null, tool_calls: retry.toolCalls.length ? retry.toolCalls : undefined };
+        }
     
     // ── POST-STREAM ROUTING ──────────────────────────────────────────────────
     console.log("AI first response - has tool_calls:", !!firstMessage.tool_calls);
@@ -11128,8 +11195,17 @@ The user's message is just a conversational acknowledgment - respond in kind, do
       return;
     }
 
-    // Fallback: content already streamed (shouldn't normally reach here)
-    await writeDone();
+    // Containment: never emit a silent bare [DONE]. Reaching here means no
+    // tool-synthesis path ran. If the first call streamed real content (a direct
+    // answer), it is already on the wire — just close. Otherwise surface an
+    // explicit transient message instead of an empty stream.
+    if (typeof firstMessage?.content === 'string' && firstMessage.content.trim().length > 0) {
+      await writeDone();
+    } else {
+      logStreamOutcome({ phase: 'fallthrough', provider: 'unknown', model: 'unknown', upstream_stream: true, contentDeltaCount: 0, toolCallCount: 0, empty_stream: true, retry_attempt: 0, debug_trace_id: debugTraceId ?? null });
+      await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: classifyUserSafeError('empty_stream') } }] })}\n\n`);
+      await writeDone();
+    }
 
       } catch (bgErr) {
         // PROD-Q (2026-05-23): never embed raw provider/internal error text
