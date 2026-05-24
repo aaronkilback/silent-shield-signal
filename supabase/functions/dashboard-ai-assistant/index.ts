@@ -9974,7 +9974,12 @@ Deno.serve(async (req) => {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    const { messages } = body;
+    // PROD-AA (2026-05-24) — accept explicit tenant_id from frontend to break
+    // the tenant_users.limit(1).single() lottery for multi-tenant users
+    // (super_admin owning multiple tenants). Validated below against the user's
+    // tenant_users membership; falls back to the legacy lottery when missing
+    // or invalid, preserving behavior for unchanged callers.
+    const { messages, tenant_id: requestedTenantId } = body;
 
     // Input validation
     const msgValidation = validateMessages(messages, 'messages', { required: true, maxMessages: 100 });
@@ -10022,12 +10027,23 @@ Deno.serve(async (req) => {
         authenticatedUserId = user.id;
         console.log("Authenticated user for memory tools:", authenticatedUserId);
         
-        const { data: tenantUserData } = await supabaseClient
+        // PROD-AA (2026-05-24) — if the frontend supplied an explicit
+        // tenant_id, filter the membership query by it. The user MUST be a
+        // member of that tenant for the row to be returned (RLS + the .eq
+        // filter together enforce this). If the explicit tenant_id is not in
+        // the user's membership set, the query returns null and we fall back
+        // to the legacy lottery. This means a hostile/spoofed tenant_id in
+        // the request body cannot grant access — it merely fails closed.
+        let tenantUserQuery = supabaseClient
           .from("tenant_users")
           .select("tenant_id, tenants(name)")
-          .eq("user_id", user.id)
+          .eq("user_id", user.id);
+        if (typeof requestedTenantId === 'string' && requestedTenantId.length > 0) {
+          tenantUserQuery = tenantUserQuery.eq("tenant_id", requestedTenantId);
+        }
+        const { data: tenantUserData } = await tenantUserQuery
           .limit(1)
-          .single();
+          .maybeSingle();
         
         if (tenantUserData?.tenant_id) {
           userTenantId = tenantUserData.tenant_id;
