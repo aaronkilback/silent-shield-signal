@@ -201,12 +201,34 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
           }));
           // Store history separately — don't auto-populate the chat on load
           setHistoryMessages(formattedMessages);
-          setMessages([defaultMessage]);
-          // Set current conversation from last message so new messages append to it
-          const lastConvId = formattedMessages[formattedMessages.length - 1]?.conversation_id;
-          if (lastConvId) {
-            setCurrentConversationId(lastConvId);
-          }
+          // PROD-FF (2026-05-24) — non-destructive hydration. The prior unconditional
+          // setMessages([defaultMessage]) here destroyed successful streamed responses
+          // when loadMessages re-fired after a stream completed. PROD-DD instrumentation
+          // proved the stream succeeded (contentLength 2952, deltaCount 26, finishReason
+          // stop) yet the UI reset to the welcome state — because this branch clobbered
+          // the live `messages` with the default welcome. Only reset to the welcome
+          // message when the chat is still in its pristine default state; otherwise
+          // preserve whatever is active. NOTE: heuristics like
+          // `prev.length > 1 || prev.some(m => m.role === 'user')` were intentionally
+          // rejected — identity is the pristine-default check, not message-count.
+          setMessages(prev => {
+            const isOnlyDefaultWelcome =
+              prev.length === 1 &&
+              prev[0]?.id === defaultMessage.id;
+
+            if (!isOnlyDefaultWelcome) {
+              debug(`PROD-FF: preserving ${prev.length} active messages — hydration non-destructive`);
+              return prev;
+            }
+
+            return [defaultMessage];
+          });
+          // Set current conversation from last message so new messages append to it —
+          // but never clobber an already-active conversation id (the active chat owns it).
+          setCurrentConversationId(prev => {
+            if (prev) return prev;
+            return formattedMessages[formattedMessages.length - 1]?.conversation_id ?? prev;
+          });
           debug(`✅ Loaded ${formattedMessages.length} messages for ${viewMode} view (history hidden)`);
         } else if (viewMode === "personal") {
           // Only migrate from localStorage for personal view
