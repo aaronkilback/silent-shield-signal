@@ -58,7 +58,15 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   const formRef = useRef<HTMLFormElement>(null);
   
   const hasLoadedOnceRef = useRef(false);
-  
+  // PROD-Z (2026-05-24) — idempotency key for loadMessages. Prevents the destructive
+  // setMessages([defaultMessage]) re-fire when the useEffect runs with the SAME identity
+  // context as the last load. PROD-U fixed the `user` reference-flicker trigger; PROD-Z
+  // covers all other dep variants (currentTenant?.id flipping null→uuid on late tenant
+  // hydration, viewMode toggling and back, etc.) because the loadMessages logic re-fires
+  // regardless of which dep changed, and only the IDENTITY combo determines whether a
+  // genuine reload is needed.
+  const lastLoadKeyRef = useRef<string | null>(null);
+
   // Voice state
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState("");
@@ -119,6 +127,22 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
         }
         return;
       }
+
+      // PROD-Z (2026-05-24) — idempotency guard. If the useEffect re-fires with the
+      // SAME identity context as the last successful load (e.g. currentTenant?.id
+      // flicker from null→uuid after late tenant hydration, viewMode toggle and back,
+      // or any other dep variant), skip the reload. Otherwise loadMessages takes the
+      // populated-DB branch and clobbers an in-flight chat with setMessages([defaultMessage]).
+      // The DB rows still persisted — the user just loses their visible chat mid-tool-execution.
+      // Real-user prod browser test 2026-05-24T03:01Z confirmed the wipe symptom under
+      // exactly these conditions. PROD-U narrowed the `user` dep to `user?.id`; this covers
+      // the remaining dep variants without changing the dep array.
+      const loadKey = `${user.id}|${viewMode}|${currentTenant?.id ?? 'notenant'}|${location.pathname}`;
+      if (lastLoadKeyRef.current === loadKey) {
+        debug(`Skipping loadMessages — same identity key as last load (${loadKey})`);
+        return;
+      }
+      lastLoadKeyRef.current = loadKey;
 
       try {
         debug(`🔄 Loading chat history for user ${user.id}, mode: ${viewMode}`);
