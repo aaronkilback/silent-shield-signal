@@ -338,6 +338,21 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   "broadcast_to_agents",
   "synthesize_knowledge",
   "send_message_to_agent",
+  // PROD-EE (2026-05-24) — CRITICAL tenant isolation hotfix.
+  // Real-user prod reproduction: with selectedClient=Petronas (tenant
+  // feff5c44), get_recent_signals returned BC Place (CRT tenant
+  // 0aaaaaaa) + _dryrun_crt_smoketenant + _benchmark_petronas. These
+  // signal/incident read tools were previously NOT in TENANT_SCOPED_TOOLS,
+  // so the fail-closed gate never fired and handlers ran without
+  // tenant context against a SERVICE_ROLE client (RLS bypassed).
+  // The corresponding handler-level filtering is in
+  // _shared/handlers-signals-incidents.ts.
+  // Sibling read tools added defense-in-depth — handler hardening
+  // for those tracked as follow-up.
+  "get_recent_signals",
+  "get_active_incidents",
+  "search_signals_by_entity",
+  "get_signal_incident_status",
 ]);
 
 // Tools intentionally excluded from TENANT_SCOPED_TOOLS — these are global / system / external:

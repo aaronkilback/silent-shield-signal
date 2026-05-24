@@ -79,10 +79,34 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     };
   },
 
-  get_recent_signals: async (args, supabaseClient) => {
+  get_recent_signals: async (args, supabaseClient, _userId, tenantId, _tenantName) => {
+    // PROD-EE (2026-05-24) — CRITICAL tenant isolation hotfix.
+    // Real-user prod observation: with selectedClient=Petronas (tenant
+    // feff5c44) the LLM summary referenced BC Place (CRT tenant
+    // 0aaaaaaa), _dryrun_crt_smoketenant, and _benchmark_petronas.
+    // Root cause: this handler relied entirely on RLS. The dispatch
+    // path uses a SERVICE_ROLE client (RLS bypassed) → all-tenant
+    // signals returned to the LLM → summary mixed scopes.
+    //
+    // Doctrine: zero tenant contamination. Reject the call closed
+    // when tenantId is absent (defense-in-depth — dashboard-ai-
+    // assistant's TENANT_SCOPED_TOOLS gate is the primary fail-
+    // closed; this is the second gate). Always apply tenant_id +
+    // fixture-name filters even when tenantId is present.
+    if (!tenantId) {
+      console.warn("[PROD-EE] get_recent_signals invoked without tenantId — denied");
+      return {
+        error: "TENANT_BOUNDARY: get_recent_signals requires an active tenant context.",
+        signals: [],
+      };
+    }
+
     let query = supabaseClient
       .from("signals")
-      .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, source_url, clients(name)")
+      .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, source_url, clients!inner(name, tenant_id)")
+      .eq("tenant_id", tenantId)
+      .eq("clients.tenant_id", tenantId)
+      .not("clients.name", "ilike", "\\_%")
       .gte("received_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
       .order("received_at", { ascending: false })
       .limit(args.limit || 50);
@@ -90,15 +114,32 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     if (args.client_id) {
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (uuidRegex.test(args.client_id)) {
+        // Validate the requested client belongs to the active tenant
+        // before applying the filter — prevents LLM-supplied UUID
+        // from escaping the tenant scope.
+        const { data: clientCheck } = await supabaseClient
+          .from("clients")
+          .select("id")
+          .eq("id", args.client_id)
+          .eq("tenant_id", tenantId)
+          .maybeSingle();
+        if (!clientCheck) {
+          return {
+            message: `Client ${args.client_id} not found in current tenant scope`,
+            signals: [],
+          };
+        }
         query = query.eq("client_id", args.client_id);
       } else {
         const { data: client, error: clientError } = await supabaseClient
           .from("clients")
           .select("id")
+          .eq("tenant_id", tenantId)
+          .not("name", "ilike", "\\_%")
           .ilike("name", `%${args.client_id}%`)
           .limit(1)
-          .single();
-        if (clientError || !client) return { message: `No client found matching "${args.client_id}"`, signals: [] };
+          .maybeSingle();
+        if (clientError || !client) return { message: `No client found matching "${args.client_id}" in current tenant scope`, signals: [] };
         query = query.eq("client_id", client.id);
       }
     }
