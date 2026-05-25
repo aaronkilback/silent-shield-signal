@@ -203,6 +203,218 @@ export async function preGates(input: PreGateInput, deps: PreGateDeps): Promise<
   return { kind: "continue" };
 }
 
+// ── SLICE 2: classify ── verbatim lift of ingest-signal L740-982: few-shot calibration
+// (tenant-scoped DB reads), the gpt-4o-mini classifier call, result handling (scraped-news
+// verbatim normalization, confidence normalization, skip-gate floor, rules-severity override,
+// historical guardrail), fallback classification, and the unknown-category reject. The AI
+// gateway + Supabase are injected (deps) so the harness replays AI + stubs DB. The classifier's
+// telemetry + DLQ-on-failure are behaviors of callAiGatewayJson (the injected gateway), captured
+// by the replay stub. Time is not used here.
+export interface ClassifyWork {
+  signalText: string;
+  signalLocation: string | null;
+  rulesSeverity?: string | null;          // rulesResult.severity
+  explicitClientId: string | null;
+  signalRaw: Record<string, any>;
+  raw_json: Record<string, any> | null;
+  fallback_category?: string | null;
+  fallback_severity?: string | null;
+  skip_relevance_gate?: boolean;
+  isQaTest: boolean;                       // sourceType==='qa_test' || rawBody.sourceType==='qa_test' || is_test===true
+  classification?: any;                    // OUTPUT
+}
+export interface ClassifyDeps {
+  supabase: any;
+  callAiGatewayJson: (args: any) => Promise<{ data?: any; error?: any }>;
+}
+
+export async function classify(work: ClassifyWork, deps: ClassifyDeps): Promise<StageResult> {
+  const { signalText, signalLocation, rulesSeverity, explicitClientId, signalRaw, raw_json,
+    fallback_category, fallback_severity, skip_relevance_gate } = work;
+  const supabase = deps.supabase;
+
+  let classification: any = {
+    normalized_text: signalText,
+    entity_tags: [],
+    location: signalLocation,
+    category: "unknown",
+    severity: rulesSeverity || "medium",
+    confidence: 0.5,
+  };
+
+  // #130 Phase 0B — tenant-scoped few-shot calibration (fail-closed if no tenant context)
+  let fewShotTenantId: string | null = null;
+  if (explicitClientId) {
+    const { data: fewShotClientRow } = await supabase
+      .from("clients").select("tenant_id").eq("id", explicitClientId).maybeSingle();
+    fewShotTenantId = fewShotClientRow?.tenant_id ?? null;
+  }
+
+  let fewShotBlock = "";
+  let fewShotTelemetry: { state: string; tenant_id: string | null; examples: number } = {
+    state: "unknown", tenant_id: fewShotTenantId, examples: 0,
+  };
+  try {
+    if (!fewShotTenantId) {
+      fewShotTelemetry = { state: "skipped_no_tenant", tenant_id: null, examples: 0 };
+      console.log(`[#130 telemetry] ingest-signal few_shot=skipped reason=no_tenant_context`);
+    } else {
+      const { data: feedbackEvents } = await supabase
+        .from("feedback_events")
+        .select("feedback, notes, correction, object_id, signals!inner(tenant_id)")
+        .eq("object_type", "signal")
+        .eq("signals.tenant_id", fewShotTenantId)
+        .in("feedback", ["irrelevant", "wrong_severity", "confirmed"])
+        .not("notes", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(8);
+
+      if (feedbackEvents && feedbackEvents.length > 0) {
+        const signalIds = feedbackEvents.map((e: any) => e.object_id).filter(Boolean);
+        const { data: signalTitles } = signalIds.length > 0
+          ? await supabase.from("signals").select("id, title, severity, category").in("id", signalIds)
+          : { data: [] };
+        const titleMap = Object.fromEntries((signalTitles || []).map((s: any) => [s.id, s]));
+
+        const examples = feedbackEvents
+          .map((ex: any) => {
+            const sig = titleMap[ex.object_id];
+            if (!sig) return null;
+            if (ex.feedback === "irrelevant") return `- IRRELEVANT [${sig.category}]: "${sig.title?.substring(0, 80)}"${ex.notes ? ` — ${ex.notes}` : ""}`;
+            if (ex.feedback === "wrong_severity") return `- SEVERITY CORRECTION [${sig.severity} → ${ex.correction || "?"}]: "${sig.title?.substring(0, 80)}"${ex.notes ? ` — ${ex.notes}` : ""}`;
+            if (ex.feedback === "confirmed") return `- CONFIRMED RELEVANT [${sig.category}]: "${sig.title?.substring(0, 80)}"`;
+            return null;
+          })
+          .filter(Boolean);
+
+        if (examples.length > 0) {
+          fewShotBlock = "\n\nANALYST CALIBRATION EXAMPLES (learn from these real corrections):\n" + examples.join("\n");
+          fewShotTelemetry = { state: "applied", tenant_id: fewShotTenantId, examples: examples.length };
+          console.log(`[#130 telemetry] ingest-signal few_shot=applied tenant=${fewShotTenantId} examples=${examples.length}`);
+        } else {
+          fewShotTelemetry = { state: "applied_empty", tenant_id: fewShotTenantId, examples: 0 };
+          console.log(`[#130 telemetry] ingest-signal few_shot=applied_empty tenant=${fewShotTenantId} (no tenant-local feedback yet)`);
+        }
+      } else {
+        fewShotTelemetry = { state: "applied_empty", tenant_id: fewShotTenantId, examples: 0 };
+        console.log(`[#130 telemetry] ingest-signal few_shot=applied_empty tenant=${fewShotTenantId} (query returned 0)`);
+      }
+    }
+  } catch (err) {
+    fewShotTelemetry = { state: "error", tenant_id: fewShotTenantId, examples: 0 };
+    console.warn(`[#130 telemetry] ingest-signal few_shot=error tenant=${fewShotTenantId} err=${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const classResult = await deps.callAiGatewayJson({
+    model: "gpt-4o-mini",
+    extraContext: {
+      few_shot_state: fewShotTelemetry.state,
+      few_shot_tenant_id: fewShotTelemetry.tenant_id,
+      few_shot_examples: fewShotTelemetry.examples,
+      explicit_client_id_provided: !!explicitClientId,
+    },
+    messages: [
+      {
+        role: "system",
+        content: `You are a PECL (Physical, Environmental, Cyber, Legal) security intelligence classifier for a corporate protective intelligence platform.
+
+Extract the following fields as JSON:
+- normalized_text: clean, factual one-paragraph summary of the event
+- entity_tags: array of named entities (people, orgs, locations, IPs, domains, project names)
+- location: specific geographic location if mentioned
+- category: one of — active_threat, protest, sabotage, physical_threat, trespass, surveillance, wildfire, hazmat, flood, natural_disaster, malware, phishing, intrusion, data_exfil, ddos, ransomware, regulatory, litigation, compliance, injunction, activism, social_sentiment, crime, document_upload, insider_threat, other
+- severity: critical | high | medium | low (see rules below)
+- confidence: 0-100
+- event_date: ISO 8601 date (YYYY-MM-DD) of WHEN THE EVENT OCCURRED — extract from text clues, not crawl date
+- is_historical: true if event occurred >90 days ago
+
+SEVERITY RULES:
+- critical: Immediate threat to life/safety, active sabotage in progress, ongoing breach, credible imminent attack
+- high: Planned direct action within 7 days, serious legal order affecting operations, active malware campaign targeting sector
+- medium: Activist monitoring, routine regulatory filing, general cyber indicator, planned protest >7 days out
+- low: Historical event >90 days ago, informational/background, geopolitical context with no direct client nexus
+
+CATEGORY GUIDANCE:
+- active_threat: Use for ongoing or imminent threats requiring immediate attention (violence, active sabotage, credible attack)
+- insider_threat: ONLY for individuals with a direct employment, contractor, or privileged access relationship to the client organization. Public activists, protesters, Indigenous land defenders, journalists, and named individuals WITHOUT a direct employment or access relationship to the client are NEVER insider threats — classify them as active_threat, protest, activism, or social_sentiment instead.
+- social_sentiment: Use for aftermath/recovery coverage, public reactions, and ongoing media attention to a past event (e.g. shooting victim updates weeks after the incident)
+- protest / activism: Use for Indigenous land defense actions, pipeline opposition, environmental campaigns, direct action by external parties
+
+TEMPORAL RULES:
+- Extract the ACTUAL event date, not publication date
+- Historical signals (>90 days old) MUST be severity "low" unless actively resurging
+- Past years (2019-2024) = is_historical true${fewShotBlock}
+
+TITLE AND NORMALIZATION RULES:
+- The normalized_text must be a faithful compression of what the source actually says — not an interpretation
+- Never attribute a role or position to a named individual unless that role is explicitly stated in the source text
+- If the source mentions a person in a different context (their new company, a past role, a passing reference), do not reframe them in any other role
+- If the source is about Company A and merely mentions Person X who previously worked at Company B, the normalized_text is about Company A — not about Person X's role at Company B
+- If uncertain whether a claim appears in the source, omit it from normalized_text entirely
+
+Respond ONLY with valid JSON.`,
+      },
+      { role: "user", content: signalText },
+    ],
+    functionName: "ingest-signal",
+    dlqOnFailure: true,
+    dlqPayload: { signalText: signalText.substring(0, 500) },
+  });
+
+  if (classResult.data) {
+    const sourceTag = String(signalRaw?.source || raw_json?.source || "");
+    const isScrapedNews =
+      sourceTag === "google_news_api" || sourceTag === "rss" || sourceTag === "rss_feed" || sourceTag === "GitHub Code Search";
+    const llmFields = isScrapedNews ? { ...classResult.data, normalized_text: signalText } : classResult.data;
+    classification = { ...classification, ...llmFields };
+    if (classResult.data.confidence && classResult.data.confidence > 1) {
+      classification.confidence = classResult.data.confidence / 100;
+    }
+    if (skip_relevance_gate && classification.confidence < 0.75) {
+      classification.confidence = 0.80;
+    }
+    if (rulesSeverity) {
+      classification.severity = rulesSeverity;
+    }
+    if (classResult.data.is_historical === true) {
+      console.log(`[HISTORICAL GUARDRAIL] AI classified signal as historical — forcing severity to low`);
+      if (!rulesSeverity) {
+        classification.severity = "low";
+      }
+    }
+  } else if (classResult.error) {
+    console.warn(`[Classifier] AI classification failed: ${classResult.error}. signalText="${signalText.substring(0, 120)}"`);
+  }
+
+  if (classification.category === "unknown" && fallback_category) {
+    console.log(`[Classifier Fallback] Using fallback_category=${fallback_category} for monitor-supplied signal`);
+    classification.category = fallback_category;
+    if (fallback_severity && !rulesSeverity) {
+      classification.severity = fallback_severity;
+    }
+    if (classification.confidence < 0.70) {
+      classification.confidence = 0.75;
+    }
+  }
+
+  const isQaTestForCategory = work.isQaTest;
+  if (
+    classification.category === "unknown" &&
+    !rulesSeverity &&
+    !skip_relevance_gate &&
+    !isQaTestForCategory
+  ) {
+    console.log(`[Category Filter] Rejecting uncategorizable signal: ${signalText.substring(0, 100)}...`);
+    return { kind: "terminal", result: {
+      outcome: "rejected", reason: "uncategorizable", httpStatusHint: 200, payloadShape: "rejected",
+      body: { status: "rejected", reason: "uncategorizable", message: "AI classifier could not assign a category — signal lacks structure to be actionable intelligence" },
+    } };
+  }
+
+  work.classification = classification;
+  return { kind: "continue" };
+}
+
 export async function runExternalCrawledAdmission(
   _candidate: SignalCandidate,
   _ctx: AdmissionContext,
