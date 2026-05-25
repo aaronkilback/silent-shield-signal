@@ -12,12 +12,12 @@ export function stubSupabase(
   fixtures: Record<string, TableFixture>,
   invokeResults: Record<string, { data?: any; error?: any }> = {},
 ) {
-  const calls: { table: string; ops: string[] }[] = [];
+  const calls: { table: string; ops: string[]; writes: { op: string; payload: any }[] }[] = [];
   const invokeCalls: { name: string; body: any }[] = [];
   const perTableCount: Record<string, number> = {};
   const sb = {
     from(table: string) {
-      const rec = { table, ops: [] as string[] };
+      const rec = { table, ops: [] as string[], writes: [] as { op: string; payload: any }[] };
       calls.push(rec);
       perTableCount[table] = (perTableCount[table] ?? 0) + 1;
       const fx = fixtures[`${table}#${perTableCount[table]}`] ?? fixtures[table] ?? { data: null, error: null };
@@ -30,7 +30,11 @@ export function stubSupabase(
           if (prop === "then") return (res: any, rej: any) => settle().then(res, rej);
           if (prop === "catch") return (f: any) => settle().catch(f);
           if (prop === "finally") return (f: any) => settle().finally(f);
-          return (..._args: any[]) => { rec.ops.push(String(prop)); return builder; };
+          return (...args: any[]) => {
+            rec.ops.push(String(prop));
+            if (prop === "insert" || prop === "update" || prop === "upsert") rec.writes.push({ op: String(prop), payload: args[0] });
+            return builder;
+          };
         },
       });
       return builder;

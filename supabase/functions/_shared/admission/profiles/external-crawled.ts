@@ -810,6 +810,166 @@ Score this signal's relevance and classify the connection.`,
   return { kind: "continue" };
 }
 
+// ── SLICE 5: signals insert ── verbatim lift of ingest-signal L1672-1866: relevance scoring
+// (scoreSignalRelevance) + suppress, event/surface-date, staleness gate, severity_score,
+// quality_score, foreign-alignment, the signals insert (the 12th core effect), and insert
+// success/failure. scoreSignalRelevance + foreign-alignment + clock are injected. The controller
+// boundary ends HERE (at the insert); the post-insert orchestration tail stays in ingest-signal.
+export interface InsertWork {
+  classification: any;
+  signalText: string;
+  source_key?: string | null;
+  skip_relevance_gate?: boolean;
+  signalRaw: Record<string, any>;
+  signalTitle: string;
+  sourceId: string | null;
+  clientId: string | null;
+  matchedKeywords: string[];
+  matchConfidence: string;
+  source_url?: string | null;
+  image_url?: string | null;
+  is_test?: boolean;
+  platform?: string | null;
+  contentHash: string;
+  classResultData?: any;            // classResult.data (for event_date)
+}
+export interface InsertDeps {
+  supabase: any;
+  now: () => number;
+  scoreSignalRelevance: (supabase: any, text: string, category: string | null, severityNum: number, sourceKey: string | null) => Promise<{ score: number; recommendation: string; matchedPatterns: string[]; reason: string }>;
+  extractMentions: (text: string) => string[];
+  scoreForeignAlignment: (text: string, mentions: string[], author: string | null) => { score: number; indicators: any[]; matched_handles: any[]; matched_phrases: any[] };
+}
+
+export async function insert(work: InsertWork, deps: InsertDeps): Promise<StageResult> {
+  const { classification, signalText, source_key, skip_relevance_gate, signalRaw, signalTitle,
+    sourceId, clientId, matchedKeywords, matchConfidence, source_url, image_url, is_test, platform, contentHash } = work;
+  const supabase = deps.supabase;
+
+  const severityNum = classification.severity === "critical" ? 100 :
+    classification.severity === "high" ? 75 :
+    classification.severity === "medium" ? 50 :
+    classification.severity === "low" ? 20 : 50;
+
+  const relevanceResult = await deps.scoreSignalRelevance(
+    supabase, classification.normalized_text || signalText, classification.category || null, severityNum, source_key || null,
+  );
+
+  console.log(`[Relevance] Score: ${relevanceResult.score.toFixed(2)}, Recommendation: ${relevanceResult.recommendation}, Patterns: ${relevanceResult.matchedPatterns.join(", ")}`);
+
+  if (relevanceResult.recommendation === "suppress") {
+    console.log(`[Relevance] SUPPRESSING signal: ${relevanceResult.reason}`);
+    return { kind: "terminal", result: {
+      outcome: "rejected", reason: relevanceResult.reason, httpStatusHint: 200, payloadShape: "rejected",
+      body: { status: "suppressed", reason: relevanceResult.reason, relevance_score: relevanceResult.score, matched_patterns: relevanceResult.matchedPatterns, message: "Signal suppressed by relevance filter based on learned patterns" },
+    } };
+  }
+
+  const signalStatus = "new";
+
+  let eventDate: string | null = null;
+  let surfaceDate: Date = new Date(deps.now());
+  if (work.classResultData?.event_date) {
+    try {
+      const parsed = new Date(work.classResultData.event_date);
+      if (!isNaN(parsed.getTime())) { eventDate = parsed.toISOString(); console.log(`[EventDate] AI-extracted event_date: ${eventDate}`); }
+    } catch { /* ignore */ }
+  }
+  const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date || signalRaw?.published || signalRaw?.date || signalRaw?.article_published_time;
+  if (rawPubDate) {
+    try { const parsed = new Date(rawPubDate); if (!isNaN(parsed.getTime())) surfaceDate = parsed; } catch { /* ignore */ }
+  }
+  if (!eventDate) eventDate = surfaceDate.toISOString();
+
+  let isHistorical = false;
+  let triageOverride: string | null = null;
+  if (!skip_relevance_gate) {
+    const cyberCategories = ["malware", "phishing", "intrusion", "data_exfil", "ddos", "ransomware"];
+    const isCyber = cyberCategories.includes(classification.category || "");
+    const cutoffDays = isCyber ? 730 : 365;
+    const cutoff = new Date(deps.now());
+    cutoff.setDate(cutoff.getDate() - cutoffDays);
+    if (surfaceDate < cutoff) {
+      const daysOld = Math.floor((deps.now() - surfaceDate.getTime()) / 86400000);
+      isHistorical = true;
+      triageOverride = "historical";
+      console.log(`[Staleness] Routing to historical — surface_date ${surfaceDate.toISOString()} is ${daysOld} days old (limit: ${cutoffDays})`);
+    }
+  }
+
+  const severityScore = (() => {
+    const base = classification.severity === "critical" ? 90 : classification.severity === "high" ? 70 : classification.severity === "medium" ? 40 : 20;
+    const adjustment = Math.round((relevanceResult.score - 0.5) * 20);
+    return Math.max(0, Math.min(100, base + adjustment));
+  })();
+
+  const qualityScore = (() => {
+    let q = 0;
+    if (signalRaw?.url || signalRaw?.source_url || signalRaw?.link) q += 0.25;
+    if ((classification.entity_tags?.length ?? 0) > 0) q += 0.25;
+    if (classification.location) q += 0.25;
+    if (classification.category) q += 0.125;
+    if ((classification.normalized_text?.length ?? 0) > 50) q += 0.125;
+    return q;
+  })();
+
+  const fa_text = `${signalTitle || ""} ${classification.normalized_text || signalText || ""}`;
+  const fa_author = (signalRaw as { author_handle?: string; author?: { username?: string } })?.author_handle
+    ?? (signalRaw as { author?: { username?: string } })?.author?.username ?? null;
+  const fa_mentions = deps.extractMentions(fa_text);
+  const fa = deps.scoreForeignAlignment(fa_text, fa_mentions, fa_author ? `@${fa_author.replace(/^@/, "")}` : null);
+
+  const { data: signal, error: insertError } = await supabase
+    .from("signals")
+    .insert({
+      source_id: sourceId,
+      client_id: clientId,
+      title: signalTitle,
+      foreign_alignment_score: fa.score > 0 ? fa.score : null,
+      foreign_alignment_indicators: fa.indicators,
+      raw_json: {
+        ...signalRaw,
+        matched_keywords: matchedKeywords.length > 0 ? matchedKeywords : undefined,
+        match_confidence: matchConfidence,
+        match_timestamp: new Date(deps.now()).toISOString(),
+        relevance_score: relevanceResult.score,
+        relevance_patterns: relevanceResult.matchedPatterns,
+        relevance_recommendation: relevanceResult.recommendation,
+        foreign_alignment: fa.score > 0 ? { score: fa.score, indicators: fa.indicators, matched_handles: fa.matched_handles, matched_phrases: fa.matched_phrases } : undefined,
+      },
+      normalized_text: classification.normalized_text,
+      entity_tags: classification.entity_tags,
+      location: classification.location,
+      category: classification.category,
+      severity: classification.severity,
+      severity_score: severityScore,
+      quality_score: qualityScore,
+      confidence: classification.confidence,
+      relevance_score: relevanceResult.score,
+      status: signalStatus,
+      is_test: is_test || false,
+      content_hash: contentHash,
+      event_date: eventDate,
+      triage_override: triageOverride,
+      signal_type: isHistorical ? "historical" : null,
+      source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
+      image_url: image_url || signalRaw?.image_url || signalRaw?.og_image || signalRaw?.thumbnail || null,
+      platform: platform ?? null,
+    })
+    .select()
+    .single();
+
+  if (insertError) {
+    console.error("Insert error:", insertError);
+    throw new Error(`Signal insert failed: ${insertError.message} (code: ${insertError.code}, details: ${insertError.details})`);
+  }
+
+  console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(", ")})` : ""}`);
+
+  // Controller boundary: admitted. ingest-signal runs the post-insert orchestration tail.
+  return { kind: "terminal", result: { outcome: "admitted", signal_id: signal.id, httpStatusHint: 200, payloadShape: "accepted" } };
+}
+
 export async function runExternalCrawledAdmission(
   _candidate: SignalCandidate,
   _ctx: AdmissionContext,
