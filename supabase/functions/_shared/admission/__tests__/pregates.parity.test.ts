@@ -144,10 +144,10 @@ const CASES: Array<{ name: string; input: PreGateInput; golden: Golden }> = [
   },
   {
     name: "test filter → 200",
-    input: base({ source_url: CBC, text: "Alerts Archives - weekly" }),
+    input: base({ source_url: CBC, text: "this is a test signal" }),
     golden: { kind: "terminal", httpStatusHint: 200, reason: "test_content",
       body: { status: "rejected", reason: "test_content", message: "Test/verification content rejected from production pipeline" },
-      telemetry: [], logs: [{ level: "log", msg: `[Test Filter] Rejecting test content: Alerts Archives - weekly...` }] },
+      telemetry: [], logs: [{ level: "log", msg: `[Test Filter] Rejecting test content: this is a test signal...` }] },
   },
   {
     name: "clean pass-through → continue (no mutation, no log)",
