@@ -10503,11 +10503,16 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     // failure path. Synthesis (pipeResponseBody) is intentionally NOT changed.
     // Long-term this detection belongs in callAiGatewayStream; this is caller-
     // side containment.
+    // [AI-STREAM] telemetry — one structured line per stream attempt. Enables
+    // computing, from edge logs:
+    //   empty_stream rate   = count(retry_attempt=0 AND empty_stream=true) / count(retry_attempt=0)
+    //   retry_success rate  = count(retry_outcome='recovered')             / count(retry_attempt=1)
     const logStreamOutcome = (o: {
       phase: string; provider: string; model: string; upstream_stream: boolean;
       contentDeltaCount: number; toolCallCount: number; empty_stream: boolean;
-      retry_attempt: number; debug_trace_id: string | null; error?: string | null;
-    }) => console.log('[AI-STREAM]', JSON.stringify({ ...o, error: o.error ?? null }));
+      retry_attempt: number; debug_trace_id: string | null;
+      retry_outcome?: 'recovered' | 'still_empty' | null; error?: string | null;
+    }) => console.log('[AI-STREAM]', JSON.stringify({ ...o, retry_outcome: o.retry_outcome ?? null, error: o.error ?? null }));
 
     // Parse a primary-classifier stream: forward content deltas live (OpenAI
     // SSE format, mirroring the proven first-call forwarding), accumulate tool
@@ -10707,13 +10712,15 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         if (!primary.empty) {
           firstMessage = { role: 'assistant', content: primary.streamedContent || null, tool_calls: primary.toolCalls.length ? primary.toolCalls : undefined };
         } else {
-          // CONTAINMENT — OpenAI returned an empty 200 completion. Because empty
-          // means we forwarded NOTHING, it is safe to retry. Per design, retry via
-          // GEMINI (provider diversity against OpenAI-specific empties), not OpenAI.
+          // CONTAINMENT — OpenAI returned an empty 200 completion (no content,
+          // no tool_calls). Empty means we forwarded NOTHING, so it is safe to
+          // retry. Retry the SAME provider (OpenAI) once with jitter. Gemini is
+          // reserved as a true fallback and is intentionally NOT invoked for
+          // routine dashboard chat (provider-spend discipline). If still empty,
+          // surface a clear transient message — never a silent [DONE].
           await new Promise((r) => setTimeout(r, 300 + Math.floor(Math.random() * 400))); // jitter
-          const geminiModel = Deno.env.get('OPENAI_FALLBACK_GEMINI_MODEL') ?? 'gemini-2.5-flash';
           const retryResult = await callAiGatewayStream({
-            model: geminiModel,
+            model: "gpt-4o-mini",
             messages: firstMessagesPayload,
             functionName: 'dashboard-ai-assistant',
             extraBody: { tools, tool_choice: "auto" },
@@ -10723,18 +10730,18 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           });
 
           if (!retryResult.stream) {
-            // Gemini unavailable (e.g. GEMINI_API_KEY not configured / error). Surface
-            // an explicit transient message — never a silent [DONE].
-            logStreamOutcome({ phase: 'first', provider: 'gemini', model: geminiModel, upstream_stream: false, contentDeltaCount: 0, toolCallCount: 0, empty_stream: false, retry_attempt: 1, debug_trace_id: debugTraceId ?? null, error: retryResult.error });
+            // Retry call failed outright — explicit transient message, never a silent [DONE].
+            logStreamOutcome({ phase: 'first', provider: 'openai', model: 'gpt-4o-mini', upstream_stream: false, contentDeltaCount: 0, toolCallCount: 0, empty_stream: false, retry_attempt: 1, retry_outcome: 'still_empty', debug_trace_id: debugTraceId ?? null, error: retryResult.error });
             await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: classifyUserSafeError('empty_stream') } }] })}\n\ndata: [DONE]\n\n`);
             return;
           }
 
           const retry = await consumeFirstStream(retryResult.stream);
-          logStreamOutcome({ phase: 'first', provider: 'gemini', model: geminiModel, upstream_stream: true, contentDeltaCount: retry.contentDeltaCount, toolCallCount: retry.toolCalls.length, empty_stream: retry.empty, retry_attempt: 1, debug_trace_id: debugTraceId ?? null });
+          logStreamOutcome({ phase: 'first', provider: 'openai', model: 'gpt-4o-mini', upstream_stream: true, contentDeltaCount: retry.contentDeltaCount, toolCallCount: retry.toolCalls.length, empty_stream: retry.empty, retry_attempt: 1, retry_outcome: retry.empty ? 'still_empty' : 'recovered', debug_trace_id: debugTraceId ?? null });
 
           if (retry.empty) {
-            // Both providers returned an empty completion — explicit transient message.
+            // OpenAI returned empty twice — explicit transient message.
+            // Gemini intentionally NOT used as automatic fallback for dashboard chat.
             await writeSSEText(`data: ${JSON.stringify({ choices: [{ delta: { content: classifyUserSafeError('empty_stream') } }] })}\n\ndata: [DONE]\n\n`);
             return;
           }
