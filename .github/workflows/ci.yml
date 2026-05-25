@@ -264,3 +264,17 @@ jobs:
           TEST_INVARIANT_USER_A_PASSWORD: ${{ secrets.TEST_INVARIANT_USER_A_PASSWORD }}
           TEST_INVARIANT_USER_B_EMAIL: ${{ secrets.TEST_INVARIANT_USER_B_EMAIL }}
           TEST_INVARIANT_USER_B_PASSWORD: ${{ secrets.TEST_INVARIANT_USER_B_PASSWORD }}
+
+  dgic-parity:
+    name: DGIC Admission Parity (Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: DGIC admission controller parity harness
+        # Proves the lifted external/crawled admission stages are byte-for-byte equivalent to
+        # legacy (response body/status, telemetry effects, log semantics), with only the approved
+        # nondeterminism allowlist (timestamps/duration) normalized. Offline; no deploy, no network.
+        run: deno test --no-check supabase/functions/_shared/admission/
