@@ -9,8 +9,9 @@
 //
 // Phase B: NO DGIC enforcement, NO quality_status change, NO schema stamp. The dgicStage seam
 // is a no-op pass-through. External/crawled is behavior-equivalent to today's ingest-signal.
-import type { AdmissionContext, AdmissionResult, Classification, SignalCandidate, StageResult } from "./types.ts";
+import type { AdmissionContext, AdmissionResult, Classification, SignalCandidate } from "./types.ts";
 import { runExternalCrawledAdmission } from "./profiles/external-crawled.ts";
+export { dgicStage } from "./dgic-stage.ts"; // re-export the seam (defined in its own module to avoid a controller↔profile import cycle)
 
 export class NotImplementedMode extends Error {}
 
@@ -26,13 +27,3 @@ export async function admitSignal(
   throw new NotImplementedMode(`admission mode not implemented: ${JSON.stringify(cls)}`);
 }
 
-/**
- * DGIC evaluation seam. Placed by each profile AFTER relevanceGate, BEFORE the signals insert.
- * PHASE B: no-op pass-through — admits unchanged.
- * FUTURE P1 (audit-only): stamp dgic.* on the row, still `continue`.
- * FUTURE (enforce): return a terminal result on sub_grade / evaluator-error (fail-closed).
- * Declaring it now means later phases insert at ONE point, never re-threading the controller.
- */
-export async function dgicStage(_working: unknown, _ctx: AdmissionContext): Promise<StageResult> {
-  return { kind: "continue" };
-}

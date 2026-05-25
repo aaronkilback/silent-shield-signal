@@ -44,6 +44,55 @@ export interface AdmissionContext {
   requestStartedAt: number;                      // for duration_ms parity
   dryRun?: boolean;                              // parity harness: capture-intent, execute NO writes
   logger?: (line: string) => void;              // wrap console.* so log lines are preserved verbatim
+  // injected dependencies (wiring/tests provide; the stages use these instead of direct imports)
+  now: () => number;
+  callAiGatewayJson: (args: any) => Promise<any>;
+  recordTelemetry: (client: unknown, payload: Record<string, unknown>) => Promise<void> | void;
+  scoreSignalRelevance: (supabase: any, text: string, category: string | null, severityNum: number, sourceKey: string | null) => Promise<{ score: number; recommendation: string; matchedPatterns: string[]; reason: string }>;
+  extractMentions: (text: string) => string[];
+  scoreForeignAlignment: (text: string, mentions: string[], author: string | null) => { score: number; indicators: any[]; matched_handles: any[]; matched_phrases: any[] };
+}
+
+// The assembled per-request working state threaded through the external/crawled stages. ingest-
+// signal (wiring step, later) builds this from its validated request + client-validation result;
+// the controller composes the stages over it. `classification` is the one value PRODUCED mid-
+// pipeline (by classify) and threaded into dedup/relevance/insert.
+export interface WorkingSignal {
+  // pre-gate inputs (client validation resolved upstream)
+  validatedExplicitClientId: string | null;
+  tenant_broadcast?: { scope?: string } | null;
+  callerKind: string;
+  // content / source
+  text?: string | null;
+  event?: { title?: string } | null;
+  url?: string | null;
+  source_url?: string | null;
+  source_key?: string | null;
+  raw_json: Record<string, any> | null;
+  signalRaw: Record<string, any>;
+  signalLocation: string | null;
+  signalTitle: string;
+  // classification inputs / flags
+  rulesSeverity?: string | null;
+  explicitClientId: string | null;
+  fallback_category?: string | null;
+  fallback_severity?: string | null;
+  skip_relevance_gate?: boolean;
+  isQaTest: boolean;
+  sourceType?: string | null;
+  rawBodySourceType?: string | null;
+  rawBodyIsTest?: boolean;
+  isTest?: boolean;
+  classResultData?: any;
+  // tenancy / insert metadata (resolved upstream)
+  clientId: string | null;
+  sourceId: string | null;
+  matchedKeywords: string[];
+  matchConfidence: string;
+  image_url?: string | null;
+  platform?: string | null;
+  // threaded mid-pipeline
+  classification?: any;
 }
 
 export interface DryRunEffect {

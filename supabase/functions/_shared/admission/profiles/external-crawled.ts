@@ -15,7 +15,8 @@
 // disabled (flag defaults to legacy).
 import { isFalsePositiveContent } from "../../keyword-matcher.ts";
 import { isTestContent } from "../../signal-relevance-scorer.ts";
-import type { AdmissionContext, AdmissionResult, SignalCandidate, StageResult } from "../types.ts";
+import { dgicStage } from "../dgic-stage.ts";
+import type { AdmissionContext, AdmissionResult, SignalCandidate, StageResult, WorkingSignal } from "../types.ts";
 
 export class AdmissionExtractionPending extends Error {}
 
@@ -970,12 +971,64 @@ export async function insert(work: InsertWork, deps: InsertDeps): Promise<StageR
   return { kind: "terminal", result: { outcome: "admitted", signal_id: signal.id, httpStatusHint: 200, payloadShape: "accepted" } };
 }
 
+// ── ASSEMBLY ── compose the five proven stages into the external/crawled admission pipeline:
+// preGates → classify → dedup → relevance → dgicStage(no-op) → insert. Each terminal short-
+// circuits (returns its AdmissionResult). `classification` is threaded from classify into
+// dedup/relevance/insert; `contentHash` is computed once (as dedup does — deterministic) and
+// threaded to insert. Controller boundary ends at the insert; ingest-signal runs the post-insert
+// orchestration tail. Phase B: NO DGIC stamp, NO quality_status change. Controller stays disabled
+// (flag false) until wired + burned-in.
 export async function runExternalCrawledAdmission(
-  _candidate: SignalCandidate,
-  _ctx: AdmissionContext,
+  work: WorkingSignal,
+  ctx: AdmissionContext,
 ): Promise<AdmissionResult> {
-  // Slices 2-5 not yet lifted; controller path must not be enabled. Flag defaults to legacy.
-  throw new AdmissionExtractionPending(
-    "external/crawled pipeline incomplete (pre-gates slice only). Controller disabled until all slices land + parity green.",
+  const signalText = work.text || JSON.stringify(work.event);
+
+  // contentHash threaded to insert (dedup computes its own identical value; deterministic).
+  const contentToHash = work.source_url ? `url:${work.source_url}` : signalText;
+  const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(contentToHash));
+  const contentHash = Array.from(new Uint8Array(hb)).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+  // 1. pre-gates (#256 contract, F-034, FP/test)
+  const pre = await preGates(
+    { validatedExplicitClientId: work.validatedExplicitClientId, tenant_broadcast: work.tenant_broadcast, source_key: work.source_key, text: work.text, event: work.event, url: work.url, source_url: work.source_url, raw_json: work.raw_json, fallback_severity: work.fallback_severity, skip_relevance_gate: work.skip_relevance_gate, callerKind: work.callerKind },
+    { supabase: ctx.supabase, recordTelemetry: ctx.recordTelemetry, now: ctx.now, requestStartedAt: ctx.requestStartedAt },
   );
+  if (pre.kind === "terminal") return pre.result;
+
+  // 2. classify (produces classification)
+  const clsWork: ClassifyWork = {
+    signalText, signalLocation: work.signalLocation, rulesSeverity: work.rulesSeverity, explicitClientId: work.explicitClientId,
+    signalRaw: work.signalRaw, raw_json: work.raw_json, fallback_category: work.fallback_category, fallback_severity: work.fallback_severity,
+    skip_relevance_gate: work.skip_relevance_gate, isQaTest: work.isQaTest,
+  };
+  const cls = await classify(clsWork, { supabase: ctx.supabase, callAiGatewayJson: ctx.callAiGatewayJson });
+  if (cls.kind === "terminal") return cls.result;
+  work.classification = clsWork.classification; // THREAD classification forward
+
+  // 3. dedup
+  const dd = await dedup(
+    { signalText, source_url: work.source_url, classification: work.classification, clientId: work.clientId, sourceType: work.sourceType, rawBodySourceType: work.rawBodySourceType, rawBodyIsTest: work.rawBodyIsTest, isTest: work.isTest },
+    { supabase: ctx.supabase, callAiGatewayJson: ctx.callAiGatewayJson, now: ctx.now },
+  );
+  if (dd.kind === "terminal") return dd.result;
+
+  // 4. relevance gate
+  const rel = await relevance(
+    { clientId: work.clientId, skip_relevance_gate: work.skip_relevance_gate, classification: work.classification, signalText, source_url: work.source_url, source_key: work.source_key, signalRaw: work.signalRaw, signalTitle: work.signalTitle, sourceType: work.sourceType, rawBodySourceType: work.rawBodySourceType, isTest: work.isTest },
+    { supabase: ctx.supabase, callAiGatewayJson: ctx.callAiGatewayJson },
+  );
+  if (rel.kind === "terminal") return rel.result;
+
+  // 5. DGIC seam (Phase B: no-op)
+  const gate = await dgicStage(work, ctx);
+  if (gate.kind === "terminal") return gate.result;
+
+  // 6. insert (controller boundary). Only reached on the fully-admitted path.
+  const ins = await insert(
+    { classification: work.classification, signalText, source_key: work.source_key, skip_relevance_gate: work.skip_relevance_gate, signalRaw: work.signalRaw, signalTitle: work.signalTitle, sourceId: work.sourceId, clientId: work.clientId, matchedKeywords: work.matchedKeywords, matchConfidence: work.matchConfidence, source_url: work.source_url, image_url: work.image_url, is_test: work.isTest, platform: work.platform, contentHash, classResultData: work.classResultData },
+    { supabase: ctx.supabase, now: ctx.now, scoreSignalRelevance: ctx.scoreSignalRelevance, extractMentions: ctx.extractMentions, scoreForeignAlignment: ctx.scoreForeignAlignment },
+  );
+  if (ins.kind === "terminal") return ins.result;
+  return { outcome: "admitted", httpStatusHint: 200, payloadShape: "accepted" }; // defensive; insert always returns terminal
 }
