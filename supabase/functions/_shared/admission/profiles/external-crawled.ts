@@ -415,6 +415,181 @@ Respond ONLY with valid JSON.`,
   return { kind: "continue" };
 }
 
+// ── SLICE 3: dedup ── verbatim lift of ingest-signal L1024-1303: content-hash + previously-
+// rejected check, CVE dedup, URL dedup (30d), title dedup (24h), detect-duplicates invoke
+// (exact 409 / near-dup ≥0.8 200), and the 0.5-0.8 same-story filing. Supabase (incl.
+// functions.invoke), the AI gateway, and the clock are injected. Time uses deps.now (timestamps
+// are on the approved nondeterminism allowlist).
+//
+// ⚠ PRESERVED LEGACY DEFECT (do NOT fix in this mechanical lift): on the same-story path,
+// `signal.source_name`/`signal.source_url` reference `signal`, which legacy declares (const) only
+// at the INSERT (a later slice) — so at dedup time it is in the temporal dead zone and throws
+// ReferenceError while building the signal_updates insert argument. That throw is caught below
+// ("AI check failed, proceeding with new signal") → fail-open. CONSEQUENCE: the same-story
+// signal_updates filing + its rejected_content_hashes upsert + the `filed_as_update` return are
+// DEAD CODE in legacy and never execute. The lift reproduces this exactly for byte-parity. The
+// dead same-story filing is flagged as a separate post-Phase-B defect to fix deliberately.
+export interface DedupWork {
+  signalText: string;
+  source_url?: string | null;
+  classification: any;
+  clientId: string | null;
+  sourceType?: string | null;       // validationResult.data.sourceType
+  rawBodySourceType?: string | null; // rawBody?.sourceType
+  rawBodyIsTest?: boolean;          // rawBody?.is_test
+  isTest?: boolean;                 // is_test
+}
+export interface DedupDeps {
+  supabase: any;
+  callAiGatewayJson: (args: any) => Promise<any>;
+  now: () => number;
+}
+
+const dterm = (r: AdmissionResult): StageResult => ({ kind: "terminal", result: r });
+
+export async function dedup(work: DedupWork, deps: DedupDeps): Promise<StageResult> {
+  const { signalText, source_url, classification, clientId } = work;
+  const supabase = deps.supabase;
+
+  const encoder = new TextEncoder();
+  const contentToHash = source_url ? `url:${source_url}` : signalText;
+  const data = encoder.encode(contentToHash);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const contentHash = hashArray.map((b: number) => b.toString(16).padStart(2, "0")).join("");
+
+  console.log(`Calculated content hash: ${contentHash.substring(0, 16)}... (basis: ${source_url ? "source_url" : "text"})`);
+
+  const isQaTestEarly = work.sourceType === "qa_test" || work.rawBodySourceType === "qa_test";
+  const { data: rejectedHash } = isQaTestEarly ? { data: null } : await supabase
+    .from("rejected_content_hashes").select("id").eq("content_hash", contentHash).limit(1).maybeSingle();
+
+  if (rejectedHash) {
+    console.log(`[Rejected] Signal blocked - content was previously rejected/deleted`);
+    return dterm({ outcome: "rejected", reason: "previously_rejected", httpStatusHint: 200, payloadShape: "rejected",
+      body: { status: "rejected", reason: "previously_rejected", message: "This content was previously deleted or marked irrelevant by an analyst" } });
+  }
+
+  const isQaTest = work.sourceType === "qa_test" || work.rawBodySourceType === "qa_test" || work.rawBodyIsTest === true || work.isTest === true;
+
+  // CVE dedup
+  if (!isQaTest) {
+    const cveMatch = signalText.match(/CVE-\d{4}-\d+/gi);
+    const cveIds = cveMatch ? [...new Set(cveMatch.map((c: string) => c.toUpperCase()))] : [];
+    if (cveIds.length > 0) {
+      const todayStart = new Date(deps.now());
+      todayStart.setHours(0, 0, 0, 0);
+      const { data: existingCve } = await supabase
+        .from("signals").select("id, title")
+        .gte("created_at", todayStart.toISOString())
+        .or(cveIds.map((cve: string) => `title.ilike.%${cve}%,normalized_text.ilike.%${cve}%`).join(","))
+        .limit(1);
+      if (existingCve && existingCve.length > 0) {
+        console.log(`[CVE-dedup] Duplicate CVE advisory blocked: ${cveIds.join(", ")} already filed as signal ${existingCve[0].id}`);
+        return dterm({ outcome: "deduplicated", reason: "duplicate_cve", httpStatusHint: 200, payloadShape: "deduplicated", existing_signal_id: existingCve[0].id,
+          body: { filtered: true, reason: "duplicate_cve", cve_ids: cveIds, existing_signal_id: existingCve[0].id, message: `CVE advisory already ingested today: ${cveIds.join(", ")}` } });
+      }
+    }
+  }
+
+  // URL dedup (30d)
+  if (source_url && !isQaTest) {
+    const thirtyDaysAgo = new Date(deps.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: existingByUrl } = await supabase
+      .from("signals").select("id").eq("source_url", source_url).gte("created_at", thirtyDaysAgo).limit(1).maybeSingle();
+    if (existingByUrl) {
+      console.log(`[URL-dedup] Duplicate source URL blocked: ${source_url}`);
+      return dterm({ outcome: "deduplicated", reason: "duplicate_url", httpStatusHint: 200, payloadShape: "deduplicated", existing_signal_id: existingByUrl.id,
+        body: { status: "suppressed", reason: "duplicate_url", existing_signal_id: existingByUrl.id } });
+    }
+  }
+
+  // Title dedup (24h)
+  if (!isQaTest && signalText) {
+    const titleLine = signalText.split("\n")[0].trim().substring(0, 200);
+    if (titleLine.length > 20) {
+      const oneDayAgo = new Date(deps.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: existingByTitle } = await supabase
+        .from("signals").select("id").ilike("title", `%${titleLine.substring(0, 80)}%`).gte("created_at", oneDayAgo).limit(1).maybeSingle();
+      if (existingByTitle) {
+        console.log(`[Title-dedup] Duplicate title blocked: "${titleLine.substring(0, 60)}..."`);
+        return dterm({ outcome: "deduplicated", reason: "duplicate_title", httpStatusHint: 200, payloadShape: "deduplicated", existing_signal_id: existingByTitle.id,
+          body: { status: "suppressed", reason: "duplicate_title", existing_signal_id: existingByTitle.id } });
+      }
+    }
+  }
+
+  // detect-duplicates (semantic near-dup)
+  const dupCheck = isQaTest ? null : await supabase.functions.invoke("detect-duplicates", {
+    body: { type: "signal", content: (classification.normalized_text || signalText).toString(), client_id: clientId || undefined, near_duplicate_threshold: 0.8, lookback_days: 30, use_semantic: true, autoCheck: false },
+  });
+
+  if (dupCheck?.data?.isDuplicate && dupCheck?.data?.exactMatch) {
+    console.log(`EXACT duplicate detected - blocking signal creation`);
+    return dterm({ outcome: "rejected", reason: "exact_duplicate", httpStatusHint: 409, payloadShape: "deduplicated", existing_signal_id: dupCheck.data.duplicate?.id,
+      body: { error: "Duplicate signal detected and blocked", duplicate_of: dupCheck.data.duplicate?.id, message: dupCheck.data.message } });
+  }
+
+  if (dupCheck?.data?.nearDuplicateMatch && (dupCheck?.data?.duplicates || []).length > 0) {
+    const top = dupCheck.data.duplicates[0];
+    console.log(`NEAR duplicate detected (>=80%) - returning existing signal`);
+    return dterm({ outcome: "deduplicated", reason: "near_duplicate", httpStatusHint: 200, payloadShape: "deduplicated", existing_signal_id: top?.id,
+      body: { signal_id: top?.id, deduplicated: true, duplicate_of: top?.id, similarity_score: top?.similarity_score, lookback_days: dupCheck.data.lookback_days_used ?? 30, threshold: dupCheck.data.near_duplicate_threshold_used ?? 0.8, message: `Near-duplicate detected (similarity ${(top?.similarity_score ?? 0).toFixed(2)}). Returning existing signal.` } });
+  }
+
+  // Same-story filing (0.5-0.8) — see PRESERVED LEGACY DEFECT note above.
+  if (dupCheck?.data?.duplicates && dupCheck.data.duplicates.length > 0) {
+    const topMatch = dupCheck.data.duplicates[0];
+    const similarity = topMatch?.similarity_score ?? 0;
+    if (similarity >= 0.50 && similarity < 0.80 && topMatch?.id) {
+      console.log(`[Same-Story] Moderate similarity ${(similarity * 100).toFixed(0)}% with signal ${topMatch.id} — checking if same story...`);
+      try {
+        const existingTitle = topMatch.title || "";
+        const newTitle = (classification.normalized_text || signalText).substring(0, 300);
+        const sameStoryCheck = await deps.callAiGatewayJson({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: 'You determine if two intelligence signals are about the same ongoing story/event. Return JSON with: {"same_story": boolean, "has_new_intel": boolean, "reason": "brief explanation"}. "same_story" means they describe the same event, policy, or situation. "has_new_intel" means the new signal contains genuinely new facts, developments, or outcomes not present in the existing one.' },
+            { role: "user", content: `EXISTING SIGNAL: "${existingTitle}"\n\nNEW SIGNAL: "${newTitle}"\n\nAre these about the same story? Does the new one add genuinely new intelligence?` },
+          ],
+          functionName: "ingest-signal-same-story-check",
+        });
+        const sameStoryResult = sameStoryCheck as any;
+        if (sameStoryResult?.same_story === true) {
+          const newIntel = sameStoryResult?.has_new_intel === true;
+          console.log(`[Same-Story] FILING as update on ${topMatch.id} (${newIntel ? "NEW INTEL" : "rehash"}): ${sameStoryResult.reason}`);
+          const updateHashData = new TextEncoder().encode(`same-story|${topMatch.id}|${contentHash}`);
+          const updateHashBuffer = await crypto.subtle.digest("SHA-256", updateHashData);
+          const updateHash = Array.from(new Uint8Array(updateHashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+          const { data: existingUpdate } = await supabase
+            .from("signal_updates").select("id").eq("content_hash", updateHash).maybeSingle();
+          if (!existingUpdate) {
+            await supabase.from("signal_updates").insert({
+              signal_id: topMatch.id,
+              content: (classification.normalized_text || signalText).substring(0, 2000),
+              source_name: signal.source_name || "same-story-filing", // ⚠ TDZ throw (see note) — DO NOT change
+              source_url: signal.source_url || null,
+              content_hash: updateHash,
+              metadata: { filed_reason: sameStoryResult.reason, similarity_score: similarity, original_content_hash: contentHash, has_new_intel: newIntel, same_story_check: true },
+            });
+          }
+          await supabase.from("rejected_content_hashes").upsert({
+            content_hash: contentHash, client_id: clientId, reason: newIntel ? "same_story_new_intel_filed" : "same_story_filed", original_signal_title: newTitle.substring(0, 200),
+          }, { onConflict: "content_hash,client_id", ignoreDuplicates: true });
+          return dterm({ outcome: "updated", reason: "filed_as_update", httpStatusHint: 200, payloadShape: "deduplicated", existing_signal_id: topMatch.id,
+            body: { status: "filed_as_update", filed_on: topMatch.id, similarity_score: similarity, has_new_intel: newIntel, reason: sameStoryResult.reason, message: newIntel ? "Signal filed as new-intel update on existing story (no separate feed entry)." : "Signal filed as rehash update on existing story." } });
+        } else {
+          console.log(`[Same-Story] AI says different story — creating as new signal. Reason: ${sameStoryResult?.reason || "(no reason given)"}`);
+        }
+      } catch (sameStoryErr) {
+        console.warn(`[Same-Story] AI check failed, proceeding with new signal:`, sameStoryErr);
+      }
+    }
+  }
+
+  return { kind: "continue" };
+}
+
 export async function runExternalCrawledAdmission(
   _candidate: SignalCandidate,
   _ctx: AdmissionContext,
