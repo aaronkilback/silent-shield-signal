@@ -19,6 +19,7 @@ function work(over: Partial<WorkingSignal> = {}): WorkingSignal {
     rulesSeverity: null, explicitClientId: "c1", fallback_category: null, fallback_severity: null, skip_relevance_gate: false, isQaTest: false,
     sourceType: null, rawBodySourceType: null, rawBodyIsTest: false, isTest: false, classResultData: { event_date: "2026-05-20" },
     clientId: "c1", sourceId: "src-1", matchedKeywords: ["explicit_client_override"], matchConfidence: "explicit", image_url: null, platform: "web",
+    location: "BC", client_id: null, clientIdCamel: null, is_test_input: false,
     ...over,
   };
 }
@@ -34,6 +35,12 @@ function makeCtx(fixtures: Record<string, TableFixture>, invokeResults: Record<s
     scoreSignalRelevance: async () => scoreResult ?? { score: 0.7, recommendation: "admit", matchedPatterns: [], reason: "ok" },
     extractMentions: () => [],
     scoreForeignAlignment: () => ({ score: 0, indicators: [], matched_handles: [], matched_phrases: [] }),
+    // prep deps (slice 6) — minimal stubs (no novelty/source-lookup in the admit seed)
+    recordObservation: async () => ({}),
+    extractDomain: () => null,
+    callAiGateway: async () => ({ content: "" }),
+    fetchFn: async () => new Response("", { status: 200 }),
+    strictSourceAttribution: false,
   };
   return { ctx, dbCalls, invokeCalls, aiCalls, tel };
 }

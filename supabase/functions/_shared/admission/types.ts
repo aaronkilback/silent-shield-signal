@@ -51,6 +51,12 @@ export interface AdmissionContext {
   scoreSignalRelevance: (supabase: any, text: string, category: string | null, severityNum: number, sourceKey: string | null) => Promise<{ score: number; recommendation: string; matchedPatterns: string[]; reason: string }>;
   extractMentions: (text: string) => string[];
   scoreForeignAlignment: (text: string, mentions: string[], author: string | null) => { score: number; indicators: any[]; matched_handles: any[]; matched_phrases: any[] };
+  // prep-stage deps (slice 6)
+  recordObservation: (supabase: any, clientId: string, kind: string, value: string) => Promise<any>;
+  extractDomain: (url: string | null | undefined) => string | null;
+  callAiGateway: (args: any) => Promise<{ content?: string }>;
+  fetchFn: (url: string, init?: any) => Promise<Response>;
+  strictSourceAttribution: boolean;
 }
 
 // The assembled per-request working state threaded through the external/crawled stages. ingest-
@@ -68,6 +74,10 @@ export interface WorkingSignal {
   url?: string | null;
   source_url?: string | null;
   source_key?: string | null;
+  location?: string | null;          // prep input (slice 6)
+  client_id?: string | null;         // prep novelty/guard input
+  clientIdCamel?: string | null;     // prep novelty/guard input
+  is_test_input?: boolean;           // prep guard input
   raw_json: Record<string, any> | null;
   signalRaw: Record<string, any>;
   signalLocation: string | null;

@@ -971,6 +971,179 @@ export async function insert(work: InsertWork, deps: InsertDeps): Promise<StageR
   return { kind: "terminal", result: { outcome: "admitted", signal_id: signal.id, httpStatusHint: 200, payloadShape: "accepted" } };
 }
 
+// ── SLICE 6 helpers (pure, verbatim from ingest-signal) ──
+const RULES = {
+  p1: { keywords: ["credible threat", "weapon", "kidnap", "active shooter", "bomb"], severity: "critical", priority: "p1", shouldOpenIncident: true },
+  p2: { keywords: ["suspicious", "prowler", "tamper", "breach attempt", "intrusion"], severity: "high", priority: "p2", shouldOpenIncident: true },
+};
+export function applyRules(text: string) {
+  const lowerText = text.toLowerCase();
+  for (const keyword of RULES.p1.keywords) {
+    if (lowerText.includes(keyword.toLowerCase())) return { severity: RULES.p1.severity, priority: RULES.p1.priority, shouldOpenIncident: RULES.p1.shouldOpenIncident, matchedRule: "p1", matchedKeyword: keyword };
+  }
+  for (const keyword of RULES.p2.keywords) {
+    if (lowerText.includes(keyword.toLowerCase())) return { severity: RULES.p2.severity, priority: RULES.p2.priority, shouldOpenIncident: RULES.p2.shouldOpenIncident, matchedRule: "p2", matchedKeyword: keyword };
+  }
+  return { severity: null, priority: null, shouldOpenIncident: false, matchedRule: null, matchedKeyword: null };
+}
+
+const ABBREV_RE = /\b(?:Mr|Mrs|Ms|Dr|Prof|St|Mt|Sr|Jr|Inc|Corp|Co|Ltd|Ave|Blvd|Rd|U\.S|U\.K)$/i;
+export function generateTitle(text: string, now: () => number = Date.now): string {
+  if (!text || text.length === 0) return "Signal - " + new Date(now()).toISOString().slice(0, 16);
+  let sentenceEnd = -1;
+  const re = /[.!?](?=\s|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const idx = m.index;
+    if (idx < 30) continue;
+    if (text[idx] === ".") { const before = text.substring(Math.max(0, idx - 12), idx); if (ABBREV_RE.test(before)) continue; }
+    sentenceEnd = idx + 1;
+    break;
+  }
+  const honorSentence = sentenceEnd > 0;
+  const TITLE_CAP = 200;
+  const titleLength = honorSentence ? Math.min(sentenceEnd, TITLE_CAP) : TITLE_CAP;
+  let title = text.substring(0, titleLength).trim();
+  const truncatedAtCap = (!honorSentence && text.length > TITLE_CAP) || (honorSentence && sentenceEnd > TITLE_CAP);
+  if (truncatedAtCap) title = title.replace(/\s+\S*$/, "") + "...";
+  return title || "Signal - " + new Date(now()).toISOString().slice(0, 16);
+}
+
+// ── SLICE 6: prep ── verbatim lift of ingest-signal L512-738: signalRaw setup + source_url merge,
+// novelty tracking (recordObservation DB read/write → signalRaw.novelty mutation), optional
+// website fetch+AI (url path; mutates signalText/signalLocation/signalRaw), sourceId source-lookup
+// (404/403 terminals), the #120 EXTERNAL_UNATTRIBUTED guard (warn + env-gated 400), and rulesResult
+// (applyRules). DB / AI gateway / fetch / clock / strict-flag injected. Mutates work.{signalText,
+// signalLocation, signalRaw, sourceId, rulesResult}.
+export interface PrepWork {
+  location?: string | null;
+  raw_json: Record<string, any> | null;
+  event?: any;
+  signalText: string;
+  source_url?: string | null;
+  url?: string | null;
+  source_key?: string | null;
+  client_id?: string | null;
+  clientIdCamel?: string | null;
+  is_test_input?: boolean;
+  signalLocation?: string | null;     // OUT
+  signalRaw?: Record<string, any>;    // OUT
+  sourceId?: string | null;           // OUT
+  rulesResult?: any;                  // OUT
+}
+export interface PrepDeps {
+  supabase: any;
+  recordObservation: (supabase: any, clientId: string, kind: string, value: string) => Promise<any>;
+  extractDomain: (url: string | null | undefined) => string | null;
+  callAiGateway: (args: any) => Promise<{ content?: string }>;
+  fetchFn: (url: string, init?: any) => Promise<Response>;
+  now: () => number;
+  strictSourceAttribution: boolean;
+}
+
+export async function prep(work: PrepWork, deps: PrepDeps): Promise<StageResult> {
+  const { location, raw_json, event, source_url, url, source_key, client_id, clientIdCamel, is_test_input } = work;
+  let signalText = work.signalText;
+  let signalLocation = location || null;
+  let signalRaw: Record<string, any> = raw_json || event || { text: signalText };
+  if (source_url && !signalRaw.source_url) signalRaw = { ...signalRaw, source_url };
+
+  const noveltyClientId = client_id || clientIdCamel || null;
+  if (noveltyClientId) {
+    try {
+      const domain = deps.extractDomain(source_url) ?? deps.extractDomain(signalRaw?.source_url);
+      const noveltyMeta: Record<string, unknown> = {};
+      if (domain) noveltyMeta.domain = await deps.recordObservation(deps.supabase, noveltyClientId, "source_domain", domain);
+      if (source_key) noveltyMeta.source_key = await deps.recordObservation(deps.supabase, noveltyClientId, "source_key", source_key);
+      if (Object.keys(noveltyMeta).length > 0) signalRaw = { ...signalRaw, novelty: noveltyMeta };
+    } catch (noveltyErr) {
+      console.warn("[Novelty] non-blocking error:", noveltyErr instanceof Error ? noveltyErr.message : noveltyErr);
+    }
+  }
+
+  if (url) {
+    console.log("Fetching website content from:", url);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      const websiteResponse = await deps.fetchFn(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; SOCBot/1.0)", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeout));
+      if (!websiteResponse.ok) throw new Error(`Failed to fetch website: ${websiteResponse.status}`);
+      const html = await websiteResponse.text();
+      let textContent = html
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, "")
+        .replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, "")
+        .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, "")
+        .replace(/<(main|article)[^>]*>([\s\S]*?)<\/(main|article)>/gi, (_match: string, _tag: string, content: string) => "\n\n" + content + "\n\n");
+      textContent = textContent
+        .replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&[^;]+;/g, " ").replace(/\s+/g, " ").trim();
+      const contentForAnalysis = textContent.substring(0, 8000);
+      console.log(`Extracted ${contentForAnalysis.length} characters from website`);
+      const analysisResult = await deps.callAiGateway({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: `You are a corporate security intelligence analyst specializing in threat assessment. Analyze web content for security-relevant information including:\n- Direct threats or security incidents\n- Activist campaigns or protests targeting corporations\n- Legal disputes or regulatory actions\n- Operational disruptions or risks\n- Reputation threats or negative publicity\n- Supply chain or infrastructure vulnerabilities\n\nProvide a structured, actionable summary focused on business impact.` },
+          { role: "user", content: `Analyze this content from ${url}\n\nCONTENT:\n${contentForAnalysis}\n\nProvide a clear summary including:\n1. KEY FINDINGS: What security-relevant events or threats are described?\n2. AFFECTED PARTIES: Which companies, organizations, or projects are mentioned or impacted?\n3. THREAT LEVEL: Rate as CRITICAL, HIGH, MEDIUM, or LOW\n4. BUSINESS IMPACT: What are the potential operational, legal, or reputational consequences?\n5. ACTIONABLE INTEL: What specific details (dates, locations, actors, tactics) are relevant for security teams?\n\nBe specific and concise. Focus on facts, not speculation.` },
+        ],
+        functionName: "ingest-signal",
+        extraBody: { max_completion_tokens: 1200 },
+        dlqOnFailure: true,
+        dlqPayload: { url, signalText: signalText.substring(0, 500) },
+      });
+      const analysis = analysisResult.content || "";
+      signalText = `Website Analysis - ${url}\n\n${analysis}`;
+      signalLocation = url;
+      signalRaw = { url, analysis, snippet: textContent.substring(0, 500), scannedAt: new Date(deps.now()).toISOString() };
+      console.log("Website analysis complete:", analysis.substring(0, 200));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error("Error fetching/analyzing website:", error);
+      signalText = `Failed to scan website ${url}: ${errorMessage}`;
+      signalRaw = { url, error: errorMessage };
+    }
+  }
+
+  console.log("Ingesting signal:", signalText.substring(0, 100));
+
+  let sourceId: string | null = null;
+  if (source_key) {
+    const { data: source, error: sourceError } = await deps.supabase.from("sources").select("id, status").eq("name", source_key).single();
+    if (sourceError || !source) {
+      console.error("Source not found:", source_key, sourceError?.message);
+      return dterm({ outcome: "rejected", reason: "source_not_found", httpStatusHint: 404, payloadShape: "rejected", body: { error: "Source not found or inactive" } });
+    }
+    if (source.status !== "active") {
+      return dterm({ outcome: "rejected", reason: "source_inactive", httpStatusHint: 403, payloadShape: "rejected", body: { error: `Source ${source_key} status=${source.status}` } });
+    }
+    sourceId = source.id;
+  }
+
+  const externalUrl = source_url || url || null;
+  if (sourceId === null && externalUrl && !externalUrl.includes("example.com") && !externalUrl.includes("qa.test") && is_test_input !== true) {
+    console.warn(`[ingest-signal] EXTERNAL_UNATTRIBUTED — source_id null, source_url=${externalUrl.substring(0, 120)} source_key=${source_key ?? "NOT_PROVIDED"} client_id=${client_id ?? clientIdCamel ?? "NOT_PROVIDED"}`);
+    if (deps.strictSourceAttribution) {
+      return dterm({ outcome: "rejected", reason: "missing_source_attribution", httpStatusHint: 400, payloadShape: "rejected",
+        body: { error: "External signal blocked: missing source attribution", message: "Signals with source_url must pass a source_key that matches a registered sources row. Set source_key, register the source in the sources table, or set INGEST_STRICT_SOURCE_ATTRIBUTION=false to bypass this guard.", source_url: externalUrl, source_key_provided: source_key ?? null } });
+    }
+  }
+
+  const rulesResult = applyRules(signalText);
+  console.log("Rules matched:", rulesResult);
+
+  work.signalText = signalText;
+  work.signalLocation = signalLocation;
+  work.signalRaw = signalRaw;
+  work.sourceId = sourceId;
+  work.rulesResult = rulesResult;
+  return { kind: "continue" };
+}
+
 // ── ASSEMBLY ── compose the five proven stages into the external/crawled admission pipeline:
 // preGates → classify → dedup → relevance → dgicStage(no-op) → insert. Each terminal short-
 // circuits (returns its AdmissionResult). `classification` is threaded from classify into
@@ -982,51 +1155,71 @@ export async function runExternalCrawledAdmission(
   work: WorkingSignal,
   ctx: AdmissionContext,
 ): Promise<AdmissionResult> {
-  const signalText = work.text || JSON.stringify(work.event);
+  let signalText = work.text || JSON.stringify(work.event);
 
-  // contentHash threaded to insert (dedup computes its own identical value; deterministic).
-  const contentToHash = work.source_url ? `url:${work.source_url}` : signalText;
-  const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(contentToHash));
-  const contentHash = Array.from(new Uint8Array(hb)).map((b) => b.toString(16).padStart(2, "0")).join("");
-
-  // 1. pre-gates (#256 contract, F-034, FP/test)
+  // 1. pre-gates (#256 contract, F-034, FP/test) — uses the original signalText
   const pre = await preGates(
     { validatedExplicitClientId: work.validatedExplicitClientId, tenant_broadcast: work.tenant_broadcast, source_key: work.source_key, text: work.text, event: work.event, url: work.url, source_url: work.source_url, raw_json: work.raw_json, fallback_severity: work.fallback_severity, skip_relevance_gate: work.skip_relevance_gate, callerKind: work.callerKind },
     { supabase: ctx.supabase, recordTelemetry: ctx.recordTelemetry, now: ctx.now, requestStartedAt: ctx.requestStartedAt },
   );
   if (pre.kind === "terminal") return pre.result;
 
-  // 2. classify (produces classification)
+  // 2. prep (signalRaw/novelty/website/sourceId/guard/rulesResult) — may rewrite signalText
+  const prepWork: PrepWork = {
+    location: work.location, raw_json: work.raw_json, event: work.event, signalText,
+    source_url: work.source_url, url: work.url, source_key: work.source_key,
+    client_id: work.client_id, clientIdCamel: work.clientIdCamel, is_test_input: work.is_test_input,
+  };
+  const pr = await prep(prepWork, {
+    supabase: ctx.supabase, recordObservation: ctx.recordObservation, extractDomain: ctx.extractDomain,
+    callAiGateway: ctx.callAiGateway, fetchFn: ctx.fetchFn, now: ctx.now, strictSourceAttribution: ctx.strictSourceAttribution,
+  });
+  if (pr.kind === "terminal") return pr.result;
+  signalText = prepWork.signalText;                       // prep may have rewritten it (website path)
+  const signalRaw = prepWork.signalRaw ?? {};
+  const signalLocation = prepWork.signalLocation ?? null;
+  const sourceId = prepWork.sourceId ?? null;
+  const rulesSeverity = prepWork.rulesResult?.severity ?? null;
+
+  // contentHash computed post-prep (prep-mutated signalText), threaded to insert (dedup recomputes identical)
+  const contentToHash = work.source_url ? `url:${work.source_url}` : signalText;
+  const hb = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(contentToHash));
+  const contentHash = Array.from(new Uint8Array(hb)).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+  // 3. classify (produces classification)
   const clsWork: ClassifyWork = {
-    signalText, signalLocation: work.signalLocation, rulesSeverity: work.rulesSeverity, explicitClientId: work.explicitClientId,
-    signalRaw: work.signalRaw, raw_json: work.raw_json, fallback_category: work.fallback_category, fallback_severity: work.fallback_severity,
+    signalText, signalLocation, rulesSeverity, explicitClientId: work.explicitClientId,
+    signalRaw, raw_json: work.raw_json, fallback_category: work.fallback_category, fallback_severity: work.fallback_severity,
     skip_relevance_gate: work.skip_relevance_gate, isQaTest: work.isQaTest,
   };
   const cls = await classify(clsWork, { supabase: ctx.supabase, callAiGatewayJson: ctx.callAiGatewayJson });
   if (cls.kind === "terminal") return cls.result;
-  work.classification = clsWork.classification; // THREAD classification forward
+  const classification = clsWork.classification;
 
-  // 3. dedup
+  // 4. dedup
   const dd = await dedup(
-    { signalText, source_url: work.source_url, classification: work.classification, clientId: work.clientId, sourceType: work.sourceType, rawBodySourceType: work.rawBodySourceType, rawBodyIsTest: work.rawBodyIsTest, isTest: work.isTest },
+    { signalText, source_url: work.source_url, classification, clientId: work.clientId, sourceType: work.sourceType, rawBodySourceType: work.rawBodySourceType, rawBodyIsTest: work.rawBodyIsTest, isTest: work.isTest },
     { supabase: ctx.supabase, callAiGatewayJson: ctx.callAiGatewayJson, now: ctx.now },
   );
   if (dd.kind === "terminal") return dd.result;
 
-  // 4. relevance gate
+  // 5. signalTitle derived post-dedup via generateTitle (was the wiring gap)
+  const signalTitle = generateTitle(classification.normalized_text || signalText, ctx.now);
+
+  // 6. relevance gate
   const rel = await relevance(
-    { clientId: work.clientId, skip_relevance_gate: work.skip_relevance_gate, classification: work.classification, signalText, source_url: work.source_url, source_key: work.source_key, signalRaw: work.signalRaw, signalTitle: work.signalTitle, sourceType: work.sourceType, rawBodySourceType: work.rawBodySourceType, isTest: work.isTest },
+    { clientId: work.clientId, skip_relevance_gate: work.skip_relevance_gate, classification, signalText, source_url: work.source_url, source_key: work.source_key, signalRaw, signalTitle, sourceType: work.sourceType, rawBodySourceType: work.rawBodySourceType, isTest: work.isTest },
     { supabase: ctx.supabase, callAiGatewayJson: ctx.callAiGatewayJson },
   );
   if (rel.kind === "terminal") return rel.result;
 
-  // 5. DGIC seam (Phase B: no-op)
+  // 7. DGIC seam (Phase B: no-op)
   const gate = await dgicStage(work, ctx);
   if (gate.kind === "terminal") return gate.result;
 
-  // 6. insert (controller boundary). Only reached on the fully-admitted path.
+  // 8. insert (controller boundary). Only reached on the fully-admitted path.
   const ins = await insert(
-    { classification: work.classification, signalText, source_key: work.source_key, skip_relevance_gate: work.skip_relevance_gate, signalRaw: work.signalRaw, signalTitle: work.signalTitle, sourceId: work.sourceId, clientId: work.clientId, matchedKeywords: work.matchedKeywords, matchConfidence: work.matchConfidence, source_url: work.source_url, image_url: work.image_url, is_test: work.isTest, platform: work.platform, contentHash, classResultData: work.classResultData },
+    { classification, signalText, source_key: work.source_key, skip_relevance_gate: work.skip_relevance_gate, signalRaw, signalTitle, sourceId, clientId: work.clientId, matchedKeywords: work.matchedKeywords, matchConfidence: work.matchConfidence, source_url: work.source_url, image_url: work.image_url, is_test: work.isTest, platform: work.platform, contentHash, classResultData: work.classResultData },
     { supabase: ctx.supabase, now: ctx.now, scoreSignalRelevance: ctx.scoreSignalRelevance, extractMentions: ctx.extractMentions, scoreForeignAlignment: ctx.scoreForeignAlignment },
   );
   if (ins.kind === "terminal") return ins.result;
