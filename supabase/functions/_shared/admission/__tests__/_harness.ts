@@ -49,13 +49,15 @@ export function stubSupabase(
 // harness asserts model/functionName/dlqOnFailure/messages without hitting a provider). The real
 // gateway's telemetry + DLQ-on-failure are its own behaviors; capturing the call args captures
 // ingest-signal's REQUEST of those (dlqOnFailure/dlqPayload), which is the in-scope effect.
-export function aiReplay(responses: Array<{ data?: any; error?: any }>) {
+// responses may carry `throw:true` to make that call REJECT (exercises fail-closed branches).
+export function aiReplay(responses: Array<{ data?: any; error?: any; throw?: boolean }>) {
   const calls: any[] = [];
   let i = 0;
   const callAiGatewayJson = (args: any) => {
     calls.push(args);
     const r = responses[Math.min(i, responses.length - 1)] ?? {};
     i++;
+    if ((r as any).throw) return Promise.reject((r as any).error ?? new Error("ai gateway error"));
     return Promise.resolve(r);
   };
   return { callAiGatewayJson, calls };

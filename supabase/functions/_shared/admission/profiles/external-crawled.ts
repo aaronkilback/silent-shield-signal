@@ -590,6 +590,226 @@ export async function dedup(work: DedupWork, deps: DedupDeps): Promise<StageResu
   return { kind: "continue" };
 }
 
+// ── SLICE 4: relevance-gate ── verbatim lift of ingest-signal L1419-1670: skip bypass, the
+// PECL-calibrated AI relevance gate (2nd AI call, functionName 'ingest-signal-relevance-gate'),
+// learning-profile threshold bias, per-source (Phase3C) threshold, reject (filtered_signals +
+// rejected_content_hashes writes) / accept, and the fail-closed catch (filtered_signals write).
+// Supabase + AI gateway injected. Fire-and-forget writes preserved verbatim.
+export interface RelevanceWork {
+  clientId: string | null;
+  skip_relevance_gate?: boolean;
+  classification: any;
+  signalText: string;
+  source_url?: string | null;
+  source_key?: string | null;
+  signalRaw: Record<string, any>;
+  signalTitle: string;
+  sourceType?: string | null;
+  rawBodySourceType?: string | null;
+  isTest?: boolean;
+}
+export interface RelevanceDeps {
+  supabase: any;
+  callAiGatewayJson: (args: any) => Promise<any>;
+}
+
+export async function relevance(work: RelevanceWork, deps: RelevanceDeps): Promise<StageResult> {
+  const { clientId, skip_relevance_gate, classification, signalText, source_url, source_key, signalRaw, signalTitle } = work;
+  const supabase = deps.supabase;
+
+  if (skip_relevance_gate) {
+    console.log(`[AI Relevance Gate] BYPASSED — upstream keyword matching already vetted this signal`);
+  }
+  if (clientId && !skip_relevance_gate) {
+    try {
+      const { data: clientForGate } = await supabase
+        .from("clients").select("name, industry, locations, high_value_assets").eq("id", clientId).single();
+
+      let approvedPatternBlock = "";
+      let rejectedPatternBlock = "";
+      let learnedThresholdAdjustment = 0;
+      try {
+        const { data: profiles } = await supabase
+          .from("learning_profiles").select("profile_type, features")
+          .in("profile_type", ["approved_signal_patterns", "rejected_signal_patterns"]).limit(2);
+        if (profiles && profiles.length > 0) {
+          const textLower = (classification.normalized_text || signalText).toLowerCase();
+          for (const profile of profiles) {
+            const features: Record<string, number> = profile.features || {};
+            const topKeywords = Object.entries(features)
+              .sort(([, a], [, b]) => (b as number) - (a as number)).slice(0, 12).map(([k]) => k).filter((k) => !k.startsWith("reason:"));
+            const matchCount = topKeywords.filter((k) => textLower.includes(k)).length;
+            if (profile.profile_type === "approved_signal_patterns") {
+              if (topKeywords.length > 0) approvedPatternBlock = `\nPATTERNS ANALYSTS HAVE APPROVED: ${topKeywords.slice(0, 8).join(", ")}`;
+              if (matchCount >= 2) learnedThresholdAdjustment -= 0.05;
+            } else if (profile.profile_type === "rejected_signal_patterns") {
+              if (topKeywords.length > 0) rejectedPatternBlock = `\nPATTERNS ANALYSTS HAVE REJECTED: ${topKeywords.slice(0, 8).join(", ")}`;
+              if (matchCount >= 3) learnedThresholdAdjustment += 0.05;
+            }
+          }
+        }
+      } catch { /* non-blocking */ }
+
+      if (clientForGate) {
+        const gateResult = await deps.callAiGatewayJson({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: `You are a relevance scorer for a corporate protective intelligence platform. Your job is to admit signals that change a principal-protection or asset-security analyst's situational picture — NOT only signals that name an active threat.
+
+Score on a 0.0–1.0 scale. Classify the primary connection type.
+
+SCORE GUIDE:
+0.8–1.0  Direct: client or asset explicitly named in a threat, incident, legal action, or material development (M&A, project FID, pipeline approval, divestment announcement, named protest target)
+0.6–0.79 Strong indirect: same named project/partner/transporter as client, same threat actor active against client's sector, adjacent geography with credible spillover, regulatory ruling that affects client's operating posture
+0.45–0.59 Moderate: sector-wide risk, regulatory trend, activist tactic relevant to client's industry, supply-chain partner (lender, insurer, transporter, indigenous-territory counterparty) material event ← INGESTION FLOOR
+0.2–0.44 Weak: tangential keyword match, distant geography, generic corporate PR with no client nexus, historical >6 months without resurgence
+0.0–0.19 No connection: wrong industry, wrong region, sports/entertainment, generic content
+
+WHAT COUNTS AS "MATERIAL DEVELOPMENT" (admit at ≥0.45 if client or core asset is named):
+- Named M&A, finance deals, capital decisions, project approvals, FID announcements
+- First Nations / Indigenous treaty agreements, consultation outcomes, treaty rulings
+- Bank / insurer / pension fund decisions about financing the client's projects
+- Regulatory rulings, environmental review outcomes, sanctions decisions
+- Reputational events naming the client (boycotts, divestment campaigns, public letters)
+- Named supply-chain or transporter changes (e.g. TC Energy is Petronas's CGL transporter)
+
+These are NOT "security threats" in the narrow sense, but they DO change the principal-protection threat surface (capital flow, activist target prioritization, geopolitical alignment, stakeholder posture). Admit them.
+
+CONNECTION TYPES (pick one):
+- direct_naming: client or asset explicitly named
+- threat_actor: known threat group also targeting client's sector
+- regulatory: regulation/legal ruling affecting client's industry
+- geographic: incident in client's operational area
+- tactical: activist/attack tactic relevant to client's threat model
+- material_development: M&A, capital, treaty, regulatory, reputational event affecting client's threat surface
+- supply_chain: client's transporter, lender, insurer, or named partner has a material event
+- none: no meaningful connection
+
+INDIGENOUS-RELATIONS CONTEXT (admit these — they shape the protective-intelligence operating environment):
+- Treaty / benefits agreement ratifications affecting client's projects or operating territory → 0.65–0.85 (material_development)
+- Court rulings on Indigenous law in client's operating territory → 0.55–0.75 (regulatory)
+- MMIWG memorials, Red Dress Day, residential school commemorations in client's operating territory → 0.45–0.60 (geographic)
+- Indigenous-rights legal proceedings (defamation suits, injunctions, charges) within or adjacent to operating area → 0.50–0.70 (regulatory)
+- First Nations chief / council public statements about client or sector → 0.55–0.75 (material_development)
+A "good news" benefits agreement is STILL a material development — it shapes activist target prioritization, capital flow, and stakeholder dynamics. Do not score low because no threat is named.
+
+DOXXING / NAMED-STAFF TARGETING (admit at ≥0.7 regardless of how indirect the threat language is):
+- Any signal that names a specific client staff member or executive in a public-pressure, exposure, or campaign-to-fire context → 0.7–0.95 (direct_naming)
+- Activist newsletter / coalition piece naming individual healthcare providers, security staff, or executives → 0.7–0.85
+- The mere act of NAMING is the protective-intel concern, not the explicit threat words
+
+CATEGORICAL EXCLUSIONS — return score 0.0 regardless of location:
+- Sports leagues, tryouts, tournaments, recreational activities
+- School events, graduations, concerts, festivals, community social events (paint nights, art classes)
+- Retail sales, restaurant openings, local lifestyle news with no client/asset/threat nexus
+- Client's own positive PR, sponsorships, community goodwill posts (UNLESS reputational pushback is present)
+- Software product announcements (non-security)
+- Generic "about us" pages, merchandise listings, job postings
+
+Geographic location alone does NOT override these exclusions. If a signal matches an exclusion, set score to 0.0 and primary_connection to "none".
+${approvedPatternBlock}${rejectedPatternBlock}
+
+Respond with JSON: {"score": 0.0-1.0, "relevant": true/false, "primary_connection": "...", "reason": "one sentence"}`,
+            },
+            {
+              role: "user",
+              content: `CLIENT: ${clientForGate.name}
+INDUSTRY: ${clientForGate.industry || "unknown"}
+LOCATIONS: ${(clientForGate.locations || []).join(", ")}
+KEY ASSETS: ${(clientForGate.high_value_assets || []).join(", ")}
+
+SIGNAL:
+${(classification.normalized_text || signalText).substring(0, 1500)}
+
+Score this signal's relevance and classify the connection.`,
+            },
+          ],
+          functionName: "ingest-signal-relevance-gate",
+          extraBody: { max_completion_tokens: 120 },
+        });
+
+        const gateScore: number = gateResult.data?.score ?? (gateResult.data?.relevant === false ? 0.1 : 0.7);
+        const gateReason: string = gateResult.data?.reason || "";
+        const primaryConnection: string = gateResult.data?.primary_connection || "none";
+
+        let relevanceThreshold = Math.min(0.55, Math.max(0.25, 0.30 + learnedThresholdAdjustment));
+        if (learnedThresholdAdjustment !== 0) {
+          console.log(`[Learning] Threshold adjusted by analyst patterns: ${learnedThresholdAdjustment > 0 ? "+" : ""}${learnedThresholdAdjustment.toFixed(2)} → ${relevanceThreshold.toFixed(2)}`);
+        }
+        if (source_key) {
+          const { data: credScore } = await supabase
+            .from("source_credibility_scores").select("current_credibility, total_signals").eq("source_key", source_key).maybeSingle();
+          if (credScore?.current_credibility && (credScore.total_signals ?? 0) >= 5) {
+            const adjustment = (0.55 - credScore.current_credibility) * 0.40;
+            relevanceThreshold = Math.min(0.55, Math.max(0.25, 0.30 + adjustment));
+            if (Math.abs(relevanceThreshold - 0.30) > 0.005) {
+              console.log(`[Phase3C] ${source_key} threshold adjusted: ${relevanceThreshold.toFixed(2)} (credibility: ${credScore.current_credibility.toFixed(3)}, signals: ${credScore.total_signals})`);
+            }
+          }
+        }
+
+        if (gateScore < relevanceThreshold) {
+          console.log(`[AI Relevance Gate] REJECTED (score ${gateScore.toFixed(2)}): ${gateReason}`);
+          supabase.from("filtered_signals").insert({
+            raw_text: (classification.normalized_text || signalText).substring(0, 2000),
+            source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
+            source_name: source_key || signalRaw?.source_name || null,
+            client_id: clientId,
+            filter_reason: "ai_relevance_gate",
+            relevance_score: gateScore,
+            relevance_reason: gateReason,
+            primary_connection: primaryConnection,
+          }).then(() => {}).catch(() => {});
+
+          const encoder2 = new TextEncoder();
+          const data2 = encoder2.encode(classification.normalized_text || signalText);
+          const hashBuffer2 = await crypto.subtle.digest("SHA-256", data2);
+          const hashArray2 = Array.from(new Uint8Array(hashBuffer2));
+          const rejectedHash2 = hashArray2.map((b: number) => b.toString(16).padStart(2, "0")).join("");
+
+          await supabase.from("rejected_content_hashes").insert({
+            content_hash: rejectedHash2,
+            client_id: clientId,
+            reason: "ai_relevance_gate",
+            original_signal_title: signalTitle.substring(0, 200),
+          }).then(() => {}).catch(() => {});
+
+          return { kind: "terminal", result: {
+            outcome: "rejected", reason: "ai_relevance_gate", httpStatusHint: 200, payloadShape: "rejected",
+            body: { status: "rejected", reason: "ai_relevance_gate", relevance_score: gateScore, primary_connection: primaryConnection, detail: gateReason, message: "Signal rejected by AI relevance gate — not actionable intelligence for this client" },
+          } };
+        } else {
+          console.log(`[AI Relevance Gate] ACCEPTED (score ${gateScore.toFixed(2)}, connection: ${primaryConnection}): ${gateReason}`);
+        }
+      }
+    } catch (gateError) {
+      const gateErrMsg = gateError instanceof Error ? gateError.message : String(gateError);
+      console.error("[AI Relevance Gate] Error (failing closed):", gateErrMsg);
+      const isQaTestForGate = work.sourceType === "qa_test" || work.rawBodySourceType === "qa_test" || work.isTest === true;
+      if (!isQaTestForGate) {
+        supabase.from("filtered_signals").insert({
+          raw_text: signalText.substring(0, 2000),
+          source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
+          source_name: source_key || signalRaw?.source_name || null,
+          client_id: clientId,
+          filter_reason: "ai_relevance_gate_error",
+          relevance_score: null,
+          relevance_reason: gateErrMsg.substring(0, 500),
+          primary_connection: null,
+        }).then(() => {}).catch(() => {});
+
+        return { kind: "terminal", result: {
+          outcome: "rejected", reason: "ai_relevance_gate_error", httpStatusHint: 200, payloadShape: "rejected",
+          body: { status: "rejected", reason: "ai_relevance_gate_error", detail: gateErrMsg.substring(0, 200), message: "Signal rejected because the AI relevance gate could not be evaluated" },
+        } };
+      }
+    }
+  }
+  return { kind: "continue" };
+}
+
 export async function runExternalCrawledAdmission(
   _candidate: SignalCandidate,
   _ctx: AdmissionContext,
