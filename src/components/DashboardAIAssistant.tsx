@@ -73,6 +73,10 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
   // regardless of which dep changed, and only the IDENTITY combo determines whether a
   // genuine reload is needed.
   const lastLoadKeyRef = useRef<string | null>(null);
+  // Tenant-scoped personal chat: track the last operating scope (viewMode|tenant|
+  // all-tenants) to distinguish a GENUINE scope change (reset conversation state)
+  // from a spurious same-scope re-fire (keep PROD-FF non-destructive preserve).
+  const lastScopeKeyRef = useRef<string | null>(null);
 
   // Voice state
   const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -144,12 +148,29 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
       // Real-user prod browser test 2026-05-24T03:01Z confirmed the wipe symptom under
       // exactly these conditions. PROD-U narrowed the `user` dep to `user?.id`; this covers
       // the remaining dep variants without changing the dep array.
-      const loadKey = `${user.id}|${viewMode}|${currentTenant?.id ?? 'notenant'}|${location.pathname}`;
+      // isAllTenantsView is part of the operating scope, so it MUST be in the
+      // idempotency key — toggling All-Tenants with the same currentTenant.id must
+      // still re-scope personal history.
+      const loadKey = `${user.id}|${viewMode}|${currentTenant?.id ?? 'notenant'}|${isAllTenantsView}|${location.pathname}`;
       if (lastLoadKeyRef.current === loadKey) {
         debug(`Skipping loadMessages — same identity key as last load (${loadKey})`);
         return;
       }
       lastLoadKeyRef.current = loadKey;
+
+      // Detect a GENUINE operating-scope change (viewMode / tenant / all-tenants) vs a
+      // spurious same-scope re-fire. On a real scope change we RESET stale conversation
+      // state from the prior context so it does not visually persist (which looked like
+      // a contamination bug) and force a clean load — overriding PROD-FF's preservation,
+      // which must apply ONLY to same-scope re-fires.
+      const scopeKey = `${viewMode}|${currentTenant?.id ?? 'global'}|${isAllTenantsView}`;
+      const scopeChanged = lastScopeKeyRef.current !== null && lastScopeKeyRef.current !== scopeKey;
+      lastScopeKeyRef.current = scopeKey;
+      if (scopeChanged) {
+        debug(`Scope changed → resetting conversation state for ${scopeKey}`);
+        setCurrentConversationId(null);
+        setMessages([defaultMessage]);
+      }
 
       try {
         debug(`🔄 Loading chat history for user ${user.id}, mode: ${viewMode}`);
@@ -165,16 +186,23 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
           .limit(100);
 
         if (viewMode === "personal") {
-          // Personal: show only user's own messages
+          // Personal: own messages, tenant-scoped to the current operating context so
+          // chats do not bleed across tenants. Global/all-tenants chats (tenant_id NULL)
+          // and per-tenant chats are kept in their own context.
           query = query.eq('user_id', user.id);
+          if (isAllTenantsView || !currentTenant?.id) {
+            query = query.is('tenant_id', null);            // global scratchpad only
+          } else {
+            query = query.eq('tenant_id', currentTenant.id); // this tenant only
+          }
         } else if (viewMode === "team" && currentTenant?.id) {
-          // Team: show shared messages within tenant
+          // Team: show shared messages within tenant (UNCHANGED)
           query = query
             .eq('tenant_id', currentTenant.id)
             .eq('is_shared', true);
         } else {
-          // Fallback to personal if no tenant
-          query = query.eq('user_id', user.id);
+          // Fallback (no tenant context): personal, global scope only
+          query = query.eq('user_id', user.id).is('tenant_id', null);
         }
 
         const { data: dbMessages, error } = await query;
@@ -199,36 +227,39 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             user_id: msg.user_id,
             conversation_id: msg.conversation_id || undefined,
           }));
-          // Store history separately — don't auto-populate the chat on load
+          // Store history separately — don't auto-populate the chat on load.
           setHistoryMessages(formattedMessages);
-          // PROD-FF (2026-05-24) — non-destructive hydration. The prior unconditional
-          // setMessages([defaultMessage]) here destroyed successful streamed responses
-          // when loadMessages re-fired after a stream completed. PROD-DD instrumentation
-          // proved the stream succeeded (contentLength 2952, deltaCount 26, finishReason
-          // stop) yet the UI reset to the welcome state — because this branch clobbered
-          // the live `messages` with the default welcome. Only reset to the welcome
-          // message when the chat is still in its pristine default state; otherwise
-          // preserve whatever is active. NOTE: heuristics like
-          // `prev.length > 1 || prev.some(m => m.role === 'user')` were intentionally
-          // rejected — identity is the pristine-default check, not message-count.
-          setMessages(prev => {
-            const isOnlyDefaultWelcome =
-              prev.length === 1 &&
-              prev[0]?.id === defaultMessage.id;
+          if (scopeChanged) {
+            // Genuine scope change → clean load. The prior context's chat must NOT
+            // persist; show the welcome and let history be opened explicitly.
+            setMessages([defaultMessage]);
+          } else {
+            // PROD-FF (2026-05-24) — non-destructive hydration for a SAME-SCOPE re-fire.
+            // The prior unconditional setMessages([defaultMessage]) destroyed successful
+            // streamed responses when loadMessages re-fired after a stream completed.
+            // Preserve an active chat; only reset when still pristine.
+            setMessages(prev => {
+              const isOnlyDefaultWelcome =
+                prev.length === 1 &&
+                prev[0]?.id === defaultMessage.id;
 
-            if (!isOnlyDefaultWelcome) {
-              debug(`PROD-FF: preserving ${prev.length} active messages — hydration non-destructive`);
-              return prev;
-            }
+              if (!isOnlyDefaultWelcome) {
+                debug(`PROD-FF: preserving ${prev.length} active messages — hydration non-destructive`);
+                return prev;
+              }
 
-            return [defaultMessage];
-          });
-          // Set current conversation from last message so new messages append to it —
-          // but never clobber an already-active conversation id (the active chat owns it).
-          setCurrentConversationId(prev => {
-            if (prev) return prev;
-            return formattedMessages[formattedMessages.length - 1]?.conversation_id ?? prev;
-          });
+              return [defaultMessage];
+            });
+          }
+          // Auto-attach new messages to the scope's most recent conversation ONLY on a
+          // same-scope re-fire. On a scope change we start fresh (conv id was reset to
+          // null above) so a new message does not append to the prior context's thread.
+          if (!scopeChanged) {
+            setCurrentConversationId(prev => {
+              if (prev) return prev;
+              return formattedMessages[formattedMessages.length - 1]?.conversation_id ?? prev;
+            });
+          }
           debug(`✅ Loaded ${formattedMessages.length} messages for ${viewMode} view (history hidden)`);
         } else if (viewMode === "personal") {
           // Only migrate from localStorage for personal view
@@ -293,7 +324,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     // setMessages([defaultMessage]) at line 173 and wiping the in-progress response.
     // Only re-load when user identity actually changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: user?.id, not user
-  }, [user?.id, authLoading, location.pathname, viewMode, currentTenant?.id]); // Re-run when view mode or tenant changes
+  }, [user?.id, authLoading, location.pathname, viewMode, currentTenant?.id, isAllTenantsView]); // Re-run when view mode, tenant, or all-tenants scope changes
 
   // Helper function to save a new message to database immediately
   const saveMessageToDb = async (message: Message, conversationId?: string): Promise<boolean> => {
