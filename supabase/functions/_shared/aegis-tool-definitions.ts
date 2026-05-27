@@ -100,20 +100,41 @@ Returns:
     type: "function",
     function: {
       name: "search_entities",
-      description: "Search for entities (people, organizations, locations). Use this when users ask to find a specific person or entity.",
+      description: "Find a specific entity (person, organization, location) within the current tenant by name or id. Tenant-scoped. Use for 'find/who is X'.",
       parameters: {
         type: "object",
         properties: {
-          query: {
-            type: "string",
-            description: "Search query for entity name",
-          },
-          limit: {
-            type: "number",
-            description: "Number of results to return (default 10)",
-          },
+          query: { type: "string", description: "Entity name or id to resolve (within the current tenant)" },
+          limit: { type: "number", description: "Number of results (default 10)" },
         },
         required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_entity_intelligence",
+      description: "Tenant-scoped entity intelligence for the active tenant: total entity count, monitored entities (active_monitoring_enabled), unreviewed entities, and counts by type. Use for questions like 'how many entities', 'which entities are monitored', 'how many unreviewed entities'. Returns a provenance trace.",
+      parameters: {
+        type: "object",
+        properties: {
+          type: { type: "string", description: "Optional entity type filter: person | organization | location | infrastructure | domain | ip_address" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_entity_relationships",
+      description: "Tenant-scoped relationships for an entity (which entities are connected). Only returns edges where both endpoints belong to the current tenant. Use for 'which entities are connected to X' / 'X's network'.",
+      parameters: {
+        type: "object",
+        properties: {
+          entity_name: { type: "string", description: "Entity name or id (within the current tenant)" },
+        },
+        required: ["entity_name"],
       },
     },
   },

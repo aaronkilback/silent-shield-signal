@@ -2,6 +2,7 @@
 //    AEGIS TOOL HANDLERS — Signals, Incidents & Data Quality
 // ═══════════════════════════════════════════════════════════════════════════════
 import type { ToolHandlerRegistry } from "./aegis-tool-executor.ts";
+import { entityIntelligence, entityDetails, entitySignals, entityRelationships } from "./tenant-entity-graph.ts";
 
 // Helper — reused across handlers for edge function calls with timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
@@ -254,14 +255,13 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     };
   },
 
-  search_entities: async (args, supabaseClient) => {
-    const { data, error } = await supabaseClient
-      .from("entities")
-      .select("id, name, type, description, risk_level, threat_score, current_location")
-      .ilike("name", `%${args.query}%`)
-      .limit(args.limit || 10);
-    if (error) throw error;
-    return data;
+  // RETIRED raw path → certified tenant-scoped traversal (unified retrieval graph).
+  // Was: unscoped `ilike(name)` across ALL entities. Now scoped to the caller's tenant
+  // via the entity intelligence graph; returns a provenance trace.
+  search_entities: async (args, supabaseClient, _userId, tenantId) => {
+    if (!tenantId) return { error: "TENANT_CONTEXT_MISSING", matches: [] };
+    const res = await entityDetails(supabaseClient, tenantId, String(args.query ?? ""));
+    return { matches: res.matches, count: res.matches.length, provenance: res.provenance };
   },
 
   search_investigations: async (args, supabaseClient) => {
@@ -317,56 +317,25 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     return data;
   },
 
-  search_signals_by_entity: async (args, supabaseClient) => {
-    const { data: entities, error: entityError } = await supabaseClient
-      .from("entities")
-      .select("id, name, type, description")
-      .ilike("name", `%${args.entity_name}%`)
-      .limit(5);
+  // RETIRED raw path → certified (c)-semantics traversal (unified retrieval graph).
+  // Was: unscoped entity ilike → entity_mentions only. Now tenant-scoped, reports
+  // directly-correlated signals (entity_mentions ∪ auto_correlated_entities) SEPARATELY
+  // from uncorrelated client-context signals. No name/title inference, no fabricated edges.
+  search_signals_by_entity: async (args, supabaseClient, _userId, tenantId) => {
+    if (!tenantId) return { error: "TENANT_CONTEXT_MISSING" };
+    return await entitySignals(supabaseClient, tenantId, String(args.entity_name ?? ""));
+  },
 
-    if (entityError) throw new Error(`Failed to search entities: ${entityError.message}`);
-    if (!entities || entities.length === 0) {
-      return {
-        success: false,
-        message: `No entity found matching "${args.entity_name}". You may need to create this entity first in the [Entities](/entities) page.`,
-        signals: [],
-      };
-    }
+  // Certified tenant-scoped entity intelligence: counts, monitored, unreviewed, by-type.
+  get_entity_intelligence: async (args, supabaseClient, _userId, tenantId) => {
+    if (!tenantId) return { error: "TENANT_CONTEXT_MISSING" };
+    return await entityIntelligence(supabaseClient, tenantId, { type: args?.type });
+  },
 
-    const entityIds = entities.map((e: any) => e.id);
-    const { data: mentions, error: mentionsError } = await supabaseClient
-      .from("entity_mentions")
-      .select("signal_id, entity_id, confidence, context")
-      .in("entity_id", entityIds)
-      .order("detected_at", { ascending: false })
-      .limit(args.limit || 20);
-
-    if (mentionsError) throw new Error(`Failed to search entity mentions: ${mentionsError.message}`);
-    if (!mentions || mentions.length === 0) {
-      return {
-        success: true,
-        entities,
-        message: `Found entity "${entities[0].name}" (${entities[0].type}) but no intelligence signals mention this entity yet.`,
-        signals: [],
-        suggestion: `Try: "Perform an OSINT scan on ${entities[0].name}" to gather intelligence from the web.`,
-      };
-    }
-
-    const signalIds = [...new Set(mentions.map((m: any) => m.signal_id))];
-    const { data: signals, error: signalsError } = await supabaseClient
-      .from("signals")
-      .select("id, title, description, severity, received_at, status, category, client_id, clients(name)")
-      .in("id", signalIds)
-      .order("received_at", { ascending: false });
-
-    if (signalsError) throw new Error(`Failed to fetch signals: ${signalsError.message}`);
-    return {
-      success: true,
-      entities,
-      entity_mentions_count: mentions.length,
-      signals: signals || [],
-      message: `Found ${signals?.length || 0} signal(s) mentioning ${entities[0].name}`,
-    };
+  // Certified tenant-scoped entity relationships (edge-join, both endpoints in-tenant).
+  get_entity_relationships: async (args, supabaseClient, _userId, tenantId) => {
+    if (!tenantId) return { error: "TENANT_CONTEXT_MISSING" };
+    return await entityRelationships(supabaseClient, tenantId, String(args?.entity_name ?? args?.query ?? ""));
   },
 
   get_monitoring_status: async (args, supabaseClient) => {
