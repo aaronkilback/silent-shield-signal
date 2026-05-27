@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { Upload, Sparkles, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { useActivityTracking } from "@/hooks/useActivityTracking";
 
@@ -69,6 +70,7 @@ export const CreateEntityDialog = ({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { selectedClientId } = useClientSelection();
+  const { currentTenant } = useTenant();
   const { trackEntityAction } = useActivityTracking();
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
@@ -250,6 +252,10 @@ export const CreateEntityDialog = ({
           associations: associationsArray.length > 0 ? associationsArray : null,
           created_by: user.id,
           client_id: selectedClientId || null,
+          // INC-CRT-VISIBILITY: persist tenant_id so the entity is visible in the
+          // tenant-scoped Entities UI (it filters .eq('tenant_id', currentTenant.id)).
+          // The created entity belongs to the operator's current tenant context.
+          tenant_id: currentTenant?.id ?? null,
           attributes: Object.keys(attributes).length > 0 ? attributes : null,
           active_monitoring_enabled: formData.active_monitoring_enabled,
           current_location: formData.current_location || null,

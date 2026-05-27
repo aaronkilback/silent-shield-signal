@@ -120,21 +120,24 @@ const Sources = () => {
         .select("*")
         .order("created_at", { ascending: false });
 
-      // PRIMARY scope (ownership): align super_admin tenant view with
-      // what the tenant would actually see. No-op when in All Tenants
-      // view or when no tenant is selected (platform admin mode).
+      // INC-CRT-VISIBILITY scope: a tenant's OWN sources are ALWAYS visible
+      // immediately (no requirement that they produced a signal in the last 90
+      // days). The activity-relevance narrower (useTenantRelevantSourceIds) is
+      // applied ONLY to GLOBAL (null-tenant) sources, for noise reduction on the
+      // shared pool — it must never hide a tenant-owned source.
+      //   tenantRelevantSourceIds: null → All Tenants view; undefined → loading
+      //   (held by the `enabled` gate); string[] → relevant global source IDs.
       if (currentTenant?.id && !isAllTenantsView) {
-        query = query.or(`created_by_tenant_id.is.null,created_by_tenant_id.eq.${currentTenant.id}`);
-      }
-
-      // SECONDARY narrower (activity relevance): see
-      // useTenantRelevantSourceIds. Applied AFTER ownership scope.
-      //   null      → All Tenants view, no further filter
-      //   undefined → still loading; `enabled` gate below holds the query
-      //   string[]  → restrict to these source IDs (empty array → no rows)
-      if (tenantRelevantSourceIds !== null && tenantRelevantSourceIds !== undefined) {
-        if (tenantRelevantSourceIds.length === 0) return [];
-        query = query.in("id", tenantRelevantSourceIds);
+        const relevant = tenantRelevantSourceIds;
+        if (relevant && relevant.length > 0) {
+          query = query.or(
+            `created_by_tenant_id.eq.${currentTenant.id},and(created_by_tenant_id.is.null,id.in.(${relevant.join(",")}))`
+          );
+        } else {
+          // No relevant global sources → show this tenant's own sources only
+          // (still always visible, regardless of signal activity).
+          query = query.eq("created_by_tenant_id", currentTenant.id);
+        }
       }
 
       const { data, error } = await query;
