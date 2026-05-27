@@ -353,6 +353,9 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   "get_active_incidents",
   "search_signals_by_entity",
   "get_signal_incident_status",
+  // Unified retrieval graph — certified tenant-scoped entity intelligence surface.
+  "get_entity_intelligence",
+  "get_entity_relationships",
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────
