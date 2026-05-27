@@ -9,23 +9,47 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import { formatFunctionInvokeErrorAsync } from "@/lib/functionInvokeError";
 import { useState } from "react";
+import { useTenant } from "@/hooks/useTenant";
 
 export const ArchivalDocumentsList = () => {
   const queryClient = useQueryClient();
+  const { currentTenant, isAllTenantsView } = useTenant();
   const [reprocessing, setReprocessing] = useState<string | null>(null);
   const [processingIntel, setProcessingIntel] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkReprocessing, setBulkReprocessing] = useState(false);
 
+  // INC-CRT-DOCUMENT-SCOPE Stage 1 — tenant-scoped view (interim containment).
+  // archival_documents has no tenant_id, so scope by the effective tenant's
+  // clients + attribution_status='assigned'. Mirrors the notifications/sources
+  // super-admin-impersonation-scope fix: RLS lets super_admin see ALL docs, so
+  // the frontend MUST scope by currentTenant. All-Tenants view = operator mode
+  // (all docs, incl. quarantine_review/deletion_candidate). Durable fix is
+  // Stage 2: archival_documents.tenant_id + a certified tenantRetrieve() surface
+  // (INC-XTEN Phase 3) — this special-case path is intentionally temporary.
   const { data: documents, isLoading } = useQuery({
-    queryKey: ['archival-documents'],
+    queryKey: ['archival-documents', currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('archival_documents')
         .select('*')
         .order('upload_date', { ascending: false })
         .limit(50);
-      
+
+      if (!isAllTenantsView) {
+        // Tenant-scoped view: only this tenant's clients' assigned documents.
+        if (!currentTenant?.id) return []; // no tenant context → fail closed
+        const { data: clientRows } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('tenant_id', currentTenant.id);
+        const clientIds = (clientRows ?? []).map((c: { id: string }) => c.id);
+        if (clientIds.length === 0) return []; // tenant has no clients → no docs
+        query = query.in('client_id', clientIds).eq('attribution_status', 'assigned');
+      }
+      // All-Tenants view: operator mode — unscoped (sees all, incl. quarantine).
+
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     }
