@@ -6,6 +6,33 @@ Supabase keys updated and validated.
 
 <!-- last-deploy: 2026-04-24 -->
 
+## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
+
+**No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.
+
+1. **Bare ownerless artifacts are forbidden.** Every asset (signals, incidents, entities, documents, reports, generated artifacts, storage objects) must be **client-owned / tenant-owned / user-owned / `global_shared` / `system` / or parent-owned via a non-null owned parent**.
+2. **Service-role writers are untrusted by default.** Service-role bypasses RLS, so the **non-bypassable backstop is DB CHECK constraints** + mandatory provenance assertion at the shared write seam (`assertProvenance`/`createArtifact`).
+3. **RLS is defense-in-depth, not primary enforcement** for service-role writers.
+4. **NULL fallback is prohibited** — no `client_id || null`, no `unassigned/` storage path, no silent downgrade to ownerless.
+5. **Unknown provenance fails closed or quarantines** — never creates an operator-visible asset.
+
+Invariant: `client_id IS NOT NULL OR tenant_id IS NOT NULL OR user_id IS NOT NULL OR asset_class IN ('global_shared','system') OR (owned parent FK)`. Positive models already in-repo: `ingest-signal` (#256 hard-reject), `generated_reports`/`tenant_chunks` (`tenant_id NOT NULL`).
+
+## Aegis Authority & Memory Doctrine (2026-05-27 — RATIFIED)
+
+Full plan: `docs/platform-operations/aegis-consolidated-ratification-and-sequencing.md`. Ratified: 3-layer memory model, action-integrity doctrine (AR1–AR6), authority modes, Aegis Ops control plane. Locked principles:
+
+1. **Aegis = tenant intelligence officer** (customer-facing, own-tenant-bounded, broad+operational). **Aegis Ops = operator control plane** (internal, cross-tenant by explicit `target_tenant`, mutating). Two physically-partitioned identities — separate tool registries + entry points, **not** a mode flag.
+2. **No impersonation.** The operator never becomes a user; no claims/JWT/tenant-context override path may exist. `actor = operator, target_tenant = X` — never `actor = <tenant user>` for an operator action.
+3. **actor ≠ owner.** Every write records ownership (= target tenant/client, Provenance Doctrine) AND actor (audit) as separate fields.
+4. **Memory layers:** L1 tenant facts (tenant-scoped only) · L2 approved anonymized/public learning (proven by content, not schema) · L3 operator/forensic (never silently mixed into a tenant answer).
+5. **Cross-Tenant Retrieval Exclusivity (AMENDMENT):** *all cross-tenant retrieval occurs exclusively through the audited Aegis Ops retrieval seam.* No tenant-facing code path may directly query cross-tenant data, shared global stores, service-role global stores, or unscoped helper queries. Tenant code uses `tenantRetrieve()` (own tenant) + `globalLearning()` (approved-clean L2) only; a blocking CI guard fails the build on any tenant-surface `.from()` of a cross-tenant/global store outside the seam.
+5b. **Certified-Safe Retrieval Allowlist (AMENDMENT):** tenant Aegis may retrieve ONLY from **certified-safe** surfaces through `tenantRetrieve()`; any uncertified surface is **unavailable by default** (allowlist, not denylist — `CERTIFIED_TENANT_SURFACES`). Certification = declared scope key (seam-only, no raw path) + empirical 0-cross-tenant isolation proof + no leaky sibling + (L2) certified anonymized content. Spec: `docs/platform-operations/architecture-decisions/aegis-tenant-intelligence-retrieval.md`.
+6. **No implied capabilities** (registry-gated, implemented-only) · **no fake success** (honest refusal) · **post-action receipts required** (measured post-condition, never "Done").
+7. **Service-role untrusted** — enforce at the DB layer + shared seams, never RLS-only or prompt discipline.
+
+Implementation order (gated, do not skip): preserve INC-LEARN-CONTAM containment → R1 retrieval seam → R2 leak fixes → L2 classification/gates → AR1 registry → AR3 receipts → AR4 refusal → split identity → `operatorAction` seam + `operator_actions_log` → Ops capabilities → tenant capabilities → INC-XTEN continuation → shared-learning remediation. **Do NOT build new tools before retrieval+capability truth is fixed; do NOT re-enable contaminated learning stores before anonymization gates.**
+
 ## Quarantine Doctrine (2026-05-23, Branch 1A merged)
 
 **Quarantine (`signals.quality_status = 'quarantined'`) is an ANALYST VISIBILITY BOUNDARY, not a presentation filter.**
