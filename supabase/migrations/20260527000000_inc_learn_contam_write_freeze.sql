@@ -37,14 +37,18 @@ begin
 end;
 $$;
 
+-- Idempotent: matches the DDL applied directly to staging + prod on 2026-05-27.
+drop trigger if exists trg_inc_learn_contam_freeze_ek on public.expert_knowledge;
 create trigger trg_inc_learn_contam_freeze_ek
   before insert on public.expert_knowledge
   for each row execute function public.inc_learn_contam_write_freeze();
 
+drop trigger if exists trg_inc_learn_contam_freeze_gli on public.global_learning_insights;
 create trigger trg_inc_learn_contam_freeze_gli
   before insert on public.global_learning_insights
   for each row execute function public.inc_learn_contam_write_freeze();
 
+drop trigger if exists trg_inc_learn_contam_freeze_ab on public.agent_beliefs;
 create trigger trg_inc_learn_contam_freeze_ab
   before insert on public.agent_beliefs
   for each row execute function public.inc_learn_contam_write_freeze();
