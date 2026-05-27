@@ -355,6 +355,23 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   "get_signal_incident_status",
 ]);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// INC-LEARN-CONTAM (2026-05-27) — P0 CONTAINMENT, default-deny.
+// The L2 content-provenance audit proved the cross-tenant "shared learning"
+// stores are contaminated with tenant facts at write time (uploaded tenant
+// PDFs ingested into expert_knowledge/global_learning_insights; AI beliefs
+// synthesised from one tenant's signals stored client-null in agent_beliefs,
+// e.g. "Petronas faces increased reputational risk … LNG Canada Phase 2").
+// Any tool that READS these free-text shared stores is an active cross-tenant
+// disclosure path. Disable until the rows are proven clean (anonymisation gate
+// + re-derivation). This is intentionally a hard refusal, not a silent empty.
+// Re-enable ONLY after INC-LEARN-CONTAM remediation passes the identity test.
+const CONTAINMENT_DISABLED_TOOLS = new Set<string>([
+  "get_global_learning_insights", // reads global_learning_insights (CONTAMINATED)
+  "get_cross_tenant_patterns",    // cross-tenant by design; default-deny
+  "query_expert_knowledge",       // reads expert_knowledge (CONTAMINATED — ingested tenant reports)
+]);
+
 // Tools intentionally excluded from TENANT_SCOPED_TOOLS — these are global / system / external:
 //   list_source_files, get_source_file      — codebase introspection (global system metadata)
 //   search_knowledge_base, get_knowledge_base_categories — public published KB articles
@@ -423,6 +440,16 @@ async function executeTool(
   tenantId?: string,
   tenantName?: string,
 ) {
+  // INC-LEARN-CONTAM — P0 containment gate (takes precedence). These tools read
+  // shared-learning stores proven to contain cross-tenant facts. Default-deny
+  // with an honest refusal until the stores are cleaned + re-derived.
+  if (CONTAINMENT_DISABLED_TOOLS.has(toolName)) {
+    console.warn(`[INC-LEARN-CONTAM] denied contaminated shared-learning tool '${toolName}'`);
+    return {
+      error: `'${toolName}' is temporarily disabled. The shared cross-tenant knowledge it reads is undergoing a data-provenance review (INC-LEARN-CONTAM) and may contain other tenants' information. It will return once verified clean. I cannot retrieve from it right now.`,
+    };
+  }
+
   // P0 Phase-C — fail-closed gate. Any tool that touches tenant-scoped data
   // requires a valid tenantId. This blocks unauthenticated/anonymous callers
   // from reaching ANY query path that could leak cross-tenant data.
@@ -6103,14 +6130,11 @@ Return a JSON object (no markdown, only valid JSON):
         const { data: kbData } = await kbQ.limit(limit).order('updated_at', { ascending: false });
         results.knowledge_base = kbData || [];
 
-        // Also query expert_knowledge (agent-hunted + document-derived intelligence)
-        let ekQ = supabaseClient.from('expert_knowledge').select('id, domain, subdomain, knowledge_type, expert_name, title, content, applicability_tags, confidence_score, citation, created_at').eq('is_active', true);
-        if (filters.keywords?.length) {
-          const ekf = filters.keywords.map((k: string) => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
-          ekQ = ekQ.or(ekf);
-        }
-        const { data: ekData } = await ekQ.limit(20).order('created_at', { ascending: false });
-        results.expert_knowledge = ekData || [];
+        // INC-LEARN-CONTAM — P0 containment: expert_knowledge is a shared store
+        // proven to contain ingested tenant documents + tenant-derived risk
+        // assessments. Do NOT surface it cross-tenant until cleaned. Knowledge-
+        // base articles (above) remain — they passed the L2 identity test.
+        results.expert_knowledge = [];
       }
 
       // Query monitoring history
@@ -7727,6 +7751,16 @@ Return a JSON object (no markdown, only valid JSON):
     }
 
     case "submit_learning_insight": {
+      // INC-LEARN-CONTAM (2026-05-27) — P0 WRITE FREEZE. Default-deny the writer
+      // until anonymisation gates exist. global_learning_insights is a shared
+      // free-text store proven to absorb tenant facts; new writes are blocked
+      // here (and at the DB layer by trg_inc_learn_contam_write_freeze) to stop
+      // contamination growth. Re-enable after INC-LEARN-CONTAM remediation.
+      return {
+        success: false,
+        error: "submit_learning_insight is temporarily frozen (INC-LEARN-CONTAM). Writes to the shared cross-tenant knowledge base are paused pending a data-provenance review so tenant information cannot be added without anonymisation. I did not record this insight.",
+      };
+
       const { error } = await supabaseClient
         .from("global_learning_insights")
         .insert({
@@ -10139,8 +10173,13 @@ Deno.serve(async (req) => {
     if (learningContext) console.log(`[AEGIS] Loaded adaptive learning context (${learningContext.length} chars)`);
 
     // ── Scoped agent beliefs — fetched after auth so we have userTenantId ──────
-    // Shows global beliefs (client_id IS NULL) + beliefs from this tenant's clients only.
-    // This prevents intelligence formed from one client's signals leaking to another tenant.
+    // INC-LEARN-CONTAM (2026-05-27) — P0 containment: load ONLY this tenant's
+    // own client beliefs. The previous "client_id IS NULL = global, safe to
+    // share" assumption is FALSE — the L2 audit proved many client-null beliefs
+    // are tenant-derived and name a specific client's posture (e.g. "Petronas
+    // faces reputational risk … LNG Canada Phase 2"). client-null beliefs are
+    // therefore suppressed from prompt context until re-derived clean. Without
+    // a resolved tenant (or with no clients), load NOTHING (was: unfiltered).
     let agentBeliefsData: any[] | null = null;
     try {
       let beliefsQuery = supabaseClient
@@ -10151,24 +10190,26 @@ Deno.serve(async (req) => {
         .order("confidence", { ascending: false })
         .limit(20);
 
+      let tenantClientIds: string[] = [];
       if (userTenantId) {
-        // Fetch client IDs for this tenant, then filter beliefs to those clients + global
         const { data: tenantClients } = await supabaseClient
           .from("clients")
           .select("id")
           .eq("tenant_id", userTenantId);
-        const tenantClientIds = (tenantClients || []).map((c: any) => c.id);
-        if (tenantClientIds.length > 0) {
-          beliefsQuery = beliefsQuery.or(
-            `client_id.is.null,${tenantClientIds.map((id: string) => `client_id.eq.${id}`).join(',')}`
-          );
-        } else {
-          beliefsQuery = beliefsQuery.is("client_id", null);
-        }
+        tenantClientIds = (tenantClients || []).map((c: any) => c.id);
+      }
+      if (tenantClientIds.length > 0) {
+        beliefsQuery = beliefsQuery.in("client_id", tenantClientIds);
+      } else {
+        // No tenant context or no clients → nothing is safely scoped. Load none.
+        agentBeliefsData = [];
+        beliefsQuery = null as any;
       }
 
-      const { data: beliefsRaw } = await beliefsQuery;
-      agentBeliefsData = beliefsRaw;
+      if (beliefsQuery) {
+        const { data: beliefsRaw } = await beliefsQuery;
+        agentBeliefsData = beliefsRaw;
+      }
     } catch (e) {
       console.warn("[AEGIS] Failed to load scoped agent beliefs (non-fatal):", e);
     }
