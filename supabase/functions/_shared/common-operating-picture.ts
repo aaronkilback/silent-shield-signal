@@ -32,10 +32,27 @@ export interface COPSnapshot {
  * Pass a Supabase service-role client.
  * Result is the same regardless of which agent or Aegis calls it.
  */
-export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
+export async function buildCOP(supabase: SupabaseClient, tenantId: string | null | undefined): Promise<COPSnapshot> {
   const now = new Date();
   const cutoff4h = new Date(now.getTime() - 4 * 3600000).toISOString();
   const cutoff24h = new Date(now.getTime() - 24 * 3600000).toISOString();
+
+  // INC-CTX-CONTAM — the COP is injected into EVERY Aegis prompt, so it MUST be tenant-scoped.
+  // An unscoped COP leaked cross-tenant facts (another tenant's "BC Children's Hospital"
+  // entities/signals) into other tenants' prompts. No tenant context → empty COP (fail closed),
+  // never global.
+  if (!tenantId) {
+    return {
+      generated_at: now.toISOString(), risk_score: null, risk_trend: 'unknown',
+      open_incidents: [], critical_signals: [], high_probability_escalations: [],
+      top_entities: [], watched_entities: [], active_agents: [], broadcast_messages: [],
+      summary: 'No tenant context — common operating picture is empty (fail-closed).',
+    } as COPSnapshot;
+  }
+  // Tenant's client ids — for client-scoped tables (entity_watch_list).
+  const { data: _tc } = await supabase.from('clients').select('id').eq('tenant_id', tenantId);
+  const clientIds: string[] = (_tc ?? []).map((c: { id: string }) => c.id);
+  const clientScope = clientIds.length > 0 ? clientIds : ['00000000-0000-0000-0000-000000000000'];
 
   const [
     { data: openIncidents },
@@ -50,6 +67,7 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
     supabase
       .from('incidents')
       .select('id, title, priority, status, opened_at')
+      .eq('tenant_id', tenantId)
       .eq('status', 'open')
       .is('deleted_at', null)
       .order('opened_at', { ascending: false })
@@ -57,6 +75,7 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
     supabase
       .from('signals')
       .select('id, title, severity, rule_category, created_at')
+      .eq('tenant_id', tenantId)
       .in('severity', ['critical', 'high'])
       .eq('is_test', false)
       .gte('created_at', cutoff24h)
@@ -64,7 +83,8 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
       .limit(10),
     supabase
       .from('predictive_incident_scores')
-      .select('signal_id, escalation_probability, predicted_severity')
+      .select('signal_id, escalation_probability, predicted_severity, signals!inner(tenant_id)')
+      .eq('signals.tenant_id', tenantId)
       .gte('escalation_probability', 0.70)
       .gte('scored_at', cutoff4h)
       .order('escalation_probability', { ascending: false })
@@ -72,12 +92,14 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
     supabase
       .from('entities')
       .select('name, type, risk_level, threat_score')
+      .eq('tenant_id', tenantId)
       .not('threat_score', 'is', null)
       .order('threat_score', { ascending: false })
       .limit(5),
     supabase
       .from('entity_watch_list')
       .select('entity_name, watch_level, reason, entity:entities(name, type, risk_level)')
+      .in('client_id', clientScope)
       .eq('is_active', true)
       .in('watch_level', ['alert', 'critical'])
       .order('watch_level', { ascending: false })
@@ -95,6 +117,7 @@ export async function buildCOP(supabase: SupabaseClient): Promise<COPSnapshot> {
     supabase
       .from('agent_pending_messages')
       .select('message, priority, created_at')
+      .eq('tenant_id', tenantId)
       .eq('trigger_event', 'principal_broadcast')
       .gte('created_at', cutoff24h)
       .order('created_at', { ascending: false })

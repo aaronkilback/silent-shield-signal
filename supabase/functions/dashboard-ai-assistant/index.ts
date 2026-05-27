@@ -9016,7 +9016,8 @@ Return a JSON object (no markdown, only valid JSON):
       // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
       assertTenantContext("get_common_operating_picture", tenantId);
       try {
-        const cop = await buildCOP(supabaseClient);
+        // INC-CTX-CONTAM — COP is tenant-scoped; pass the gated tenant.
+        const cop = await buildCOP(supabaseClient, tenantId);
         return {
           success: true,
           summary: cop.summary,
@@ -10074,14 +10075,10 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
     
     // ── COMMON OPERATING PICTURE ────────────────────────────────────────────
+    // INC-CTX-CONTAM: the COP is TENANT-SCOPED and built AFTER userTenantId resolves
+    // (below) — never here pre-auth. An unscoped/global COP injected cross-tenant facts
+    // (e.g. another tenant's "BC Children's Hospital") into every prompt.
     let copContext = "";
-    try {
-      const cop = await buildCOP(supabaseClient);
-      copContext = formatCOPForPrompt(cop);
-      console.log(`[Aegis] COP: ${cop.summary}`);
-    } catch (copErr) {
-      console.warn("[Aegis] COP build failed (non-fatal):", copErr);
-    }
     // ────────────────────────────────────────────────────────────────────────
 
     // Extract authenticated user ID from Authorization header for memory tools
@@ -10300,6 +10297,19 @@ Deno.serve(async (req) => {
         console.warn("[AEGIS] Login summary unavailable (non-fatal):", e);
       }
     }
+
+    // ── COMMON OPERATING PICTURE (tenant-scoped) ──────────────────────────────
+    // INC-CTX-CONTAM: built HERE — after userTenantId resolves — never pre-auth.
+    // No tenant → buildCOP fails closed (empty), so no cross-tenant facts can leak
+    // into the prompt. (See common-operating-picture.ts.)
+    try {
+      const cop = await buildCOP(supabaseClient, userTenantId);
+      copContext = formatCOPForPrompt(cop);
+      console.log(`[Aegis] COP (tenant=${userTenantId ?? "none"}): ${cop.summary}`);
+    } catch (copErr) {
+      console.warn("[Aegis] COP build failed (non-fatal):", copErr);
+    }
+    // ──────────────────────────────────────────────────────────────────────────
 
     const truncateContent = (content: string, maxChars: number = 50000): string => {
       if (content.length <= maxChars) return content;

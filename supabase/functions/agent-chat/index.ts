@@ -659,7 +659,19 @@ Respond naturally and briefly.`
       pendingMsgsResult,
       missionsResult,
     ] = await Promise.allSettled([
-      buildCOP(supabase),
+      // INC-CTX-CONTAM: the COP is injected into the agent's prompt, so it MUST be
+      // tenant-scoped. Derive tenant from the conversation's client (authoritative
+      // subject); fall back to the agent's home tenant. No tenant → empty COP
+      // (buildCOP fails closed) — never a global cross-tenant picture.
+      (async () => {
+        let copTenantId: string | null = (agent as { tenant_id?: string | null }).tenant_id ?? null;
+        if (client_id) {
+          const { data: copClient } = await supabase
+            .from('clients').select('tenant_id').eq('id', client_id).maybeSingle();
+          if (copClient?.tenant_id) copTenantId = copClient.tenant_id;
+        }
+        return buildCOP(supabase, copTenantId);
+      })(),
       (() => {
         let q = supabase
           .from('agent_beliefs')
