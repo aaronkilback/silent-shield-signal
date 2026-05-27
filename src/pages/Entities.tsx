@@ -42,8 +42,6 @@ export default function Entities() {
   const [searchTerm, setSearchTerm] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<string | null>(null);
-  const [showAutoCreated, setShowAutoCreated] = useState(false);
-  const [hideLowQuality, setHideLowQuality] = useState(true); // toggle label: "Hide unreviewed extractions" (#139)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [bulletinDialogOpen, setBulletinDialogOpen] = useState(false);
@@ -59,13 +57,17 @@ export default function Entities() {
 
   // Filter entities by the selected client
   const { data: entities = [], refetch } = useQuery({
-    queryKey: ['entities', searchTerm, selectedType, selectedClientId, showAutoCreated, hideLowQuality, currentTenant?.id, isAllTenantsView],
+    queryKey: ['entities', searchTerm, selectedType, selectedClientId, currentTenant?.id, isAllTenantsView],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
         .from('entities')
         .select('*')
         .eq('is_active', true)
+        // Main Entities = approved operational entities only. Unreviewed machine
+        // extractions (visibility_class='extracted') live in the Suggested review
+        // queue, never on this surface (product lock 2026-05-27).
+        .neq('visibility_class', 'extracted')
         .order('created_at', { ascending: false });
 
       // Tenant scope cascade (defense-in-depth):
@@ -89,36 +91,24 @@ export default function Entities() {
         query = query.eq('type', selectedType as any);
       }
 
-      if (showAutoCreated) {
-        query = query.ilike('description', 'Auto-created from%');
-      }
-
-      if (hideLowQuality) {
-        // #139: provenance-aware suppression. Hide only machine-originated entities
-        // that have not yet been gated by a human. visibility_class='curated' (operator
-        // authored) and 'reviewed' (suggestion approved) are always shown; only
-        // 'extracted' is suppressible. Replaces the old quality_score-based proxy.
-        query = query.neq('visibility_class', 'extracted');
-      }
-
       const { data, error } = await query;
       if (error) throw error;
       return data;
     }
   });
 
-  // Shown total — honors the SAME hideLowQuality filter as the list query, so the
-  // headline count never exceeds the number of rendered cards (issue #1: header
-  // said "2 entities" while one card rendered because this count ignored the
-  // "Hide Unreviewed Extractions" filter the list applied).
+  // Approved-entity count for the selected client — matches the list query
+  // (both exclude unreviewed extractions), so the header count never diverges
+  // from the rendered cards.
   const { data: totalCount = 0 } = useQuery({
-    queryKey: ['entities-total-count', selectedClientId, showAutoCreated, hideLowQuality, currentTenant?.id, isAllTenantsView],
+    queryKey: ['entities-total-count', selectedClientId, currentTenant?.id, isAllTenantsView],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
         .from('entities')
         .select('*', { count: 'exact', head: true })
-        .eq('is_active', true);
+        .eq('is_active', true)
+        .neq('visibility_class', 'extracted');
 
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
@@ -127,44 +117,6 @@ export default function Entities() {
         }
       } else if (currentTenant?.id && !isAllTenantsView) {
         query = query.eq('tenant_id', currentTenant.id);
-      }
-
-      if (showAutoCreated) {
-        query = query.ilike('description', 'Auto-created from%');
-      }
-
-      if (hideLowQuality) {
-        query = query.neq('visibility_class', 'extracted');
-      }
-
-      const { count, error } = await query;
-      if (error) throw error;
-      return count || 0;
-    }
-  });
-
-  // Unfiltered total (ignores hideLowQuality) — the "of N" denominator so the
-  // header can disclose hidden extractions as "Showing X of Y entities".
-  const { data: unfilteredTotal = 0 } = useQuery({
-    queryKey: ['entities-unfiltered-total', selectedClientId, showAutoCreated, currentTenant?.id, isAllTenantsView],
-    enabled: !!user && isContextReady,
-    queryFn: async () => {
-      let query = supabase
-        .from('entities')
-        .select('*', { count: 'exact', head: true })
-        .eq('is_active', true);
-
-      if (selectedClientId) {
-        query = query.eq('client_id', selectedClientId);
-        if (currentTenant?.id && !isAllTenantsView) {
-          query = query.eq('tenant_id', currentTenant.id);
-        }
-      } else if (currentTenant?.id && !isAllTenantsView) {
-        query = query.eq('tenant_id', currentTenant.id);
-      }
-
-      if (showAutoCreated) {
-        query = query.ilike('description', 'Auto-created from%');
       }
 
       const { count, error } = await query;
@@ -447,9 +399,9 @@ export default function Entities() {
           <div className="flex items-center justify-between">
             <div className="flex gap-2 flex-wrap">
               <Button
-                variant={selectedType === null && !showAutoCreated ? "default" : "outline"}
+                variant={selectedType === null ? "default" : "outline"}
                 size="sm"
-                onClick={() => { setSelectedType(null); setShowAutoCreated(false); }}
+                onClick={() => setSelectedType(null)}
               >
                 All
               </Button>
@@ -458,26 +410,11 @@ export default function Entities() {
                   key={type.value}
                   variant={selectedType === type.value ? "default" : "outline"}
                   size="sm"
-                  onClick={() => { setSelectedType(type.value); setShowAutoCreated(false); }}
+                  onClick={() => setSelectedType(type.value)}
                 >
                   {type.label}
                 </Button>
               ))}
-              <Button
-                variant={showAutoCreated ? "destructive" : "outline"}
-                size="sm"
-                onClick={() => { setShowAutoCreated(!showAutoCreated); setSelectedType(null); }}
-              >
-                Auto-Created (Unapproved)
-              </Button>
-              <Button
-                variant={hideLowQuality ? "default" : "outline"}
-                size="sm"
-                onClick={() => setHideLowQuality(!hideLowQuality)}
-                title="Hide machine-extracted entities that have not been reviewed by an analyst. Manually-created and approved entities stay visible."
-              >
-                Hide Unreviewed Extractions
-              </Button>
             </div>
             <div className="flex gap-1">
               <Button
@@ -504,9 +441,9 @@ export default function Entities() {
             <div className="flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" />
               <span className="font-semibold text-lg">
-                {searchTerm || selectedType || showAutoCreated || (hideLowQuality && unfilteredTotal > totalCount) ? (
+                {searchTerm || selectedType ? (
                   <>
-                    Showing {entities.length} of {unfilteredTotal} entities
+                    Showing {entities.length} of {totalCount} entities
                   </>
                 ) : (
                   <>
@@ -515,14 +452,13 @@ export default function Entities() {
                 )}
               </span>
             </div>
-            {(searchTerm || selectedType || showAutoCreated) && (
+            {(searchTerm || selectedType) && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => {
                   setSearchTerm('');
                   setSelectedType(null);
-                  setShowAutoCreated(false);
                 }}
               >
                 Clear Filters
