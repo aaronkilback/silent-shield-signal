@@ -13,6 +13,7 @@ import { FORTRESS_CORE_DIRECTIVE } from "../_shared/fortress-core-directive.ts";
 import { aegisToolDefinitions } from "../_shared/aegis-tool-definitions.ts";
 import { extractPlannedTestSignalFromText, extractPlannedFortressQueryFromText, extractPlannedAgentFromText } from "../_shared/aegis-forced-execution.ts";
 import { signalsAndIncidentsHandlers } from "../_shared/handlers-signals-incidents.ts";
+import { recordRecommendation } from "../_shared/aegis-recommendations.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -4877,20 +4878,35 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       const dominantCategory = Object.entries(categoryCounts).sort(([, a], [, b]) => b - a)[0]?.[0];
       const highConfidence = newProposals.filter(p => p.confidence === "high");
+      const clientName = (client as any)?.name || client_id;
 
+      // Operational State Integrity (C/D): if there is a concrete proposal, PERSIST it as a
+      // real recommendation object and surface ONLY the recorded-with-id claim. If there is
+      // nothing to propose, do NOT imply any recorded/pending/approved state.
+      if (newProposals.length === 0) {
+        return {
+          success: true, recommendation: null, recorded: false,
+          analysis: { client_id, client_name: clientName, signals_analyzed: signals?.length || 0, current_keyword_count: currentKeywords.size },
+          message: `Analyzed ${signals?.length || 0} signals for ${clientName} over ${lookback_days} days — no new keywords to propose. Nothing was recorded.`,
+        };
+      }
+      const rec = await recordRecommendation(supabaseClient, {
+        kind: "monitoring_keywords",
+        tenantId, clientId: client_id,
+        title: `Monitoring keyword proposal for ${clientName} (${newProposals.length} new)`,
+        payload: { new_keyword_proposals: newProposals, dominant_category: dominantCategory,
+          top_entity_tags: Object.entries(entityTagCounts).sort(([, a], [, b]) => b - a).slice(0, 10).map(([tag, count]) => ({ tag, frequency: count })) },
+        rationale: `Derived from ${signals?.length || 0} signals over ${lookback_days}d; ${highConfidence.length} high-confidence.`,
+        actorUserId: userId, actorSurface: "aegis",
+        provenance: { surface: "signals", scope: `tenant_id=${tenantId} AND client_id=${client_id}`, signals_analyzed: signals?.length || 0 },
+      });
       return {
         success: true,
-        client_id,
-        client_name: (client as any)?.name || client_id,
-        analysis_period_days: lookback_days,
-        signals_analyzed: signals?.length || 0,
-        current_keyword_count: currentKeywords.size,
+        recorded: true,
+        recommendation: rec,                 // persisted object — has id + status='proposed'
         new_keyword_proposals: newProposals,
-        top_current_keywords: topCurrentKws,
-        dominant_category: dominantCategory,
-        top_entity_tags: Object.entries(entityTagCounts).sort(([, a], [, b]) => b - a).slice(0, 10).map(([tag, count]) => ({ tag, frequency: count })),
-        observed_trends: observed_trends || null,
-        message: `Keyword analysis for ${(client as any)?.name || client_id}: ${signals?.length || 0} signals over ${lookback_days} days. ${newProposals.length} new keyword proposals found (${highConfidence.length} high-confidence). Current config has ${currentKeywords.size} keywords. Dominant signal category: ${dominantCategory || "N/A"}.`,
+        // Claim discipline: Aegis must use this exact claim — recorded, NOT approved/applied.
+        message: `${rec.claim} ${newProposals.length} new keyword(s) for ${clientName} (${highConfidence.length} high-confidence). It is NOT yet approved or applied to the monitoring configuration.`,
       };
     }
 
