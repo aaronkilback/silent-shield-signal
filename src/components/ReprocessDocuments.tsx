@@ -7,20 +7,40 @@ import { RefreshCw, FileSearch } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
+import { useTenant } from "@/hooks/useTenant";
 
 export const ReprocessDocuments = () => {
+  const { currentTenant, isAllTenantsView } = useTenant();
   const [processing, setProcessing] = useState(false);
   const [processedCount, setProcessedCount] = useState(0);
   const [processAll, setProcessAll] = useState(false);
 
+  // INC-CRT-DOCUMENT-SCOPE Stage 1 — tenant-scoped (matches ArchivalDocumentsList).
+  // This is the component that renders the visible Library document list + counts.
+  // archival_documents has no tenant_id, so scope by the effective tenant's clients +
+  // attribution_status='assigned'. All-Tenants view = operator mode (unscoped). Without
+  // a tenant (or with no clients) → fail closed. Durable fix is Stage 2 (tenant_id +
+  // certified tenantRetrieve() surface, INC-XTEN Phase 3).
   const { data: allDocuments, isLoading, refetch } = useQuery({
-    queryKey: ['all-documents-stats'],
+    queryKey: ['all-documents-stats', currentTenant?.id, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('archival_documents')
         .select('id, filename, file_size, created_at, metadata, entity_mentions')
         .order('created_at', { ascending: false });
 
+      if (!isAllTenantsView) {
+        if (!currentTenant?.id) return []; // no tenant context → fail closed
+        const { data: clientRows } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('tenant_id', currentTenant.id);
+        const clientIds = (clientRows ?? []).map((c: { id: string }) => c.id);
+        if (clientIds.length === 0) return []; // tenant has no clients → no docs
+        query = query.in('client_id', clientIds).eq('attribution_status', 'assigned');
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return data || [];
     }
