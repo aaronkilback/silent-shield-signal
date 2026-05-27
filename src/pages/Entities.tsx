@@ -107,9 +107,46 @@ export default function Entities() {
     }
   });
 
-  // Get entity count for selected client
+  // Shown total — honors the SAME hideLowQuality filter as the list query, so the
+  // headline count never exceeds the number of rendered cards (issue #1: header
+  // said "2 entities" while one card rendered because this count ignored the
+  // "Hide Unreviewed Extractions" filter the list applied).
   const { data: totalCount = 0 } = useQuery({
-    queryKey: ['entities-total-count', selectedClientId, showAutoCreated, currentTenant?.id, isAllTenantsView],
+    queryKey: ['entities-total-count', selectedClientId, showAutoCreated, hideLowQuality, currentTenant?.id, isAllTenantsView],
+    enabled: !!user && isContextReady,
+    queryFn: async () => {
+      let query = supabase
+        .from('entities')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true);
+
+      if (selectedClientId) {
+        query = query.eq('client_id', selectedClientId);
+        if (currentTenant?.id && !isAllTenantsView) {
+          query = query.eq('tenant_id', currentTenant.id);
+        }
+      } else if (currentTenant?.id && !isAllTenantsView) {
+        query = query.eq('tenant_id', currentTenant.id);
+      }
+
+      if (showAutoCreated) {
+        query = query.ilike('description', 'Auto-created from%');
+      }
+
+      if (hideLowQuality) {
+        query = query.neq('visibility_class', 'extracted');
+      }
+
+      const { count, error } = await query;
+      if (error) throw error;
+      return count || 0;
+    }
+  });
+
+  // Unfiltered total (ignores hideLowQuality) — the "of N" denominator so the
+  // header can disclose hidden extractions as "Showing X of Y entities".
+  const { data: unfilteredTotal = 0 } = useQuery({
+    queryKey: ['entities-unfiltered-total', selectedClientId, showAutoCreated, currentTenant?.id, isAllTenantsView],
     enabled: !!user && isContextReady,
     queryFn: async () => {
       let query = supabase
@@ -467,9 +504,9 @@ export default function Entities() {
             <div className="flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" />
               <span className="font-semibold text-lg">
-                {searchTerm || selectedType || showAutoCreated ? (
+                {searchTerm || selectedType || showAutoCreated || (hideLowQuality && unfilteredTotal > totalCount) ? (
                   <>
-                    Showing {entities.length} of {totalCount} entities
+                    Showing {entities.length} of {unfilteredTotal} entities
                   </>
                 ) : (
                   <>
