@@ -9,17 +9,17 @@ Legend: ✅ done · ◑ partial · ❌ none · — n/a
 | Surface | Header traced | Retrieval coverage | Tool/AI-call coverage | Replayable |
 |---|---|---|---|---|
 | **dashboard-ai-assistant** | ✅ | ◑ COP (memory/entity-graph reached via tools, tool-traced) | ✅ executeTool loop | ✅ |
-| **incident-agent-orchestrator** | ⏳ slice 3a | ⏳ buildMemoryContext + buildCrossAgentContext | ⏳ agent AI call | ⏳ |
-| **multi-agent-debate** | ⏳ slice 3a | ⏳ buildMemoryContext (per-agent) | ⏳ per-agent + judge AI calls | ⏳ |
-| **agent-chat** | ⏳ slice 3b | ⏳ COP + beliefs + memory block | ⏳ tool calls | ⏳ |
+| **incident-agent-orchestrator** | ✅ | ✅ buildMemoryContext + buildCrossAgentContext | ◑ AI call (synthesis-level, not per-tool) | ✅ |
+| **multi-agent-debate** | ✅ | ✅ buildMemoryContext (per-agent) | ◑ AI calls (per-agent + judge — synthesis-level) | ✅ |
+| **agent-chat** | ✅ | ✅ COP (call-site, scope from client→tenant) · other 9 parallel reads ◑ | ⏳ per-branch tool capture deferred (many switch/case sites) | ✅ |
 
 ## Retrieval-primitive instrumentation
 
 | Primitive | Module | Emits retrieval trace? |
 |---|---|---|
-| `buildCOP` | `common-operating-picture.ts` | captured at **call site** (dashboard ✅; agent-chat ⏳ 3b) — COP has no fallback/vector dimension |
-| `match_agent_memories` (`retrieveAgentMemories`) | `agent-memory.ts` | ⏳ 3a — in-function (surface, scope, returned IDs, vector hits, timing) |
-| `match_cross_agent_memories` (`retrieveCrossAgentInsights`) | `agent-intelligence.ts` | ⏳ 3a — in-function, incl. `fallback_path` (rpc vs keyword_fallback) |
+| `buildCOP` | `common-operating-picture.ts` | captured at **call site** (dashboard ✅; agent-chat ✅) — COP has no fallback/vector dimension |
+| `match_agent_memories` (`retrieveAgentMemories`) | `agent-memory.ts` | ✅ in-function (surface, scope, returned IDs, vector hits, timing) |
+| `match_cross_agent_memories` (`retrieveCrossAgentInsights`) | `agent-intelligence.ts` | ✅ in-function, incl. `fallback_path` (rpc vs keyword_fallback) |
 | `tenant-entity-graph` (`entityIntelligence`/`entitySignals`/`entityRelationships`) | `tenant-entity-graph.ts` | reached only via dashboard tools (tool-traced); direct retrieval-trace ⏳ later |
 | `tenantRetrieve()` | — | **not implemented** (R1 retrieval seam unbuilt); out of scope until it exists |
 

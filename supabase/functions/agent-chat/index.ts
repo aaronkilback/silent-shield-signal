@@ -4,6 +4,7 @@ import { classifyUserSafeError } from "../_shared/user-safe-errors.ts";
 import { validateString, validateUUID, validateMessages, validateAll } from "../_shared/input-validation.ts";
 import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_shared/fortress-infrastructure.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
+import { startTrace, type Recorder } from "../_shared/flight-recorder.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
 import {
   getReliabilityFirstPrompt,
@@ -351,6 +352,8 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Flight recorder hoisted so catch/finally paths can flush. Assigned after body parse.
+  let rec: Recorder | null = null;
   try {
     const body = await req.json();
     
@@ -396,6 +399,15 @@ Deno.serve(async (req) => {
     }
 
     console.log('Agent chat request:', { agent_id, message_length: message?.length, client_id });
+
+    // Flight recorder (Slice 3b) — chain-of-custody for this agent chat.
+    rec = startTrace(supabase, {
+      debugTraceId: body.debug_trace_id ?? undefined,
+      conversationId: body.conversation_id ?? null,
+      clientId: client_id ?? null,
+      functionName: 'agent-chat',
+      actorSurface: 'agent',
+    });
 
     // AI calls route through callAiGateway → OpenAI (GEMINI_API_KEY guard removed)
 
@@ -670,7 +682,21 @@ Respond naturally and briefly.`
             .from('clients').select('tenant_id').eq('id', client_id).maybeSingle();
           if (copClient?.tenant_id) copTenantId = copClient.tenant_id;
         }
-        return buildCOP(supabase, copTenantId);
+        // Flight recorder: scope + COP retrieval trace.
+        rec?.setScope({ tenantId: copTenantId });
+        const t0 = Date.now();
+        const cop = await buildCOP(supabase, copTenantId);
+        rec?.retrieval({
+          surface: 'COP', tenantScope: copTenantId,
+          returnedObjectIds: [
+            ...(cop.open_incidents ?? []).map((i: { id: string }) => i.id),
+            ...(cop.critical_signals ?? []).map((s: { id: string }) => s.id),
+            ...(cop.top_entities ?? []).map((e: { name: string }) => e.name),
+          ],
+          fallbackPath: 'none', timingMs: Date.now() - t0,
+          provenance: { summary: cop.summary, tenant_scoped: !!copTenantId },
+        });
+        return cop;
       })(),
       (() => {
         let q = supabase
@@ -1624,6 +1650,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
     if (body.stream === false) {
       const raw = await makeAICall(messages, false);
       const content = raw?.choices?.[0]?.message?.content || '';
+      if (rec) await rec.finish({ status: 'ok', finalResponsePath: 'json' });
       return new Response(JSON.stringify({ response: content }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -3931,6 +3958,8 @@ To include geopolitical or external news context, please ask me to perform an ex
         await sendSSE('[DONE]');
       } catch { /* writer may already be closed */ }
     } finally {
+      // Flight recorder flush — post-stream, best-effort.
+      if (rec) { try { await rec.finish({ status: 'ok', finalResponsePath: 'streamed' }); } catch {} }
       try { await sseWriter.close(); } catch { /* already closed */ }
     }
     })(); // end background IIFE — NOT awaited
@@ -3941,6 +3970,7 @@ To include geopolitical or external news context, please ask me to perform an ex
 
   } catch (error) {
     console.error('Error in agent-chat:', error);
+    if (rec) { try { await rec.finish({ status: 'error', finalResponsePath: 'error' }); } catch {} }
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : 'Unknown error occurred',
