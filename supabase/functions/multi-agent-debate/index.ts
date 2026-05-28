@@ -12,6 +12,7 @@ import { buildGraphContext, discoverIncidentConnections } from "../_shared/knowl
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
 import { STRUCTURED_DEBATE_TOOLS, STRUCTURED_SYNTHESIS_TOOLS, storeStructuredArguments } from "../_shared/structured-debate.ts";
+import { startTrace, type Recorder } from "../_shared/flight-recorder.ts";
 
 const DEBATE_AGENTS: Record<string, { model: string; specialty: string; prompt: string }> = {
   'THREAT-ANALYST': {
@@ -134,8 +135,10 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  // Flight recorder hoisted so the catch can flush.
+  let rec: Recorder | null = null;
   try {
-    const { incident_id, agents, debate_type, call_signs, question } = await req.json();
+    const { incident_id, agents, debate_type, call_signs, question, debug_trace_id: debugTraceId } = await req.json();
 
     // Must have either incident_id (existing mode) or call_signs + question (task force mode)
     if (!incident_id && (!call_signs?.length || !question)) {
@@ -145,6 +148,13 @@ Deno.serve(async (req) => {
     const supabase = createServiceClient();
     const dateContext = getCriticalDateContext();
     const antiHallucination = getAntiHallucinationPrompt();
+
+    // Flight recorder (Slice 3) — chain-of-custody for the debate.
+    rec = startTrace(supabase, {
+      debugTraceId: debugTraceId ?? undefined,
+      functionName: 'multi-agent-debate',
+      actorSurface: 'agent',
+    });
 
     // ── Task Force Mode: named agents + free-form question ────────────────
     if (!incident_id && call_signs?.length && question) {
@@ -172,7 +182,7 @@ Deno.serve(async (req) => {
       // Phase 1: Independent analyses in parallel
       const [memoryContexts] = await Promise.all([
         // INC-OMCR: task-force question debates carry no tenant → no tenant memory (fail closed).
-        Promise.all(orderedCallSigns.map(cs => buildMemoryContext(supabase, cs, questionContext, null))),
+        Promise.all(orderedCallSigns.map(cs => buildMemoryContext(supabase, cs, questionContext, null, rec ?? undefined))),
       ]);
 
       const analysisPromises = orderedCallSigns.map(async (callSign: string, idx: number) => {
@@ -298,6 +308,7 @@ You MUST use the submit_synthesis tool.`;
         }
       }
 
+      if (rec) await rec.finish({ status: 'ok', finalResponsePath: 'json' });
       return successResponse({
         success: true,
         mode: 'task_force',
@@ -338,6 +349,9 @@ You MUST use the submit_synthesis tool.`;
       console.error('[Debate] Incident query error:', JSON.stringify(incErr), 'incident_id:', incident_id);
       throw new Error(`Incident not found: ${incErr?.message || 'no data returned'}`);
     }
+
+    // Flight recorder: fill scope now that incident's tenant/client are known.
+    rec?.setScope({ tenantId: incident.tenant_id ?? null, clientId: incident.client_id ?? null });
 
     // ── Specialty routing — semantic via agent-router ─────────────
     // 2026-05-10: replaced the hardcoded 9-route SPECIALTY_ROUTES regex
@@ -447,7 +461,7 @@ Entity Tags: ${incident.signals?.entity_tags?.join(', ') || 'None'}
 `;
 
     const [memoryContexts, graphContext, graphEdges] = await Promise.all([
-      Promise.all(selectedAgents.map((a: string) => buildMemoryContext(supabase, a, incidentContext, incident.tenant_id))),
+      Promise.all(selectedAgents.map((a: string) => buildMemoryContext(supabase, a, incidentContext, incident.tenant_id, rec ?? undefined))),
       buildGraphContext(supabase, incident_id),
       discoverIncidentConnections(supabase, incident_id, 'debate-protocol'),
     ]);
@@ -630,6 +644,7 @@ Current date: ${dateContext.currentDateISO}`;
       updated_at: new Date().toISOString(),
     }).eq('id', incident_id);
 
+    if (rec) await rec.finish({ status: 'ok', finalResponsePath: 'json' });
     return successResponse({
       success: true,
       incident_id,
@@ -657,6 +672,7 @@ Current date: ${dateContext.currentDateISO}`;
     });
   } catch (error) {
     console.error('[Debate] Error:', error);
+    if (rec) { try { await rec.finish({ status: 'error', finalResponsePath: 'error' }); } catch {} }
     await logError(error, { functionName: 'multi-agent-debate', severity: 'error' });
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes('402') || msg.includes('credits')) {
