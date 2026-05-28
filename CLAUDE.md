@@ -33,6 +33,20 @@ Full plan: `docs/platform-operations/aegis-consolidated-ratification-and-sequenc
 
 Implementation order (gated, do not skip): preserve INC-LEARN-CONTAM containment → R1 retrieval seam → R2 leak fixes → L2 classification/gates → AR1 registry → AR3 receipts → AR4 refusal → split identity → `operatorAction` seam + `operator_actions_log` → Ops capabilities → tenant capabilities → INC-XTEN continuation → shared-learning remediation. **Do NOT build new tools before retrieval+capability truth is fixed; do NOT re-enable contaminated learning stores before anonymization gates.**
 
+## Grounding-State Doctrine (2026-05-27, INC-CTX-CONTAM — RATIFIED)
+
+**A tenant-fact claim may be asserted ONLY when it is grounded in a certified tenant retrieval trace.** Full ADR: `docs/platform-operations/architecture-decisions/aegis-grounding-state-doctrine.md`. Incident: `docs/platform-operations/incidents/INC-CTX-CONTAM-2026-05-27.md`. This is the epistemic twin of the Operational State Integrity doctrine — facts: *"no grounding trace → no claim"*; actions: *"no persisted object → no claim."*
+
+**Trigger (INC-CTX-CONTAM):** Aegis referenced "BC Children's Hospital Gender Clinic" in the CRT tenant view. Forensic proved the phrase exists in **no** retrieval surface (entities/signals/incidents/entity_content/expert_knowledge/global_learning_insights/agent_beliefs). Two root causes: **Class A** — the always-on Common Operating Picture (`_shared/common-operating-picture.ts`) queried 8 tables globally with no tenant filter (a real cross-tenant leak, **closed** by tenant-scoping `buildCOP(supabase, tenantId)` + fail-closed, prod); **Class B (dominant)** — the model emitted a real-world fact from pretraining knowledge with no tenant trace. Class B is unfixable by scoping; only the assertion-layer grounding discipline closes it.
+
+1. **Grounding state is first-class.** Every factual assertion is **grounded** (surface from `CERTIFIED_TENANT_SURFACES` + tenant scope + `row_ids` from `tenantRetrieve()`) or **ungrounded** (parametric/world-knowledge). In tenant mode, only grounded claims may be asserted as tenant fact.
+2. **No semantic / free-association fallback in tenant mode.** Ungrounded specifics — entity/client/concept names, acronym expansions, partial-name completions — are prohibited. Aegis refuses ("not identified in this tenant's intelligence") or frames-as-general; it never dresses a parametric world-fact as tenant intelligence.
+3. **General method vs tenant fact.** General security tradecraft is allowed but must be framed as general guidance; tenant-specific factual claims must be grounded. Analysis inherits the grounding of the facts it reasons over and must cite them.
+4. **Recommendations: no provenance → no recommendation.** Recommendation generation uses only certified tenant surfaces + the current tenant graph; provenance (surfaces, entity/signal/source IDs, tenant scope) is attached.
+5. **Deleted tenants/clients are cryptographically unreachable** to tenant retrieval/recommendation (no residual embeddings, cached summaries, memory artifacts, prompt fragments).
+6. **Tenant-parity test = acceptance oracle.** If the tenant UI / entity graph does not contain a concept/entity/client, Aegis cannot introduce it.
+7. **Execution gate.** F-stage execution (Operational State Integrity) stays **DISABLED** until grounding + provenance + traversal integrity is fully trustworthy — executing on top of ungrounded retrieval turns an epistemic error into a real-world mutation. Build continues on provenance + traversal hardening (R1 persona grounding enforcement, certified surfaces, unified retrieval graph); E (approval) may be designed; **F does not ship until this gate clears.**
+
 ## Quarantine Doctrine (2026-05-23, Branch 1A merged)
 
 **Quarantine (`signals.quality_status = 'quarantined'`) is an ANALYST VISIBILITY BOUNDARY, not a presentation filter.**
