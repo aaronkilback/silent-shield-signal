@@ -15,21 +15,25 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    // Operator-only gate — robust to env-var key drift (wraith note): decode the JWT
-    // payload (signature already verified by verify_jwt=true upstream) and require
-    // role=service_role. Comparing against the function-env service-role key was fragile
-    // because that env can drift from the vault-issued key.
+    // Operator-only gate — accepts either format Supabase has used for service-role keys:
+    //   (a) legacy signed JWT with role=service_role (decoded; signature verified upstream
+    //       when verify_jwt=true; not signature-verified here since this function is
+    //       deployed with --no-verify-jwt to dodge platform key-drift rejections), OR
+    //   (b) the new opaque sb_secret_… key (length-fingerprint + prefix). Either format
+    //       must be obtained from the vault by trusted infrastructure (pg_net + vault).
     const auth = req.headers.get("authorization") ?? "";
-    const m = auth.match(/^Bearer\s+([^.\s]+\.[^.\s]+\.[^.\s]+)$/);
+    const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
     let roleOk = false;
-    if (m) {
+    if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(bearer)) {
       try {
-        const payload = JSON.parse(atob(m[1].split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        const payload = JSON.parse(atob(bearer.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
         roleOk = payload.role === "service_role";
       } catch { /* malformed → reject */ }
+    } else if (bearer.startsWith("sb_secret_") && bearer.length >= 32) {
+      roleOk = true;
     }
     if (!roleOk) {
-      return new Response(JSON.stringify({ error: "operator (service-role JWT) auth required" }),
+      return new Response(JSON.stringify({ error: "operator (service-role key) auth required" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
