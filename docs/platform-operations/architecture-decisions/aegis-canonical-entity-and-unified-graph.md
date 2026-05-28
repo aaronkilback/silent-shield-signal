@@ -11,11 +11,32 @@ Symptoms operator observed: Aegis returned conflicting Kelly profiles; denied an
 **One canonical entity per real-world thing; one traversal seam; provenance-backed edges; an executable parity oracle.** Everything related to an entity — signals, investigations, OSINT scans, sources, reports, relationships, recommendations, monitoring state — must resolve through the canonical entity via the same traversal. UI reality = Aegis retrieval reality = database reality, and that equality is **tested**, not asserted.
 
 ## 1. Canonical entity model
-- Add `entities.canonical_entity_id uuid` (FK → `entities.id`, nullable). For the canonical row itself, this is `NULL`. For a duplicate, it points to its canonical.
-- Add `entities.canonical_at timestamptz` + `entities.canonical_chosen_by uuid` (operator who elected, when overridden).
-- **Default canonical-selection rule (deterministic):** within `(tenant_id, lower(trim(name)))`, the row with the earliest `created_at` is canonical (lowest `id` as tie-break). Operator override possible via `canonical_chosen_by`.
-- `resolveCanonicalEntity(sb, tenantId, ref)` (new in `tenant-entity-graph.ts`): `ref` may be an id, a name, or an alias; returns the canonical row + an audit trail of how it resolved. **Tenant-scoped + fail-closed** (no tenant → null).
-- **Doctrine:** every entity-keyed retrieval first calls `resolveCanonicalEntity`. Non-canonical ids are *transparently redirected* to their canonical; an Aegis reply that names a non-canonical never escapes.
+### 1a. Conservative canonicalization (RATIFIED clarification, 2026-05-28)
+**"Same normalized name ≠ same entity."** Same `(tenant_id, lower(trim(name)))` produces a **candidate cluster**, never automatic proof of same real-world identity. Default canonical selection (earliest-created within the cluster) may only run **after** the cluster is classified `safe_to_collapse`. Required preconditions before any merge / canonical redirect:
+1. **Same tenant** (tenant-scoped resolution; cross-tenant collapse is *never* permitted).
+2. **Compatible entity type** (e.g., `person` ≠ `organization`; a type mismatch blocks collapse).
+3. **No protected-principal / investigation-placeholder semantics conflict** (entities flagged as protected principals, or created as investigation placeholders, never auto-collapse with other rows).
+4. **No conflicting source-of-truth evidence** (distinct verified external IDs / authoritative sources that disagree block collapse).
+5. **Operator override available** (an operator may explicitly elect a canonical, or explicitly *reject* a collapse for a cluster; overrides are durable + audited).
+6. **Provenance recorded** (every classification + override emits a structured trace — Flight Recorder + persistent record on canonicalization writes).
+
+Clusters that fail any precondition resolve to classification `unresolved_conflict` or `pending_operator_review` (never silent `safe_to_collapse`). **G2 identifies + resolves safely; G2 never mutates** — auto-collapse of the 52 detected duplicate clusters does **not** run in G2 and is explicitly prohibited.
+
+### 1b. Storage (G3 — schema gated separately)
+- Add `entities.canonical_entity_id uuid` (FK → `entities.id`, nullable). Canonical row itself = `NULL`. Duplicate → points to its canonical.
+- Add `entities.canonical_at timestamptz` + `entities.canonical_chosen_by uuid` (operator who elected) + `entities.canonical_classification text` (`safe_to_collapse` | `operator_elected` | `pending_review` — audit trail) + `entities.canonical_provenance jsonb` (rules applied, blockers, source).
+- Durable operator-override surface (elect or *reject* a cluster collapse). **No backfill until G3 ratification.**
+
+### 1c. Resolution seam (G2 — code-only, the focus of this slice)
+`resolveCanonicalEntity(sb, tenantId, ref)` in `tenant-entity-graph.ts`. `ref` may be id, name, or alias. **Tenant-scoped + fail-closed** (no tenant → `null`). Returns:
+```
+{ canonical: Entity | null,                     // chosen canonical IFF safe_to_collapse | singleton | operator_elected; else null
+  cluster:   Entity[],                          // all candidates considered
+  classification: 'singleton' | 'safe_to_collapse' | 'unresolved_conflict' | 'pending_operator_review',
+  blockers:  string[],                          // 'type_mismatch' | 'protected_principal' | 'placeholder_conflict' | 'source_of_truth_conflict' | ...
+  provenance: { input_ref, matched_by, rules_applied, operator_override_id? } }
+```
+**Doctrine:** every entity-keyed retrieval first calls `resolveCanonicalEntity`. If `canonical` is non-null the caller proceeds; if null, Aegis returns *"multiple candidates — operator must elect"* with the cluster — it **never silently picks one**. Non-canonical-id lookups (G3-and-later, once the FK exists) transparently redirect to canonical only when classification is `safe_to_collapse` or `operator_elected`.
 
 ## 2. Unified retrieval graph (the traversal seam)
 One exported function:
@@ -70,8 +91,8 @@ Certified-safe retrieval only · fail-closed grounding (no tenant → empty grap
 
 ## Build slices (gated; do not skip)
 1. **Slice G1 (this ADR + schema):** ADR + migration adding `canonical_entity_id`/`canonical_at`/`canonical_chosen_by` + edge-provenance columns; **no backfill yet**, no canonical-write trigger yet — schema is additive and safe to live without callers. *Apply on ratification.*
-2. **Slice G2 (resolution + traversal):** `resolveCanonicalEntity` + `entityGraph` in `_shared/tenant-entity-graph.ts`; flight-recorder retrieval traces threaded; existing `entityIntelligence` etc. become thin wrappers calling `entityGraph`.
-3. **Slice G3 (canonicalization):** backfill `canonical_entity_id` for the 52 detected duplicate clusters (deterministic rule); add the write-trigger that **rejects non-canonical edge endpoints**; operator-election surface (admin UI/RPC) for overrides.
+2. **Slice G2 (resolution + traversal — code-only, NO mutation):** `resolveCanonicalEntity` + `entityGraph` in `_shared/tenant-entity-graph.ts`; flight-recorder retrieval traces threaded; existing `entityIntelligence` etc. become thin wrappers calling `entityGraph`. **G2 identifies clusters and resolves safely (returning `safe_to_collapse` / `pending_operator_review` / `unresolved_conflict`); it never writes `canonical_entity_id`, never auto-collapses the 52 detected clusters, and performs no data mutation.** Staging validation only.
+3. **Slice G3 (canonicalization, separately gated — explicit GO required):** schema additions (canonical FK + classification + provenance + override columns); backfill **only after** running the safety-classifier across the 52 clusters and confirming the safe-to-collapse subset with the operator; add the write-trigger that **rejects non-canonical edge endpoints**; operator-election + operator-reject surfaces (admin UI/RPC). The conservative classifier — not "earliest-created" alone — drives backfill.
 4. **Slice G4 (parity oracle):** `entityParityProbe` + the three committed probes (Kelly / BCH / Trent) as CI tests + a forensic replay note.
 5. **Slice G5 (Aegis routing + cleanup):** `search_entities`/`get_entity_intelligence` route through `entityGraph`; redirect non-canonical resolutions transparently; retire/deprecate any disconnected entity-retrieval path the audit surfaces; coverage-matrix update.
 
@@ -81,8 +102,8 @@ Certified-safe retrieval only · fail-closed grounding (no tenant → empty grap
 - Slice 4 grounding-marker persona capture (still acceptable interim `unknown_unavailable`).
 
 ## What ratification authorizes
-1. Apply Slice G1 migration (schema additions, no data change) to staging → prod.
-2. Build Slices G2–G5 in order, each its own PR with staging validation.
-3. The parity contract becomes the acceptance gate: a slice doesn't ship if it widens parity mismatches; the workstream isn't "done" until the three committed probes pass deterministically.
+1. **G2 (code-only) begins now** — `resolveCanonicalEntity` + `entityGraph` traversal seam in `_shared/tenant-entity-graph.ts`. No schema change. No `canonical_entity_id` writes. No auto-collapse. Staging validation only.
+2. **Slices G3–G5 remain separately gated** — each requires explicit operator GO before prod application (G3 schema/backfill especially, since canonicalization writes are the schema-permanent part).
+3. **Parity contract is the acceptance gate** — a slice doesn't ship if it widens parity mismatches; the workstream isn't "done" until the three committed probes (Kelly / BCH / Trent) pass deterministically.
 
 **No code in this ADR. Formalization of the canonical-entity + unified-graph contract; build follows ratification.**
