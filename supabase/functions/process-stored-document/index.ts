@@ -1640,26 +1640,35 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
           return true;
         });
         
-        // Write memory entries for each targeted agent
-        const memoryInserts = uniqueTargets.map(target => ({
-          agent_call_sign: target.callSign,
-          content: memoryContent,
-          memory_type: 'document_intake',
-          entities: entityNames.slice(0, 20),
-          tags: ['document_upload', document.file_type.split('/').pop() || 'unknown', target.reason],
-          confidence: 0.8,
-          client_id: document.client_id || null,
-        }));
-        
-        const { error: memError } = await supabase
-          .from('agent_investigation_memory')
-          .insert(memoryInserts);
-        
-        if (memError) {
-          console.error('Failed to disseminate to agent memory:', memError);
+        // INC-OMCR: dissemination requires an owning client (→ tenant). An ownerless
+        // document_intake memory is exactly the cross-tenant retrieval hazard that leaked
+        // "BC Children's Hospital Gender Clinic". Skip dissemination for unattributed docs
+        // (the DB trigger trg_aim_require_tenant would reject them anyway); tenant_id is
+        // derived from client_id by that trigger.
+        if (!document.client_id) {
+          console.warn(`[process-stored-document] Skipped agent-memory dissemination for doc ${document.id}: no client_id — refusing ownerless memory (INC-OMCR).`);
         } else {
-          disseminatedTo = uniqueTargets.map(t => t.callSign);
-          console.log(`Disseminated document findings to ${disseminatedTo.length} agents: ${disseminatedTo.join(', ')}`);
+          // Write memory entries for each targeted agent
+          const memoryInserts = uniqueTargets.map(target => ({
+            agent_call_sign: target.callSign,
+            content: memoryContent,
+            memory_type: 'document_intake',
+            entities: entityNames.slice(0, 20),
+            tags: ['document_upload', document.file_type.split('/').pop() || 'unknown', target.reason],
+            confidence: 0.8,
+            client_id: document.client_id,
+          }));
+
+          const { error: memError } = await supabase
+            .from('agent_investigation_memory')
+            .insert(memoryInserts);
+
+          if (memError) {
+            console.error('Failed to disseminate to agent memory:', memError);
+          } else {
+            disseminatedTo = uniqueTargets.map(t => t.callSign);
+            console.log(`Disseminated document findings to ${disseminatedTo.length} agents: ${disseminatedTo.join(', ')}`);
+          }
         }
         
         // Log the dissemination action for audit trail

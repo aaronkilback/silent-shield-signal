@@ -258,10 +258,10 @@ Deno.serve(async (req) => {
 
     // Tier 2: Retrieve agent memory, knowledge graph, cross-agent insights, calibration, preferences, and mesh inbox in parallel
     const [memoryContext, graphContext, graphEdges, crossAgentContext, agentCalibration, analystPrefs, meshInboxContext] = await Promise.all([
-      buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
+      buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || '', incident.tenant_id),
       buildGraphContext(supabase, incident_id),
       discoverIncidentConnections(supabase, incident_id, selectedAgent),
-      buildCrossAgentContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || ''),
+      buildCrossAgentContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || '', incident.tenant_id),
       getAgentCalibration(supabase, selectedAgent),
       requestingUserId ? getAnalystPreferences(supabase, requestingUserId) : Promise.resolve({}),
       // Read unread mesh messages sent to this agent by peers, then mark them read
