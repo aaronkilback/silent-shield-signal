@@ -15,12 +15,21 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    // Operator-only gate. The function is invoked with the service-role Bearer (by
-    // operator tooling / scripts). Any non-service caller is rejected.
+    // Operator-only gate — robust to env-var key drift (wraith note): decode the JWT
+    // payload (signature already verified by verify_jwt=true upstream) and require
+    // role=service_role. Comparing against the function-env service-role key was fragile
+    // because that env can drift from the vault-issued key.
     const auth = req.headers.get("authorization") ?? "";
-    const expected = `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""}`;
-    if (!expected.endsWith(" ") && auth !== expected) {
-      return new Response(JSON.stringify({ error: "operator (service-role) auth required" }),
+    const m = auth.match(/^Bearer\s+([^.\s]+\.[^.\s]+\.[^.\s]+)$/);
+    let roleOk = false;
+    if (m) {
+      try {
+        const payload = JSON.parse(atob(m[1].split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        roleOk = payload.role === "service_role";
+      } catch { /* malformed → reject */ }
+    }
+    if (!roleOk) {
+      return new Response(JSON.stringify({ error: "operator (service-role JWT) auth required" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
