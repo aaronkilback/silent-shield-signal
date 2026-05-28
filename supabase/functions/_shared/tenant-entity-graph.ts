@@ -506,10 +506,12 @@ export async function entityGraph(
   });
 
   // ── sources: entity_content.entity_id = canonical (parent-joined tenant via the canonical entity) ──
+  // G5a: limit raised 100→500 to match the parity probe's UI-reality cap.
+  // Operational truth convergence > retrieval optimization; pagination is a future slice.
   const tSr = Date.now();
   const { data: contents } = await sb.from("entity_content")
     .select("id, content_type, source, title, url, created_at")
-    .eq("entity_id", cid).limit(100);
+    .eq("entity_id", cid).limit(500);
   const sources = contents || [];
   rec?.retrieval({
     surface: "entityGraph:sources", tenantScope: tenantId,
