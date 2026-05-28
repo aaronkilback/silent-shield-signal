@@ -10,6 +10,7 @@
 
 import { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "./ai-gateway.ts";
+import type { Recorder } from "./flight-recorder.ts";
 
 // ─── 1. CHAIN-OF-THOUGHT REASONING ───────────────────────────────────────────
 
@@ -198,9 +199,16 @@ export async function retrieveCrossAgentInsights(
   currentAgent: string,
   queryText: string,
   tenantId: string | null | undefined,
-  maxPerAgent: number = 3
+  maxPerAgent: number = 3,
+  rec?: Recorder
 ): Promise<{ agentCallSign: string; content: string; confidence: number; memory_type: string }[]> {
-  if (!tenantId) return []; // INC-OMCR: tenant-scoped; no tenant → no cross-agent retrieval
+  const t0 = Date.now();
+  if (!tenantId) {
+    // INC-OMCR: tenant-scoped; no tenant → no cross-agent retrieval (recorded as fail-closed)
+    rec?.retrieval({ surface: 'match_cross_agent_memories', query: queryText, tenantScope: null,
+      returnedObjectIds: [], fallbackPath: 'none', timingMs: Date.now() - t0, provenance: { fail_closed: 'no_tenant' } });
+    return [];
+  }
   const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
   if (!OPENAI_API_KEY) return [];
 
@@ -236,8 +244,17 @@ export async function retrieveCrossAgentInsights(
     if (error) {
       // Fallback: if RPC doesn't exist yet, do a basic keyword search
       console.warn('[CrossAgentLearning] RPC not available, using keyword fallback:', error.message);
-      return await keywordFallbackSearch(supabase, currentAgent, queryText, tenantId);
+      return await keywordFallbackSearch(supabase, currentAgent, queryText, tenantId, rec, t0);
     }
+
+    // Flight recorder: cross-agent vector retrieval trace (raw RPC hits, pre-dedup).
+    rec?.retrieval({
+      surface: 'match_cross_agent_memories', query: queryText, tenantScope: tenantId,
+      returnedObjectIds: (memories || []).map((m: { id: string }) => m.id),
+      vectorHits: (memories || []).map((m: { id: string; similarity: number }) => ({ id: m.id, similarity: m.similarity })),
+      fallbackPath: 'rpc', timingMs: Date.now() - t0,
+      provenance: { rpc: 'match_cross_agent_memories', threshold: 0.70, exclude_agent: currentAgent },
+    });
 
     // Deduplicate: max N per agent
     const perAgentCount: Record<string, number> = {};
@@ -270,7 +287,9 @@ async function keywordFallbackSearch(
   supabase: SupabaseClient,
   excludeAgent: string,
   queryText: string,
-  tenantId: string | null | undefined
+  tenantId: string | null | undefined,
+  rec?: Recorder,
+  t0: number = Date.now()
 ): Promise<{ agentCallSign: string; content: string; confidence: number; memory_type: string }[]> {
   if (!tenantId) return []; // INC-OMCR fail closed
   // Extract key terms from query
@@ -286,6 +305,13 @@ async function keywordFallbackSearch(
     .neq('agent_call_sign', excludeAgent)
     .order('created_at', { ascending: false })
     .limit(50);
+
+  // Flight recorder: keyword-fallback retrieval trace (no per-row ids/vectors available here).
+  rec?.retrieval({
+    surface: 'match_cross_agent_memories', query: queryText, tenantScope: tenantId,
+    returnedObjectIds: [], fallbackPath: 'keyword_fallback', timingMs: Date.now() - t0,
+    provenance: { mode: 'keyword_fallback', candidate_rows: memories?.length ?? 0, key_terms: keyTerms },
+  });
 
   if (!memories) return [];
 
@@ -314,9 +340,10 @@ export async function buildCrossAgentContext(
   supabase: SupabaseClient,
   currentAgent: string,
   incidentContext: string,
-  tenantId: string | null | undefined
+  tenantId: string | null | undefined,
+  rec?: Recorder
 ): Promise<string> {
-  const insights = await retrieveCrossAgentInsights(supabase, currentAgent, incidentContext, tenantId);
+  const insights = await retrieveCrossAgentInsights(supabase, currentAgent, incidentContext, tenantId, 3, rec);
 
   if (insights.length === 0) {
     return '\n=== CROSS-AGENT INTELLIGENCE ===\nNo relevant findings from other agents.\n';

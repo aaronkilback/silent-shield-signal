@@ -5,6 +5,7 @@ import { getAntiHallucinationPrompt, getCriticalDateContext, calculateIncidentAg
 import { buildMemoryContext, storeAgentMemory } from "../_shared/agent-memory.ts";
 import { buildGraphContext, discoverIncidentConnections } from "../_shared/knowledge-graph.ts";
 import { getIntelligenceUpgradePrompt, buildCrossAgentContext, runAdversarialReview, generateHypothesisTree, recordAgentPrediction, getAgentCalibration, getAnalystPreferences, buildPersonalizationPrompt } from "../_shared/agent-intelligence.ts";
+import { startTrace, type Recorder } from "../_shared/flight-recorder.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -166,9 +167,11 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Flight recorder: hoisted so the catch can flush. Assigned once auth/state is parsed.
+  let rec: Recorder | null = null;
   try {
-    const { incident_id, agent_call_sign, prompt } = await req.json();
-    
+    const { incident_id, agent_call_sign, prompt, debug_trace_id: debugTraceId } = await req.json();
+
     if (!incident_id) {
       throw new Error('incident_id is required');
     }
@@ -183,6 +186,14 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
+    // Flight recorder (Slice 3) — chain-of-custody for this orchestration. debug_trace_id
+    // links to the parent request when the caller threads it; else a fresh id is minted.
+    rec = startTrace(supabase, {
+      debugTraceId: debugTraceId ?? undefined,
+      functionName: 'incident-agent-orchestrator',
+      actorSurface: 'agent',
+    });
+
     // Fetch incident with related data
     const { data: incident, error: incidentError } = await supabase
       .from('incidents')
@@ -194,6 +205,9 @@ Deno.serve(async (req) => {
       console.error('[Orchestrator] Incident query error:', JSON.stringify(incidentError), 'incident_id:', incident_id);
       throw new Error(`Incident not found: ${incidentError?.message || 'no data returned'}`);
     }
+
+    // Flight recorder: fill scope now that the incident's tenant/client are known.
+    rec.setScope({ tenantId: incident.tenant_id ?? null, clientId: incident.client_id ?? null });
 
     // Determine which agent to use
     let agentConfig = agent_call_sign ? AGENT_CAPABILITIES[agent_call_sign] : null;
@@ -258,10 +272,10 @@ Deno.serve(async (req) => {
 
     // Tier 2: Retrieve agent memory, knowledge graph, cross-agent insights, calibration, preferences, and mesh inbox in parallel
     const [memoryContext, graphContext, graphEdges, crossAgentContext, agentCalibration, analystPrefs, meshInboxContext] = await Promise.all([
-      buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || '', incident.tenant_id),
+      buildMemoryContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || '', incident.tenant_id, rec),
       buildGraphContext(supabase, incident_id),
       discoverIncidentConnections(supabase, incident_id, selectedAgent),
-      buildCrossAgentContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || '', incident.tenant_id),
+      buildCrossAgentContext(supabase, selectedAgent, incident.signals?.normalized_text || incident.title || '', incident.tenant_id, rec),
       getAgentCalibration(supabase, selectedAgent),
       requestingUserId ? getAnalystPreferences(supabase, requestingUserId) : Promise.resolve({}),
       // Read unread mesh messages sent to this agent by peers, then mark them read
@@ -555,6 +569,7 @@ Provide your specialized analysis following the output format specified.`;
 
     console.log(`${selectedAgent} analysis complete for incident ${incident_id}`);
 
+    await rec.finish({ status: 'ok', finalResponsePath: 'json' });
     return new Response(
       JSON.stringify({
         success: true,
@@ -562,13 +577,15 @@ Provide your specialized analysis following the output format specified.`;
         analysis: analysisContent,
         investigation_focus: agentConfig.investigationFocus,
         incident_id,
-        log_entry_count: updatedLog.length
+        log_entry_count: updatedLog.length,
+        debug_trace_id: rec.traceId,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
     console.error('Error in incident agent orchestrator:', error);
+    if (rec) { try { await rec.finish({ status: 'error', finalResponsePath: 'error' }); } catch {} }
     
     const errorMessage = error instanceof Error ? error.message : String(error);
     

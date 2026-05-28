@@ -8,6 +8,7 @@
  */
 
 import { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { Recorder } from "./flight-recorder.ts";
 
 export interface AgentMemory {
   id: string;
@@ -117,9 +118,15 @@ export async function retrieveAgentMemories(
   agentCallSign: string,
   queryText: string,
   tenantId: string | null | undefined,
-  maxResults: number = 5
+  maxResults: number = 5,
+  rec?: Recorder
 ): Promise<AgentMemory[]> {
-  if (!tenantId) return []; // INC-OMCR fail closed
+  const t0 = Date.now();
+  if (!tenantId) {
+    rec?.retrieval({ surface: 'match_agent_memories', query: queryText, tenantScope: null,
+      returnedObjectIds: [], fallbackPath: 'none', timingMs: Date.now() - t0, provenance: { fail_closed: 'no_tenant', agent: agentCallSign } });
+    return []; // INC-OMCR fail closed
+  }
   const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
   if (!OPENAI_API_KEY) return [];
 
@@ -157,6 +164,15 @@ export async function retrieveAgentMemories(
       return [];
     }
 
+    // Flight recorder: same-agent vector retrieval trace.
+    rec?.retrieval({
+      surface: 'match_agent_memories', query: queryText, tenantScope: tenantId,
+      returnedObjectIds: (memories || []).map((m: AgentMemory) => m.id),
+      vectorHits: (memories || []).map((m: AgentMemory) => ({ id: m.id, similarity: m.similarity })),
+      fallbackPath: 'rpc', timingMs: Date.now() - t0,
+      provenance: { rpc: 'match_agent_memories', threshold: 0.65, agent: agentCallSign },
+    });
+
     return (memories || []) as AgentMemory[];
   } catch (err) {
     console.error('[AgentMemory] Retrieval failed:', err);
@@ -172,9 +188,10 @@ export async function buildMemoryContext(
   supabase: SupabaseClient,
   agentCallSign: string,
   incidentContext: string,
-  tenantId: string | null | undefined
+  tenantId: string | null | undefined,
+  rec?: Recorder
 ): Promise<string> {
-  const memories = await retrieveAgentMemories(supabase, agentCallSign, incidentContext, tenantId);
+  const memories = await retrieveAgentMemories(supabase, agentCallSign, incidentContext, tenantId, 5, rec);
 
   if (memories.length === 0) {
     return '\n=== AGENT MEMORY ===\nNo relevant past investigations found.\n';
