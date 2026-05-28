@@ -303,3 +303,76 @@ These are the values the operator ratifies at the end of this ADR; they live as 
 - [ ] Verification gates (§10) approved as the prod-apply checklist.
 
 Once ratified, the next artifact is the **slim-slice implementation PR** (staging first; prod apply held).
+
+---
+
+## Amendment A1 — Operational usefulness over academic scoring (2026-05-28, RATIFIED)
+
+Operator clarification at ratification time. The substrate of §3 (six axes) and §6 (prose-lint) remains binding **but is not the primary surface**. The primary surface is **decision quality**, not score generation.
+
+### The four operator questions (display frame)
+
+Every operator-facing output from Aegis that surfaces a claim must answer, in this order, in this prominence:
+
+1. **What do we know?** — the claim itself, with type label (§2). Plain language, no jargon, no axis numbers.
+2. **How do we know it?** — source surface label + corroboration count + drill link. Plain language ("3 audited monitors over 9 days") not a 0.85 number on first read.
+3. **How confident are we?** — a qualitative summary (one of: `confirmed` · `well-attested` · `single-source` · `inferred` · `hypothesis` · `stale` · `ungrounded`) backed by the §3 axes, drillable. The summary is generated from the axes by the table in §A1.1 — it is not a free-form composite.
+4. **What action, if any, should be considered?** — a recommendation (or `none`). Always recommendation-only per parent ADR; never executed; always carries the operator-validation state needed to upgrade it.
+
+The axes (§3) and the composite (§3.7) are the **substrate** that produces these four answers — drillable from any of them, but never the headline.
+
+### A1.1 — Confidence summary derivation (binding mapping)
+
+| Claim type | Grounded? | Validation | Corroboration ≥ | Provenance ≥ | Freshness | → Summary |
+|---|---|---|---|---|---|---|
+| any | false | any | any | any | any | `ungrounded` (suppress) |
+| `ai_generated_hypothesis` | true | any | any | any | any | `hypothesis` |
+| `inferred_relationship` | true | not accepted | any | any | any | `inferred` |
+| `retrieved_fact` / `inferred_relationship` | true | not accepted | < 0.4 | any | any | `single-source` |
+| `retrieved_fact` | true | not accepted | ≥ 0.4 | any | < `STALE_THRESHOLD` | `stale` |
+| `retrieved_fact` | true | not accepted | ≥ 0.4 | ≥ 0.7 | ≥ `STALE_THRESHOLD` | `well-attested` |
+| `retrieved_fact` | true | not accepted | ≥ 0.7 | ≥ 0.7 | ≥ `STALE_THRESHOLD` | `well-attested` |
+| `analyst_confirmed_assessment` | true | accepted | any | any | ≥ `STALE_THRESHOLD` | `confirmed` |
+| `analyst_confirmed_assessment` | true | accepted | any | any | < `STALE_THRESHOLD` | `stale` (with prior validation noted) |
+
+Rules:
+- Summary is **derived**, not stored as a separate column — recomputed from the persisted axes on read.
+- The summary is the **headline label**; the underlying axes are always one drill away.
+- The mapping table is operator-tunable (lives in `_shared/aegis-confidence.ts` constants); changes are auditable PRs.
+
+### A1.2 — Banned operator-facing surfaces
+
+In addition to §6 prose bans, the following **UI surfaces** are prohibited because they tilt toward intelligence theater rather than decision quality:
+
+- A standalone "confidence dashboard" displaying axes without any associated claim or action.
+- Aggregate scores across many claims rolled into one tenant-level "confidence index".
+- Trend lines on confidence scores divorced from the underlying claim trajectory.
+- Visual hierarchies that make a high-numerical-axis claim *look more important* than a confirmed-by-operator claim with lower axes.
+
+### A1.3 — Action consideration field
+
+The fourth question — *what action, if any, should be considered?* — requires a structured field, not free text. Each Aegis claim that proposes action carries:
+
+```ts
+consideration: {
+  recommended_action: ActionKey | null,     // enumerated registry; null = no action recommended
+  rationale: string,                        // one short sentence; required when action ≠ null
+  requires_operator_approval: true,         // BINDING — never false in this phase
+  approval_state: 'not_yet_reviewed' | 'queued' | 'approved' | 'rejected',
+  executed: false,                          // BINDING — never true in this phase
+}
+```
+
+The `executed: false` and `requires_operator_approval: true` invariants are enforced at the type level (TS literal `true`/`false`) so a future code change cannot quietly remove them without an explicit type-system override. The CI gate (§10.5) checks the literal source.
+
+### A1.4 — Slim-slice scope addendum
+
+The slim-slice implementation PR adds to §7:
+
+- Frame helper `frameClaim()` returning `{ what, how, confidence, consideration }` — the four-question structure consumed by display layers.
+- Confidence-summary derivation as a pure function in `_shared/aegis-confidence.ts`.
+- One end-to-end demonstration: `dashboard-ai-assistant` returns at least one framed claim per response (when a retrieved fact / inference is in play), and the response payload includes the framed structure (not just axes).
+- The `consideration` shape is scaffolded in the evaluator — initial `recommended_action` values are `null` until Workstream C wires action recommendation logic.
+
+Ratified by operator at ADR ratification time (2026-05-28).
+

@@ -15,6 +15,12 @@ import { aegisToolDefinitions } from "../_shared/aegis-tool-definitions.ts";
 import { extractPlannedTestSignalFromText, extractPlannedFortressQueryFromText, extractPlannedAgentFromText } from "../_shared/aegis-forced-execution.ts";
 import { signalsAndIncidentsHandlers } from "../_shared/handlers-signals-incidents.ts";
 import { recordRecommendation } from "../_shared/aegis-recommendations.ts";
+// Workstream D slim slice — confidence/provenance four-question framing.
+// Feature-flagged via D_SLIM_SLICE_ENABLED; ships dark by default.
+import { scoreClaim, type SourceRecord, type ClaimClass, type ClaimType } from "../_shared/aegis-confidence.ts";
+import { frameClaim, noActionConsideration, type ClaimFrame } from "../_shared/aegis-claim-frame.ts";
+import { proseLintReport } from "../_shared/aegis-prose-lint.ts";
+import { recordClaimConfidence } from "../_shared/aegis-claim-confidence-store.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10575,6 +10581,93 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     const sseWriter = sseWritable.getWriter();
     const sseEnc = new TextEncoder();
 
+    // ── Workstream D slim slice — confidence/provenance frame emission ──────
+    // Feature-flagged. Off by default; turn on for staging validation only.
+    // Mutates nothing user-visible — emits an additional SSE event type and
+    // best-effort persists a snapshot to aegis_claim_confidence.
+    const D_FRAMING_ENABLED = (Deno.env.get("D_SLIM_SLICE_ENABLED") ?? "0") === "1";
+    const collectedFrames: ClaimFrame[] = [];
+    const emitFramedClaim = async (input: {
+      claim_type: ClaimType;
+      claim_class: ClaimClass;
+      label: string;
+      subject_kind: string;
+      subject_id?: string | null;
+      payload: Record<string, unknown>;
+      sources: SourceRecord[];
+      grounded: boolean;
+      validation_state?: "not_yet_reviewed" | "in_review" | "accepted" | "rejected" | "needs_more_info" | "withdrawn" | "superseded";
+    }): Promise<ClaimFrame | null> => {
+      if (!D_FRAMING_ENABLED) return null;
+      try {
+        const axes = scoreClaim({
+          claim_type: input.claim_type,
+          claim_class: input.claim_class,
+          sources: input.sources,
+          grounded: input.grounded,
+          validation_state: input.validation_state,
+        });
+        const frame = frameClaim({
+          claim_type: input.claim_type,
+          label: input.label,
+          payload: input.payload,
+          sources: input.sources,
+          axes,
+          consideration: noActionConsideration(),
+        });
+        // Suppress ungrounded — never surface (ADR §3.6 fail-closed).
+        if (frame.confidence.summary === "ungrounded") return null;
+        collectedFrames.push(frame);
+        const sseEvt = `event: claim_frame\ndata: ${JSON.stringify({
+          what: frame.what,
+          how: { ...frame.how, sources: frame.how.sources.slice(0, 5) }, // cap drill-down in SSE
+          confidence: { summary: frame.confidence.summary, freshness_label: frame.confidence.freshness_label, axes: frame.confidence.axes },
+          consideration: frame.consideration,
+        })}\n\n`;
+        try { await sseWriter.write(sseEnc.encode(sseEvt)); } catch { /* SSE may have closed; ignore */ }
+        // Best-effort persistence — never throws into the request closure.
+        if (userTenantId) {
+          await recordClaimConfidence(supabaseClient, {
+            tenant_id: userTenantId,
+            claim_type: input.claim_type,
+            claim_subject_kind: input.subject_kind,
+            claim_subject_id: input.subject_id ?? null,
+            claim_payload: input.payload,
+            axes,
+            sources: input.sources,
+            debug_trace_id: (typeof debugTraceId !== "undefined" ? debugTraceId : null) as string | null,
+          });
+        }
+        return frame;
+      } catch (err) {
+        console.warn("[D-slim-slice] emitFramedClaim error (non-fatal):", (err as Error).message);
+        return null;
+      }
+    };
+    // emitFramedClaim is intentionally not called yet from this surface — the
+    // streaming path lacks a final-text accumulator. Call-site demonstration
+    // lands in the follow-on slice; the helper is ready for that wire-up.
+    void emitFramedClaim;
+    // Expose collectedFrames so the final prose-lint pass can reference them.
+    // Bound after assistant prose is final.
+    const runProseLintAtFinish = async (finalProse: string) => {
+      if (!D_FRAMING_ENABLED || collectedFrames.length === 0 || !finalProse) return;
+      try {
+        for (const frame of collectedFrames) {
+          const { passed, violations } = proseLintReport(finalProse, frame);
+          if (!passed) {
+            console.warn(
+              `[D-slim-slice] prose-lint violations (${violations.length}) for claim "${frame.what.label.slice(0, 60)}":`,
+              violations.map((v) => `${v.rule_id}:"${v.matched_phrase}"`).join(" | "),
+            );
+            // Slim slice: log only. Enforcement gate ships in follow-on PR.
+          }
+        }
+      } catch (err) {
+        console.warn("[D-slim-slice] prose-lint error (non-fatal):", (err as Error).message);
+      }
+    };
+
     const writeRaw = async (bytes: Uint8Array) => { try { await sseWriter.write(bytes); } catch {} };
     const writeSSEText = async (text: string) => writeRaw(sseEnc.encode(text));
     const writeDone = () => writeSSEText('data: [DONE]\n\n');
@@ -11268,6 +11361,13 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           await writeSSEText(`data: ${payload}\n\ndata: [DONE]\n\n`);
         } catch {}
       } finally {
+        // Workstream D slim slice — prose-lint wire-up against final assistant
+        // text is intentionally deferred: dashboard-ai-assistant streams via SSE
+        // tee without a final-text accumulator. The lint library + regression
+        // suite ship in this PR; accumulator + wire-up land in a follow-on slice
+        // (likely alongside the incident-agent-orchestrator wiring, which DOES
+        // have an accumulator). runProseLintAtFinish is intentionally unused here.
+        void runProseLintAtFinish; // referenced to silence TS unused-var.
         // Flight recorder flush — post-stream, best-effort (the seam swallows errors).
         await rec.finish({ status: recResponsePath === 'error' ? 'error' : 'ok', finalResponsePath: recResponsePath });
         try { await sseWriter.close(); } catch {}

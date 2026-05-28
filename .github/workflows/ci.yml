@@ -81,6 +81,31 @@ jobs:
       - name: Verify every import from supabase/functions/_shared/* resolves to a real export
         run: node scripts/check-shared-imports.mjs
 
+  workstream-d-tests:
+    name: Workstream D — confidence + provenance suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v1
+        with:
+          deno-version: v1.x
+      - name: Run Deno test suite (evaluator · framing · prose-lint)
+        run: deno test --allow-none --no-check supabase/functions/_shared/aegis-confidence.test.ts
+
+  no-auto-exec-on-score:
+    name: Workstream D — no autonomous execution on score
+    runs-on: ubuntu-latest
+    # AUDIT-ONLY (per feedback_audit_before_blocking_ci policy). The script
+    # exits 0 even when violations are found unless --strict is passed.
+    # Promote to --strict in a follow-on PR after the audit run is clean.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Static check — recommendation/approval/execution separation
+        run: node scripts/check-no-autonomous-execution-on-score.mjs
+
   cron-alignment:
     name: Cron Schedule Alignment
     runs-on: ubuntu-latest
