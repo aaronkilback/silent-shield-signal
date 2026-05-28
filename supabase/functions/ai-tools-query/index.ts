@@ -580,12 +580,13 @@ Deno.serve(async (req) => {
 
       case "query_fortress_data":
         // Comprehensive fortress data query tool
-        const { 
+        const {
           query_type: fortressQueryType = 'comprehensive',
           filters: fortressFilters = {},
           output_format: fortressOutputFormat = 'detailed',
           reason_for_access: fortressReason,
-          agent_id: fortressAgentId
+          agent_id: fortressAgentId,
+          tenant_id: fortressTenantId
         } = parameters;
 
         if (!fortressReason) {
@@ -611,10 +612,31 @@ Deno.serve(async (req) => {
         const fortressLimit = fortressFilters.limit || 100;
         const fortressResults: Record<string, any> = {};
 
-        // Helper function for common filters
+        // INC-OMCR: tenant scoping is mandatory and fail-closed. Resolve the caller
+        // tenant's clients; with no tenant (and no explicit client_id) the fortress query
+        // returns nothing rather than reading across all tenants.
+        const FORTRESS_EMPTY = '00000000-0000-0000-0000-000000000000';
+        let fortressScopedClientIds: string[] = [];
+        if (fortressTenantId) {
+          const { data: fcs } = await supabase.from('clients').select('id').eq('tenant_id', fortressTenantId);
+          fortressScopedClientIds = (fcs ?? []).map((c: { id: string }) => c.id);
+        }
+
+        // Helper function for common filters — tenant-scoped, fail closed.
+        // (All tables this is applied to — signals/incidents/archival_documents/
+        //  investigations/itineraries — carry client_id.)
         const applyFortressFilters = (query: any) => {
           if (fortressFilters.client_id) {
-            query = query.eq('client_id', fortressFilters.client_id);
+            // An explicit client must belong to the caller's tenant (when a tenant is known).
+            if (fortressTenantId && !fortressScopedClientIds.includes(fortressFilters.client_id)) {
+              query = query.in('client_id', [FORTRESS_EMPTY]);
+            } else {
+              query = query.eq('client_id', fortressFilters.client_id);
+            }
+          } else if (fortressScopedClientIds.length > 0) {
+            query = query.in('client_id', fortressScopedClientIds);
+          } else {
+            query = query.in('client_id', [FORTRESS_EMPTY]); // no tenant scope → fail closed
           }
           if (fortressFilters.time_range?.start) {
             query = query.gte('created_at', fortressFilters.time_range.start);
@@ -652,7 +674,16 @@ Deno.serve(async (req) => {
         // Query entities
         if (fortressQueryType === 'entities' || fortressQueryType === 'comprehensive') {
           let entQ = supabase.from('entities').select('*, entity_relationships(*), entity_mentions(*)');
-          if (fortressFilters.client_id) entQ = entQ.eq('client_id', fortressFilters.client_id);
+          // INC-OMCR: entities is tenant-scoped + fail closed (mirrors applyFortressFilters).
+          if (fortressFilters.client_id) {
+            entQ = (fortressTenantId && !fortressScopedClientIds.includes(fortressFilters.client_id))
+              ? entQ.in('client_id', [FORTRESS_EMPTY])
+              : entQ.eq('client_id', fortressFilters.client_id);
+          } else if (fortressScopedClientIds.length > 0) {
+            entQ = entQ.in('client_id', fortressScopedClientIds);
+          } else {
+            entQ = entQ.in('client_id', [FORTRESS_EMPTY]);
+          }
           if (fortressFilters.entity_id) entQ = entQ.eq('id', fortressFilters.entity_id);
           if (fortressFilters.keywords?.length) {
             const kf = fortressFilters.keywords.map((k: string) => `name.ilike.%${k}%,description.ilike.%${k}%`).join(',');

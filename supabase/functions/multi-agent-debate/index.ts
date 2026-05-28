@@ -171,7 +171,8 @@ Deno.serve(async (req) => {
 
       // Phase 1: Independent analyses in parallel
       const [memoryContexts] = await Promise.all([
-        Promise.all(orderedCallSigns.map(cs => buildMemoryContext(supabase, cs, questionContext))),
+        // INC-OMCR: task-force question debates carry no tenant → no tenant memory (fail closed).
+        Promise.all(orderedCallSigns.map(cs => buildMemoryContext(supabase, cs, questionContext, null))),
       ]);
 
       const analysisPromises = orderedCallSigns.map(async (callSign: string, idx: number) => {
@@ -446,7 +447,7 @@ Entity Tags: ${incident.signals?.entity_tags?.join(', ') || 'None'}
 `;
 
     const [memoryContexts, graphContext, graphEdges] = await Promise.all([
-      Promise.all(selectedAgents.map((a: string) => buildMemoryContext(supabase, a, incidentContext))),
+      Promise.all(selectedAgents.map((a: string) => buildMemoryContext(supabase, a, incidentContext, incident.tenant_id))),
       buildGraphContext(supabase, incident_id),
       discoverIncidentConnections(supabase, incident_id, 'debate-protocol'),
     ]);

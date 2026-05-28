@@ -197,8 +197,10 @@ export async function retrieveCrossAgentInsights(
   supabase: SupabaseClient,
   currentAgent: string,
   queryText: string,
+  tenantId: string | null | undefined,
   maxPerAgent: number = 3
 ): Promise<{ agentCallSign: string; content: string; confidence: number; memory_type: string }[]> {
+  if (!tenantId) return []; // INC-OMCR: tenant-scoped; no tenant → no cross-agent retrieval
   const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
   if (!OPENAI_API_KEY) return [];
 
@@ -228,12 +230,13 @@ export async function retrieveCrossAgentInsights(
       p_query_embedding: JSON.stringify(queryEmbedding),
       p_match_threshold: 0.70, // Higher threshold for cross-agent to ensure relevance
       p_match_count: maxPerAgent * 5, // Fetch more, then deduplicate per agent
+      p_tenant_id: tenantId, // INC-OMCR tenant scope
     });
 
     if (error) {
       // Fallback: if RPC doesn't exist yet, do a basic keyword search
       console.warn('[CrossAgentLearning] RPC not available, using keyword fallback:', error.message);
-      return await keywordFallbackSearch(supabase, currentAgent, queryText);
+      return await keywordFallbackSearch(supabase, currentAgent, queryText, tenantId);
     }
 
     // Deduplicate: max N per agent
@@ -266,8 +269,10 @@ export async function retrieveCrossAgentInsights(
 async function keywordFallbackSearch(
   supabase: SupabaseClient,
   excludeAgent: string,
-  queryText: string
+  queryText: string,
+  tenantId: string | null | undefined
 ): Promise<{ agentCallSign: string; content: string; confidence: number; memory_type: string }[]> {
+  if (!tenantId) return []; // INC-OMCR fail closed
   // Extract key terms from query
   const words = queryText.toLowerCase().split(/\s+/).filter(w => w.length > 4);
   const keyTerms = words.slice(0, 5);
@@ -277,6 +282,7 @@ async function keywordFallbackSearch(
   const { data: memories } = await supabase
     .from('agent_investigation_memory')
     .select('agent_call_sign, content, confidence, memory_type')
+    .eq('tenant_id', tenantId) // INC-OMCR tenant scope (quarantined NULL-tenant rows excluded)
     .neq('agent_call_sign', excludeAgent)
     .order('created_at', { ascending: false })
     .limit(50);
@@ -307,9 +313,10 @@ async function keywordFallbackSearch(
 export async function buildCrossAgentContext(
   supabase: SupabaseClient,
   currentAgent: string,
-  incidentContext: string
+  incidentContext: string,
+  tenantId: string | null | undefined
 ): Promise<string> {
-  const insights = await retrieveCrossAgentInsights(supabase, currentAgent, incidentContext);
+  const insights = await retrieveCrossAgentInsights(supabase, currentAgent, incidentContext, tenantId);
 
   if (insights.length === 0) {
     return '\n=== CROSS-AGENT INTELLIGENCE ===\nNo relevant findings from other agents.\n';
