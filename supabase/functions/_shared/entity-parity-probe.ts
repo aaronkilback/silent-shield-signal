@@ -113,46 +113,55 @@ export async function entityParityProbe(
   const graph: EntityGraph = await entityGraph(sb, tenantId, cid, rec);
 
   // 3. UI reality — exact queries from src/components/EntityDetailDialog.tsx.
+  //    Updated for G5 ontology: the detail card surfaces entity_content (sources),
+  //    entity_relationships (relationships), entity_photos (photos), poi_investigations
+  //    (entity scans), poi_reports (entity threat reports), and entity_mentions (signals).
   const { data: uiMentions } = await sb.from("entity_mentions").select("signal_id").eq("entity_id", cid).limit(2000);
   const uiSignalIds: string[] = (uiMentions || []).map((r: { signal_id: string }) => r.signal_id);
-  const { data: uiInvs } = await sb.from("poi_investigations").select("id").eq("entity_id", cid).eq("tenant_id", tenantId).limit(500);
-  const uiInvIds: string[] = (uiInvs || []).map((r: { id: string }) => r.id);
-  const { data: uiReps } = await sb.from("poi_reports").select("id").eq("entity_id", cid).limit(500);
-  const uiRepIds: string[] = (uiReps || []).map((r: { id: string }) => r.id);
+  const { data: uiPoiInvs } = await sb.from("poi_investigations").select("id").eq("entity_id", cid).eq("tenant_id", tenantId).limit(500);
+  const uiPoiInvIds: string[] = (uiPoiInvs || []).map((r: { id: string }) => r.id);
+  const { data: uiPoiReps } = await sb.from("poi_reports").select("id").eq("entity_id", cid).limit(500);
+  const uiPoiRepIds: string[] = (uiPoiReps || []).map((r: { id: string }) => r.id);
   const { data: uiPhotos } = await sb.from("entity_photos").select("id").eq("entity_id", cid).limit(500);
   const uiPhotoIds: string[] = (uiPhotos || []).map((r: { id: string }) => r.id);
+  const { data: uiSources } = await sb.from("entity_content").select("id").eq("entity_id", cid).limit(500);
+  const uiSourceIds: string[] = (uiSources || []).map((r: { id: string }) => r.id);
+  const { data: uiRelsA } = await sb.from("entity_relationships").select("id").eq("entity_a_id", cid).limit(200);
+  const { data: uiRelsB } = await sb.from("entity_relationships").select("id").eq("entity_b_id", cid).limit(200);
+  const uiRelIds: string[] = Array.from(new Set([...(uiRelsA || []), ...(uiRelsB || [])].map((r: { id: string }) => r.id)));
 
-  // 4. DB reality — broadest source-of-truth (Graph ∪ UI sources where applicable).
+  // 4. DB reality — broadest source-of-truth union for forensic visibility.
   const { data: dbAutoSignals } = await sb.from("signals")
     .select("id").eq("tenant_id", tenantId).eq("is_test", false).contains("auto_correlated_entities", [cid]).limit(2000);
   const dbAutoIds: string[] = (dbAutoSignals || []).map((s: { id: string }) => s.id);
-  const dbSignalIds = Array.from(new Set([...uiSignalIds, ...dbAutoIds]));   // union: entity_mentions ∪ auto_correlated
+  const dbSignalIds = Array.from(new Set([...uiSignalIds, ...dbAutoIds]));   // entity_mentions ∪ auto_correlated
 
-  const { data: dbInvBroad } = await sb.from("investigations").select("id, client_id").contains("correlated_entity_ids", [cid]).limit(500);
-  const { data: tenantClients } = await sb.from("clients").select("id").eq("tenant_id", tenantId);
-  const tenantClientSet = new Set((tenantClients || []).map((c: { id: string }) => c.id));
-  const dbInvBroadInTenant: string[] = (dbInvBroad || []).filter((r: { client_id: string }) => tenantClientSet.has(r.client_id)).map((r: { id: string }) => r.id);
-  const dbInvIds = Array.from(new Set([...uiInvIds, ...dbInvBroadInTenant])); // union: poi_investigations ∪ investigations
-
-  const { data: dbGenReports } = await sb.from("generated_reports").select("id").eq("tenant_id", tenantId).filter("metadata->>entity_id", "eq", cid).limit(500);
-  const dbGenRepIds: string[] = (dbGenReports || []).map((r: { id: string }) => r.id);
-  const dbReportIds = Array.from(new Set([...uiRepIds, ...dbGenRepIds]));     // union: poi_reports ∪ generated_reports
-
-  // Graph axis ids.
+  // Graph axis ids — extended with the three G5 ontology axes.
   const graphSignalIds = (graph.signals?.directly_correlated ?? []).map((s) => s.id);
-  const graphInvIds = (graph.investigations ?? []).map((i) => i.id);
-  const graphRepIds = (graph.reports ?? []).map((r) => r.id);
+  const graphCaseInvIds = (graph.investigations ?? []).map((i) => i.id);        // case-file investigations table
+  const graphOpRepIds = (graph.reports ?? []).map((r) => r.id);                 // operational reports table
   const graphSrcIds = (graph.sources ?? []).map((s) => s.id);
   const graphRelIds = (graph.relationships ?? []).map((r) => r.id);
   const graphRecIds = (graph.recommendations ?? []).map((r) => r.id);
+  const graphEntityScanIds = (graph.entity_scans ?? []).map((r) => r.id);       // poi_investigations
+  const graphEntityRepIds = (graph.entity_reports ?? []).map((r) => r.id);      // poi_reports
+  const graphPhotoIds = (graph.photos ?? []).map((r) => r.id);
 
-  // 5. Build per-axis probes.
+  // Helper for the dual / authoritative-only axes: build a "graph-authoritative" probe.
+  const graphAuthoritative = (axis: string, ids: string[], src: string): ParityAxisProbe => ({
+    axis,
+    ui: { count: null, ids: [], query_source: "n/a — graph-authoritative by ontology (see ADR aegis-operational-ontology)" },
+    graph: { count: ids.length, ids, query_source: src },
+    db: { count: ids.length, ids, query_source: src },
+    status: "aligned", missing_from_graph: [], missing_from_ui: [], // intentional: not a defect
+  });
+
+  // 5. Build per-axis probes — G5 ontology-aligned.
   const axes: ParityAxisProbe[] = [];
 
-  // signals (axis where UI + Graph use the SAME backing tables, modulo auto_correlated)
+  // signals — both surfaces, (c)-semantics. UI = entity_mentions only; Graph = entity_mentions ∪ auto_correlated.
   {
     const sd = symDiff(uiSignalIds, graphSignalIds);
-    // Graph adds auto_correlated_entities the UI doesn't capture → ui_missing rather than count_diff.
     const c = classify(uiSignalIds.length, graphSignalIds.length, sd.onlyA.length, sd.onlyB.length, false);
     axes.push({
       axis: "signals",
@@ -164,83 +173,72 @@ export async function entityParityProbe(
     });
   }
 
-  // investigations — definition divergence (UI: poi_investigations; Graph: investigations).
+  // entity_scans — both surfaces query poi_investigations.entity_id (G5 alignment).
   {
-    const definitionDiverged = true; // different tables
-    const sd = symDiff(uiInvIds, graphInvIds);
-    const c = classify(uiInvIds.length, graphInvIds.length, sd.onlyA.length, sd.onlyB.length, definitionDiverged);
+    const sd = symDiff(uiPoiInvIds, graphEntityScanIds);
+    const c = classify(uiPoiInvIds.length, graphEntityScanIds.length, sd.onlyA.length, sd.onlyB.length, false);
     axes.push({
-      axis: "investigations",
-      ui: { count: uiInvIds.length, ids: uiInvIds, query_source: "poi_investigations.entity_id" },
-      graph: { count: graphInvIds.length, ids: graphInvIds, query_source: "investigations.correlated_entity_ids" },
-      db: { count: dbInvIds.length, ids: dbInvIds, query_source: "poi_investigations ∪ investigations" },
+      axis: "entity_scans",
+      ui: { count: uiPoiInvIds.length, ids: uiPoiInvIds, query_source: "poi_investigations.entity_id" },
+      graph: { count: graphEntityScanIds.length, ids: graphEntityScanIds, query_source: "poi_investigations.entity_id" },
+      db: { count: uiPoiInvIds.length, ids: uiPoiInvIds, query_source: "poi_investigations.entity_id" },
       status: c.status, missing_from_graph: sd.onlyA, missing_from_ui: sd.onlyB,
       failure_class: c.failure_class, reason: c.reason,
     });
   }
 
-  // reports — definition divergence (UI: poi_reports; Graph: generated_reports).
+  // entity_reports — both surfaces query poi_reports.entity_id (G5 alignment).
   {
-    const definitionDiverged = true;
-    const sd = symDiff(uiRepIds, graphRepIds);
-    const c = classify(uiRepIds.length, graphRepIds.length, sd.onlyA.length, sd.onlyB.length, definitionDiverged);
+    const sd = symDiff(uiPoiRepIds, graphEntityRepIds);
+    const c = classify(uiPoiRepIds.length, graphEntityRepIds.length, sd.onlyA.length, sd.onlyB.length, false);
     axes.push({
-      axis: "reports",
-      ui: { count: uiRepIds.length, ids: uiRepIds, query_source: "poi_reports.entity_id" },
-      graph: { count: graphRepIds.length, ids: graphRepIds, query_source: "generated_reports.metadata.entity_id" },
-      db: { count: dbReportIds.length, ids: dbReportIds, query_source: "poi_reports ∪ generated_reports" },
+      axis: "entity_reports",
+      ui: { count: uiPoiRepIds.length, ids: uiPoiRepIds, query_source: "poi_reports.entity_id" },
+      graph: { count: graphEntityRepIds.length, ids: graphEntityRepIds, query_source: "poi_reports.entity_id" },
+      db: { count: uiPoiRepIds.length, ids: uiPoiRepIds, query_source: "poi_reports.entity_id" },
       status: c.status, missing_from_graph: sd.onlyA, missing_from_ui: sd.onlyB,
       failure_class: c.failure_class, reason: c.reason,
     });
   }
 
-  // sources — Graph-only (UI doesn't surface entity_content on the detail card).
+  // sources — both surfaces query entity_content.entity_id (probe UI-reality fix).
   {
-    const c = classify(null, graphSrcIds.length, 0, 0, false);
+    const sd = symDiff(uiSourceIds, graphSrcIds);
+    const c = classify(uiSourceIds.length, graphSrcIds.length, sd.onlyA.length, sd.onlyB.length, false);
     axes.push({
       axis: "sources",
-      ui: { count: null, ids: [], query_source: "n/a — UI does not show entity_content on detail card" },
+      ui: { count: uiSourceIds.length, ids: uiSourceIds, query_source: "entity_content.entity_id" },
       graph: { count: graphSrcIds.length, ids: graphSrcIds, query_source: "entity_content.entity_id" },
-      db: { count: graphSrcIds.length, ids: graphSrcIds, query_source: "entity_content.entity_id" },
-      status: c.status, missing_from_graph: [], missing_from_ui: graphSrcIds,
+      db: { count: uiSourceIds.length, ids: uiSourceIds, query_source: "entity_content.entity_id" },
+      status: c.status, missing_from_graph: sd.onlyA, missing_from_ui: sd.onlyB,
       failure_class: c.failure_class, reason: c.reason,
     });
   }
 
-  // scans — not directly linkable v1 (per ADR + graph note).
-  axes.push({
-    axis: "scans",
-    ui: { count: null, ids: [], query_source: "n/a" },
-    graph: { count: null, ids: [], query_source: "n/a (autonomous_scan_results has no entity link)" },
-    db: { count: null, ids: [], query_source: "n/a" },
-    status: "inconclusive",
-    missing_from_graph: [], missing_from_ui: [],
-    failure_class: "data_model",
-    reason: "scans not directly linkable in v1 — investigate-poi findings flow into entity_content instead.",
-  });
-
-  // relationships — Graph-only.
+  // relationships — both surfaces query entity_relationships endpoints (probe UI-reality fix).
   {
-    const c = classify(null, graphRelIds.length, 0, 0, false);
+    const sd = symDiff(uiRelIds, graphRelIds);
+    const c = classify(uiRelIds.length, graphRelIds.length, sd.onlyA.length, sd.onlyB.length, false);
     axes.push({
       axis: "relationships",
-      ui: { count: null, ids: [], query_source: "n/a — UI does not show entity_relationships on detail card" },
-      graph: { count: graphRelIds.length, ids: graphRelIds, query_source: "entity_relationships.entity_a_id|entity_b_id" },
-      db: { count: graphRelIds.length, ids: graphRelIds, query_source: "entity_relationships" },
-      status: c.status, missing_from_graph: [], missing_from_ui: graphRelIds,
+      ui: { count: uiRelIds.length, ids: uiRelIds, query_source: "entity_relationships.entity_a_id|entity_b_id" },
+      graph: { count: graphRelIds.length, ids: graphRelIds, query_source: "entity_relationships.entity_a_id|entity_b_id (tenant-validated)" },
+      db: { count: uiRelIds.length, ids: uiRelIds, query_source: "entity_relationships" },
+      status: c.status, missing_from_graph: sd.onlyA, missing_from_ui: sd.onlyB,
       failure_class: c.failure_class, reason: c.reason,
     });
   }
 
-  // recommendations — Graph-only (aegis_recommendations target_entity_id).
+  // photos — both surfaces query entity_photos.entity_id.
   {
-    const c = classify(null, graphRecIds.length, 0, 0, false);
+    const sd = symDiff(uiPhotoIds, graphPhotoIds);
+    const c = classify(uiPhotoIds.length, graphPhotoIds.length, sd.onlyA.length, sd.onlyB.length, false);
     axes.push({
-      axis: "recommendations",
-      ui: { count: null, ids: [], query_source: "n/a — UI does not show aegis_recommendations on detail card" },
-      graph: { count: graphRecIds.length, ids: graphRecIds, query_source: "aegis_recommendations.target_entity_id" },
-      db: { count: graphRecIds.length, ids: graphRecIds, query_source: "aegis_recommendations" },
-      status: c.status, missing_from_graph: [], missing_from_ui: graphRecIds,
+      axis: "photos",
+      ui: { count: uiPhotoIds.length, ids: uiPhotoIds, query_source: "entity_photos.entity_id" },
+      graph: { count: graphPhotoIds.length, ids: graphPhotoIds, query_source: "entity_photos.entity_id" },
+      db: { count: uiPhotoIds.length, ids: uiPhotoIds, query_source: "entity_photos.entity_id" },
+      status: c.status, missing_from_graph: sd.onlyA, missing_from_ui: sd.onlyB,
       failure_class: c.failure_class, reason: c.reason,
     });
   }
@@ -261,18 +259,22 @@ export async function entityParityProbe(
     });
   }
 
-  // photos — UI-only (Graph doesn't surface entity_photos).
-  {
-    const c = classify(uiPhotoIds.length, null, 0, 0, false);
-    axes.push({
-      axis: "photos",
-      ui: { count: uiPhotoIds.length, ids: uiPhotoIds, query_source: "entity_photos.entity_id" },
-      graph: { count: null, ids: [], query_source: "n/a — entityGraph does not include photos in v1" },
-      db: { count: uiPhotoIds.length, ids: uiPhotoIds, query_source: "entity_photos.entity_id" },
-      status: c.status, missing_from_graph: uiPhotoIds, missing_from_ui: [],
-      failure_class: c.failure_class, reason: c.reason,
-    });
-  }
+  // ── Graph-authoritative axes (intentional, documented in ADR aegis-operational-ontology) ──
+  axes.push(graphAuthoritative("signals.client_context", (graph.signals?.client_context ?? []).map((s) => s.id), "(c)-semantics: same-client signals not entity-correlated"));
+  axes.push(graphAuthoritative("case_investigations", graphCaseInvIds, "investigations.correlated_entity_ids (multi-entity case files; surfaced via EntityUnifiedProfile, not detail card)"));
+  axes.push(graphAuthoritative("operational_reports", graphOpRepIds, "generated_reports.metadata.entity_id (period-based; surfaced on Reports page, not detail card)"));
+  axes.push(graphAuthoritative("recommendations", graphRecIds, "aegis_recommendations.target_entity_id (no UI tab yet; operator-only via Aegis chat)"));
+
+  // scans (legacy axis) — autonomous_scan_results has no entity link; superseded by entity_scans.
+  axes.push({
+    axis: "scans",
+    ui: { count: null, ids: [], query_source: "n/a — superseded by entity_scans (poi_investigations) per ADR ontology" },
+    graph: { count: null, ids: [], query_source: "n/a — autonomous_scan_results has no entity link" },
+    db: { count: null, ids: [], query_source: "n/a" },
+    status: "inconclusive",
+    missing_from_graph: [], missing_from_ui: [],
+    reason: "scans axis now subsumed by entity_scans (poi_investigations); no operational gap.",
+  });
 
   // 6. Overall pass/fail + failure-class summary.
   const failureClasses = new Set<FailureClass>();

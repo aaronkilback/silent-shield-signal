@@ -404,13 +404,19 @@ export interface EntityGraph {
   classification: CanonicalClassification;
   blockers: string[];
   signals?: EntityGraphSignals;
+  // case-file investigations (multi-entity narrative files; surfaced in EntityUnifiedProfile, not the detail card).
   investigations?: { id: string; file_number: string | null; synopsis: string | null; created_at: string }[];
-  sources?: { id: string; content_type: string; source: string | null; title: string | null; url: string | null; created_at: string }[];
+  // operator-period operational reports (multi-entity); surfaced on the separate Reports page, NOT the entity card.
   reports?: { id: string; report_type: string; title: string; created_at: string }[];
+  sources?: { id: string; content_type: string; source: string | null; title: string | null; url: string | null; created_at: string }[];
   relationships?: EntityGraphRelationship[];
   recommendations?: { id: string; kind: string; title: string; status: string; created_at: string }[];
   monitoring_state?: { active: boolean; context: string | null };
-  scans?: { note: string };           // not directly linkable in v1 — see provenance note
+  // ── G5 ontology — entity-targeted concepts surfaced on EntityDetailDialog ──
+  entity_scans?: { id: string; status: string | null; created_at: string }[];        // poi_investigations
+  entity_reports?: { id: string; threat_level: string | null; confidence_score: number | null; created_at: string }[]; // poi_reports
+  photos?: { id: string; storage_path: string | null; source: string | null; created_at: string }[]; // entity_photos
+  scans?: { note: string };           // legacy field — autonomous_scan_results axis, now subsumed by entity_scans
   provenance: Provenance[];
 }
 
@@ -591,6 +597,59 @@ export async function entityGraph(
     counts: { n: recommendations.length },
   });
 
+  // ── G5 ontology: entity-targeted concepts that ARE surfaced on EntityDetailDialog ──
+
+  // entity_scans — poi_investigations.entity_id; tenant-scoped (poi_investigations has tenant_id).
+  const tES = Date.now();
+  const { data: scanRows } = await sb.from("poi_investigations")
+    .select("id, status, created_at")
+    .eq("entity_id", cid).eq("tenant_id", tenantId)
+    .order("created_at", { ascending: false }).limit(100);
+  const entity_scans = scanRows || [];
+  rec?.retrieval({
+    surface: "entityGraph:entity_scans", tenantScope: tenantId,
+    returnedObjectIds: entity_scans.map((r: { id: string }) => r.id), fallbackPath: "none", timingMs: Date.now() - tES,
+  });
+  provenance.push({
+    surface: "entityGraph:entity_scans", scope: `tenant_id=${tenantId}`,
+    edges: ["poi_investigations.entity_id"], row_ids: entity_scans.map((r: { id: string }) => r.id),
+    counts: { n: entity_scans.length },
+  });
+
+  // entity_reports — poi_reports.entity_id; tenant via parent entity (poi_reports has no tenant_id).
+  const tER = Date.now();
+  const { data: poiReportRows } = await sb.from("poi_reports")
+    .select("id, threat_level, confidence_score, created_at")
+    .eq("entity_id", cid)
+    .order("created_at", { ascending: false }).limit(100);
+  const entity_reports = poiReportRows || [];
+  rec?.retrieval({
+    surface: "entityGraph:entity_reports", tenantScope: tenantId,
+    returnedObjectIds: entity_reports.map((r: { id: string }) => r.id), fallbackPath: "none", timingMs: Date.now() - tER,
+  });
+  provenance.push({
+    surface: "entityGraph:entity_reports", scope: `entity_id=${cid} (parent-joined tenant)`,
+    edges: ["poi_reports.entity_id"], row_ids: entity_reports.map((r: { id: string }) => r.id),
+    counts: { n: entity_reports.length },
+  });
+
+  // photos — entity_photos.entity_id; tenant via parent entity.
+  const tPh = Date.now();
+  const { data: photoRows } = await sb.from("entity_photos")
+    .select("id, storage_path, source, created_at")
+    .eq("entity_id", cid)
+    .order("created_at", { ascending: false }).limit(100);
+  const photos = photoRows || [];
+  rec?.retrieval({
+    surface: "entityGraph:photos", tenantScope: tenantId,
+    returnedObjectIds: photos.map((r: { id: string }) => r.id), fallbackPath: "none", timingMs: Date.now() - tPh,
+  });
+  provenance.push({
+    surface: "entityGraph:photos", scope: `entity_id=${cid} (parent-joined tenant)`,
+    edges: ["entity_photos.entity_id"], row_ids: photos.map((r: { id: string }) => r.id),
+    counts: { n: photos.length },
+  });
+
   // ── monitoring_state: derived from the canonical entity row ──
   const attrs = (resolution.canonical.attributes ?? {}) as Record<string, unknown>;
   const monitoring_state = {
@@ -612,6 +671,9 @@ export async function entityGraph(
     relationships,
     recommendations,
     monitoring_state,
+    entity_scans,
+    entity_reports,
+    photos,
     scans,
     provenance,
   };
