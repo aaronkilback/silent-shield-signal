@@ -121,6 +121,14 @@ export class Recorder {
     this.traceId = header.debugTraceId || uuid();
   }
 
+  /** Fill scope once it resolves (e.g. after auth), without resetting the start time. */
+  setScope(s: { tenantId?: string | null; clientId?: string | null; conversationId?: string | null; actorUserId?: string | null }) {
+    if (s.tenantId !== undefined) this.header.tenantId = s.tenantId;
+    if (s.clientId !== undefined) this.header.clientId = s.clientId;
+    if (s.conversationId !== undefined) this.header.conversationId = s.conversationId;
+    if (s.actorUserId !== undefined) this.header.actorUserId = s.actorUserId;
+  }
+
   prompt(p: PromptTrace) { this.prompts.push(p); }
   retrieval(r: RetrievalTrace) { this.retrievals.push(r); }
   tool(t: ToolTrace) { this.tools.push(t); }
@@ -181,13 +189,16 @@ export class Recorder {
           refusal_reason: t.refusalReason ?? null, outcome: t.outcome ?? null, timing_ms: t.timingMs ?? null,
         })));
       }
-      if (this.groundings.length) {
-        await this.sb.from("aegis_grounding_trace").insert(this.groundings.map((g) => ({
-          trace_id: tid, tenant_id: tenant,
-          segment_index: g.segmentIndex, segment_text: g.text ? (redactDeep(g.text) as string) : null,
-          grounding_state: g.groundingState, source_object_ids: g.sourceObjectIds ?? [],
-        })));
-      }
+      // Grounding is fail-closed: until the model emits reliable markers, every trace
+      // still carries at least one segment defaulted to `unknown_unavailable`.
+      const groundings: GroundingTrace[] = this.groundings.length
+        ? this.groundings
+        : [{ segmentIndex: 0, groundingState: "unknown_unavailable" }];
+      await this.sb.from("aegis_grounding_trace").insert(groundings.map((g) => ({
+        trace_id: tid, tenant_id: tenant,
+        segment_index: g.segmentIndex, segment_text: g.text ? (redactDeep(g.text) as string) : null,
+        grounding_state: g.groundingState, source_object_ids: g.sourceObjectIds ?? [],
+      })));
     } catch (err) {
       console.warn(`[flight-recorder] trace flush failed (non-fatal) trace=${tid}:`, err);
     }

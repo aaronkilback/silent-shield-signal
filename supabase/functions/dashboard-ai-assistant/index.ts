@@ -7,6 +7,7 @@ import { logError } from "../_shared/error-logger.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
+import { startTrace } from "../_shared/flight-recorder.ts";
 import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
 import { FORTRESS_PLATFORM_OVERVIEW, FORTRESS_AEGIS_CAPABILITIES, FORTRESS_WORKFLOW_INSTRUCTIONS, AEGIS_TOOL_SUMMARIZER_PROMPT, AEGIS_REPORT_PRESENTER_PROMPT, AEGIS_AGENT_CREATION_PROMPT, AEGIS_DATA_PRESENTER_PROMPT } from "../_shared/fortress-operational-prompt.ts";
 import { FORTRESS_CORE_DIRECTIVE } from "../_shared/fortress-core-directive.ts";
@@ -10073,6 +10074,17 @@ Deno.serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     const supabaseClient = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
+
+    // ── FLIGHT RECORDER (INC-OMCR-4) — runtime chain-of-custody for this request ──
+    // Best-effort, non-blocking; scope filled once auth resolves; flushed in the SSE
+    // background closure's finally. Never throws into the request.
+    const rec = startTrace(supabaseClient, {
+      debugTraceId: debugTraceId ?? undefined,
+      requestId: (body as { request_id?: string }).request_id ?? undefined,
+      conversationId: (body as { conversation_id?: string }).conversation_id ?? null,
+      functionName: 'dashboard-ai-assistant',
+      actorSurface: 'aegis',
+    });
     
     // ── COMMON OPERATING PICTURE ────────────────────────────────────────────
     // INC-CTX-CONTAM: the COP is TENANT-SCOPED and built AFTER userTenantId resolves
@@ -10306,6 +10318,19 @@ Deno.serve(async (req) => {
       const cop = await buildCOP(supabaseClient, userTenantId);
       copContext = formatCOPForPrompt(cop);
       console.log(`[Aegis] COP (tenant=${userTenantId ?? "none"}): ${cop.summary}`);
+      // Flight recorder: scope + COP retrieval trace.
+      rec.setScope({ tenantId: userTenantId ?? null, actorUserId: authenticatedUserId ?? null });
+      rec.retrieval({
+        surface: 'COP',
+        tenantScope: userTenantId ?? null,
+        returnedObjectIds: [
+          ...(cop.open_incidents ?? []).map((i: { id: string }) => i.id),
+          ...(cop.critical_signals ?? []).map((s: { id: string }) => s.id),
+          ...(cop.top_entities ?? []).map((e: { name: string }) => e.name),
+        ],
+        fallbackPath: 'none',
+        provenance: { tenant_scoped: !!userTenantId, summary: cop.summary },
+      });
     } catch (copErr) {
       console.warn("[Aegis] COP build failed (non-fatal):", copErr);
     }
@@ -10586,6 +10611,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
 
     // Fire-and-forget background pipeline
     (async () => {
+      let recResponsePath = 'streamed'; // flight recorder: final response path
       try {
         // ── WRAITH PRE-SCREEN (runs before OpenAI sees the message) ───────────
         {
@@ -10670,12 +10696,26 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
+        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "");
+        // Flight recorder: prompt-assembly trace (final system prompt + context blocks).
+        rec.prompt({
+          systemPrompt: __recSystemPrompt,
+          contextBlocks: [
+            { name: 'tenant_knowledge', size: tenantKnowledgeContext?.length ?? 0 },
+            { name: 'behavioral_correction', size: behavioralCorrectionContext?.length ?? 0 },
+            { name: 'learning', size: learningContext?.length ?? 0 },
+            { name: 'agent_roster', size: agentRosterContext?.length ?? 0 },
+            { name: 'cop', size: copContext?.length ?? 0 },
+            { name: 'agent_intelligence', size: agentIntelligenceContext?.length ?? 0 },
+            { name: 'login_summary', size: loginSummaryContext?.length ?? 0 },
+          ],
+        });
         const firstResult = await callAiGatewayStream({
           model: "gpt-4o-mini",
           messages: [
             {
               role: "system",
-              content: buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? ""),
+              content: __recSystemPrompt,
             },
             ...processedMessages,
           ] as any,
@@ -11120,6 +11160,14 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               resultLen: _resultStr.length,
               resultPreview: _resultStr.slice(0, 400),
             }));
+            const _recOk = (result && typeof result === 'object') ? (result as Record<string, unknown>) : null;
+            rec.tool({
+              toolName: toolCall.function.name, args,
+              scopedTenantId: userTenantId ?? null,
+              outcome: (_recOk && _recOk.success === false) ? 'refused' : 'ok',
+              refusalReason: (_recOk && _recOk.success === false) ? String(_recOk.error ?? '').slice(0, 300) : null,
+              returnedObjectCount: _recOk && Array.isArray((_recOk as { data?: unknown }).data) ? ((_recOk as { data: unknown[] }).data.length) : undefined,
+            });
             return {
               tool_call_id: toolCall.id,
               role: "tool",
@@ -11133,6 +11181,11 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               toolName: toolCall.function.name,
               error: errorMessage.slice(0, 300),
             }));
+            rec.tool({
+              toolName: toolCall.function.name, args,
+              scopedTenantId: userTenantId ?? null,
+              outcome: 'error', refusalReason: errorMessage.slice(0, 300),
+            });
             // PROD-T.3 (2026-05-23) — sanitize tool error before LLM exposure.
             // Raw provider text (OPENAI_API_KEY, quota, RESOURCE_EXHAUSTED, etc.)
             // must not be embedded in tool-call results, because the model can
@@ -11205,6 +11258,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // PROD-Q (2026-05-23): never embed raw provider/internal error text
         // into SSE content. Raw remains in console.error + logError for ops
         // triage. User-visible chat bubble gets a canonical safe message.
+        recResponsePath = 'error';
         console.error("[dashboard-ai-assistant] Background pipeline error:", bgErr);
         await logError(bgErr, { functionName: 'dashboard-ai-assistant', severity: 'error' });
         const rawMsg = bgErr instanceof Error ? bgErr.message : String(bgErr);
@@ -11214,6 +11268,8 @@ The user's message is just a conversational acknowledgment - respond in kind, do
           await writeSSEText(`data: ${payload}\n\ndata: [DONE]\n\n`);
         } catch {}
       } finally {
+        // Flight recorder flush — post-stream, best-effort (the seam swallows errors).
+        await rec.finish({ status: recResponsePath === 'error' ? 'error' : 'ok', finalResponsePath: recResponsePath });
         try { await sseWriter.close(); } catch {}
       }
     })();
