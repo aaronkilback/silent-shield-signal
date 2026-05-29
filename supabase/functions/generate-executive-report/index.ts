@@ -411,57 +411,28 @@ Deno.serve(async (req) => {
     });
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // KNOWLEDGE BASE + AGENT BELIEF INJECTION
-    // Fetch in parallel before any prompts are built
+    // KNOWLEDGE BASE + AGENT BELIEF INJECTION — REMOVED 2026-05-29
+    // Forensic audit on the Trent Reznor exec-intel report (5edad4b5) proved
+    // these three context injections caused methodology-applied-as-evidence
+    // narrative drift: expert_knowledge rows describing workplace-violence
+    // pathway / fixation / advance surveys / close protection were lifted
+    // verbatim into the narrative for a quiet-period client with 0 high
+    // signals and only 3 pattern-detector mentions.
+    //
+    // Operator directive: executive reports must be evidence-first.
+    // Methodology must never be allowed to masquerade as observed intelligence.
+    // The prompts already carry their own tradecraft rules (CAPITALS for
+    // surnames, DEDUCTIONS label, no markdown, grounding-verification steps).
+    // External context is structurally unnecessary for coherent output.
+    //
+    // To restore (only after INC-LEARN-CONTAM is closed AND a per-client
+    // relevance gate is added): bring back ONLY rows whose content is
+    // demonstrably grounded in the client's own signals/incidents.
     // ═══════════════════════════════════════════════════════════════════════════
-    const [knowledgeResult, agentBeliefResult, briefingStandardsResult] = await Promise.allSettled([
-      supabase
-        .from('expert_knowledge')
-        .select('title, content, domain, knowledge_type, citation')
-        .eq('is_active', true)
-        .in('domain', ['intelligence_reporting', 'security_assessment', 'threat_analysis', 'executive_communication', 'corporate_security', 'threat_intelligence', 'executive_protection', 'crisis_management'])
-        .gte('confidence_score', 0.75)
-        .order('confidence_score', { ascending: false })
-        .limit(8),
-
-      supabase
-        .from('agent_beliefs')
-        .select('belief_type, confidence, related_domains, agent_call_sign, last_updated_at, hypothesis')
-        .eq('is_active', true)
-        .gte('confidence', 0.65)
-        .order('confidence', { ascending: false })
-        .limit(12),
-
-      supabase
-        .from('expert_knowledge')
-        .select('title, content, domain, knowledge_type')
-        .eq('is_active', true)
-        .or('title.ilike.%brief%,title.ilike.%report%,title.ilike.%BLUF%,title.ilike.%intelligence writing%,content.ilike.%bottom line up front%')
-        .gte('confidence_score', 0.88)
-        .limit(5),
-    ]);
-
-    const knowledge = knowledgeResult.status === 'fulfilled' ? (knowledgeResult.value.data || []) : [];
-    const agentBeliefs = agentBeliefResult.status === 'fulfilled' ? (agentBeliefResult.value.data || []) : [];
-    const briefingKnowledge = briefingStandardsResult.status === 'fulfilled' ? (briefingStandardsResult.value.data || []) : [];
-
-    const knowledgeContext = knowledge.length > 0 ? `
-EXPERT KNOWLEDGE BASE (apply this specialist expertise to your analysis):
-${knowledge.map((k: any) => `[${k.knowledge_type?.toUpperCase()} | ${k.domain}] ${k.title}
-${k.content?.substring(0, 300)}`).join('\n\n')}
-` : '';
-
-    const agentContext = agentBeliefs.length > 0 ? `
-ANALYST TEAM ASSESSMENTS — reference these only where current signals directly support them. Do not use these to introduce risks or claims that are not grounded in the signals provided above. These are background context, not a substitute for signal evidence:
-${agentBeliefs.map((b: any) => `• ${b.agent_call_sign} [${b.belief_type}, ${Math.round(b.confidence * 100)}% confidence]: ${b.hypothesis?.substring(0, 200)}`).join('\n')}
-` : '';
-
-    const briefingStandardsContext = briefingKnowledge.length > 0 ? `
-BRIEFING STANDARDS (apply these standards to structure and tone):
-${briefingKnowledge.map((k: any) => `${k.title}: ${k.content?.substring(0, 250)}`).join('\n\n')}
-` : '';
-
-    console.log(`Knowledge base: ${knowledge.length} entries, agent beliefs: ${agentBeliefs.length}, briefing standards: ${briefingKnowledge.length}`);
+    const knowledgeContext = '';
+    const agentContext = '';
+    const briefingStandardsContext = '';
+    console.log('[generate-executive-report] knowledge/agent_beliefs/briefingStandards injections DISABLED (operator directive 2026-05-29 — see methodology-applied-as-evidence forensic).');
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL DATE CONTEXT injected into AI prompts to prevent hallucination
