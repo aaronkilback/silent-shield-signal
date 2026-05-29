@@ -91,9 +91,25 @@ Deno.serve(async (req) => {
         .gte("last_updated_at", cutoff7d)
         .order("last_updated_at", { ascending: false })
         .limit(10),
+      // 2026-05-29 — Layer 1 fix per operator directive after signal_agent_analyses
+      // scope audit. Pre-fix this query had no client/tenant filter and no JOIN, so
+      // service-role bypassed RLS and returned rows across all tenants. Historical
+      // realization on prod: 2026-05-27 / 24 / 19 each had multi-tenant exposure in
+      // the 24h window — every tenant's daily briefing prompt received the other
+      // tenant's LLM-derived analysis prose.
+      //
+      // The fix uses signals!inner so PostgREST emits an INNER JOIN; the
+      // .eq("signals.client_id", clientId) constrains the join's outer table.
+      // Rows whose parent signal is owned by a different client are excluded.
+      // Rows with NULL signal_id (none on prod today; FK enforced) cannot match.
+      //
+      // See docs/platform-operations/audits/signal-agent-analyses-scope-audit-2026-05-29.md
       supabase
         .from("signal_agent_analyses")
-        .select("agent_call_sign, trigger_reason, analysis, created_at")
+        .select(
+          "agent_call_sign, trigger_reason, analysis, created_at, signals!inner(client_id)"
+        )
+        .eq("signals.client_id", clientId)
         .ilike("trigger_reason", "entity_mention:%")
         .gte("created_at", cutoff24h)
         .order("created_at", { ascending: false })
