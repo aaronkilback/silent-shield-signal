@@ -10292,41 +10292,66 @@ Deno.serve(async (req) => {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // P4 — Class A tradecraft injection (operator-authorized 2026-05-29)
-    // Reads from agent_tradecraft (post P3 shadow population). 3-item budget.
-    // Labeled at injection time so prompt-level discipline can never present
-    // tradecraft as observation. Workstream D prose-lint R7 is the backstop.
-    // Flight Recorder captures every injection per S6 success criterion.
+    // N+1 — Class A tradecraft keyword retrieval (operator-authorized 2026-05-29)
+    //
+    // Replaces P4's random-3 sampling with relevance-based retrieval against the
+    // retrieve_tradecraft_keyword RPC (Postgres FTS + ts_rank_cd).
+    //
+    // Load-bearing rule (operator directive): "Tradecraft appears ONLY when it
+    // materially improves reasoning, recommendation quality, or decision
+    // support." 0..budget items, never padded — empty result is valid.
+    //
+    // Calibration: threshold 0.25 returns 3 items for on-topic queries with
+    // library coverage, 0 items for off-topic queries or library gaps. See
+    // docs/.../classA-tradecraft-relevance-retrieval-design-2026-05-29.md.
+    //
+    // Flight Recorder traces every retrieval — including empty — so the 7-day
+    // review can measure injection rate, empty-result rate, FP, FN.
     // ─────────────────────────────────────────────────────────────────────
     const TRADECRAFT_BUDGET = 3;
+    const TRADECRAFT_THRESHOLD = 0.25;
+    const TRADECRAFT_MIN_CONFIDENCE = 0.80;
+    const TRADECRAFT_MIN_QUERY_LENGTH = 8; // skip trivial queries ("hi", "ok", "ty")
+
+    // Extract the last user message — that's the query that drives retrieval.
+    // Defensive: messages can be missing/empty/non-array depending on caller.
+    const _lastUserMsgForTC = Array.isArray(messages)
+      ? messages.filter((m: any) => m?.role === "user").pop()
+      : null;
+    const _lastUserTextForTC =
+      typeof _lastUserMsgForTC?.content === "string" ? _lastUserMsgForTC.content.trim() : "";
+
     let tradecraftItems: Array<{
       id: string; authored_by_agent: string; domain: string;
       hypothesis: string; confidence: number; provenance_resolved: boolean;
+      rank: number;
     }> = [];
-    try {
-      // Top-confidence rotation: pull top 12 by confidence then sample 3 at random
-      // to avoid the "same 3 items every prompt" problem. Embedding-based relevance
-      // is a future iteration. Filter to high-confidence only (>= 0.80).
-      const { data: tcCandidates } = await supabaseClient
-        .from("agent_tradecraft")
-        .select("id, authored_by_agent, domain, hypothesis, confidence, provenance_resolved")
-        .eq("is_active", true)
-        .gte("confidence", 0.80)
-        .in("anonymization_status", ["passed", "passed_provenance_unknown", "passed_after_review"])
-        .order("confidence", { ascending: false })
-        .limit(60);
+    let tradecraftSkippedReason: string | null = null;
 
-      if (tcCandidates && tcCandidates.length > 0) {
-        // Lightweight in-memory random sample of TRADECRAFT_BUDGET from the candidates
-        const shuffled = [...tcCandidates];
-        for (let i = shuffled.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    if (_lastUserTextForTC.length < TRADECRAFT_MIN_QUERY_LENGTH) {
+      tradecraftSkippedReason = "query_too_short";
+    } else {
+      try {
+        const { data: tcRows, error: tcErr } = await supabaseClient.rpc(
+          "retrieve_tradecraft_keyword",
+          {
+            p_query: _lastUserTextForTC,
+            p_threshold: TRADECRAFT_THRESHOLD,
+            p_budget: TRADECRAFT_BUDGET,
+            p_min_confidence: TRADECRAFT_MIN_CONFIDENCE,
+          },
+        );
+        if (tcErr) {
+          console.warn("[AEGIS] tradecraft RPC error (non-fatal):", tcErr);
+          tradecraftSkippedReason = "rpc_error";
+        } else if (Array.isArray(tcRows)) {
+          tradecraftItems = tcRows as typeof tradecraftItems;
+          if (tradecraftItems.length === 0) tradecraftSkippedReason = "below_threshold";
         }
-        tradecraftItems = shuffled.slice(0, TRADECRAFT_BUDGET) as typeof tradecraftItems;
+      } catch (tcErr) {
+        console.warn("[AEGIS] tradecraft retrieval failed (non-fatal):", tcErr);
+        tradecraftSkippedReason = "exception";
       }
-    } catch (tcErr) {
-      console.warn("[AEGIS] tradecraft retrieval failed (non-fatal):", tcErr);
     }
 
     let tradecraftContext = "";
@@ -10346,29 +10371,38 @@ ${tradecraftItems.map((t, i) =>
 ).join('\n\n')}
 ═══════════════════════════════════════════════════════════════════════════
 `;
-      console.log(`[AEGIS] tradecraft injection: ${tradecraftItems.length} items (budget ${TRADECRAFT_BUDGET})`);
+      console.log(`[AEGIS] tradecraft injection: ${tradecraftItems.length} items (budget ${TRADECRAFT_BUDGET}, max_rank ${Math.max(...tradecraftItems.map(t => t.rank)).toFixed(3)})`);
+    } else {
+      console.log(`[AEGIS] tradecraft injection: 0 items (skipped_reason=${tradecraftSkippedReason ?? "unknown"})`);
+    }
 
-      // S6 — Flight Recorder captures every tradecraft injection.
-      // tenant_scope is UUID-typed; Class A is asset_class='global_shared' (no tenant
-      // UUID); signal global-shared status via provenance.asset_class instead.
-      try {
-        rec.retrieval({
-          surface: 'agent_tradecraft',
-          tenantScope: null,
-          returnedObjectIds: tradecraftItems.map((t) => t.id),
-          fallbackPath: 'none',
-          provenance: {
-            asset_class: 'global_shared',
-            budget: TRADECRAFT_BUDGET,
-            items_returned: tradecraftItems.length,
-            min_confidence: Math.min(...tradecraftItems.map((t) => t.confidence)),
-            domains: [...new Set(tradecraftItems.map((t) => t.domain))],
-            label_version: 'v1.2026-05-29',
-          },
-        });
-      } catch (recErr) {
-        console.warn("[AEGIS] flight-recorder tradecraft trace failed (non-fatal):", recErr);
-      }
+    // S6 — Flight Recorder ALWAYS records (empty + non-empty). Empty traces are
+    // the load-bearing data for the 7-day false-negative review.
+    try {
+      const ranks = tradecraftItems.map((t) => t.rank);
+      rec.retrieval({
+        surface: 'agent_tradecraft',
+        tenantScope: null,
+        returnedObjectIds: tradecraftItems.map((t) => t.id),
+        fallbackPath: 'none',
+        provenance: {
+          asset_class: 'global_shared',
+          retrieval_strategy: 'keyword_fts_ts_rank_cd',
+          threshold: TRADECRAFT_THRESHOLD,
+          budget: TRADECRAFT_BUDGET,
+          min_confidence: TRADECRAFT_MIN_CONFIDENCE,
+          min_query_length: TRADECRAFT_MIN_QUERY_LENGTH,
+          query_length: _lastUserTextForTC.length,
+          items_returned: tradecraftItems.length,
+          per_item_ranks: ranks,
+          max_rank: ranks.length > 0 ? Math.max(...ranks) : null,
+          domains: [...new Set(tradecraftItems.map((t) => t.domain))],
+          skipped_reason: tradecraftSkippedReason,
+          label_version: 'v2.2026-05-29-n1',
+        },
+      });
+    } catch (recErr) {
+      console.warn("[AEGIS] flight-recorder tradecraft trace failed (non-fatal):", recErr);
     }
 
     // ── Login summary — fetch after auth resolves so we have user_id ──
