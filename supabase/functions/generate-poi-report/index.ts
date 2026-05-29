@@ -11,6 +11,309 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+// Workstream D — confidence/provenance frame wiring (slim slice follow-on).
+// Feature-flagged via D_SLIM_SLICE_ENABLED; ships dark by default.
+import { scoreClaim, type SourceRecord, type ClaimType } from "../_shared/aegis-confidence.ts";
+import { frameClaim, noActionConsideration, type ClaimFrame } from "../_shared/aegis-claim-frame.ts";
+import { recordClaimConfidence } from "../_shared/aegis-claim-confidence-store.ts";
+
+// ─── Workstream D — claim-frame renderer + builder ──────────────────────────
+// Reads ONLY data already in scope inside the request handler. No new IO.
+// Renders the four claim types in a compact operator-readable markdown section.
+const D_SLIM_SLICE_ENABLED = (Deno.env.get("D_SLIM_SLICE_ENABLED") ?? "0") === "1";
+
+function renderClaimFrame(frame: ClaimFrame): string {
+  const t = frame.what.type;
+  const headlineMap: Record<ClaimType, string> = {
+    retrieved_fact:               "Retrieved fact",
+    inferred_relationship:        "Inferred relationship",
+    analyst_confirmed_assessment: "Analyst-confirmed",
+    ai_generated_hypothesis:      "AI hypothesis — not corroborated",
+  };
+  const sectionLabel = t === "ai_generated_hypothesis"
+    ? "Basis"
+    : t === "inferred_relationship"
+      ? "Inferred from"
+      : "Source";
+  const lines: string[] = [];
+  lines.push(`**[${headlineMap[t]}]**  ${frame.what.label}`);
+  // Source / Inferred from / Basis line
+  const sources = frame.how.sources.slice(0, 3);
+  const sourceLines = sources.map((s) => {
+    const ref = s.ref;
+    const refStr = ref?.url ? ` <${ref.url}>`
+      : ref?.id ? ` (${ref.kind}#${ref.id.slice(0, 8)})`
+      : "";
+    return `${frame.how.provenance_label}${refStr}`;
+  });
+  const lineageNote = frame.how.lineage_count === 1
+    ? "1 independent source"
+    : `${frame.how.lineage_count} independent sources`;
+  lines.push(`- **${sectionLabel}.** ${sourceLines.join(" · ")}${sourceLines.length ? " · " : ""}${lineageNote}.`);
+  // Confidence line — qualitative summary + freshness, NO numeric headline.
+  const summaryLabel: Record<string, string> = {
+    confirmed:      "Confirmed",
+    "well-attested": "Well-attested",
+    "single-source": "Single-source",
+    inferred:       "Inferred",
+    hypothesis:     "Hypothesis — could be wrong",
+    stale:          "Stale",
+    ungrounded:     "Ungrounded — suppressed",
+  };
+  const vs = frame.confidence.axes.validation_state;
+  const reviewNote = vs === "accepted" ? "operator-validated" : "not yet reviewed";
+  lines.push(`- **Confidence.** ${summaryLabel[frame.confidence.summary] ?? frame.confidence.summary}. ${frame.confidence.freshness_label}; ${reviewNote}.`);
+  // Action line
+  const action = frame.consideration.recommended_action
+    ? `${frame.consideration.recommended_action} — ${frame.consideration.rationale ?? ""}`.trim()
+    : (t === "inferred_relationship" ? "Review and either confirm (creates a stored relationship) or reject."
+      : t === "ai_generated_hypothesis" ? "Consider whether the missing structure should be investigated. This is a prompt, not a finding."
+      : t === "analyst_confirmed_assessment" ? "None — relationship is first-class data."
+      : "None — record-of-fact citation. Mark reviewed if accurate.");
+  lines.push(`- **Recommended action.** ${action}`);
+  return lines.join("\n");
+}
+
+interface PendingClaim {
+  claim_type: ClaimType;
+  claim_subject_kind: string;
+  claim_subject_id: string | null;
+  claim_payload: Record<string, unknown>;
+  sources: SourceRecord[];
+  label: string;
+  validation_state?: "not_yet_reviewed" | "in_review" | "accepted" | "rejected" | "needs_more_info" | "withdrawn" | "superseded";
+  grounded: boolean;
+  claim_class: "operational" | "attribute" | "relationship" | "document";
+}
+
+function buildPendingClaimsForReport(args: {
+  entity: any;
+  signals: any[] | null;
+  relationships: any[] | null;
+  watchEntries: any[] | null;
+  reportMarkdown: string;
+}): PendingClaim[] {
+  const out: PendingClaim[] = [];
+  const { entity, signals, relationships, watchEntries, reportMarkdown } = args;
+  const nowIso = new Date().toISOString();
+
+  // (1) RETRIEVED FACT — entity role / watch_list status / first signal.
+  // Prefer watch_list (operator-attested) > attributes.role > most-recent signal.
+  if (watchEntries && watchEntries.length > 0) {
+    const w = watchEntries[0];
+    out.push({
+      claim_type: "retrieved_fact",
+      claim_subject_kind: "entity",
+      claim_subject_id: entity.id,
+      claim_payload: { kind: "watch_list_entry", entity_id: entity.id, entity_name: entity.name, watch_level: w.watch_level, reason: w.reason },
+      sources: [{
+        surface: "analyst_confirmed", // watch_list rows are operator-set
+        lineage_fingerprint: `watch:${entity.id}`,
+        observed_at: w.added_at ?? nowIso,
+        ref: { kind: "watch_list", id: entity.id },
+      }],
+      label: `${entity.name} is on the operator watch list — level: \`${w.watch_level}\`${w.reason ? ` (reason: ${w.reason})` : ""}.`,
+      grounded: true,
+      claim_class: "attribute",
+    });
+  } else if (entity.attributes?.role) {
+    out.push({
+      claim_type: "retrieved_fact",
+      claim_subject_kind: "entity",
+      claim_subject_id: entity.id,
+      claim_payload: { kind: "entity_role", entity_id: entity.id, role: entity.attributes.role },
+      sources: [{
+        surface: "tenant_document",
+        lineage_fingerprint: `entity:${entity.id}`,
+        observed_at: nowIso,
+        ref: { kind: "entity", id: entity.id },
+      }],
+      label: `${entity.name} is registered as a **${String(entity.attributes.role).replace(/_/g, " ")}** in this tenant.`,
+      grounded: true,
+      claim_class: "attribute",
+    });
+  } else if (signals && signals.length > 0) {
+    const s = signals[0];
+    out.push({
+      claim_type: "retrieved_fact",
+      claim_subject_kind: "signal",
+      claim_subject_id: s.id,
+      claim_payload: { kind: "signal_mention", signal_id: s.id, title: s.title, entity_id: entity.id },
+      sources: [{
+        surface: "audited_monitor_allowlist",
+        lineage_fingerprint: s.source_name ? `signal:${s.source_name}:${s.id}` : `signal:${s.id}`,
+        observed_at: s.event_date ?? nowIso,
+        ref: { kind: "signal", id: s.id },
+      }],
+      label: `Signal _"${(s.title ?? "untitled").slice(0, 100)}"_ references this subject (severity: ${s.severity ?? "unknown"}).`,
+      grounded: true,
+      claim_class: "operational",
+    });
+  }
+
+  // (2) INFERRED RELATIONSHIP — first relationship without operator confirmation.
+  // (3) ANALYST CONFIRMED — first relationship that IS operator-confirmed.
+  // The poi report's relationship rows carry a `strength` value. We treat
+  // strength >= 0.8 OR description containing "confirmed" as analyst-confirmed,
+  // and strength < 0.8 as inferred. This is a transitional convention until
+  // entity_relationships gains a validation_state column.
+  if (relationships && relationships.length > 0) {
+    const isConfirmed = (r: any) => (r.strength ?? 0) >= 0.8 || /\bconfirmed\b/i.test(r.description ?? "");
+    const conf = relationships.find(isConfirmed);
+    const inf  = relationships.find((r: any) => !isConfirmed(r));
+
+    const relToFrame = (r: any, type: ClaimType, vs?: PendingClaim["validation_state"]) => {
+      const otherId = r.entity_a_id === entity.id ? r.entity_b_id : r.entity_a_id;
+      return {
+        claim_type: type,
+        claim_subject_kind: "relationship",
+        claim_subject_id: null,
+        claim_payload: {
+          kind: "entity_relationship",
+          entity_a_id: entity.id,
+          entity_b_id: otherId,
+          relationship_type: r.relationship_type,
+          description: r.description,
+          strength: r.strength,
+        },
+        sources: [{
+          surface: "tenant_document" as const,
+          lineage_fingerprint: `er:${entity.id}:${otherId}`,
+          observed_at: nowIso,
+          ref: { kind: "entity_relationships" },
+        }],
+        label: type === "analyst_confirmed_assessment"
+          ? `**${entity.name} ↔ ${otherId.slice(0, 8)}** — ${r.relationship_type}${r.description ? ": " + r.description : ""}.`
+          : `${entity.name} is connected to entity \`${otherId.slice(0, 8)}\` — ${r.relationship_type}${r.description ? ": " + r.description : ""}.`,
+        grounded: true,
+        validation_state: vs ?? "not_yet_reviewed",
+        claim_class: "relationship" as const,
+      };
+    };
+
+    if (inf)  out.push(relToFrame(inf,  "inferred_relationship"));
+    if (conf) out.push(relToFrame(conf, "analyst_confirmed_assessment", "accepted"));
+  }
+
+  // (4) AI GENERATED HYPOTHESIS — extract one [AI-KNOWLEDGE] line from the report
+  // OR, if no AI-KNOWLEDGE was emitted, surface a pattern observation from the
+  // ABSENCE of structure (operator value: explicitly flagged as hypothesis).
+  const aiLineMatch = reportMarkdown.match(/^[-•*]\s*([^\n]*\[AI-KNOWLEDGE[^\n]*)$/m);
+  if (aiLineMatch) {
+    const text = aiLineMatch[1].replace(/\s*\[AI-KNOWLEDGE[^\]]*\]\s*/g, " ").trim();
+    out.push({
+      claim_type: "ai_generated_hypothesis",
+      claim_subject_kind: "entity",
+      claim_subject_id: entity.id,
+      claim_payload: { kind: "ai_knowledge_extract", entity_id: entity.id, text },
+      sources: [{
+        surface: "ai_only",
+        lineage_fingerprint: `ai:${entity.id}`,
+        observed_at: nowIso,
+        ref: { kind: "ai_model" },
+      }],
+      label: text.length > 220 ? text.slice(0, 217) + "…" : text,
+      grounded: true,
+      claim_class: "operational",
+    });
+  } else if ((signals?.length ?? 0) > 0 && (relationships?.length ?? 0) === 0) {
+    // Pattern observation: the subject has signals but no stored relationships.
+    out.push({
+      claim_type: "ai_generated_hypothesis",
+      claim_subject_kind: "entity",
+      claim_subject_id: entity.id,
+      claim_payload: { kind: "pattern_observation", entity_id: entity.id, pattern: "signals_without_relationships" },
+      sources: [{
+        surface: "ai_only",
+        lineage_fingerprint: `pattern:${entity.id}:signals_no_relationships`,
+        observed_at: nowIso,
+        ref: { kind: "pattern" },
+      }],
+      label: `${entity.name} has ${signals!.length} signal mention(s) but no stored relationships — the network around this subject may be under-mapped.`,
+      grounded: true,
+      claim_class: "operational",
+    });
+  }
+
+  return out;
+}
+
+async function emitClaimFramesForReport(args: {
+  supabase: any;
+  tenantId: string | null;
+  entity: any;
+  signals: any[] | null;
+  relationships: any[] | null;
+  watchEntries: any[] | null;
+  reportMarkdown: string;
+}): Promise<{ section: string; emitted: number; persisted: number }> {
+  if (!D_SLIM_SLICE_ENABLED) return { section: "", emitted: 0, persisted: 0 };
+  if (!args.tenantId) {
+    // Fail closed — confidence frames require tenant ownership per Provenance Doctrine.
+    return { section: "", emitted: 0, persisted: 0 };
+  }
+  const pending = buildPendingClaimsForReport(args);
+  if (pending.length === 0) return { section: "", emitted: 0, persisted: 0 };
+
+  const frames: { type: ClaimType; md: string }[] = [];
+  let persisted = 0;
+
+  for (const p of pending) {
+    const axes = scoreClaim({
+      claim_type: p.claim_type,
+      claim_class: p.claim_class,
+      sources: p.sources,
+      grounded: p.grounded,
+      validation_state: p.validation_state,
+    });
+    const frame = frameClaim({
+      claim_type: p.claim_type,
+      label: p.label,
+      payload: p.claim_payload,
+      sources: p.sources,
+      axes,
+      consideration: noActionConsideration(),
+    });
+    // Suppress ungrounded entirely (ADR §3.6 fail-closed).
+    if (frame.confidence.summary === "ungrounded") continue;
+    frames.push({ type: p.claim_type, md: renderClaimFrame(frame) });
+
+    const r = await recordClaimConfidence(args.supabase, {
+      tenant_id: args.tenantId,
+      claim_type: p.claim_type,
+      claim_subject_kind: p.claim_subject_kind,
+      claim_subject_id: p.claim_subject_id ?? null,
+      claim_payload: p.claim_payload,
+      axes,
+      sources: p.sources,
+    });
+    if (r.persisted) persisted++;
+  }
+
+  if (frames.length === 0) return { section: "", emitted: 0, persisted };
+
+  // Group + render. Section order: facts → inferences → confirmed → hypotheses.
+  const order: ClaimType[] = ["retrieved_fact", "inferred_relationship", "analyst_confirmed_assessment", "ai_generated_hypothesis"];
+  const titleMap: Record<ClaimType, string> = {
+    retrieved_fact:               "### Retrieved facts",
+    inferred_relationship:        "### Inferred relationships",
+    analyst_confirmed_assessment: "### Analyst-confirmed",
+    ai_generated_hypothesis:      "### AI-generated hypotheses",
+  };
+  const parts: string[] = [];
+  parts.push("\n---\n\n## CONFIDENCE & PROVENANCE");
+  parts.push("Each statement below is labelled with its type. **Fact** = stored record we read. **Inferred** = Aegis joined two facts. **Confirmed** = an operator validated it. **Hypothesis** = Aegis interpretation, not data. **Stale** = confirmed in the past but evidence is old.\n");
+  for (const t of order) {
+    const block = frames.filter((f) => f.type === t);
+    if (block.length === 0) continue;
+    parts.push(titleMap[t]);
+    parts.push(block.map((b) => b.md).join("\n\n"));
+    parts.push("");
+  }
+
+  return { section: parts.join("\n"), emitted: frames.length, persisted };
+}
+// ─── /Workstream D wiring ────────────────────────────────────────────────────
 
 async function runHibpCheck(email: string, apiKey: string): Promise<any[]> {
   try {
@@ -124,7 +427,8 @@ Deno.serve(async (req) => {
     // ── Load entity ──────────────────────────────────────────────────────────
     const { data: entity, error: entityErr } = await supabase
       .from('entities')
-      .select('id, name, type, risk_level, threat_score, description, aliases, attributes, ai_assessment')
+      // tenant_id added 2026-05-28 for Workstream D framing wire-up (Provenance Doctrine fail-closed).
+      .select('id, tenant_id, name, type, risk_level, threat_score, description, aliases, attributes, ai_assessment')
       .eq('id', entity_id)
       .single();
 
@@ -495,7 +799,30 @@ REMINDER: You must also contribute your own knowledge about this subject from yo
       throw new Error(aiResult.error || 'AI returned empty report');
     }
 
-    const reportMarkdown = aiResult.content;
+    let reportMarkdown = aiResult.content;
+
+    // ── Workstream D — append claim-frame section (feature-flagged) ─────────
+    // Reads ONLY data already loaded above. No new IO except the best-effort
+    // persistence into aegis_claim_confidence. Ships dark unless the function
+    // secret D_SLIM_SLICE_ENABLED=1 is set.
+    try {
+      const frameResult = await emitClaimFramesForReport({
+        supabase,
+        tenantId: entity.tenant_id ?? null,
+        entity,
+        signals: signals ?? null,
+        relationships: relationships ?? null,
+        watchEntries: watchEntries ?? null,
+        reportMarkdown,
+      });
+      if (frameResult.section) {
+        reportMarkdown = reportMarkdown + frameResult.section;
+        console.log(`[generate-poi-report][D] emitted ${frameResult.emitted} claim frame(s), persisted ${frameResult.persisted}`);
+      }
+    } catch (err) {
+      // Never let the framing wire-up break the report.
+      console.warn("[generate-poi-report][D] frame emission error (non-fatal):", (err as Error).message);
+    }
 
     // ── Extract confidence JSON from the report ──────────────────────────────
     let confidenceScore = 50;
