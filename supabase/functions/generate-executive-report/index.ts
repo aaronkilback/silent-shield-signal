@@ -291,13 +291,43 @@ Deno.serve(async (req) => {
     // Log signal count but don't block — AI will note low activity if signals are sparse
     console.log(`[generate-executive-report] reportable signals: ${reportableSignals.length}`);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NARRATIVE-INPUT SIGNAL SET (operator directive 2026-05-29)
+    // Pattern-detector signals (signal_type='pattern') are META-OBSERVATIONS about
+    // signal volume — e.g. "[PATTERN] Frequency spike: 4 this week vs 0 prior week".
+    // They are NOT direct threat observations. Today they are tagged
+    // category='active_threat' at ingest, which lets them feed the narrative LLM and
+    // get promoted into "ESCALATING threat activity" prose for quiet-period clients.
+    // Per the signal-vs-threat-separation proposal, exclude pattern signals from the
+    // narrative input. They remain in:
+    //   • Flash counts (criticalSignals/highSignals built from reportableSignals)
+    //   • Signal History + evidenceSources (per-signal evidence loop)
+    //   • Operator drill-down via report_evidence_sources
+    // They no longer feed:
+    //   • signalsByCategory used for narrative selection
+    //   • weightedCategories
+    //   • the narrative LLM prompt
+    // ═══════════════════════════════════════════════════════════════════════════
+    const narrativeSignals = reportableSignals.filter((s: any) => s.signal_type !== 'pattern');
+    const patternSignalCount = reportableSignals.length - narrativeSignals.length;
+    console.log(`[generate-executive-report] narrative signals: ${narrativeSignals.length} (excluded ${patternSignalCount} pattern signals)`);
+
     function getHostname(url: string | null | undefined): string {
       if (!url) return 'Fortress Intelligence';
       try { return new URL(url).hostname; } catch { return url; }
     }
 
-    // Group signals by category and severity
+    // Group signals by category (existing Flash + downstream paths — uses reportableSignals).
     const signalsByCategory = reportableSignals.reduce((acc: any, s: any) => {
+      const cat = s.category || 'uncategorized';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(s);
+      return acc;
+    }, {});
+
+    // SEPARATE grouping for the narrative path — pattern signals excluded.
+    // The narrative section consumes this; Flash + Signal History do not.
+    const narrativeSignalsByCategory = narrativeSignals.reduce((acc: any, s: any) => {
       const cat = s.category || 'uncategorized';
       if (!acc[cat]) acc[cat] = [];
       acc[cat].push(s);
@@ -843,7 +873,8 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       categoryDisplayNames[cat] || cat.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
     // Generate detailed narratives — top 3 categories by weighted score (critical×4, high×2, medium×1), min score 3
-    const weightedCategories = Object.entries(signalsByCategory)
+    // Uses narrativeSignalsByCategory (pattern signals excluded) per operator directive 2026-05-29.
+    const weightedCategories = Object.entries(narrativeSignalsByCategory)
       .map(([category, categorySignals]: [string, any]) => {
         const score = (categorySignals as any[]).filter((s: any) => s.severity !== 'low').reduce((sum: number, s: any) => {
           if (s.severity === 'critical') return sum + 4;
@@ -856,8 +887,57 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
 
-    const narrativesPromises = weightedCategories.map(async ({ category, categorySignals }) => {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NARRATIVE QUIET-PERIOD SHORT-CIRCUIT (operator directive 2026-05-29)
+    // Mirror the Flash's isQuietPeriod gate so Flash and Narrative cannot
+    // contradict each other. When the deterministic-Flash conditions are met
+    // (0 critical, 0 high, 0 new incidents, LOW risk) — using the
+    // narrative-eligible signal set (pattern signals excluded) — the narrative
+    // LLM is bypassed entirely. Emit deterministic per-category text consistent
+    // with the Flash.
+    // ═══════════════════════════════════════════════════════════════════════════
+    const narrativeCriticalCount = narrativeSignals.filter((s: any) => s.severity === 'critical').length;
+    const narrativeHighCount     = narrativeSignals.filter((s: any) => s.severity === 'high').length;
+    const isNarrativeQuietPeriod =
+      narrativeCriticalCount === 0
+      && narrativeHighCount === 0
+      && newIncidentsLast24h.length === 0
+      && (overallRiskLevel || '').toUpperCase() === 'LOW';
+
+    let narratives: Array<{ category: string; narrative: string; signals: any[] }> = [];
+    if (isNarrativeQuietPeriod) {
+      console.log('[generate-executive-report] narrative quiet-period — using deterministic narratives (no LLM call)');
+      // Deterministic per-category narrative consistent with the Flash.
+      // If no narrative-eligible categories survive (e.g. only pattern signals
+      // existed), emit a single general entry pointing to Signal History so
+      // operators still see why the section is sparse.
+      narratives = weightedCategories.length > 0
+        ? weightedCategories.map(({ category }) => ({
+            category,
+            narrative: `No significant ${getCategoryDisplay(category).toLowerCase()} activity detected in the reporting period. See Signal History below for detail on lower-severity items.`,
+            signals: [],
+          }))
+        : (patternSignalCount > 0
+          ? [{
+              category: 'active_threat',
+              narrative: `No significant active-threat activity detected in the reporting period. ${patternSignalCount} internal pattern-detector signal(s) were observed (signal-volume meta-metric, not direct threat observations) — see Signal History below for detail.`,
+              signals: [],
+            }]
+          : []);
+    } else {
+      const narrativesPromises = weightedCategories.map(async ({ category, categorySignals }) => {
         const topSignals = (categorySignals as any[]).slice(0, 5);
+
+        // Belt-and-braces (Approach 3, defensive): even though pattern signals
+        // are excluded above, if any pattern signal ever reaches this layer in
+        // future, label it explicitly so the LLM doesn't promote signal-volume
+        // observations to threat-escalation narrative voice.
+        const formatSignalLine = (s: any, i: number) => {
+          const isPattern = s.signal_type === 'pattern';
+          const patternTag = isPattern ? ' [INTERNAL PATTERN DETECTOR — describes signal volume, not observed threat activity]' : '';
+          const dateStr = new Date(s.received_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+          return `${i + 1}. [${s.severity?.toUpperCase()}]${patternTag} ${cleanSignalExcerpt(s.normalized_text)} (Source: ${getHostname(s.source_url)}, ${dateStr})`;
+        };
 
         const narrativePrompt = `Write a professional intelligence narrative about ${getCategoryDisplay(category)} threats for ${client.name}. Apply the specialist knowledge and agent assessments below.
 ${knowledgeContext}
@@ -872,10 +952,11 @@ MANDATORY TRADECRAFT RULES:
 - If no significant activity occurred in this category during the reporting period, state clearly: "No significant ${category} activity detected in the reporting period." Do not pad with generic content.
 - STRICT SOURCE DISCIPLINE: every factual claim must trace to one of the signals listed above — never introduce events, statistics, or context from your training data
 - If a signal references a historical event for context, you may mention it was historical — but do not expand on it with details not in the signal
+- SIGNAL-VOLUME vs THREAT DISTINCTION: any signal tagged "[INTERNAL PATTERN DETECTOR — describes signal volume, not observed threat activity]" is a meta-observation about how many signals were collected. NEVER use such signals as evidence of escalating threat activity. They may be referenced as "signal volume increased" but never as "threats escalated" or "threats are rising."
 - RELEVANCE FILTER: if any signal in the list above is NOT actually relevant to ${client.name} on closer reading — wrong sector, wrong geography, different company, tangential industry news — exclude it from the narrative entirely. Do NOT mention it just to dismiss it ("noted but not directly relevant" / "while this reflects broader dynamics it does not concern us") — that is exactly the filler a sophisticated executive reader will reject. Silent exclusion only.
 
 Signals to analyze:
-${topSignals.map((s: any, i: number) => `${i + 1}. [${s.severity?.toUpperCase()}] ${cleanSignalExcerpt(s.normalized_text)} (Source: ${getHostname(s.source_url)}, ${new Date(s.received_at).toLocaleDateString('en-US', {year: 'numeric', month: 'long', day: 'numeric'})})`).join('\n')}
+${topSignals.map(formatSignalLine).join('\n')}
 ${topSignals.some((s: any) => {
   const eventDate = s.event_date ? new Date(s.event_date) : null;
   return eventDate && (Date.now() - eventDate.getTime()) > 365 * 24 * 60 * 60 * 1000;
@@ -901,11 +982,11 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         };
       });
 
-    console.log('Generating detailed narratives...');
+      console.log('Generating detailed narratives...');
+      narratives = await Promise.all(narrativesPromises);
+    }
 
     const threatCategories = Object.keys(signalsByCategory);
-
-    const narratives = await Promise.all(narrativesPromises);
 
     // Format dates
     const reportDate = new Date().toLocaleDateString('en-US', { 
