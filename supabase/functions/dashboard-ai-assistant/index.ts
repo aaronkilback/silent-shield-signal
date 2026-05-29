@@ -10349,13 +10349,16 @@ ${tradecraftItems.map((t, i) =>
       console.log(`[AEGIS] tradecraft injection: ${tradecraftItems.length} items (budget ${TRADECRAFT_BUDGET})`);
 
       // S6 — Flight Recorder captures every tradecraft injection.
+      // tenant_scope is UUID-typed; Class A is asset_class='global_shared' (no tenant
+      // UUID); signal global-shared status via provenance.asset_class instead.
       try {
         rec.retrieval({
           surface: 'agent_tradecraft',
-          tenantScope: 'global_shared',  // Class A is asset_class='global_shared'
+          tenantScope: null,
           returnedObjectIds: tradecraftItems.map((t) => t.id),
           fallbackPath: 'none',
           provenance: {
+            asset_class: 'global_shared',
             budget: TRADECRAFT_BUDGET,
             items_returned: tradecraftItems.length,
             min_confidence: Math.min(...tradecraftItems.map((t) => t.confidence)),
