@@ -12,7 +12,7 @@ import {
   type SourceRecord,
 } from "./aegis-confidence.ts";
 import { frameClaim } from "./aegis-claim-frame.ts";
-import { proseLintReport } from "./aegis-prose-lint.ts";
+import { proseLintReport, tradecraftLintReport } from "./aegis-prose-lint.ts";
 
 const isoDaysAgo = (n: number) => new Date(Date.now() - n * 24 * 3600 * 1000).toISOString();
 const baseAxes: ConfidenceAxes = {
@@ -169,4 +169,44 @@ Deno.test("R1: ungrounded frame triggers suppression violation", () => {
   const r = proseLintReport("anything", f);
   assert(!r.passed);
   assert(r.violations.some((v) => v.rule_id === "R1_ungrounded_must_be_suppressed"));
+});
+
+// ─── Prose-lint R7 — tradecraft must not be cited as observation ──────────
+const tradecraftItem = {
+  id: "tc-test-001",
+  hypothesis: "Executive protection has fundamentally evolved from a reactive, bodyguard-focused service to a proactive, data-driven, intelligence-led, and technology-enabled practice that integrates diverse security domains.",
+  domain: "security_principles",
+};
+
+Deno.test("R7: clean response (with 'methodology' framing word) → pass", () => {
+  const prose = "The platform's methodology says executive protection has fundamentally evolved from a reactive, bodyguard-focused service. Apply that framing to your tour plan.";
+  assert(tradecraftLintReport(prose, [tradecraftItem]).passed);
+});
+
+Deno.test("R7: tradecraft cited as observation without framing → violation", () => {
+  const prose = "Reports indicate that executive protection has fundamentally evolved from a reactive, bodyguard-focused service. This is the current state of the industry.";
+  const r = tradecraftLintReport(prose, [tradecraftItem]);
+  assert(!r.passed);
+  assert(r.violations.some((v) => v.rule_id === "R7_tradecraft_must_not_be_observation"));
+});
+
+Deno.test("R7: tradecraft borrowed + 'confirmed' framing without methodology label → violation", () => {
+  const prose = "We have confirmed that executive protection has fundamentally evolved from a reactive, bodyguard-focused service. Action: deploy a proactive plan.";
+  const r = tradecraftLintReport(prose, [tradecraftItem]);
+  assert(!r.passed);
+});
+
+Deno.test("R7: no tradecraft borrowing → no violation regardless of assertive voice", () => {
+  const prose = "Reports indicate that the tour will visit 4 European cities. Plan accordingly.";
+  assert(tradecraftLintReport(prose, [tradecraftItem]).passed);
+});
+
+Deno.test("R7: empty tradecraft list → always passes", () => {
+  const prose = "Reports indicate that the situation is escalating. We have confirmed multiple sources.";
+  assert(tradecraftLintReport(prose, []).passed);
+});
+
+Deno.test("R7: bracketed [TRADECRAFT REFERENCE] label counts as framing", () => {
+  const prose = "[TRADECRAFT REFERENCE — methodology, not observation] Executive protection has fundamentally evolved from a reactive, bodyguard-focused service. Reports indicate this is the methodology to apply.";
+  assert(tradecraftLintReport(prose, [tradecraftItem]).passed);
 });

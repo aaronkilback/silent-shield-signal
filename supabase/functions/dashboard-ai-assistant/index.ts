@@ -156,7 +156,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = "", tradecraftContext: string = ""): string {
   const timeContext = getTimeContext();
 
   const tenantBoundaryBlock = tenantName
@@ -182,7 +182,7 @@ ${AEGIS_CHAT_MODIFIERS}
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 ${loginSummaryContext}${agentRosterContext}
-${agentIntelligenceContext}
+${agentIntelligenceContext}${tradecraftContext}
 ${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
@@ -10291,6 +10291,83 @@ Deno.serve(async (req) => {
       console.log(`[AEGIS] Loaded ${beliefs.length} agent beliefs from ${byAgent.size} agents`);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // P4 — Class A tradecraft injection (operator-authorized 2026-05-29)
+    // Reads from agent_tradecraft (post P3 shadow population). 3-item budget.
+    // Labeled at injection time so prompt-level discipline can never present
+    // tradecraft as observation. Workstream D prose-lint R7 is the backstop.
+    // Flight Recorder captures every injection per S6 success criterion.
+    // ─────────────────────────────────────────────────────────────────────
+    const TRADECRAFT_BUDGET = 3;
+    let tradecraftItems: Array<{
+      id: string; authored_by_agent: string; domain: string;
+      hypothesis: string; confidence: number; provenance_resolved: boolean;
+    }> = [];
+    try {
+      // Top-confidence rotation: pull top 12 by confidence then sample 3 at random
+      // to avoid the "same 3 items every prompt" problem. Embedding-based relevance
+      // is a future iteration. Filter to high-confidence only (>= 0.80).
+      const { data: tcCandidates } = await supabaseClient
+        .from("agent_tradecraft")
+        .select("id, authored_by_agent, domain, hypothesis, confidence, provenance_resolved")
+        .eq("is_active", true)
+        .gte("confidence", 0.80)
+        .in("anonymization_status", ["passed", "passed_provenance_unknown", "passed_after_review"])
+        .order("confidence", { ascending: false })
+        .limit(60);
+
+      if (tcCandidates && tcCandidates.length > 0) {
+        // Lightweight in-memory random sample of TRADECRAFT_BUDGET from the candidates
+        const shuffled = [...tcCandidates];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        tradecraftItems = shuffled.slice(0, TRADECRAFT_BUDGET) as typeof tradecraftItems;
+      }
+    } catch (tcErr) {
+      console.warn("[AEGIS] tradecraft retrieval failed (non-fatal):", tcErr);
+    }
+
+    let tradecraftContext = "";
+    if (tradecraftItems.length > 0) {
+      tradecraftContext = `
+
+═══ TRADECRAFT REFERENCE — methodology, not observation ═══
+The following items are general methodology from the platform's analytical agent library. They describe how to approach security problems. They are NOT evidence about specific events in this tenant. They are NOT observations. They may be cited as methodology framing, never as observed fact.
+
+PROMPT RULES (BINDING):
+- Always include the bracketed label "[TRADECRAFT REFERENCE — methodology, not observation]" when paraphrasing or citing these items.
+- Never claim "Confirmed", "Reports indicate", "Sources say", or any assertive-evidence framing for these items.
+- If a tradecraft item is not relevant to the operator's question, silently omit it rather than name-and-dismiss it.
+
+${tradecraftItems.map((t, i) =>
+  `[TRADECRAFT REFERENCE — methodology, not observation] (item ${i + 1}, conf ${Math.round(t.confidence * 100)}%, ${t.domain}, by ${t.authored_by_agent}): ${t.hypothesis}`
+).join('\n\n')}
+═══════════════════════════════════════════════════════════════════════════
+`;
+      console.log(`[AEGIS] tradecraft injection: ${tradecraftItems.length} items (budget ${TRADECRAFT_BUDGET})`);
+
+      // S6 — Flight Recorder captures every tradecraft injection.
+      try {
+        rec.retrieval({
+          surface: 'agent_tradecraft',
+          tenantScope: 'global_shared',  // Class A is asset_class='global_shared'
+          returnedObjectIds: tradecraftItems.map((t) => t.id),
+          fallbackPath: 'none',
+          provenance: {
+            budget: TRADECRAFT_BUDGET,
+            items_returned: tradecraftItems.length,
+            min_confidence: Math.min(...tradecraftItems.map((t) => t.confidence)),
+            domains: [...new Set(tradecraftItems.map((t) => t.domain))],
+            label_version: 'v1.2026-05-29',
+          },
+        });
+      } catch (recErr) {
+        console.warn("[AEGIS] flight-recorder tradecraft trace failed (non-fatal):", recErr);
+      }
+    }
+
     // ── Login summary — fetch after auth resolves so we have user_id ──
     let loginSummaryContext = "";
     if (authenticatedUserId) {
@@ -10789,7 +10866,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
-        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "");
+        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "", tradecraftContext);
         // Flight recorder: prompt-assembly trace (final system prompt + context blocks).
         rec.prompt({
           systemPrompt: __recSystemPrompt,
@@ -10800,6 +10877,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             { name: 'agent_roster', size: agentRosterContext?.length ?? 0 },
             { name: 'cop', size: copContext?.length ?? 0 },
             { name: 'agent_intelligence', size: agentIntelligenceContext?.length ?? 0 },
+            { name: 'tradecraft', size: tradecraftContext?.length ?? 0 },
             { name: 'login_summary', size: loginSummaryContext?.length ?? 0 },
           ],
         });
