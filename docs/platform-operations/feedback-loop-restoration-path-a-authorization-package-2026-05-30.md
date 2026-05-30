@@ -74,21 +74,29 @@ Each `update<Object>Learning` function gains a `tenantId: string` parameter and 
 - INSERT payload: add `tenant_id: tenantId`.
 - UPDATE path: no change (id-based).
 
-### W4 — `propagateCrossDomainLearning` routing
+### W4 — `propagateCrossDomainLearning` routing **[DECIDED: Option α]**
 
-Operator design decision before implementation:
-- **Option α (tenant-scoped):** thread `tenantId` from `updateSignalLearning`'s scope. Cross-domain category learning becomes tenant-private. Consistent with the rest of `learning_profiles`'s post-Phase-1 tenant-scoped shape.
-- **Option β (tenant-agnostic tradecraft):** re-route cross-domain category patterns to `agent_tradecraft` (Class A store, intentionally tenant-agnostic). Cross-domain learning becomes shared tradecraft, not tenant intelligence.
+Operator decision 2026-05-30: **Option α (tenant-scoped).** Thread `tenantId` from `updateSignalLearning`'s scope through `propagateCrossDomainLearning` and into `upsertLearningProfile`. Cross-domain category learning is written into the tenant's own `learning_profiles` slice.
 
-Both are doctrinally clean. Default recommendation: **Option α** as the minimum-change path. Option β is a structurally cleaner long-term answer but adds scope beyond Path A restoration.
+Considered and not chosen: **Option β (route to `agent_tradecraft`).** Doctrinally cleaner (cross-domain category-relatedness is structurally L2 approved-anonymized tradecraft, not L1 tenant fact), but requires schema-fit verification — `agent_tradecraft` was built for narrative tradecraft notes / decision rules, not category-frequency feature vectors. A clean β implementation would need a schema extension or translation layer, pushing scope from B toward C.
 
-### W5 — Error-handling shape (RECOMMENDATION; out of minimum-safe-repair scope)
+**Follow-on backlog note (to revisit, not now):** when `agent_tradecraft` schema fit is verified or extended, migrate cross-domain category-relatedness patterns from per-tenant `learning_profiles` slices to the shared tradecraft store. Cost of α today: a Petronas analyst marking "protest → civil_unrest" as related does not teach BC Place's gate the same relationship. Tradecraft fragments per-tenant until the migration. Acceptable for the minimum-safe-repair window.
 
-The existing `upsertLearningProfile` wraps everything in `try { ... } catch (error) { console.error(...) }`, swallowing the `23502` error class that hid this defect for 30+ days. The minimum-safe repair leaves this shape intact. A follow-on hardening could:
-- Inspect the supabase-js `error` field on every write and surface it upstream via the function's return shape, OR
-- Throw on PostgrestError so the outer process-feedback function returns 500 instead of 200 on silent writer failure.
+### W5 — Error-handling shape **[DECIDED: In scope, constrained to W5a]**
 
-**Out of this package's scope.** Flagging for separate authorization if desired.
+Operator decision 2026-05-30: **W5 in scope, constrained to W5a shape.** Replace the silent-swallow try/catch in `upsertLearningProfile` (lines 627-629) with:
+
+- Inspect the supabase-js response `error` field on every write attempt (both SELECT-existing and INSERT/UPDATE paths)
+- On error: `console.error` with full context (`tenant_id`, `profile_type`, error code, error message, attempted payload shape)
+- **Do NOT throw.** Function continues; caller is unaffected.
+- **Do NOT change the HTTP response shape** of process-feedback. Frontend toast behavior unchanged.
+- Path B enqueue path is structurally preserved — a Path A write failure does not block `apply-feedback-to-agent` from being queued.
+
+Doctrinal alignment: Aegis action-integrity AR1–AR6 ("no fake success," "honest refusal") + the consistent C.x pattern (ingest-signal hard-reject, recordAgentMemory fail-closed, cop-timeline-writer discriminated union). The W5a shape preserves the doctrine surface (failures are loud) without coupling Path A and Path B success states.
+
+Considered and not chosen: **W5b (surface in return shape) / W5c (throw on PostgrestError).** Both shapes risk coupling Path B success to Path A success — if a writer throws, the downstream `enqueueJob('apply-feedback-to-agent', ...)` call may not execute, and the currently-working Path B regresses. W5a's loud-log-no-throw shape is the minimum hardening that kills the silent-swallow defect class without introducing this coupling.
+
+Defect-class prevention: the original `learning_profiles` defect hid for 30+ days specifically because the swallowing try/catch concealed `23502` errors. W5a guarantees the same drift in the future produces immediate, queryable edge function log noise — discoverable in any standard log search within hours, not 30 days.
 
 ---
 
@@ -330,8 +338,8 @@ This is a tenant-isolated corrective surgery; no global rollback needed.
 | R2 | Other writers (`aggregate-implicit-feedback`, `aggregate-global-learnings`, `agent-self-learning`) have same tenant_id-omission defect | LOW–MEDIUM (likely some do) | MEDIUM | **Pre-flight P3 audit**; expand the writer fix to cover all sites in the same PR, OR explicitly carve them out with separate backlog items |
 | R3 | Relevance gate over-tightens for negative-feedback-heavy tenant | LOW–MEDIUM | MEDIUM | Schema floor/ceiling (0.25–0.55) caps excursion; B1 7-day observation; per-tenant DELETE surgery available |
 | R4 | Operator confusion about signal-volume shift | MEDIUM | LOW | Deploy notes explicitly call out expected per-tenant shift; signal-volume telemetry watched |
-| R5 | `propagateCrossDomainLearning` routing ambiguity | resolved by §3 W4 decision before implementation | — | Operator picks Option α or β; documented in deploy notes |
-| R6 | Silent re-introduction of same defect class via the error-swallowing try/catch in `upsertLearningProfile` | LOW (no immediate trigger) | MEDIUM (latent) | Out of minimum-safe-repair scope; flagged as follow-on hardening (§3 W5) |
+| R5 | `propagateCrossDomainLearning` routing ambiguity | **RESOLVED 2026-05-30** | — | Option α chosen (§3 W4). Cross-domain category-relatedness becomes per-tenant; follow-on backlog note records future β migration when `agent_tradecraft` schema fit is verified. |
+| R6 | Silent re-introduction of same defect class via the error-swallowing try/catch in `upsertLearningProfile` | **RESOLVED 2026-05-30 (W5a in scope)** | — | W5a hardening in scope: loud `console.error` on every write failure with full context. Defect class becomes discoverable in edge function logs within hours, not 30 days. No throw, no API shape change, no Path B coupling. |
 | R7 | Consumer fan-out incomplete; one reader misses tenant filter and reads cross-tenant rows | MEDIUM | HIGH | Pre-flight P4 catalogs every site; verified by Flight Recorder trace audit during functional tests (F3, F4) |
 | R8 | Watchdog stale-learning alarm logic still global; once data exists for some tenants but not others, alarm becomes misleading | MEDIUM | LOW | Flag for separate watchdog-tuning follow-on; not gating |
 | R9 | Repair shipped during C.4 adoption window confounds adoption measurement | **REFUTED** (sequencing memo 2026-05-30) | — | Confounding argument shown speculative; no §11 metric structurally affected |
@@ -346,9 +354,9 @@ This is a tenant-isolated corrective surgery; no global rollback needed.
 ### Phase 0 — Pre-flight (before PR is opened)
 
 1. P1-P6 pre-flight tests (§6) run against staging + prod. P3 + P4 audits catalog every writer and reader with a verdict.
-2. Operator picks Option α vs β for `propagateCrossDomainLearning` (§3 W4).
-3. Operator picks scope: this repair only, OR this repair plus same-class fixes to `aggregate-implicit-feedback` / `aggregate-global-learnings` / `agent-self-learning` if those have the same defect.
-4. Operator picks whether to ship §3 W5 (error-handling hardening) inside or after this repair.
+2. ~~Operator picks Option α vs β for `propagateCrossDomainLearning` (§3 W4).~~ **RESOLVED 2026-05-30 = Option α.**
+3. Operator picks scope based on P3 audit findings: this repair only, OR this repair plus same-class fixes to `aggregate-implicit-feedback` / `aggregate-global-learnings` / `agent-self-learning` if the pre-flight reveals they have the same defect. **CONDITIONAL on P3 audit outcome.**
+4. ~~Operator picks whether to ship §3 W5 (error-handling hardening) inside or after this repair.~~ **RESOLVED 2026-05-30 = W5a in scope.**
 
 ### Phase 1 — Implementation
 
@@ -448,7 +456,7 @@ Following the C.0–C.4 pattern. Operator review of each item; GO / NO-GO / NOTE
 |---|---|---|
 | §16.1 | Approve §1 plain-English objective and the framing that this restores statistical learning without touching Path B | "Approved" or amendment |
 | §16.2 | Approve §2 file-and-table inventory as the full scope of touched surfaces | "Approved" or expand/shrink |
-| §16.3 | Approve §3 writer changes (W1, W2, W3) and direct the W4 routing decision (Option α tenant-scoped vs Option β tradecraft) | Choose α or β; W5 in or out |
+| §16.3 | Approve §3 writer changes (W1, W2, W3) **+ acknowledge W4 = Option α and W5 = W5a-shape (in scope)** decisions of 2026-05-30 | "Acknowledged" |
 | §16.4 | Approve §4 consumer changes (C1, C2 critical-path; C3 secondary-consumer audit; C4 watchdog flag) | "Approved" or amend |
 | §16.5 | Approve §5 tenant-isolation framing (repair strengthens, no new RLS / triggers / CHECK) | "Approved" |
 | §16.6 | Approve §6 pre-flight + functional + post-deploy verification plan | "Approved" or amend |
@@ -467,10 +475,15 @@ Following the C.0–C.4 pattern. Operator review of each item; GO / NO-GO / NOTE
 
 ## §17 — What this package is NOT
 
-- Not an implementation plan ready to execute autonomously. The §3 W4 routing decision and §16 sign-off items require operator input before any code is written.
+- Not an implementation plan ready to execute autonomously. **W4 and W5 are now decided; §16.16 GO authorization is the only remaining operator step before Phase 0 begins.**
 - Not a PR or branch. No code committed, no migration drafted.
 - Not authorization for any other backlog item (Report Generator Standardization, R1.1, detector work, watchdog rewrite, INC-LEARN-CONTAM lift).
 - Not a deferral of C.4 adoption observation. Adoption window continues independently.
+
+## §17a — Revision history
+
+- **2026-05-30 v1** — Initial package draft. W4 and W5 left as operator design decisions.
+- **2026-05-30 v2** — Operator decisions recorded: W4 = Option α (tenant-scoped, with follow-on backlog note for eventual β migration to `agent_tradecraft`); W5 = in scope, constrained to W5a shape (loud `console.error` without throw, no API change, Path B preserved). R5 and R6 marked RESOLVED. §16.3 sign-off shape simplified to "Acknowledge." Pre-flight Phase 0 design-decision steps struck through. §16.16 (AUTHORIZE EXECUTION) remains the only load-bearing operator decision.
 
 ---
 
