@@ -303,6 +303,13 @@ const Investigations = () => {
                 <div className="text-xs text-muted-foreground">
                   <p>Created: {format(new Date(investigation.created_at), "MMM d, yyyy 'at' h:mm a")}</p>
                   <p>By: {investigation.created_by_name}</p>
+                  {/* C.4 (Decision Layer adoption experiment): operator-set next review
+                      date. Renders only when populated — absence here is meaningful
+                      (NULL = not set by any operator). Read-only on this list view;
+                      edit on the detail page. */}
+                  {investigation.next_review_at && (
+                    <p>Next review: {format(new Date(investigation.next_review_at), "MMM d, yyyy")}</p>
+                  )}
                 </div>
               </Card>
             ))}
