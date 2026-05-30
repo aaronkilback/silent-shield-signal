@@ -131,30 +131,62 @@ Per-tenant configurability adds complexity before we know whether it's needed. P
 
 ---
 
-### Q5 — Baseline computation for trend deltas
+### Q5 — Baseline computation for trend deltas — RESOLVED 2026-05-29 with operator clarification
 
 **Question.** How is "trend change" baselined? Rolling N-day mean vs absolute threshold vs z-score per-keyword?
 
+**Operator clarification (2026-05-29 — locked invariant):**
+
+> *"Statistical significance must never become a primary Decision Frame trigger. Commitment invalidation remains the primary trigger. A statistically unusual event without commitment impact should not create a Decision Frame. A commitment-invalidating event should be eligible even if statistically normal."*
+
+This clarification sharpens the doctrine. Statistical thresholds (rolling 28-day median, z-score ≥ 2) are **telemetry and observability — not gating signals.** The ONLY structural gate for C1 = `true` is commitment-linkage per the materiality test in §1 of the R1 ADR.
+
 **Options considered.**
-- (A) Rolling 28-day median for cadence + z-score ≥ 2 for severity bins
+- (A) Rolling 28-day median + z-score ≥ 2 **as telemetry**; commitment-linkage as sole gating signal *(retained, sharpened)*
 - (B) Absolute thresholds (e.g., "cadence > N/day")
 - (C) Per-keyword baseline
 
-**Recommendation: (A) — rolling 28-day median for cadence, z-score ≥ 2 for severity-bin shifts.**
+**Recommendation: (A) as sharpened — rolling 28-day median for cadence + z-score ≥ 2 for severity-bin shifts, retained for telemetry and Flight Recorder annotation ONLY. NOT a primary gate.**
+
+### Two invariants that follow from the clarification
+
+| Invariant | Meaning |
+|---|---|
+| **I1 — Statistical noise without commitment impact ≠ frame.** | A z-score-anomalous signal (e.g., a posting-cadence spike) that does NOT invalidate any commitment in the working model evaluates `C1 = false`. No frame. The statistical anomaly is recorded in Flight Recorder (`c1_candidate_deltas[].z_score`, `cadence_median`) for observability but does NOT participate in the C1 boolean. |
+| **I2 — Quiet commitment-invalidating event ≠ excluded.** | A statistically-normal event (z-score below the telemetry threshold) that DOES invalidate a commitment evaluates `C1 = true`. The "quiet" path must be eligible. Statistical magnitude is irrelevant to the gate. |
+
+### Decision logic (locked)
+
+For each candidate delta during C1 evaluation:
+
+```
+materiality_score :=  (commitment_linkage ? 1.0 : 0.0)   -- the GATE
+  // Statistical signal is captured ALONGSIDE this score for telemetry,
+  // but it does NOT contribute to materiality_score and cannot flip the gate.
+
+candidate.gated_in := (materiality_score >= MATERIALITY_THRESHOLD)
+candidate.telemetry := { z_score, cadence_vs_28d_median, baseline_window_id }
+```
+
+`MATERIALITY_THRESHOLD` therefore has only two effective values for R1 cold-start: `0.0` (gate open, fires on any candidate including non-invalidating — over-fire mode, not used) or `0.5` (gate requires commitment-linkage — the cold-start mode). The recommendation locks `0.5`.
 
 **Rationale.**
+- The operator's clarification eliminates the "statistical noise drives a Decision Frame" failure mode at the structural level. The detector cannot fire on statistical noise because statistics never feed the gate.
+- Conversely, a low-volume but commitment-invalidating event (e.g., a single legal notice that invalidates a publicly-announced position) is eligible — exactly the kind of decision-relevant change that pure statistical thresholds would miss.
+- Statistical telemetry is still valuable for observability: the operator can audit which candidates *were* statistically unusual to spot patterns the detector might be missing — without those candidates auto-firing.
 - 28-day median matches the 30-day working-model bound — same lookback frame.
-- Median (not mean) is robust to outliers — a single burst doesn't shift the baseline; sustained shift does.
-- z-score ≥ 2 is industry-standard for "statistically anomalous" — and at z=2 false-positive rate is ~5% for normally-distributed observations.
-- Per-keyword baseline (option C) would be more precise but requires pre-computation infrastructure that's premature for R1 cold-start.
+- Median (not mean) is robust to outliers — a single burst doesn't shift the baseline.
 
 Pinned at `evaluator_version` tag per ADR §6/§7 so tuning audits can A/B against versions.
 
 **Risks.**
-- 28-day baseline can mask slow, sustained trend changes. *Mitigation:* this is a known limitation; observation may surface it as a false-negative class.
-- z=2 fires on ~5% of normal observations. *Mitigation:* z-score alone doesn't fire C1 — the materiality test (commitment-linkage) is the second gate.
+- Operator (or downstream R2 implementation) accidentally uses statistical telemetry as a gating signal. *Mitigation:* the decision logic above is named explicitly; R1.1 detector implementation must include a unit test or assertion that statistical telemetry never contributes to `materiality_score`. The literal-type pattern from Workstream D is the right shape (separate types for `Gate` vs `Telemetry` so the compiler refuses the conflation).
+- 28-day baseline can mask slow sustained trend changes for telemetry purposes (but per I2 this can't cause a missed frame if the slow trend actually invalidates a commitment). *Mitigation:* this is now purely a telemetry-quality concern, not a doctrine concern; observation surfaces it.
+- A frame fires on a commitment-invalidating event the operator considers low-stakes. *Mitigation:* that's a Q1 (authority map) miss or a Q3 (commitment derivation noise) miss, not a Q5 issue. Routed to the appropriate watchlist class in §B.1.
 
-**Re-evaluation trigger.** If §B.1 watchlist shows false-negatives traceable to "slow sustained trend was real but baseline masked it," extend to multi-window baselines (e.g., 7-day vs 28-day comparison) before R1.7.
+**Re-evaluation trigger.** If §B.1 watchlist shows false-negatives traceable to "commitment was real and invalidating but detector missed it," the issue is commitment-derivation (Q3) or working-model bound (Q4) — NOT Q5. Q5 statistical telemetry should never produce a re-evaluation by itself, because by I1 it doesn't produce frame decisions by itself.
+
+**Cross-reference for future doctrine maintenance.** I1 and I2 are operator-locked invariants. Any future ADR amendment that proposes statistical significance as a Decision Frame trigger requires explicit operator re-ratification of those invariants. Captured in §C resolution matrix and §B.4 (new watchlist class — see below).
 
 ---
 
@@ -336,6 +368,19 @@ The R1 ADR §10 names this as a P0 contamination incident. Captured here as a wa
 
 **Tuning rule.** Zero tolerance. Any single ungrounded firing during the audit period stops the clock — R1.7 promotion is blocked until the root cause is identified and remediated.
 
+### §B.4 — Statistical-significance drift into the gate (operator-locked invariant I1)
+
+Per the operator clarification on Q5 (2026-05-29): statistical thresholds (z-score, rolling-median cadence) are **telemetry**, never gating signals. The structural risk is that future implementation (or operator override under pressure) silently lets a statistical signal contribute to `materiality_score` — collapsing the I1 invariant ("Statistical noise without commitment impact ≠ frame").
+
+**What we measure.** Two complementary audits:
+
+1. **Static audit (build-time).** R1.1 detector implementation includes a unit test or type-level assertion that `materiality_score` is computed from `commitment_linkage` only and never reads from the telemetry struct. CI gate blocks if the assertion fails.
+2. **Runtime audit (Flight Recorder).** For every fired frame (`frame_fires=true`), confirm that at least one `c1_candidate_deltas[]` entry has `invalidated_commitment_id != null`. Any fired frame whose C1 candidates ALL have `invalidated_commitment_id = null` is an **I1 violation** — frame fired without commitment-linkage gate.
+
+**Tuning rule.** Zero tolerance for I1 violations (parallel to §B.3 ungrounded-firing tolerance). Any single occurrence during the audit period stops the R1.7 clock until the implementation is corrected. Statistical telemetry continues to be recorded as observability; the violation is in the gate logic, not the telemetry.
+
+**Cross-reference to operator directive.** This watchlist class implements the operator's locked invariants I1 + I2 from §A Q5. Captured here durably so the audit cannot silently drop them.
+
 ## §C — Resolution matrix (fast-scan)
 
 | Item | Resolution | Re-evaluation trigger |
@@ -344,7 +389,7 @@ The R1 ADR §10 names this as a P0 contamination incident. Captured here as a wa
 | Q2 (runtime location) | In-process; refactor to `_shared/` if ≥2 surfaces consume | R3 or Q10 expansion |
 | Q3 (commitments inventory) | Dynamic derivation from existing surfaces; dedicated table deferred | §B.1 ≥10 misses in 7 days |
 | Q4 (snapshot bound) | `min(last_briefing, 30 days)` globally | §B.1 shows aging-out false-negatives |
-| Q5 (baseline) | Rolling 28-day median + z-score ≥ 2 | §B.1 shows slow-sustained-trend false-negatives |
+| Q5 (baseline) | Rolling 28-day median + z-score ≥ 2 **as telemetry only**; commitment-linkage is the sole C1 gate (operator-locked invariants I1 + I2) | I1/I2 are operator-locked; any change requires ADR amendment, not Q-level re-eval |
 | Q6 (cold tenant) | `frame_fires=false` | §B.1 ≥3 cold-tenant cases |
 | Q7 (investigation expiry) | `next_review_at` if set, else expired | §B.1 ≥5 null-next-review cases |
 | Q8 (latency cap) | 200ms, fail-closed, timeout traced | Timeout rate >2% |
@@ -353,6 +398,7 @@ The R1 ADR §10 names this as a P0 contamination incident. Captured here as a wa
 | §B.1 (operator-flagged FN class) | Tracked via `c1_significant_no_commitment` field | Class size + operator judgment at R1.7 gate |
 | §B.2 (cross-tenant variance) | Per-tenant fire-rate, flagged >2× median | Variance triggers investigation |
 | §B.3 (ungrounded firing) | Zero-tolerance, P0 incident on any single occurrence | Any occurrence stops R1.7 clock |
+| §B.4 (statistical drift into gate, I1 violation) | Zero-tolerance, static + runtime audits | Any single occurrence stops R1.7 clock |
 
 ## §D — Pre-R1.0 authorization checklist
 
@@ -379,3 +425,4 @@ Before R1.0 (the schema + initial detector phase) is authorized, the operator co
 ## Changelog
 
 - **2026-05-29 v1** — initial Q1–Q10 recommendations + audit watchlist + resolution matrix + pre-R1.0 authorization checklist. Includes the operator-flagged false-negative class as §B.1 with explicit Flight Recorder field, daily review cadence, and per-pattern tuning rules.
+- **2026-05-29 v2** — operator approval of Q1–Q10 with Q5 clarification. **Q5 sharpened:** statistical thresholds (rolling 28-day median, z-score ≥ 2) retained for telemetry/observability only, NEVER as a primary Decision Frame trigger. Commitment invalidation remains the sole gating signal. Two operator-locked invariants captured: **I1** (statistical noise without commitment impact ≠ frame) and **I2** (quiet commitment-invalidating event ≠ excluded). New **§B.4** watchlist class — zero-tolerance on statistical-significance drift into the gate, with both static (build-time) and runtime audits. Operator strong approvals recorded for Q1 / Q3 / Q6 / Q9 / Q10 and the §B.1 mechanism. Companion §D authorization sheet (`decision-layer-r1-authorization-sheet-2026-05-29.md`) prepared for operator sign-off.
