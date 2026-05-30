@@ -1,6 +1,19 @@
 # ADR — Decision Layer Option C: Minimum Schema Patches for Commitment Inventory Maturity
 
-**Status:** PROPOSED 2026-05-29 — design-only ADR for operator ratification. **No code, no schema changes, no implementation work authorized by this document.** Option C scope per operator directive 2026-05-29 (after rejecting Options A + F): "Close the minimum set of schema gaps required to produce a meaningful commitment inventory."
+**Status:** PROPOSED 2026-05-29 · **v2 correction 2026-05-30** — schema-reality pre-flight (run 2026-05-30 before C.1 apply) found that the original v1 backfill source `briefing_workspaces.tenant_id` does NOT exist in prod or staging. The actual FK on `cop_timeline_events.workspace_id` is to `investigation_workspaces.id`, and `investigation_workspaces` itself carries no `tenant_id` column. Tenant scope is reachable only via two FK chains (documented below). The ADR is corrected; CQ1 strictness is preserved verbatim (tenant_id required + NOT NULL + fail-closed + Provenance backstop) per operator directive ("Do not introduce C.0. Do not soften CQ1. Do not make tenant_id nullable."). v1 historical references retained for audit trail but explicitly marked as superseded where they appeared.
+
+**Design-only ADR for operator ratification. No code, no schema changes, no implementation work authorized by this document.** Option C scope per operator directive 2026-05-29 (after rejecting Options A + F): "Close the minimum set of schema gaps required to produce a meaningful commitment inventory."
+
+## Schema reality note (v2, 2026-05-30)
+
+`cop_timeline_events.workspace_id` foreign-keys to **`investigation_workspaces.id`** (NOT `briefing_workspaces` — that table doesn't exist; the v1 ADR misnamed it). `investigation_workspaces` has **no `tenant_id` column** itself. Tenant scope is therefore derived via one of two FK chains:
+
+- **Path A:** `cop_timeline_events.workspace_id → investigation_workspaces.incident_id → incidents.tenant_id`
+- **Path B:** `cop_timeline_events.workspace_id → investigation_workspaces.investigation_id → investigations.client_id → clients.tenant_id`
+
+`investigation_workspaces.incident_id` and `investigation_workspaces.investigation_id` are both nullable (one OR the other on a given row). Backfill uses `COALESCE` across the two paths. Both tables are 0-row in prod and staging today, so the `UPDATE` is empty — the chain is documented for forward correctness so the C.2 writer plumb can mirror it.
+
+This is the **only** change in v2; every other CQ resolution remains as v1 ratified.
 
 **Companion artifacts:**
 - `decision-layer-doctrine-2026-05-29.md` (v2, RATIFIED)
@@ -65,7 +78,7 @@ Effort is decomposed into: schema migration cost + writer adoption cost + reader
 |---|---|---|---|---|
 | G1 | `ALTER TABLE investigations ADD COLUMN next_review_at timestamptz` — trivial | Investigation editor UI/edge function must populate it on edit; today none exists | R1.1 must read it (this lives in R1.1 scope, not Option C) | **LOW (schema only)** + new editor plumb |
 | G2 | `ALTER TABLE incidents ADD COLUMN principal_tier_deadline_at timestamptz` — trivial | Incident creation/edit must populate; today only `sla_targets_json` is populated | R1.1 must read it | **LOW (schema only)** + new editor plumb |
-| G3 | `ALTER TABLE cop_timeline_events ADD COLUMN tenant_id uuid` + Provenance CHECK backstop + RLS update + backfill from `briefing_workspaces.tenant_id` | **Writer already exists** in `src/components/briefing/COPCanvas.tsx:178-204` (`addEvent` mutation). Just needs to start including tenant_id (one-line change). | R1.1 must read it | **LOW** (table + writer exist; the schema patch is the only new work) |
+| G3 | `ALTER TABLE cop_timeline_events ADD COLUMN tenant_id uuid` + Provenance CHECK backstop + RLS update + backfill via the v2 two-path FK chain (see Schema reality note above) | **Writer already exists** in `src/components/briefing/COPCanvas.tsx:178-204` (`addEvent` mutation). v2 correction: writer plumb must perform the same chain lookup at write time (small derivation, not one-line — see CQ4 v2 in the CQ recommendations). | R1.1 must read it | **LOW** (table + writer exist; the schema patch is the only new work; v2 chain derivation adds a small lookup) |
 
 **Ranking by effort:** all three are LOW. G3 is the lowest because the writer is already shipped — the change is "make the existing writer tenant-aware" rather than "build a new writer."
 
@@ -77,7 +90,7 @@ A value is "derived" if it can be computed at evaluation time from existing data
 |---|---|---|---|
 | G1 | NO | Yes | Investigations have no temporal field that implies a review date. Nothing to derive from. |
 | G2 | PARTIAL | Mixed | The class-default `opened_at + (sla_targets_json->>'mttr')::int * interval '1 minute'` can be computed today — but mttr is alerting-tier (5/30 min), not principal-tier (24h–4wk). Principal-tier deadline requires a separate stored column OR a doctrine decision that alerting-tier SLAs ARE the principal-tier deadlines for incidents (which they aren't). |
-| G3 | NO (tenant scope) | Yes (single column) | Without tenant_id, R1.1 cannot scope cop_timeline_events to a tenant. The join through `briefing_workspaces` works at query time but adds latency and complexity (and is fragile against the Tenant Isolation discipline that prefers explicit tenant_id at row level). |
+| G3 | NO (tenant scope) | Yes (single column) | Without tenant_id, R1.1 cannot scope cop_timeline_events to a tenant. The two-path FK chain (workspace → incident → tenant, OR workspace → investigation → client → tenant) is the only reachable scope today, and it works at query time but adds latency and complexity (and is fragile against the Tenant Isolation discipline that prefers explicit tenant_id at row level). |
 
 **Storage is required for all three.** None can be cleanly derived. G3's storage need is the smallest (one denormalized column from an existing FK).
 
@@ -101,7 +114,7 @@ If G3 is excluded from the bundle: structural +12.5%, empirical ~0%. **G3 is the
 |---|---|---|
 | G1 | `ALTER TABLE investigations DROP COLUMN next_review_at;` | Yes — any populated review dates are lost. Mitigation: export to JSON before drop if needed for forensic record. |
 | G2 | `ALTER TABLE incidents DROP COLUMN principal_tier_deadline_at;` | Yes — any populated principal-tier deadlines are lost. Same mitigation. |
-| G3 | `ALTER TABLE cop_timeline_events DROP COLUMN tenant_id;` | Tenant scope is lost on the column, but the underlying `workspace_id` still resolves to a tenant via `briefing_workspaces`. So the data is recoverable via the FK join — no permanent loss. |
+| G3 | `ALTER TABLE cop_timeline_events DROP COLUMN tenant_id;` | Tenant scope is lost on the column, but the underlying `workspace_id` still resolves to a tenant via the two-path FK chain through `investigation_workspaces`. So the data is recoverable via the FK chain — no permanent loss. |
 
 **All three are fully reversible at the schema layer.** G3 is the most cleanly reversible (data fully recoverable via FK join).
 
@@ -137,7 +150,7 @@ Combining §1–§6 across all criteria:
 
 | Patch | What | Empirical lift | Total time-to-effect |
 |---|---|---|---|
-| **G3.0** | `ALTER TABLE cop_timeline_events ADD COLUMN tenant_id uuid` + Provenance CHECK backstop + RLS update + backfill from `briefing_workspaces.tenant_id` + one-line change in `COPCanvas.tsx` `addEvent` mutation to set tenant_id | Real per-tenant scheduled-event commitments visible to R1.1 once operators use the existing Briefing Room timeline UI | 1 migration + 1 frontend PR; dependent on operator UI adoption for empirical fill |
+| **G3.0** | `ALTER TABLE cop_timeline_events ADD COLUMN tenant_id uuid` + Provenance CHECK backstop + RLS update + backfill via `COALESCE` over Path A (`workspace → incident → tenant`) and Path B (`workspace → investigation → client → tenant`) + small chain-derivation lookup in `COPCanvas.tsx` `addEvent` mutation at write time (v2 — no longer one-line because `investigation_workspaces` has no `tenant_id` of its own) | Real per-tenant scheduled-event commitments visible to R1.1 once operators use the existing Briefing Room timeline UI (backed by `investigation_workspaces` + `cop_timeline_events`) | 1 migration + 1 frontend PR; dependent on operator UI adoption for empirical fill |
 | **G1.0** | `ALTER TABLE investigations ADD COLUMN next_review_at timestamptz` + investigation editor plumb (UI + edge function `investigation-ai-assist`) | Investigation commitments derivable when operators populate it; today's 5 open investigations have NULL synopsis so theoretical-only | 1 migration + 1 frontend + 1 edge function PR |
 | **G2.0 (stretch)** | `ALTER TABLE incidents ADD COLUMN principal_tier_deadline_at timestamptz` + incident editor plumb | Only useful if operator anticipates principal-tier incident frames; ~0 active rows today | Same shape as G1.0 |
 
@@ -194,7 +207,7 @@ Option C explicitly does **NOT** do the following:
 
 | # | Question |
 |---|---|
-| **CQ1** | **G3 backfill strategy.** When adding `tenant_id` to `cop_timeline_events`, do we backfill from `briefing_workspaces.tenant_id` (and require it NOT NULL after backfill) — OR allow NULL temporarily during transition? Recommendation: backfill, then NOT NULL. The table has 0 rows today, so backfill is trivial; the constraint is the discipline. |
+| **CQ1** | **G3 backfill strategy.** When adding `tenant_id` to `cop_timeline_events`, do we backfill via the two-path FK chain (Path A `workspace → incident → tenant`, Path B `workspace → investigation → client → tenant`) using `COALESCE` and require NOT NULL after backfill — OR allow NULL temporarily during transition? **Resolution (v2, 2026-05-30):** backfill via `COALESCE` across both paths, then NOT NULL, then named Provenance CHECK backstop, all in one migration. The table has 0 rows today, so backfill is trivial; the constraint is the discipline. **CQ1 strictness preserved verbatim per operator: tenant_id required + NOT NULL + fail-closed + Provenance preserved. No nullable transition.** |
 | **CQ2** | **G3 RLS policy.** `cop_timeline_events` currently has workspace-scoped RLS. After adding `tenant_id`, do we (a) add a tenant-scoped policy alongside the workspace-scoped one, or (b) replace with tenant-scoped only? Recommendation: ADDITIVE — keep workspace scope for the Briefing Room UI, add tenant scope for R1.1 read path. Doesn't break existing UI. |
 | **CQ3** | **G2 inclusion.** Is G2 (`incidents.principal_tier_deadline_at`) part of the cold-start bundle, or only G3 + G1? Recommendation: G3 + G1 only; defer G2 until first principal-tier incident frame is actually anticipated. |
 | **CQ4** | **Writer/UI scope.** Option C strictly is schema; does the operator authorize the **minimum** writer plumbs (1 line in `COPCanvas.tsx` for G3; investigation editor for G1) inside the Option C bundle, or split into Option C-schema + Option C-writer as separate gates? Recommendation: bundle the minimum writer plumbs (1-line change for G3; the G1 editor plumb is a separate small frontend PR) — without them, Option C is structural-only. |
@@ -210,7 +223,7 @@ If and only if this Option C ADR is ratified, implementation work would follow t
 
 | Phase | Scope | Gate |
 |---|---|---|
-| **C.1** | G3 schema migration (`cop_timeline_events.tenant_id` + Provenance CHECK + RLS additive policy + backfill from `briefing_workspaces.tenant_id`) — staging-first, then prod | Ratification + CQ1 + CQ2 resolved |
+| **C.1** | G3 schema migration (`cop_timeline_events.tenant_id` + Provenance CHECK + RLS additive policy + backfill via `COALESCE` over Path A and Path B FK chain) — staging-first, then prod | Ratification + CQ1 v2 + CQ2 resolved |
 | **C.2** | G3 writer plumb (1-line change in `COPCanvas.tsx` `addEvent` to include tenant_id from the workspace context) | C.1 green |
 | **C.3** | G1 schema migration (`investigations.next_review_at` column add) — staging-first, then prod | Ratification + CQ4 resolved |
 | **C.4** | G1 editor plumb (investigation editor UI + edge function `investigation-ai-assist` writes the column on save) | C.3 green |
@@ -246,3 +259,4 @@ If none of these thresholds is reached in 2 weeks, Option C is structurally comp
 ## Changelog
 
 - **2026-05-29 v1** — initial Option C design ADR. G3 + G1 minimum-viable bundle (with G2 stretch), ranked recommendation, 9 open questions for ratification, 8-phase non-commitment implementation sketch, success criterion. G3 (`cop_timeline_events.tenant_id`) identified as the load-bearing patch — the only one with realistic short-term empirical lift via the existing Briefing Room UI.
+- **2026-05-30 v2** — schema-reality pre-flight (operator-approved Option α correction) before any C.1 apply. Findings: (1) v1's documented backfill source `briefing_workspaces.tenant_id` does NOT exist in prod or staging — actual FK is to `investigation_workspaces.id`. (2) `investigation_workspaces` itself has no `tenant_id` column. (3) Tenant scope is reachable only via two FK chains: Path A `workspace → incident → tenant` (via `incidents.tenant_id`); Path B `workspace → investigation → client → tenant` (via `investigations.client_id → clients.tenant_id`). v2 corrections: new Schema reality note at top; six in-body references corrected to the two-path chain; CQ1 resolution reworded for the COALESCE-over-two-paths shape; C.1 phase description updated. **CQ1 strictness preserved verbatim per operator: tenant_id required + NOT NULL + fail-closed + Provenance preserved. No C.0 introduced. CQ1 not softened. tenant_id stays NOT NULL.** Both source and target tables are 0-row in prod and staging, so the corrected backfill is still empty — change is forward-correctness, not data migration. No staging apply, no prod apply, no migration commit until re-authorized.
