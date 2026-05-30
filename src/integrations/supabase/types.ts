@@ -14,6 +14,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      _inc_xten_rollback: {
+        Row: {
+          id: string | null
+          prev_client_id: string | null
+          prev_status: string | null
+        }
+        Insert: {
+          id?: string | null
+          prev_client_id?: string | null
+          prev_status?: string | null
+        }
+        Update: {
+          id?: string | null
+          prev_client_id?: string | null
+          prev_status?: string | null
+        }
+        Relationships: []
+      }
       academy_agent_scores: {
         Row: {
           agent_call_sign: string
@@ -755,6 +773,616 @@ export type Database = {
         }
         Relationships: []
       }
+      aegis_claim_confidence: {
+        Row: {
+          claim_payload: Json
+          claim_payload_hash: string | null
+          claim_subject_id: string | null
+          claim_subject_kind: string
+          claim_type: string
+          corroboration: number
+          debug_trace_id: string | null
+          freshness: number
+          grounded: boolean
+          id: string
+          operator_note: string | null
+          provenance_quality: number
+          scored_at: string
+          sources_jsonb: Json
+          tenant_id: string
+          trajectory_confidence: number | null
+          validation_state: string
+        }
+        Insert: {
+          claim_payload: Json
+          claim_payload_hash?: string | null
+          claim_subject_id?: string | null
+          claim_subject_kind: string
+          claim_type: string
+          corroboration: number
+          debug_trace_id?: string | null
+          freshness: number
+          grounded?: boolean
+          id?: string
+          operator_note?: string | null
+          provenance_quality: number
+          scored_at?: string
+          sources_jsonb: Json
+          tenant_id: string
+          trajectory_confidence?: number | null
+          validation_state?: string
+        }
+        Update: {
+          claim_payload?: Json
+          claim_payload_hash?: string | null
+          claim_subject_id?: string | null
+          claim_subject_kind?: string
+          claim_type?: string
+          corroboration?: number
+          debug_trace_id?: string | null
+          freshness?: number
+          grounded?: boolean
+          id?: string
+          operator_note?: string | null
+          provenance_quality?: number
+          scored_at?: string
+          sources_jsonb?: Json
+          tenant_id?: string
+          trajectory_confidence?: number | null
+          validation_state?: string
+        }
+        Relationships: []
+      }
+      aegis_decision_threshold_trace: {
+        Row: {
+          audit_only: boolean
+          c1_asserted: boolean
+          c1_candidate_deltas: Json
+          c1_materiality_threshold: number
+          c1_rejected_deltas: Json
+          c1_significant_no_commitment: Json | null
+          c2_asserted: boolean | null
+          c2_evidence: Json
+          c2_matched_indicator: string | null
+          c2_rejected_reason: string | null
+          c3_asserted: boolean | null
+          c3_live_decisions: Json
+          c3_past_deadline_decisions: Json
+          created_at: string
+          evaluated_at: string
+          evaluator_version: string
+          frame_fires: boolean
+          id: string
+          short_circuit_axis: string | null
+          tenant_id: string
+          trace_id: string | null
+          user_query_summary: string | null
+        }
+        Insert: {
+          audit_only?: boolean
+          c1_asserted: boolean
+          c1_candidate_deltas?: Json
+          c1_materiality_threshold: number
+          c1_rejected_deltas?: Json
+          c1_significant_no_commitment?: Json | null
+          c2_asserted?: boolean | null
+          c2_evidence?: Json
+          c2_matched_indicator?: string | null
+          c2_rejected_reason?: string | null
+          c3_asserted?: boolean | null
+          c3_live_decisions?: Json
+          c3_past_deadline_decisions?: Json
+          created_at?: string
+          evaluated_at?: string
+          evaluator_version: string
+          frame_fires: boolean
+          id?: string
+          short_circuit_axis?: string | null
+          tenant_id: string
+          trace_id?: string | null
+          user_query_summary?: string | null
+        }
+        Update: {
+          audit_only?: boolean
+          c1_asserted?: boolean
+          c1_candidate_deltas?: Json
+          c1_materiality_threshold?: number
+          c1_rejected_deltas?: Json
+          c1_significant_no_commitment?: Json | null
+          c2_asserted?: boolean | null
+          c2_evidence?: Json
+          c2_matched_indicator?: string | null
+          c2_rejected_reason?: string | null
+          c3_asserted?: boolean | null
+          c3_live_decisions?: Json
+          c3_past_deadline_decisions?: Json
+          created_at?: string
+          evaluated_at?: string
+          evaluator_version?: string
+          frame_fires?: boolean
+          id?: string
+          short_circuit_axis?: string | null
+          tenant_id?: string
+          trace_id?: string | null
+          user_query_summary?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aegis_decision_threshold_trace_trace_id_fkey"
+            columns: ["trace_id"]
+            isOneToOne: false
+            referencedRelation: "aegis_request_trace"
+            referencedColumns: ["debug_trace_id"]
+          },
+        ]
+      }
+      aegis_grounding_trace: {
+        Row: {
+          created_at: string
+          grounding_state: string
+          id: string
+          segment_index: number
+          segment_text: string | null
+          source_object_ids: Json
+          tenant_id: string | null
+          trace_id: string
+        }
+        Insert: {
+          created_at?: string
+          grounding_state: string
+          id?: string
+          segment_index: number
+          segment_text?: string | null
+          source_object_ids?: Json
+          tenant_id?: string | null
+          trace_id: string
+        }
+        Update: {
+          created_at?: string
+          grounding_state?: string
+          id?: string
+          segment_index?: number
+          segment_text?: string | null
+          source_object_ids?: Json
+          tenant_id?: string | null
+          trace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aegis_grounding_trace_trace_id_fkey"
+            columns: ["trace_id"]
+            isOneToOne: false
+            referencedRelation: "aegis_request_trace"
+            referencedColumns: ["debug_trace_id"]
+          },
+        ]
+      }
+      aegis_invocations: {
+        Row: {
+          agent_call_sign: string | null
+          agent_id: string | null
+          ai_model: string | null
+          ai_provider: string | null
+          client_id: string | null
+          completed_at: string | null
+          completion_tokens: number | null
+          duration_ms: number | null
+          error_class: string | null
+          error_message: string | null
+          final_response_summary: string | null
+          hallucination_validator_details: Json | null
+          hallucination_validator_outcome: string | null
+          id: string
+          knowledge_connection_ids: string[] | null
+          prompt_composition: Json | null
+          prompt_tokens: number | null
+          retrieved_knowledge_ids: string[] | null
+          session_id: string | null
+          started_at: string
+          status: string
+          tenant_id: string
+          tool_call_count: number | null
+          total_tokens: number | null
+          user_id: string | null
+        }
+        Insert: {
+          agent_call_sign?: string | null
+          agent_id?: string | null
+          ai_model?: string | null
+          ai_provider?: string | null
+          client_id?: string | null
+          completed_at?: string | null
+          completion_tokens?: number | null
+          duration_ms?: number | null
+          error_class?: string | null
+          error_message?: string | null
+          final_response_summary?: string | null
+          hallucination_validator_details?: Json | null
+          hallucination_validator_outcome?: string | null
+          id?: string
+          knowledge_connection_ids?: string[] | null
+          prompt_composition?: Json | null
+          prompt_tokens?: number | null
+          retrieved_knowledge_ids?: string[] | null
+          session_id?: string | null
+          started_at?: string
+          status?: string
+          tenant_id: string
+          tool_call_count?: number | null
+          total_tokens?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          agent_call_sign?: string | null
+          agent_id?: string | null
+          ai_model?: string | null
+          ai_provider?: string | null
+          client_id?: string | null
+          completed_at?: string | null
+          completion_tokens?: number | null
+          duration_ms?: number | null
+          error_class?: string | null
+          error_message?: string | null
+          final_response_summary?: string | null
+          hallucination_validator_details?: Json | null
+          hallucination_validator_outcome?: string | null
+          id?: string
+          knowledge_connection_ids?: string[] | null
+          prompt_composition?: Json | null
+          prompt_tokens?: number | null
+          retrieved_knowledge_ids?: string[] | null
+          session_id?: string | null
+          started_at?: string
+          status?: string
+          tenant_id?: string
+          tool_call_count?: number | null
+          total_tokens?: number | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aegis_invocations_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "aegis_invocations_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      aegis_prompt_trace: {
+        Row: {
+          context_blocks: Json
+          created_at: string
+          grounding_markers: Json
+          id: string
+          injected_object_ids: Json
+          memory_injections: Json
+          system_prompt: string | null
+          system_prompt_sha256: string | null
+          tenant_id: string | null
+          trace_id: string
+        }
+        Insert: {
+          context_blocks?: Json
+          created_at?: string
+          grounding_markers?: Json
+          id?: string
+          injected_object_ids?: Json
+          memory_injections?: Json
+          system_prompt?: string | null
+          system_prompt_sha256?: string | null
+          tenant_id?: string | null
+          trace_id: string
+        }
+        Update: {
+          context_blocks?: Json
+          created_at?: string
+          grounding_markers?: Json
+          id?: string
+          injected_object_ids?: Json
+          memory_injections?: Json
+          system_prompt?: string | null
+          system_prompt_sha256?: string | null
+          tenant_id?: string | null
+          trace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aegis_prompt_trace_trace_id_fkey"
+            columns: ["trace_id"]
+            isOneToOne: false
+            referencedRelation: "aegis_request_trace"
+            referencedColumns: ["debug_trace_id"]
+          },
+        ]
+      }
+      aegis_recommendations: {
+        Row: {
+          actor_surface: string
+          actor_user_id: string | null
+          audit: Json
+          created_at: string
+          id: string
+          kind: string
+          payload: Json
+          provenance: Json
+          rationale: string | null
+          status: string
+          target_client_id: string | null
+          target_entity_id: string | null
+          target_tenant_id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          actor_surface?: string
+          actor_user_id?: string | null
+          audit?: Json
+          created_at?: string
+          id?: string
+          kind: string
+          payload?: Json
+          provenance?: Json
+          rationale?: string | null
+          status?: string
+          target_client_id?: string | null
+          target_entity_id?: string | null
+          target_tenant_id: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          actor_surface?: string
+          actor_user_id?: string | null
+          audit?: Json
+          created_at?: string
+          id?: string
+          kind?: string
+          payload?: Json
+          provenance?: Json
+          rationale?: string | null
+          status?: string
+          target_client_id?: string | null
+          target_entity_id?: string | null
+          target_tenant_id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      aegis_request_trace: {
+        Row: {
+          actor_surface: string
+          actor_user_id: string | null
+          client_id: string | null
+          completed_at: string | null
+          conversation_id: string | null
+          created_at: string
+          debug_trace_id: string
+          duration_ms: number | null
+          final_response_path: string | null
+          function_name: string
+          request_id: string | null
+          started_at: string
+          status: string | null
+          tenant_id: string | null
+          tool_call_chain_id: string | null
+        }
+        Insert: {
+          actor_surface?: string
+          actor_user_id?: string | null
+          client_id?: string | null
+          completed_at?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          debug_trace_id?: string
+          duration_ms?: number | null
+          final_response_path?: string | null
+          function_name: string
+          request_id?: string | null
+          started_at?: string
+          status?: string | null
+          tenant_id?: string | null
+          tool_call_chain_id?: string | null
+        }
+        Update: {
+          actor_surface?: string
+          actor_user_id?: string | null
+          client_id?: string | null
+          completed_at?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          debug_trace_id?: string
+          duration_ms?: number | null
+          final_response_path?: string | null
+          function_name?: string
+          request_id?: string | null
+          started_at?: string
+          status?: string | null
+          tenant_id?: string | null
+          tool_call_chain_id?: string | null
+        }
+        Relationships: []
+      }
+      aegis_retrieval_trace: {
+        Row: {
+          created_at: string
+          fallback_path: string | null
+          id: string
+          provenance: Json
+          query: string | null
+          returned_object_ids: Json
+          surface: string
+          tenant_id: string | null
+          tenant_scope: string | null
+          timing_ms: number | null
+          trace_id: string
+          vector_hits: Json
+        }
+        Insert: {
+          created_at?: string
+          fallback_path?: string | null
+          id?: string
+          provenance?: Json
+          query?: string | null
+          returned_object_ids?: Json
+          surface: string
+          tenant_id?: string | null
+          tenant_scope?: string | null
+          timing_ms?: number | null
+          trace_id: string
+          vector_hits?: Json
+        }
+        Update: {
+          created_at?: string
+          fallback_path?: string | null
+          id?: string
+          provenance?: Json
+          query?: string | null
+          returned_object_ids?: Json
+          surface?: string
+          tenant_id?: string | null
+          tenant_scope?: string | null
+          timing_ms?: number | null
+          trace_id?: string
+          vector_hits?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aegis_retrieval_trace_trace_id_fkey"
+            columns: ["trace_id"]
+            isOneToOne: false
+            referencedRelation: "aegis_request_trace"
+            referencedColumns: ["debug_trace_id"]
+          },
+        ]
+      }
+      aegis_tool_calls: {
+        Row: {
+          completed_at: string | null
+          duration_ms: number | null
+          id: string
+          invocation_id: string
+          sequence_index: number
+          started_at: string
+          tenant_gate_passed: boolean | null
+          tenant_gate_reason: string | null
+          tenant_id: string
+          tool_args: Json | null
+          tool_name: string
+          tool_result_status: string | null
+          tool_result_summary: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          id?: string
+          invocation_id: string
+          sequence_index: number
+          started_at?: string
+          tenant_gate_passed?: boolean | null
+          tenant_gate_reason?: string | null
+          tenant_id: string
+          tool_args?: Json | null
+          tool_name: string
+          tool_result_status?: string | null
+          tool_result_summary?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          id?: string
+          invocation_id?: string
+          sequence_index?: number
+          started_at?: string
+          tenant_gate_passed?: boolean | null
+          tenant_gate_reason?: string | null
+          tenant_id?: string
+          tool_args?: Json | null
+          tool_name?: string
+          tool_result_status?: string | null
+          tool_result_summary?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aegis_tool_calls_invocation_id_fkey"
+            columns: ["invocation_id"]
+            isOneToOne: false
+            referencedRelation: "aegis_invocations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "aegis_tool_calls_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      aegis_tool_trace: {
+        Row: {
+          args: Json
+          created_at: string
+          id: string
+          outcome: string | null
+          refusal_reason: string | null
+          returned_object_count: number | null
+          scoped_client_id: string | null
+          scoped_tenant_id: string | null
+          sequence: number | null
+          tenant_id: string | null
+          timing_ms: number | null
+          tool_name: string
+          trace_id: string
+        }
+        Insert: {
+          args?: Json
+          created_at?: string
+          id?: string
+          outcome?: string | null
+          refusal_reason?: string | null
+          returned_object_count?: number | null
+          scoped_client_id?: string | null
+          scoped_tenant_id?: string | null
+          sequence?: number | null
+          tenant_id?: string | null
+          timing_ms?: number | null
+          tool_name: string
+          trace_id: string
+        }
+        Update: {
+          args?: Json
+          created_at?: string
+          id?: string
+          outcome?: string | null
+          refusal_reason?: string | null
+          returned_object_count?: number | null
+          scoped_client_id?: string | null
+          scoped_tenant_id?: string | null
+          sequence?: number | null
+          tenant_id?: string | null
+          timing_ms?: number | null
+          tool_name?: string
+          trace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "aegis_tool_trace_trace_id_fkey"
+            columns: ["trace_id"]
+            isOneToOne: false
+            referencedRelation: "aegis_request_trace"
+            referencedColumns: ["debug_trace_id"]
+          },
+        ]
+      }
       agent_accuracy_metrics: {
         Row: {
           accuracy_score: number
@@ -1055,6 +1683,63 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      agent_beliefs_m1_snapshot: {
+        Row: {
+          agent_call_sign: string | null
+          belief_type: string | null
+          client_id: string | null
+          confidence: number | null
+          contradicting_entry_ids: string[] | null
+          contradiction_note: string | null
+          created_at: string | null
+          evolution_log: Json | null
+          has_contradiction: boolean | null
+          hypothesis: string | null
+          id: string | null
+          is_active: boolean | null
+          last_updated_at: string | null
+          related_agents: string[] | null
+          related_domains: string[] | null
+          supporting_entry_ids: string[] | null
+        }
+        Insert: {
+          agent_call_sign?: string | null
+          belief_type?: string | null
+          client_id?: string | null
+          confidence?: number | null
+          contradicting_entry_ids?: string[] | null
+          contradiction_note?: string | null
+          created_at?: string | null
+          evolution_log?: Json | null
+          has_contradiction?: boolean | null
+          hypothesis?: string | null
+          id?: string | null
+          is_active?: boolean | null
+          last_updated_at?: string | null
+          related_agents?: string[] | null
+          related_domains?: string[] | null
+          supporting_entry_ids?: string[] | null
+        }
+        Update: {
+          agent_call_sign?: string | null
+          belief_type?: string | null
+          client_id?: string | null
+          confidence?: number | null
+          contradicting_entry_ids?: string[] | null
+          contradiction_note?: string | null
+          created_at?: string | null
+          evolution_log?: Json | null
+          has_contradiction?: boolean | null
+          hypothesis?: string | null
+          id?: string | null
+          is_active?: boolean | null
+          last_updated_at?: string | null
+          related_agents?: string[] | null
+          related_domains?: string[] | null
+          supporting_entry_ids?: string[] | null
+        }
+        Relationships: []
       }
       agent_calibration_scores: {
         Row: {
@@ -1426,6 +2111,7 @@ export type Database = {
           incident_id: string | null
           memory_type: string
           tags: string[] | null
+          tenant_id: string | null
         }
         Insert: {
           agent_call_sign: string
@@ -1440,6 +2126,7 @@ export type Database = {
           incident_id?: string | null
           memory_type?: string
           tags?: string[] | null
+          tenant_id?: string | null
         }
         Update: {
           agent_call_sign?: string
@@ -1454,6 +2141,7 @@ export type Database = {
           incident_id?: string | null
           memory_type?: string
           tags?: string[] | null
+          tenant_id?: string | null
         }
         Relationships: [
           {
@@ -1836,6 +2524,159 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      agent_tradecraft: {
+        Row: {
+          anonymization_checked_at: string | null
+          anonymization_gate_version: string
+          anonymization_status: string
+          asset_class: string
+          authored_by_agent: string
+          confidence: number
+          created_at: string
+          domain: string
+          embedding: string | null
+          evolution_log: Json | null
+          hypothesis: string
+          hypothesis_search: unknown
+          id: string
+          is_active: boolean
+          last_updated_at: string
+          legacy_belief_type: string | null
+          migrated_at: string | null
+          migration_source_id: string | null
+          migration_source_table: string | null
+          provenance_resolved: boolean
+          related_domains: string[] | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          supporting_entry_ids: string[] | null
+          title: string | null
+        }
+        Insert: {
+          anonymization_checked_at?: string | null
+          anonymization_gate_version?: string
+          anonymization_status: string
+          asset_class?: string
+          authored_by_agent: string
+          confidence: number
+          created_at?: string
+          domain: string
+          embedding?: string | null
+          evolution_log?: Json | null
+          hypothesis: string
+          hypothesis_search?: unknown
+          id?: string
+          is_active?: boolean
+          last_updated_at?: string
+          legacy_belief_type?: string | null
+          migrated_at?: string | null
+          migration_source_id?: string | null
+          migration_source_table?: string | null
+          provenance_resolved?: boolean
+          related_domains?: string[] | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          supporting_entry_ids?: string[] | null
+          title?: string | null
+        }
+        Update: {
+          anonymization_checked_at?: string | null
+          anonymization_gate_version?: string
+          anonymization_status?: string
+          asset_class?: string
+          authored_by_agent?: string
+          confidence?: number
+          created_at?: string
+          domain?: string
+          embedding?: string | null
+          evolution_log?: Json | null
+          hypothesis?: string
+          hypothesis_search?: unknown
+          id?: string
+          is_active?: boolean
+          last_updated_at?: string
+          legacy_belief_type?: string | null
+          migrated_at?: string | null
+          migration_source_id?: string | null
+          migration_source_table?: string | null
+          provenance_resolved?: boolean
+          related_domains?: string[] | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          supporting_entry_ids?: string[] | null
+          title?: string | null
+        }
+        Relationships: []
+      }
+      agent_tradecraft_quarantine: {
+        Row: {
+          anonymization_gate_version: string
+          authored_by_agent: string
+          confidence: number
+          domain_candidate: string | null
+          evolution_log: Json | null
+          hypothesis: string
+          id: string
+          legacy_belief_type: string | null
+          migration_source_id: string
+          migration_source_table: string
+          quarantine_evidence: Json | null
+          quarantine_reason: string[]
+          quarantined_at: string
+          related_domains: string[] | null
+          review_status: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          reviewer_notes: string | null
+          supporting_entry_ids: string[] | null
+          target_id: string | null
+        }
+        Insert: {
+          anonymization_gate_version?: string
+          authored_by_agent: string
+          confidence: number
+          domain_candidate?: string | null
+          evolution_log?: Json | null
+          hypothesis: string
+          id?: string
+          legacy_belief_type?: string | null
+          migration_source_id: string
+          migration_source_table: string
+          quarantine_evidence?: Json | null
+          quarantine_reason: string[]
+          quarantined_at?: string
+          related_domains?: string[] | null
+          review_status?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          reviewer_notes?: string | null
+          supporting_entry_ids?: string[] | null
+          target_id?: string | null
+        }
+        Update: {
+          anonymization_gate_version?: string
+          authored_by_agent?: string
+          confidence?: number
+          domain_candidate?: string | null
+          evolution_log?: Json | null
+          hypothesis?: string
+          id?: string
+          legacy_belief_type?: string | null
+          migration_source_id?: string
+          migration_source_table?: string
+          quarantine_evidence?: Json | null
+          quarantine_reason?: string[]
+          quarantined_at?: string
+          related_domains?: string[] | null
+          review_status?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          reviewer_notes?: string | null
+          supporting_entry_ids?: string[] | null
+          target_id?: string | null
+        }
+        Relationships: []
       }
       agent_world_predictions: {
         Row: {
@@ -2311,6 +3152,7 @@ export type Database = {
       }
       archival_documents: {
         Row: {
+          attribution_status: string
           client_id: string | null
           content_hash: string | null
           content_text: string | null
@@ -2334,6 +3176,7 @@ export type Database = {
           uploaded_by: string | null
         }
         Insert: {
+          attribution_status?: string
           client_id?: string | null
           content_hash?: string | null
           content_text?: string | null
@@ -2357,6 +3200,7 @@ export type Database = {
           uploaded_by?: string | null
         }
         Update: {
+          attribution_status?: string
           client_id?: string | null
           content_hash?: string | null
           content_text?: string | null
@@ -5419,6 +6263,7 @@ export type Database = {
           severity: string | null
           source_id: string | null
           source_type: string | null
+          tenant_id: string
           title: string
           workspace_id: string
         }
@@ -5434,6 +6279,7 @@ export type Database = {
           severity?: string | null
           source_id?: string | null
           source_type?: string | null
+          tenant_id: string
           title: string
           workspace_id: string
         }
@@ -5449,6 +6295,7 @@ export type Database = {
           severity?: string | null
           source_id?: string | null
           source_type?: string | null
+          tenant_id?: string
           title?: string
           workspace_id?: string
         }
@@ -5909,6 +6756,39 @@ export type Database = {
           },
         ]
       }
+      decision_layer_audit_alerts: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          audit_name: string
+          details: Json
+          detected_at: string
+          drift_count: number
+          id: string
+          severity: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          audit_name: string
+          details?: Json
+          detected_at?: string
+          drift_count: number
+          id?: string
+          severity?: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          audit_name?: string
+          details?: Json
+          detected_at?: string
+          drift_count?: number
+          id?: string
+          severity?: string
+        }
+        Relationships: []
+      }
       dispatch_throttle_log: {
         Row: {
           agent_call_sign: string | null
@@ -6284,6 +7164,7 @@ export type Database = {
           threat_score: number | null
           type: Database["public"]["Enums"]["entity_type"]
           updated_at: string
+          visibility_class: string
         }
         Insert: {
           active_monitoring_enabled?: boolean | null
@@ -6318,6 +7199,7 @@ export type Database = {
           threat_score?: number | null
           type: Database["public"]["Enums"]["entity_type"]
           updated_at?: string
+          visibility_class?: string
         }
         Update: {
           active_monitoring_enabled?: boolean | null
@@ -6352,6 +7234,7 @@ export type Database = {
           threat_score?: number | null
           type?: Database["public"]["Enums"]["entity_type"]
           updated_at?: string
+          visibility_class?: string
         }
         Relationships: [
           {
@@ -6771,17 +7654,19 @@ export type Database = {
           confidence: number | null
           context: string | null
           created_at: string
+          created_by: string | null
           id: string
           matched_entity_id: string | null
           reviewed_at: string | null
           reviewed_by: string | null
-          source_id: string
+          source_id: string | null
           source_type: string
           status: string | null
           suggested_aliases: string[] | null
           suggested_attributes: Json | null
           suggested_name: string
           suggested_type: string
+          tenant_id: string | null
           updated_at: string
         }
         Insert: {
@@ -6792,17 +7677,19 @@ export type Database = {
           confidence?: number | null
           context?: string | null
           created_at?: string
+          created_by?: string | null
           id?: string
           matched_entity_id?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
-          source_id: string
+          source_id?: string | null
           source_type: string
           status?: string | null
           suggested_aliases?: string[] | null
           suggested_attributes?: Json | null
           suggested_name: string
           suggested_type: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -6813,17 +7700,19 @@ export type Database = {
           confidence?: number | null
           context?: string | null
           created_at?: string
+          created_by?: string | null
           id?: string
           matched_entity_id?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
-          source_id?: string
+          source_id?: string | null
           source_type?: string
           status?: string | null
           suggested_aliases?: string[] | null
           suggested_attributes?: Json | null
           suggested_name?: string
           suggested_type?: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -6842,20 +7731,85 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "entity_suggestions_source_fk"
-            columns: ["source_id"]
+            foreignKeyName: "entity_suggestions_tenant_id_fkey"
+            columns: ["tenant_id"]
             isOneToOne: false
-            referencedRelation: "archival_documents"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "entity_suggestions_source_fk"
-            columns: ["source_id"]
-            isOneToOne: false
-            referencedRelation: "stuck_documents"
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]
+      }
+      entity_suggestions_null_tenant_backfill_snapshot_20260522: {
+        Row: {
+          ai_assessed_at: string | null
+          ai_assessment: Json | null
+          ai_risk_level: string | null
+          ai_threat_score: number | null
+          confidence: number | null
+          context: string | null
+          created_at: string | null
+          created_by: string | null
+          id: string | null
+          matched_entity_id: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          source_id: string | null
+          source_type: string | null
+          status: string | null
+          suggested_aliases: string[] | null
+          suggested_attributes: Json | null
+          suggested_name: string | null
+          suggested_type: string | null
+          tenant_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          ai_assessed_at?: string | null
+          ai_assessment?: Json | null
+          ai_risk_level?: string | null
+          ai_threat_score?: number | null
+          confidence?: number | null
+          context?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string | null
+          matched_entity_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_id?: string | null
+          source_type?: string | null
+          status?: string | null
+          suggested_aliases?: string[] | null
+          suggested_attributes?: Json | null
+          suggested_name?: string | null
+          suggested_type?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          ai_assessed_at?: string | null
+          ai_assessment?: Json | null
+          ai_risk_level?: string | null
+          ai_threat_score?: number | null
+          confidence?: number | null
+          context?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string | null
+          matched_entity_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_id?: string | null
+          source_type?: string | null
+          status?: string | null
+          suggested_aliases?: string[] | null
+          suggested_attributes?: Json | null
+          suggested_name?: string | null
+          suggested_type?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
       }
       entity_watch_list: {
         Row: {
@@ -7581,6 +8535,7 @@ export type Database = {
           object_id: string
           object_type: string
           source_function: string | null
+          tenant_id: string
           user_id: string | null
         }
         Insert: {
@@ -7593,6 +8548,7 @@ export type Database = {
           object_id: string
           object_type: string
           source_function?: string | null
+          tenant_id: string
           user_id?: string | null
         }
         Update: {
@@ -7605,9 +8561,17 @@ export type Database = {
           object_id?: string
           object_type?: string
           source_function?: string | null
+          tenant_id?: string
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "feedback_events_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "feedback_events_user_id_fkey"
             columns: ["user_id"]
@@ -7616,6 +8580,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      feedback_events_phase1_snapshot: {
+        Row: {
+          correction: string | null
+          created_at: string | null
+          feedback: string | null
+          feedback_context: Json | null
+          id: string | null
+          notes: string | null
+          object_id: string | null
+          object_type: string | null
+          source_function: string | null
+          user_id: string | null
+        }
+        Insert: {
+          correction?: string | null
+          created_at?: string | null
+          feedback?: string | null
+          feedback_context?: Json | null
+          id?: string | null
+          notes?: string | null
+          object_id?: string | null
+          object_type?: string | null
+          source_function?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          correction?: string | null
+          created_at?: string | null
+          feedback?: string | null
+          feedback_context?: Json | null
+          id?: string | null
+          notes?: string | null
+          object_id?: string | null
+          object_type?: string | null
+          source_function?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
       }
       filtered_signals: {
         Row: {
@@ -7810,6 +8813,7 @@ export type Database = {
           period_end: string | null
           period_start: string | null
           report_type: string
+          tenant_id: string
           title: string
           user_id: string
         }
@@ -7823,6 +8827,7 @@ export type Database = {
           period_end?: string | null
           period_start?: string | null
           report_type: string
+          tenant_id: string
           title: string
           user_id: string
         }
@@ -7836,6 +8841,7 @@ export type Database = {
           period_end?: string | null
           period_start?: string | null
           report_type?: string
+          tenant_id?: string
           title?: string
           user_id?: string
         }
@@ -7845,6 +8851,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generated_reports_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
           {
@@ -8474,6 +9487,7 @@ export type Database = {
           id: string
           metadata: Json | null
           signal_id: string
+          tenant_id: string
           user_id: string
         }
         Insert: {
@@ -8483,6 +9497,7 @@ export type Database = {
           id?: string
           metadata?: Json | null
           signal_id: string
+          tenant_id: string
           user_id: string
         }
         Update: {
@@ -8492,9 +9507,17 @@ export type Database = {
           id?: string
           metadata?: Json | null
           signal_id?: string
+          tenant_id?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "implicit_feedback_events_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "implicit_feedback_signal_fk"
             columns: ["signal_id"]
@@ -8503,6 +9526,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      implicit_feedback_events_phase1_snapshot: {
+        Row: {
+          created_at: string | null
+          event_type: string | null
+          event_value: number | null
+          id: string | null
+          metadata: Json | null
+          signal_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          event_type?: string | null
+          event_value?: number | null
+          id?: string | null
+          metadata?: Json | null
+          signal_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          event_type?: string | null
+          event_value?: number | null
+          id?: string | null
+          metadata?: Json | null
+          signal_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
       }
       improvements: {
         Row: {
@@ -10051,6 +11104,7 @@ export type Database = {
           incident_id: string | null
           investigation_id: string | null
           status: string
+          tenant_id: string
           title: string
           updated_at: string
         }
@@ -10062,6 +11116,7 @@ export type Database = {
           incident_id?: string | null
           investigation_id?: string | null
           status?: string
+          tenant_id: string
           title: string
           updated_at?: string
         }
@@ -10073,6 +11128,7 @@ export type Database = {
           incident_id?: string | null
           investigation_id?: string | null
           status?: string
+          tenant_id?: string
           title?: string
           updated_at?: string
         }
@@ -10471,6 +11527,39 @@ export type Database = {
           },
         ]
       }
+      knowledge_connections_m1_snapshot: {
+        Row: {
+          agents_involved: string[] | null
+          connection_strength: number | null
+          created_at: string | null
+          id: string | null
+          relationship_type: string | null
+          source_entry_id: string | null
+          synthesis_note: string | null
+          target_entry_id: string | null
+        }
+        Insert: {
+          agents_involved?: string[] | null
+          connection_strength?: number | null
+          created_at?: string | null
+          id?: string | null
+          relationship_type?: string | null
+          source_entry_id?: string | null
+          synthesis_note?: string | null
+          target_entry_id?: string | null
+        }
+        Update: {
+          agents_involved?: string[] | null
+          connection_strength?: number | null
+          created_at?: string | null
+          id?: string | null
+          relationship_type?: string | null
+          source_entry_id?: string | null
+          synthesis_note?: string | null
+          target_entry_id?: string | null
+        }
+        Relationships: []
+      }
       knowledge_freshness_audits: {
         Row: {
           actions_taken: Json | null
@@ -10576,6 +11665,7 @@ export type Database = {
           last_updated: string | null
           profile_type: string
           sample_count: number | null
+          tenant_id: string
           weight: number | null
         }
         Insert: {
@@ -10585,6 +11675,7 @@ export type Database = {
           last_updated?: string | null
           profile_type: string
           sample_count?: number | null
+          tenant_id: string
           weight?: number | null
         }
         Update: {
@@ -10593,6 +11684,45 @@ export type Database = {
           id?: string
           last_updated?: string | null
           profile_type?: string
+          sample_count?: number | null
+          tenant_id?: string
+          weight?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "learning_profiles_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      learning_profiles_phase1_snapshot: {
+        Row: {
+          created_at: string | null
+          features: Json | null
+          id: string | null
+          last_updated: string | null
+          profile_type: string | null
+          sample_count: number | null
+          weight: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          features?: Json | null
+          id?: string | null
+          last_updated?: string | null
+          profile_type?: string | null
+          sample_count?: number | null
+          weight?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          features?: Json | null
+          id?: string | null
+          last_updated?: string | null
+          profile_type?: string | null
           sample_count?: number | null
           weight?: number | null
         }
@@ -11449,6 +12579,83 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      onboarding_acceptances: {
+        Row: {
+          accepted_at: string
+          ai_ack_version: string
+          id: string
+          ip: string | null
+          orientation_email_sent_at: string | null
+          privacy_version: string
+          source: string
+          tenant_id: string
+          terms_version: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          accepted_at?: string
+          ai_ack_version: string
+          id?: string
+          ip?: string | null
+          orientation_email_sent_at?: string | null
+          privacy_version: string
+          source?: string
+          tenant_id: string
+          terms_version: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          accepted_at?: string
+          ai_ack_version?: string
+          id?: string
+          ip?: string | null
+          orientation_email_sent_at?: string | null
+          privacy_version?: string
+          source?: string
+          tenant_id?: string
+          terms_version?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "onboarding_acceptances_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      onboarding_required_versions: {
+        Row: {
+          ai_ack_version: string
+          id: boolean
+          privacy_version: string
+          terms_version: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          ai_ack_version: string
+          id?: boolean
+          privacy_version: string
+          terms_version: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          ai_ack_version?: string
+          id?: boolean
+          privacy_version?: string
+          terms_version?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
       }
       operator_heartbeats: {
         Row: {
@@ -13013,6 +14220,7 @@ export type Database = {
           last_run_at: string | null
           next_run_at: string | null
           report_type: string
+          tenant_id: string
           updated_at: string
           user_id: string
         }
@@ -13029,6 +14237,7 @@ export type Database = {
           last_run_at?: string | null
           next_run_at?: string | null
           report_type: string
+          tenant_id: string
           updated_at?: string
           user_id: string
         }
@@ -13045,6 +14254,7 @@ export type Database = {
           last_run_at?: string | null
           next_run_at?: string | null
           report_type?: string
+          tenant_id?: string
           updated_at?: string
           user_id?: string
         }
@@ -13054,6 +14264,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_schedules_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
           {
@@ -14746,6 +15963,7 @@ export type Database = {
       signals: {
         Row: {
           applied_rules: Json | null
+          asset_class: string | null
           auto_correlated_entities: string[] | null
           category: string | null
           client_id: string | null
@@ -14784,6 +16002,10 @@ export type Database = {
           post_caption: string | null
           proximity: number | null
           quality_score: number | null
+          quality_status: string
+          quarantine_note: string | null
+          quarantine_reason: string | null
+          quarantined_at: string | null
           raw_json: Json | null
           received_at: string
           relevance_score: number | null
@@ -14807,6 +16029,7 @@ export type Database = {
         }
         Insert: {
           applied_rules?: Json | null
+          asset_class?: string | null
           auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
@@ -14845,6 +16068,10 @@ export type Database = {
           post_caption?: string | null
           proximity?: number | null
           quality_score?: number | null
+          quality_status?: string
+          quarantine_note?: string | null
+          quarantine_reason?: string | null
+          quarantined_at?: string | null
           raw_json?: Json | null
           received_at?: string
           relevance_score?: number | null
@@ -14868,6 +16095,7 @@ export type Database = {
         }
         Update: {
           applied_rules?: Json | null
+          asset_class?: string | null
           auto_correlated_entities?: string[] | null
           category?: string | null
           client_id?: string | null
@@ -14906,6 +16134,10 @@ export type Database = {
           post_caption?: string | null
           proximity?: number | null
           quality_score?: number | null
+          quality_status?: string
+          quarantine_note?: string | null
+          quarantine_reason?: string | null
+          quarantined_at?: string | null
           raw_json?: Json | null
           received_at?: string
           relevance_score?: number | null
@@ -15414,6 +16646,7 @@ export type Database = {
         Row: {
           config: Json | null
           created_at: string | null
+          created_by_tenant_id: string | null
           error_message: string | null
           id: string
           last_ingested_at: string | null
@@ -15426,6 +16659,7 @@ export type Database = {
         Insert: {
           config?: Json | null
           created_at?: string | null
+          created_by_tenant_id?: string | null
           error_message?: string | null
           id?: string
           last_ingested_at?: string | null
@@ -15438,6 +16672,7 @@ export type Database = {
         Update: {
           config?: Json | null
           created_at?: string | null
+          created_by_tenant_id?: string | null
           error_message?: string | null
           id?: string
           last_ingested_at?: string | null
@@ -15447,7 +16682,15 @@ export type Database = {
           type?: string
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "sources_created_by_tenant_id_fkey"
+            columns: ["created_by_tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       spatial_ref_sys: {
         Row: {
@@ -16065,6 +17308,59 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "tenant_docs_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenant_invitations: {
+        Row: {
+          accepted_at: string | null
+          accepted_by: string | null
+          app_role: Database["public"]["Enums"]["app_role"]
+          created_at: string
+          email: string
+          expires_at: string
+          id: string
+          invited_by: string
+          role: Database["public"]["Enums"]["tenant_role"]
+          status: string
+          tenant_id: string
+          token: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          app_role?: Database["public"]["Enums"]["app_role"]
+          created_at?: string
+          email: string
+          expires_at?: string
+          id?: string
+          invited_by: string
+          role?: Database["public"]["Enums"]["tenant_role"]
+          status?: string
+          tenant_id: string
+          token?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          app_role?: Database["public"]["Enums"]["app_role"]
+          created_at?: string
+          email?: string
+          expires_at?: string
+          id?: string
+          invited_by?: string
+          role?: Database["public"]["Enums"]["tenant_role"]
+          status?: string
+          tenant_id?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_invitations_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -18601,6 +19897,28 @@ export type Database = {
       }
     }
     Views: {
+      aegis_claim_current_state: {
+        Row: {
+          claim_payload: Json | null
+          claim_payload_hash: string | null
+          claim_subject_id: string | null
+          claim_subject_kind: string | null
+          claim_type: string | null
+          corroboration: number | null
+          debug_trace_id: string | null
+          freshness: number | null
+          grounded: boolean | null
+          id: string | null
+          operator_note: string | null
+          provenance_quality: number | null
+          scored_at: string | null
+          sources_jsonb: Json | null
+          tenant_id: string | null
+          trajectory_confidence: number | null
+          validation_state: string | null
+        }
+        Relationships: []
+      }
       agent_actions_24h: {
         Row: {
           action_type: string | null
@@ -18786,6 +20104,29 @@ export type Database = {
         }
         Relationships: []
       }
+      v_user_acceptance_status: {
+        Row: {
+          accepted_ai_ack_version: string | null
+          accepted_at: string | null
+          accepted_privacy_version: string | null
+          accepted_terms_version: string | null
+          required_ai_ack_version: string | null
+          required_privacy_version: string | null
+          required_terms_version: string | null
+          tenant_id: string | null
+          up_to_date: boolean | null
+          user_id: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_users_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       watchdog_effectiveness: {
         Row: {
           avg_effectiveness: number | null
@@ -18928,10 +20269,21 @@ export type Database = {
             }
             Returns: string
           }
+      aegis_trace_replay: { Args: { p_trace_id: string }; Returns: Json }
       alert_stale_secrets: { Args: never; Returns: Json }
       apply_agent_action: {
         Args: { p_action_id: string; p_reason?: string }
         Returns: boolean
+      }
+      audit_cop_timeline_events_tenant_drift: {
+        Args: never
+        Returns: {
+          cop_timeline_event_id: string
+          detected_at: string
+          expected_tenant_id: string
+          stored_tenant_id: string
+          workspace_id: string
+        }[]
       }
       auto_approve_safe_actions: { Args: never; Returns: Json }
       auto_archive_stale_entities: { Args: never; Returns: number }
@@ -18999,6 +20351,39 @@ export type Database = {
       create_conversation_with_participant: {
         Args: { _is_group: boolean; _name: string }
         Returns: string
+      }
+      create_investigation: {
+        Args: {
+          p_client_id: string
+          p_created_by_name: string
+          p_prepared_by: string
+        }
+        Returns: {
+          client_id: string | null
+          correlated_entity_ids: string[] | null
+          created_at: string | null
+          created_by_name: string | null
+          cross_references: Json | null
+          file_number: string
+          file_status: string | null
+          id: string
+          incident_id: string | null
+          information: string | null
+          intake_email_tag: string | null
+          maximo_number: string | null
+          next_review_at: string | null
+          police_file_number: string | null
+          prepared_by: string | null
+          recommendations: string | null
+          synopsis: string | null
+          updated_at: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "investigations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
@@ -19203,15 +20588,26 @@ export type Database = {
         Args: { p_lat: number; p_lng: number; p_radius_km?: number }
         Returns: Json
       }
-      get_user_accessible_client_ids: {
-        Args: never
-        Returns: {
-          client_id: string
-        }[]
-      }
+      get_user_accessible_client_ids:
+        | {
+            Args: never
+            Returns: {
+              client_id: string
+            }[]
+          }
+        | {
+            Args: { _user_id: string }
+            Returns: {
+              client_id: string
+            }[]
+          }
       get_user_consortium_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenant_ids: { Args: { _user_id: string }; Returns: string[] }
       get_user_tenants: { Args: { p_user_id: string }; Returns: string[] }
+      get_workspace_tenant_id: {
+        Args: { p_workspace_id: string }
+        Returns: string
+      }
       gettransactionid: { Args: never; Returns: unknown }
       has_consortium_role: {
         Args: {
@@ -19331,6 +20727,7 @@ export type Database = {
               p_match_count?: number
               p_match_threshold?: number
               p_query_embedding: string
+              p_tenant_id?: string
             }
             Returns: {
               confidence: number
@@ -19348,6 +20745,7 @@ export type Database = {
           p_match_count?: number
           p_match_threshold?: number
           p_query_embedding: string
+          p_tenant_id?: string
         }
         Returns: {
           agent_call_sign: string
@@ -19423,6 +20821,7 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      purge_aegis_traces: { Args: { p_days?: number }; Returns: number }
       reclassify_signal_groups: { Args: never; Returns: Json }
       record_violation: {
         Args: {
@@ -19445,12 +20844,33 @@ export type Database = {
         Returns: undefined
       }
       refresh_signal_feedback_scores: { Args: never; Returns: number }
+      retrieve_tradecraft_keyword: {
+        Args: {
+          p_budget?: number
+          p_min_confidence?: number
+          p_query: string
+          p_threshold?: number
+        }
+        Returns: {
+          authored_by_agent: string
+          confidence: number
+          domain: string
+          hypothesis: string
+          id: string
+          provenance_resolved: boolean
+          rank: number
+        }[]
+      }
       route_to_agents: {
         Args: { query_embedding: string; top_k?: number }
         Returns: {
           call_sign: string
           similarity: number
         }[]
+      }
+      run_audit_cop_timeline_events_tenant_drift: {
+        Args: never
+        Returns: undefined
       }
       search_expert_knowledge_semantic: {
         Args: {
@@ -20082,6 +21502,14 @@ export type Database = {
         }
         Returns: Json
       }
+      update_signal_agent_review: {
+        Args: {
+          p_agent_review: Json
+          p_composite_confidence: number
+          p_signal_id: string
+        }
+        Returns: undefined
+      }
       updategeometrysrid: {
         Args: {
           catalogn_name: string
@@ -20522,4 +21950,3 @@ export const Constants = {
     },
   },
 } as const
-
