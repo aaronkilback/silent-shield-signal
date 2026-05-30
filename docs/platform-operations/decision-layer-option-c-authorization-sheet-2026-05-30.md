@@ -1,6 +1,6 @@
 # Decision Layer Option C — Authorization Sheet (pre-C.1 sign-off)
 
-**Status:** PROPOSED 2026-05-30 — signable authorization artifact for Option C implementation. **This document does not, by itself, authorize implementation.** Operator sign-off on §1–§9 below converts the recommendations from `decision-layer-option-c-cq-recommendations-2026-05-30.md` into the binding pre-implementation contract for **C.1 only** (the first phase of Option C: G3 schema migration + RLS + Provenance CHECK backstop). C.2–C.4 remain separately gated.
+**Status:** PROPOSED 2026-05-30 · **v2 correction 2026-05-30** — schema-reality pre-flight (run before any C.1 apply) found that the v1 sheet referenced a backfill source (`briefing_workspaces.tenant_id`) that does NOT exist in prod or staging. **The v1 sign-off is rescinded; v2 supersedes it and requires re-ratification.** No migration was applied during v1. Corrections appear in §2 (CQ1, CQ4 rows), §3 (scope rows), §195-area (what-sign-off-authorizes block). **CQ1 strictness preserved verbatim per operator: tenant_id required + NOT NULL + fail-closed + Provenance preserved. No C.0. No softening. tenant_id stays NOT NULL.** Signable artifact for Option C implementation. **This document does not, by itself, authorize implementation.** Operator sign-off on §1–§9 below converts the recommendations from `decision-layer-option-c-cq-recommendations-2026-05-30.md` (v2) into the binding pre-implementation contract for **C.1 only** (the first phase of Option C: G3 schema migration + RLS + Provenance CHECK backstop). C.2–C.4 remain separately gated.
 
 **Companion artifacts (all unchanged by this sign-off unless noted):**
 - `architecture-decisions/decision-layer-doctrine-2026-05-29.md` (v2, RATIFIED)
@@ -45,10 +45,10 @@ Operator scope decision 2026-05-30:
 
 | CQ | Resolution | Operator action |
 |---|---|---|
-| **CQ1** | G3 backfill immediately + NOT NULL + Provenance CHECK backstop in one migration | ☐ CONFIRM ☐ OVERRIDE: ______________ |
+| **CQ1 (v2)** | G3 backfill via `COALESCE` over Path A (`workspace → incident → tenant`) and Path B (`workspace → investigation → client → tenant`) + SET NOT NULL + named Provenance CHECK backstop, all in one migration. **CQ1 strictness preserved verbatim per operator: tenant_id required + NOT NULL + fail-closed + Provenance preserved. No nullable transition. No C.0.** | ☐ CONFIRM ☐ OVERRIDE: ______________ |
 | **CQ2** | Add service-role manage policy only. No tenant-scoped end-user policy. R1.1 reads via service-role + WHERE clause. Pre-existing Briefing Room workspace-UI RLS gap is out of Option C scope. | ☐ CONFIRM ☐ OVERRIDE: ______________ |
 | CQ3 | DEFER G2 (operator-resolved) | ☐ CONFIRM ☐ OVERRIDE: ______________ |
-| **CQ4** | Bundle minimum writer plumbs: G3 = 1-line change in `COPCanvas.tsx` addEvent; G1 = small form field + edge function parameter on `investigation-ai-assist`. No auto-derivation, no UI nudges, no backfill from past activity. | ☐ CONFIRM ☐ OVERRIDE: ______________ |
+| **CQ4 (v2)** | Bundle minimum writer plumbs. G3 (v2): `COPCanvas.tsx` `addEvent` mutation derives tenant_id via the same two-path FK chain the backfill uses (CQ1 v2); recommends a small `SECURITY DEFINER` RPC `get_workspace_tenant_id(uuid)` so chain logic lives once on the DB side. Insert fails closed (NOT NULL rejects) if derivation returns NULL. G1: small form field + edge function parameter on `investigation-ai-assist`. No auto-derivation, no UI nudges, no backfill from past activity. | ☐ CONFIRM ☐ OVERRIDE: ______________ |
 | CQ5 | Adoption strategy out of scope. Observe empirical adoption per §13 success criterion. | ☐ CONFIRM ☐ OVERRIDE: ______________ |
 | **CQ6** | Option C columns = authoritative source-of-truth. Option B (`principal_commitments`) = a VIEW aggregating across source tables, NOT a separate write surface. Option B's eventual design scope shifts from "table" to "view." | ☐ CONFIRM ☐ OVERRIDE: ______________ |
 | CQ7 | Investigation synopsis-fill problem out of scope. Surface in §B.1 watchlist if FN class manifests. | ☐ CONFIRM ☐ OVERRIDE: ______________ |
@@ -63,11 +63,11 @@ C.1 authorizes the following work, and **only** the following work:
 
 | In scope for C.1 | Out of scope (deferred to C.2+) |
 |---|---|
-| Migration: `ALTER TABLE cop_timeline_events ADD COLUMN tenant_id uuid` + `UPDATE ... FROM briefing_workspaces` + `SET NOT NULL` + named CHECK backstop | G3 writer plumb (one-line change in `COPCanvas.tsx`) — that's C.2 |
+| Migration (v2 chain-corrected per CQ1 v2): `ALTER TABLE cop_timeline_events ADD COLUMN tenant_id uuid` + `UPDATE ... SET tenant_id = COALESCE(<Path A subquery>, <Path B subquery>)` + `SET NOT NULL` + named Provenance CHECK backstop | G3 writer plumb in `COPCanvas.tsx` + small SECURITY DEFINER chain RPC — that's C.2 |
 | New service-role manage RLS policy on `cop_timeline_events` | G1 schema migration (`investigations.next_review_at`) — that's C.3 |
 | Staging-first apply, then prod, parity verification on both | G1 editor plumb — that's C.4 |
-| Migration is reversible (DROP COLUMN; data fully recoverable via `briefing_workspaces` FK join) | Any R1.1 detector work |
-| Smoke-test backfill (table has 0 rows, but verify migration applies cleanly) | Any behavioral effect of any kind |
+| Migration is reversible (DROP COLUMN; data fully recoverable via the two-path FK chain through `investigation_workspaces`) | Any R1.1 detector work |
+| Smoke-test backfill (both tables 0-row, so `UPDATE` empty; verify migration applies cleanly and NOT NULL constraint holds) | Any behavioral effect of any kind |
 
 C.1 produces **zero behavioral effect on Decision Layer detector path** — `aegis_decision_threshold_trace` is unchanged; no R1.1 reads or writes are introduced. The only observable effect is that the new column exists on `cop_timeline_events`.
 
@@ -192,7 +192,7 @@ The following remain held and are NOT modified by this sign-off:
 If items §1, §2, §3, §4, §5, §7, §8, §9 are all `CONFIRM`ed (with §6 either confirmed or deferred):
 
 ### ✅ Authorized by this sheet
-- **C.1 only** — G3 schema migration on `cop_timeline_events`: ADD COLUMN `tenant_id`, backfill from `briefing_workspaces`, set NOT NULL, named CHECK backstop, service-role manage RLS policy. Staging-first then prod with parity verification. **Zero behavioral effect on Decision Layer detector path.**
+- **C.1 only** — G3 schema migration on `cop_timeline_events`: ADD COLUMN `tenant_id`, backfill via `COALESCE` over Path A (`workspace → incident → tenant`) and Path B (`workspace → investigation → client → tenant`) per CQ1 v2, SET NOT NULL, named Provenance CHECK backstop, service-role manage RLS policy. Staging-first then prod with parity verification. **Zero behavioral effect on Decision Layer detector path.**
 
 ### ❌ NOT authorized by this sheet
 - C.2 (G3 writer plumb in `COPCanvas.tsx`) — requires separate operator GO after C.1 green
@@ -233,3 +233,4 @@ The operator's authorization signal in this session is the chat message "Authori
 ## Changelog
 
 - **2026-05-30 v1** — initial Option C authorization sheet. Mirrors the R1 §D sheet structure adapted for the Option C bundle. Captures operator-locked §7 (Option C is not R1.1 authorization) and §8 (inventory-study re-run before any detector work) as load-bearing binding clauses. Eight mandatory items (§1, §2, §3, §4, §5, §7, §8, §9); one defer-eligible (§6 through C.1 only).
+- **2026-05-30 v2** — schema-reality pre-flight before any C.1 apply (operator-approved Option α correction) found v1's backfill source `briefing_workspaces.tenant_id` does NOT exist. The previous v1 sign-off (which authorized a migration referencing the wrong source) is **rescinded**; the corrected v2 sheet supersedes it and requires re-ratification. v2 corrections: §2 CQ1 row reworded for COALESCE-over-two-paths; §2 CQ4 row reworded for the chain-derivation writer plumb (small RPC recommended); §3 scope rows updated to reflect the v2 migration shape and recovery via the two-path FK chain; §195 "What sign-off authorizes" entry updated similarly. **CQ1 strictness preserved verbatim per operator directive: tenant_id required + NOT NULL + fail-closed + Provenance preserved. No C.0 introduced. No softening. tenant_id stays NOT NULL.** No staging apply, no prod apply, no migration commit until the v2 sheet is signed.

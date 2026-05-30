@@ -14,31 +14,54 @@
 
 ---
 
-## CQ1 — G3 backfill strategy ⭐
+## CQ1 — G3 backfill strategy ⭐ (v2 — chain corrected; strictness preserved verbatim)
 
-**Question.** When adding `tenant_id` to `cop_timeline_events`, backfill from `briefing_workspaces.tenant_id` and require NOT NULL after backfill, or allow NULL temporarily during transition?
+**Question.** When adding `tenant_id` to `cop_timeline_events`, what is the backfill source, and must NOT NULL hold after backfill?
 
-### Recommendation
+### v2 schema-reality correction (2026-05-30)
 
-**Backfill immediately, set NOT NULL on the same migration, add the Provenance Doctrine CHECK constraint backstop.** Three-statement migration; no transition phase.
+A schema-reality pre-flight before any C.1 apply discovered the v1 recommendation's backfill source `briefing_workspaces.tenant_id` does NOT exist in prod or staging. The actual FK on `cop_timeline_events.workspace_id` is to `investigation_workspaces.id`, and `investigation_workspaces` itself has NO `tenant_id` column. Tenant scope is reachable only via two FK chains:
 
-```
+- **Path A:** `cop_timeline_events.workspace_id → investigation_workspaces.incident_id → incidents.tenant_id`
+- **Path B:** `cop_timeline_events.workspace_id → investigation_workspaces.investigation_id → investigations.client_id → clients.tenant_id`
+
+`investigation_workspaces.incident_id` and `.investigation_id` are both nullable (one OR the other on a given row). Backfill uses `COALESCE` across the two paths. Both `cop_timeline_events` and `investigation_workspaces` are 0-row in prod and staging, so the `UPDATE` is still empty — change is forward-correctness, not data migration.
+
+### Recommendation (v2)
+
+**Backfill via `COALESCE` over Path A and Path B; set NOT NULL on the same migration; add the named Provenance Doctrine CHECK constraint backstop.** Operator-locked CQ1 strictness preserved verbatim: tenant_id required + NOT NULL + fail-closed + Provenance preserved. No nullable transition. No C.0 precursor. CQ1 not softened.
+
+```sql
 1. ALTER TABLE cop_timeline_events ADD COLUMN tenant_id uuid;
-2. UPDATE cop_timeline_events e
-     SET tenant_id = w.tenant_id
-     FROM briefing_workspaces w
-     WHERE w.id = e.workspace_id;
+
+2. UPDATE cop_timeline_events e SET tenant_id = COALESCE(
+     -- Path A: workspace → incident → tenant
+     (SELECT i.tenant_id
+        FROM incidents i
+        JOIN investigation_workspaces w ON w.incident_id = i.id
+       WHERE w.id = e.workspace_id),
+     -- Path B: workspace → investigation → client → tenant
+     (SELECT c.tenant_id
+        FROM clients c
+        JOIN investigations inv ON inv.client_id = c.id
+        JOIN investigation_workspaces w ON w.investigation_id = inv.id
+       WHERE w.id = e.workspace_id)
+   );
+
 3. ALTER TABLE cop_timeline_events ALTER COLUMN tenant_id SET NOT NULL;
+
 4. ALTER TABLE cop_timeline_events
-     ADD CONSTRAINT cop_timeline_events_provenance_ck CHECK (tenant_id IS NOT NULL);
+     ADD CONSTRAINT cop_timeline_events_provenance_ck
+     CHECK (tenant_id IS NOT NULL);
 ```
 
 ### Why
 
-- **The table has 0 rows in prod.** Backfill is trivially empty; there is no transition pain to manage. The "temporary NULL" path solves a problem that doesn't exist.
-- **Get to the canonical state immediately.** Future rows must carry tenant_id; the writer plumb (CQ4) will populate it from the workspace at write time. Leaving the column nullable would leak that obligation into "and remember to tighten this later" — a recipe for drift.
+- **The table has 0 rows in prod.** Backfill is trivially empty across both paths; no transition pain to manage. The "temporary NULL" path solves a problem that doesn't exist and was rejected by operator directive.
+- **Get to the canonical state immediately.** Future rows must carry tenant_id; the writer plumb (CQ4 v2) derives tenant_id via the same chain at write time. Leaving the column nullable would leak that obligation into "and remember to tighten this later" — a recipe for drift.
 - **The named CHECK constraint backstop** is the same R1.0 pattern (Provenance Doctrine non-bypassable backstop that survives accidental `ALTER COLUMN DROP NOT NULL`).
-- **Reversible** — the entire migration reverts as `ALTER TABLE cop_timeline_events DROP COLUMN tenant_id;` (zero data loss because there are no rows).
+- **Reversible** — the entire migration reverts as `ALTER TABLE cop_timeline_events DROP COLUMN tenant_id;` (zero data loss because there are no rows; chain is recoverable via the existing FKs in any case).
+- **Fail-closed at the writer** — if the chain derivation produces NULL at write time (workspace has neither `incident_id` nor `investigation_id`, or those parents have NULL tenant scope), the insert is **rejected** by the NOT NULL constraint. This is the intended fail-closed behavior per the operator-locked CQ1 strictness.
 
 ---
 
@@ -85,17 +108,19 @@ Out of Option C scope: fixing the Briefing Room read path. That belongs in a sep
 
 ---
 
-## CQ4 — Writer plumbing scope inside Option C ⭐
+## CQ4 — Writer plumbing scope inside Option C ⭐ (v2 — chain lookup at write time)
 
 **Question.** Strict schema-only, or include minimum writer plumbs?
 
-### Recommendation
+### Recommendation (v2)
 
 **Bundle the minimum writer plumbs for each approved gap inside Option C.** Schema-only Option C is hollow (produces 0% empirical lift per the inventory study). Treat each writer plumb as the minimum activation needed for the schema patch to produce data.
 
-| Approved gap | Minimum writer plumb | Touch points |
+**v2 correction:** the v1 G3 plumb was sized as "one-line addition" assuming `workspace.tenant_id` was directly available. Per the v2 schema reality, `investigation_workspaces` has no `tenant_id` column. The writer must therefore derive tenant_id via the same two-path FK chain the backfill uses (CQ1 v2). This is a small lookup, not a one-liner, but still LOW effort.
+
+| Approved gap | Minimum writer plumb (v2) | Touch points |
 |---|---|---|
-| **G3** | One-line addition in `src/components/briefing/COPCanvas.tsx` `addEvent` mutation: include `tenant_id: workspace.tenant_id` (or pull from workspace context). | 1 frontend file change. |
+| **G3** | `src/components/briefing/COPCanvas.tsx` `addEvent` mutation: before insert, fetch tenant_id via `COALESCE(incidents.tenant_id via incident_id, clients.tenant_id via investigation_id → investigations.client_id)`. The fetched tenant_id is included in the insert payload. If the derivation returns NULL, the insert is rejected by the NOT NULL constraint (fail-closed per CQ1 strictness). Recommended implementation: a small RPC (`get_workspace_tenant_id(uuid)`) so the chain logic lives once on the database side rather than duplicated in every writer. | 1 frontend file change + 1 small `SECURITY DEFINER` RPC migration. |
 | **G1** | Investigation editor: new `next_review_at` date input on the investigation edit form + propagation through the save handler. Edge function `investigation-ai-assist` payload must accept the field. | ~2 frontend files + 1 edge function. |
 
 Explicitly excluded from CQ4's "minimum":
@@ -236,3 +261,4 @@ If the operator approves these CQ recommendations, the next artifact is the Opti
 ## Changelog
 
 - **2026-05-30 v1** — initial CQ1–CQ9 recommendations. Five highlighted CQs (CQ1, CQ2, CQ4, CQ6, CQ9) carry fuller rationale; other CQs resolved as one-liners. Pre-flight observation on cop_timeline_events RLS state (no end-user policies present in prod — Briefing Room read path is currently dormant). PECL named as Phase 2 pilot tenant; BCCH held.
+- **2026-05-30 v2** — schema-reality pre-flight before C.1 apply (operator-approved Option α correction) found v1's documented backfill source `briefing_workspaces.tenant_id` does NOT exist. Actual FK is to `investigation_workspaces.id`, which itself has no `tenant_id` column. Two-path FK chain documented: Path A (workspace → incident → tenant) + Path B (workspace → investigation → client → tenant). CQ1 v2 reworded with the COALESCE-over-two-paths SQL. CQ4 v2 sized appropriately: G3 writer plumb is no longer one-line — recommends a small SECURITY DEFINER RPC (`get_workspace_tenant_id`) so chain logic lives once on the DB side. **CQ1 strictness preserved verbatim per operator: tenant_id required + NOT NULL + fail-closed + Provenance preserved. No C.0. CQ1 not softened. tenant_id stays NOT NULL.** No staging apply, no prod apply, no migration commit until re-authorized via the corrected authorization sheet.
