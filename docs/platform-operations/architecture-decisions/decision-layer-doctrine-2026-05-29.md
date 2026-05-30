@@ -1,6 +1,6 @@
 # ADR — Aegis Decision Layer Doctrine ("Signal → **Decision** → Action")
 
-**Status:** PROPOSED 2026-05-29 — design-only ADR for operator ratification. No code, no prompt changes, no implementation work authorized by this document. Implementation roadmap (phased) is sketched in §11 as a post-ratification artifact, not a commitment. **Locked principle when ratified:** Aegis emits a Decision Frame — not a checklist — for any output that exists to support a principal's decision.
+**Status:** PROPOSED 2026-05-29 (v2 — operator in-principle ratification + Decision Consequence addition + Q1 resolved). Design-only ADR. No code, no prompt changes, no implementation work authorized by this document. Implementation roadmap (phased) is sketched in §12 as a post-ratification artifact, not a commitment. **Locked principle when ratified:** Aegis emits a Decision Frame — not a checklist — for any output that exists to support a principal's decision.
 
 ## Problem (formalized — Commander's Intent gap audit 2026-05-29)
 
@@ -16,9 +16,10 @@ The 2026-05-29 prompt-architecture audit (Task #73) showed the current Aegis ass
 | Why it matters? | Signal | ENFORCED (FORTRESS_CORE_DIRECTIVE Step 3 — "state consequence if ignored") |
 | Who should care? | **Decision** | **ABSENT** |
 | What decision deserves attention now? | **Decision** | **ABSENT** |
+| **Decision consequence** (added v2 — "what options become unavailable once this decision is made") | **Decision** | **ABSENT** |
 | Recommended action | Action | ENFORCED (FORTRESS_CORE_DIRECTIVE Step 4 — "recommend next action") |
 
-Fulfillment of Commander's Intent under the current prompt: **~37.5%**. The two enforced elements (Why it matters + Recommended action) are precisely what an LLM produces by default from any decent query without retrieval — the prompt enforces what training already gives and is silent on what training does not give. The Q1 prod validation response (2026-05-29, exec-protection scenario) is exactly what this prompt is engineered to produce: a state-the-signal-generically + state-generic-consequence + recommend-tactical-checklist answer, indistinguishable from a generic LLM response without any retrieval at all.
+Fulfillment of Commander's Intent under the current prompt: **~33%** (2 of 6 elements enforced with the v2 addition; was ~37.5% under v1's 5-element accounting). The two enforced elements (Why it matters + Recommended action) are precisely what an LLM produces by default from any decent query without retrieval — the prompt enforces what training already gives and is silent on what training does not give. The Q1 prod validation response (2026-05-29, exec-protection scenario) is exactly what this prompt is engineered to produce: a state-the-signal-generically + state-generic-consequence + recommend-tactical-checklist answer, indistinguishable from a generic LLM response without any retrieval at all.
 
 This is now the primary architectural bottleneck. Fixing retrieval relevance (Class A N+1, deployed 2026-05-29) without fixing the Decision Layer yields better-targeted methodology that the model still ignores in favour of its training-data checklist, because the prompt has no decision-articulation requirement for the retrieved methodology to feed into.
 
@@ -26,19 +27,22 @@ The N+1 retrieval cutover validated cleanly on infrastructure axes (items_return
 
 This ADR defines that operating model. It does not implement it.
 
-## Principle (PROPOSED)
+## Principle (PROPOSED — v2)
 
-Aegis emits a **Decision Frame** for any output whose purpose is to support a principal's decision. The Decision Frame is a five-element artifact, in order:
+Aegis emits a **Decision Frame** for any output whose purpose is to support a principal's decision. The Decision Frame is a six-element artifact, in order:
 
 1. **What changed** — a delta against the principal's working model, not a static signal restatement.
 2. **Why it matters** — consequence, exposure, decision-relevance, stakeholder-impact (four sub-questions).
 3. **Who should care** — the named **decision owner** + supporting stakeholders + escalation owners. "Human review" is not ownership.
 4. **What decision deserves attention now** — a named decision (not an action), with owner, option set (≥2 incompatible options), deadline, commitment cost, and decision-relevant grounded evidence. **The load-bearing element.**
-5. **Recommended action** — decision-conditional action sets, one per option in the option set. Actions follow the decision; they do not substitute for it.
+5. **Decision consequence** — for each option in the option set, what *future* options become unavailable once that option is chosen. The inventory of decision-space contraction caused by closing the decision. **This element directly enforces "preserve decision space"** — it makes the cost-to-future-options visible *before* the decision is made.
+6. **Recommended action** — decision-conditional action sets, one per option in the option set. Actions follow the decision; they do not substitute for it.
 
-**Decision ≠ Action.** This distinction is the load-bearing invariant of this ADR; §7 makes it explicit and operational.
+§5 and §6 are mirror images of each other, paired per-option: §5 enumerates what each option **closes** (decision space lost); §6 enumerates what each option **opens** (action space gained). The decision owner chooses with both visible.
 
-The Decision Frame is the **default output shape** for substantive Aegis responses. Sub-threshold queries (chit-chat, status checks, single-tool result presentation) may bypass the frame; the framework defines a deliberate threshold (§9).
+**Decision ≠ Action.** This distinction is the load-bearing invariant of this ADR; §4 makes it explicit and operational. **Decision consequence ≠ commitment cost.** Commitment cost is the cost to *undo* a decision; decision consequence is the *inventory* of options foreclosed by *making* it. §5 makes that distinction operational.
+
+The Decision Frame is the **default output shape** for substantive Aegis responses, fired by the three-condition threshold C1 + C2 + C3 (§10). Sub-threshold queries (chit-chat, status checks, single-tool result presentation) fall back to the current FORTRESS_CORE_DIRECTIVE 5-step response format. **Q1 resolved (operator directive, 2026-05-29):** Decision Frame is default-on whenever C1 + C2 + C3 all hold; otherwise the current format is retained.
 
 ## §1 — What changed?
 
@@ -243,9 +247,76 @@ The load-bearing principles of this section:
 | Deadline | ~4 weeks before event (announcement window for (c)/(d) closes; preparation window for (b) narrows). |
 | Commitment cost | High — once publicly announced, retracting becomes a signal in itself. (b) is partly reversible until the public timing is fixed. |
 | Decision-relevant evidence | [grounded change per §1, with provenance tags] |
+| Decision consequence (per option, future options foreclosed) | See **§5** — the consequence inventory is its own first-class element of the frame, not a row buried in this table. |
 | Status | LIVE — deadline approaching, awaits CEO decision. |
 
-## §5 — Recommended action
+## §5 — Decision consequence
+
+### Definition
+
+**Decision consequence** is the inventory of *future options foreclosed* when this decision is closed in a particular direction.
+
+For every option in the option set, Aegis names what that option would make **unavailable** if chosen. This is not the same as "commitment cost":
+
+| | Commitment cost (§4 attribute) | Decision consequence (§5 element) |
+|---|---|---|
+| Question answered | "How hard is it to **reverse** this decision?" | "What future options does this decision **foreclose**?" |
+| Scope | Per-decision (one number / qualitative grade) | Per-option (one inventory per option in the set) |
+| Mechanism | Cost of *undoing* | Loss of *optionality going forward* |
+| Example | "Once publicly announced, retracting becomes itself a signal." | "(a) forecloses (c) and (d); locks in calendar visibility; surrenders 'surprise' optionality for this event." |
+
+A decision can have HIGH commitment cost but LOW decision consequence — e.g., a decision that's politically hard to unwind but doesn't lock out future options. Or LOW commitment cost but HIGH decision consequence — e.g., a decision that's easy to revert in form but permanently shifts what's available going forward.
+
+### Why this element is load-bearing for "preserve decision space"
+
+The active verb of Commander's Intent is *preserve* — not *make*, not *recommend*, not *optimize*. Preservation requires knowing what is at risk of being lost. **Decision consequence is the inventory of decision space at risk.**
+
+Without §5, the Decision Frame names options and a deadline but does not surface what the decision *costs in future optionality* — which is the property the principal most needs to weigh when "preserving decision space" is the stated objective. A frame without §5 can still produce a defensible choice; a frame with §5 produces a *deliberate* choice.
+
+§5 also enforces an under-appreciated symmetry with §6:
+
+| Element | Per option, it answers |
+|---|---|
+| §5 — Decision consequence | What **closes** if this option is chosen. |
+| §6 — Recommended action | What **opens** if this option is chosen. |
+
+The decision owner reads both lists for each option side-by-side and chooses with both visible. **Cost in foreclosed optionality** vs **gain in enabled action** — same per-option granularity, opposite direction.
+
+### How Aegis identifies decision consequence
+
+Operating model (not algorithm, not code):
+
+1. For each option in the option set, enumerate which **other options** in the same set become unreachable once this option is chosen. ("If (a), then (c) and (d) are off the table without becoming public signals themselves.")
+2. For each option, enumerate which **future decisions** become harder, costlier, or impossible. ("If (c), the precedent shifts — future events of this kind will face the same expectation.")
+3. For each option, enumerate which **principal optionality** disappears. ("If (a), the 'surprise attendance' optionality is permanently spent for this event.")
+4. Surface in the Frame as a per-option list, parallel to §6's per-option action sets.
+
+The threshold for inclusion: a consequence belongs in §5 if losing that optionality would, in retrospect, be a thing the decision owner would regret not having known *before* deciding. If it's a known and accepted cost, name it. If it's invisible to the principal without §5, that's exactly what §5 is for.
+
+### How Aegis preserves decision space *through* §5
+
+| Principle | Operationalization |
+|---|---|
+| **Make the cost-to-future visible before the decision is made.** | §5 is presented at the same level of prominence as the option set itself. Not a footnote. |
+| **Never collapse §5 by ranking options on consequence.** | Aegis may report magnitudes ("(d) has the largest consequence footprint") but does not eliminate options on consequence alone. The decision owner weighs consequence against the §2 grounded change. |
+| **Surface asymmetric consequences explicitly.** | If one option has dramatically more foreclosure than the others, say so. Decision space is not preserved by pretending all options are equivalent. |
+| **Include "no decision" as an option whose consequence is named.** | Delaying past the deadline is itself a decision (it forecloses (c) and (d)). §5 must include the consequence of inaction when inaction is a realistic path. |
+
+### Examples (exec-protection scenario)
+
+For the September attendance decision, the per-option decision consequence is:
+
+| Option | What this option **forecloses** if chosen |
+|---|---|
+| (a) Attend in person as planned, publicly pre-announced | Forecloses (c) and (d) without those becoming public signals themselves. Locks in calendar visibility — adversaries know the principal's location at a known time. Surrenders the "surprise attendance" optionality permanently for this event. Forecloses option to use a designate without that becoming a follow-on news cycle. |
+| (b) Attend in person, modify announcement | Forecloses (c) and (d) once the modified announcement goes public. Preserves (a)'s pivot-back if modifications are kept tight; forecloses pivot-back if modifications are public-facing. Forces corporate comms into a "we don't comment on principal's schedule" posture, which is itself a recurring constraint going forward. Forecloses cleanly-announced future events of this kind without setting a precedent of opacity. |
+| (c) Send a designate; principal addresses remotely | Forecloses (a) and (b) for this event permanently. **Sets a precedent.** Future events of similar kind will face the same expectation — the principal who designates once is read differently by the same adversary cohort going forward. May be read as "security retreat," which itself can become a signal that shifts the threat profile. Forecloses the principal's direct relationship-building optionality at this venue. |
+| (d) Cancel attendance | Forecloses (a)(b)(c) for this event. Cancellation is part of the permanent record. **Forces a follow-on decision about whether/when to reschedule** — that decision now exists on the principal's roadmap whether they want it or not. May trigger investor relations / shareholder communications duty (legal escalation owner). Forecloses the "we never let activism affect our schedule" public posture if that posture was ever held implicitly. |
+| (Inaction — drift past deadline) | Effectively forecloses (c) and (d) by exhausting their preparation/announcement windows. The principal is left with (a) or (b) by attrition. **Inaction is a real choice with real consequence; surfacing it as such prevents accidental decision-by-deadline.** |
+
+The decision owner now reads §5 and §6 in parallel — for each option, "what closes" and "what opens" — and chooses with both visible. **That is decision space preserved.**
+
+## §6 — Recommended action
 
 ### Principle
 
@@ -284,7 +355,7 @@ A recommendation supports a decision when it:
 
 **The decision owner picks the option. The action set drops automatically from that choice.** Aegis presents all four conditional sets in the Decision Frame; Aegis does not pick.
 
-## §6 — Intelligence Officer Test (worked side-by-side)
+## §7 — Intelligence Officer Test (worked side-by-side)
 
 Using the actual exec-protection scenario from the prod validation run (2026-05-29).
 
@@ -323,15 +394,22 @@ Using the actual exec-protection scenario from the prod validation run (2026-05-
 > | Commitment cost | High. Public announcement once made is itself a signal; retraction is itself a signal. |
 > | Status | LIVE; awaits CEO decision. |
 >
-> **What actions become available** *(decision-conditional)*:
+> **Decision consequence — what each option forecloses if chosen** *(per §5)*:
+> - (a) Attend, pre-announced → forecloses (c) and (d) without those becoming public signals themselves; locks in calendar visibility; surrenders the "surprise attendance" optionality permanently for this event.
+> - (b) Attend with modifications → forecloses (c) and (d) once the modified announcement is public; forces corp comms into a recurring "no comment on schedule" posture going forward; forecloses cleanly-announced future events of this kind without precedent of opacity.
+> - (c) Designate → forecloses (a) and (b) for this event; **sets a precedent** — future events face the same expectation; may be read as security retreat, which can itself shift the threat profile.
+> - (d) Cancel → forecloses (a)(b)(c); cancellation is permanent record; forces a follow-on rescheduling decision onto the principal's roadmap; may trigger investor-relations / shareholder-communications duty.
+> - (Inaction — drift past deadline) → effectively forecloses (c) and (d) by exhausting their windows; the principal is left with (a) or (b) by attrition. **Inaction is a real choice with real consequence.**
+>
+> **What actions become available** *(decision-conditional, per §6)*:
 > - (a) → standard EP playbook (crowd management, venue route harden, detail uplift, LE coordination).
 > - (b) → above, plus revised announcement plan with corp comms, decoupled arrival timing, family-routine posture review.
 > - (c) → designate selection + prep, remote-attendance tech readiness, principal/family residence posture (the known absence pattern is its own signal).
 > - (d) → cancellation communications plan, message control, event-postponement consideration.
 >
-> The decision frames the tactical set, not the other way around.
+> The decision owner reads §5 and §6 in parallel — for each option, "what closes" and "what opens" — and chooses with both visible. The decision frames the tactical set, not the other way around.
 
-**Commander's Intent grade:** ✅ What changed, why it matters, who should care, decision named with option set and deadline and commitment cost, decision-conditional actions surfaced without pre-collapsing the option set. The principal can decide; Aegis does not decide for them.
+**Commander's Intent grade:** ✅ What changed, why it matters, who should care, decision named with option set / deadline / commitment cost, **decision consequence (per-option foreclosure inventory) surfaced**, decision-conditional actions surfaced without pre-collapsing the option set. The principal can decide; Aegis does not decide for them.
 
 ### Side-by-side delta — what changes when the Decision phase exists
 
@@ -341,11 +419,13 @@ Using the actual exec-protection scenario from the prod validation run (2026-05-
 | Option set | Implicitly collapsed to (a) | All four options surfaced; principal closes the set |
 | Who decides | Undifferentiated "human" | CEO named as decision owner; supporting/escalation roles named |
 | What changed | Restated as static signal | Delta against principal's prior commitments |
+| **Cost of foreclosed optionality (decision consequence, §5)** | **Invisible** — collapsed inside the implicit "do (a)" recommendation; principal never sees what's being given up | **Visible per option** — each option carries an explicit foreclosure inventory; principal sees what each choice costs in future decision space |
 | Actions | Recommended as if decision is made | Conditional on each option |
 | Information → Decision flow | Information collapses to action | Information frames the decision; decision frames the action |
-| Commander's Intent fulfillment | ~37.5% | ≥95% (structurally — modulo grounded evidence quality, which is a separate Provenance/Grounding concern) |
+| "Preserve decision space" enforcement | None — the prompt has no element that surfaces decision-space contraction | Structural — §5 makes decision-space contraction a first-class output element |
+| Commander's Intent fulfillment | ~33% (2 of 6 elements enforced) | ≥95% (structurally — modulo grounded evidence quality, which is a separate Provenance/Grounding concern) |
 
-## §7 — Design constraints (preservation contracts)
+## §8 — Design constraints (preservation contracts)
 
 The Decision Layer must preserve every ratified Fortress doctrine. For each, the contract is named explicitly:
 
@@ -361,22 +441,22 @@ The Decision Layer must preserve every ratified Fortress doctrine. For each, the
 | **Aegis Authority Modes (tenant vs Ops)** | The Decision Frame is a tenant-mode artifact when produced for a tenant principal's decision. An operator-mode (Aegis Ops) Decision Frame is a separate surface — operators decide about platform/cross-tenant questions, not on behalf of a tenant principal. The two never mix. |
 | **Commander's Intent itself** | This ADR is the implementation-as-doctrine of Commander's Intent, not a divergence from it. Adopting this ADR raises Commander's Intent fulfillment from ~37.5% (current) toward ≥95% (structurally). Commander's Intent does not change; how Fortress executes it does. |
 
-## §8 — Non-goals
+## §9 — Non-goals
 
 For ratification clarity, the Decision Layer ADR explicitly does NOT do the following:
 
 | Non-goal | Why |
 |---|---|
 | Take any decision on the principal's behalf. | The decision owner is always a human role; Aegis names the frame, does not close the option set. |
-| Replace, change, or subsume any existing doctrine. | All preservation contracts in §7 are additive. The Decision Layer sits between Signal (existing retrieval) and Action (existing recommendation/approval/execution). |
+| Replace, change, or subsume any existing doctrine. | All preservation contracts in §8 are additive. The Decision Layer sits between Signal (existing retrieval) and Action (existing recommendation/approval/execution). |
 | Define agent dispatch / orchestration / multi-agent behaviour. | This ADR is the **output shape** doctrine, not the **agent-coordination** doctrine. Coordination is governed by other ADRs (`aegis-operational-state-integrity.md`, `aegis-ops-control-plane.md`). |
-| Mandate that *every* Aegis output is a Decision Frame. | Sub-threshold queries (chit-chat, simple tool-result presentation, status checks) bypass the frame. The threshold is defined operationally in §9. |
+| Mandate that *every* Aegis output is a Decision Frame. | Sub-threshold queries (chit-chat, simple tool-result presentation, status checks) bypass the frame. The threshold is defined operationally in §10. |
 | Specify the prompt design that implements this. | Prompt design is an implementation question, post-ratification, and lives outside this ADR. |
 | Specify the UI / surface design for displaying Decision Frames. | UI design is post-ratification, separate artifact. |
-| Commit to an implementation timeline. | This ADR is design only; implementation is gated on ratification and a separate roadmap (sketched §11 without commitment). |
+| Commit to an implementation timeline. | This ADR is design only; implementation is gated on ratification and a separate roadmap (sketched §12 without commitment). |
 | Compete with FORTRESS_CORE_DIRECTIVE's Response Format Discipline. | The Decision Frame *replaces* the Response Format Discipline's 5-step format for substantive principal-facing outputs. The 5-step format then becomes the sub-Decision-Frame default (the "signal + consequence + action" shape) for sub-threshold outputs. This is a layered improvement, not a contradiction. |
 
-## §9 — When does Aegis produce a Decision Frame? (Threshold)
+## §10 — When does Aegis produce a Decision Frame? (Threshold)
 
 Aegis produces a Decision Frame when **all three** of the following are true:
 
@@ -390,13 +470,13 @@ Outputs that fail any of C1/C2/C3 fall back to the **sub-Decision-Frame default*
 
 This threshold is also what makes the Decision Layer additive rather than disruptive: trivial outputs are unchanged; only substantive principal-facing outputs change shape.
 
-## §10 — Open questions for ratification
+## §11 — Open questions for ratification
 
 These are intentionally open and require operator ratification before implementation. They are not blockers to ratifying the ADR's principles; they are scoped questions to resolve in the post-ratification phase.
 
 | # | Open question |
 |---|---|
-| Q1 | Should the Decision Frame be the **default** for tenant-mode Aegis outputs, with sub-threshold queries opting *out* — or the **opt-in** shape with substantive queries opting *in*? (Recommendation: default + threshold-driven opt-out, per §9 — but operator confirms.) |
+| ~~Q1~~ — **RESOLVED 2026-05-29** | Decision Frame is **default-on whenever C1 + C2 + C3 all hold** (per §10). Sub-threshold outputs (any condition fails) retain the current FORTRESS_CORE_DIRECTIVE 5-step response format. Operator directive: "Decision Frame should be default-on whenever C1 change exists, C2 principal-level stake exists, C3 live decision exists. Otherwise retain the current response format." |
 | Q2 | Does the operator want a **distinct Decision Frame surface in the UI** (a structured artifact the user interacts with — accept option, reject option, defer), or is the Decision Frame rendered as prose within the chat surface? (UI design is post-ratification but the answer here gates the next layer.) |
 | Q3 | When the change is below the principal's threshold but actionable, **how is "route to supporting stakeholder" implemented**? Today: out-of-scope (no in-band routing surface). Likely: a separate Aegis-Ops-style stakeholder channel — but this is a real new surface to design. |
 | Q4 | Should the Decision Frame **propose** the decision owner, or **require operator/org-chart configuration** to confirm? (Recommendation: propose-by-role per §3; org-chart maps role → individual; operator can override the role-mapping. But this needs ratification.) |
@@ -404,13 +484,13 @@ These are intentionally open and require operator ratification before implementa
 | Q6 | **What is the relationship between Decision Frames and incidents?** A decision frame can be (a) standalone, (b) attached to an incident, (c) generated *by* an incident. Each has different lifecycle implications. |
 | Q7 | **What's the explicit refusal posture when Aegis has no grounded tenant evidence to support a Decision Frame?** Likely answer per Grounding Doctrine: refuse with honest absence — "Insufficient grounded tenant evidence to support a decision frame for this question." But the refusal language deserves design. |
 
-## §11 — Post-ratification implementation roadmap (sketch, non-commitment)
+## §12 — Post-ratification implementation roadmap (sketch, non-commitment)
 
 If and only if this ADR is ratified, implementation work would follow this phased sequence. **Nothing in this section is authorized by this ADR.** This is included so the operator can see the implementation surface before deciding whether to ratify.
 
 | Phase | Scope | Gate |
 |---|---|---|
-| **R1 — Threshold detection layer** | Implement C1/C2/C3 detection at the prompt-assembly seam (does this query/turn produce a Decision Frame?). Falls back to current FORTRESS_CORE_DIRECTIVE for sub-threshold. | Ratification + Q1 resolved. |
+| **R1 — Threshold detection layer** | Implement C1/C2/C3 detection at the prompt-assembly seam (does this query/turn produce a Decision Frame?). Falls back to current FORTRESS_CORE_DIRECTIVE for sub-threshold. | Ratification (Q1 already resolved — default-on at C1+C2+C3). |
 | **R2 — Decision Frame prompt-assembly** | New prompt block that the model fills in as a structured artifact. Tradecraft retrieval feeds option-set generation; tenant retrieval feeds evidence slots; provenance is attached. | R1 green; Q4 resolved. |
 | **R3 — Flight Recorder `aegis_decision_frame` surface** | New table + insert at frame-emit. Observability for "frames produced," "frames empty," "frames overridden by operator." | R2 green. |
 | **R4 — UI surface (separate ADR)** | If Q2 → "structured artifact," design the interactive frame component. If Q2 → "prose," skip. | R3 green; Q2 resolved. |
@@ -419,7 +499,7 @@ If and only if this ADR is ratified, implementation work would follow this phase
 
 Each phase is its own ratifiable ADR. R1–R3 are the irreducible core of the Decision Layer. R4–R6 are extensions.
 
-## Success criterion (operator-stated, copied here for the locked criterion)
+## Success criterion (operator-stated, copied here for the locked criterion — v2)
 
 **Aegis should help the right decision owner understand:**
 
@@ -427,11 +507,19 @@ Each phase is its own ratifiable ADR. R1–R3 are the irreducible core of the De
 2. Why it matters
 3. Who should care
 4. What decision deserves attention now
-5. What actions become available
+5. **What options become unavailable once this decision is made** *(decision consequence — added v2 per operator directive 2026-05-29)*
+6. What actions become available
 
 **before any implementation work begins.**
 
-This ADR defines what those five elements *are* and how they operate. Implementation follows ratification. Until ratified, the current Signal → Action prompt continues to produce ~37.5%-Commander's-Intent-fulfillment outputs. That is the operating baseline this ADR is designed to replace.
+Elements 5 and 6 are the per-option mirror pair: §5 (decision consequence) enumerates what each option **closes**; §6 (recommended action) enumerates what each option **opens**. Both are presented at the same prominence so the decision owner can weigh cost-of-foreclosure against gain-of-action-set for each option, in parallel, before closing the decision.
+
+This ADR defines what those six elements *are* and how they operate. Implementation follows ratification. Until ratified, the current Signal → Action prompt continues to produce ~33%-Commander's-Intent-fulfillment outputs (2 of 6 elements enforced). That is the operating baseline this ADR is designed to replace.
+
+## Changelog
+
+- **2026-05-29 v1** — initial design, 5 elements (What changed / Why it matters / Who should care / What decision deserves attention now / Recommended action), 7 open questions.
+- **2026-05-29 v2** — operator-requested revision after in-principle ratification: (a) added §5 **Decision consequence** as a formal sixth element ("what options become unavailable once this decision is made") — structurally enforces "preserve decision space" via per-option foreclosure inventory paired with §6 conditional action sets; (b) **Q1 resolved** — Decision Frame is default-on whenever C1 + C2 + C3 all hold per §10; sub-threshold falls back to current format.
 
 ## Held
 
