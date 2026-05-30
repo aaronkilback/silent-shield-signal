@@ -10107,6 +10107,7 @@ export type Database = {
           information: string | null
           intake_email_tag: string | null
           maximo_number: string | null
+          next_review_at: string | null
           police_file_number: string | null
           prepared_by: string | null
           recommendations: string | null
@@ -10126,6 +10127,7 @@ export type Database = {
           information?: string | null
           intake_email_tag?: string | null
           maximo_number?: string | null
+          next_review_at?: string | null
           police_file_number?: string | null
           prepared_by?: string | null
           recommendations?: string | null
@@ -10145,6 +10147,7 @@ export type Database = {
           information?: string | null
           intake_email_tag?: string | null
           maximo_number?: string | null
+          next_review_at?: string | null
           police_file_number?: string | null
           prepared_by?: string | null
           recommendations?: string | null

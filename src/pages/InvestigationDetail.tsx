@@ -99,6 +99,9 @@ const InvestigationDetail = () => {
   const [localSynopsis, setLocalSynopsis] = useState("");
   const [localInformation, setLocalInformation] = useState("");
   const [localRecommendations, setLocalRecommendations] = useState("");
+  // C.4 (Decision Layer): adoption-experiment input for commitment data.
+  // Optional. Default NULL — populated value reflects operator intent, not a system default.
+  const [localNextReviewAt, setLocalNextReviewAt] = useState<Date | undefined>(undefined);
 
   const { data: investigation, isLoading } = useQuery({
     queryKey: ['investigation', id],
@@ -148,13 +151,18 @@ const InvestigationDetail = () => {
       setLocalSynopsis(investigation.synopsis || '');
       setLocalInformation(investigation.information || '');
       setLocalRecommendations(investigation.recommendations || '');
+      // C.4: parametric Date hydration. ISO from DB → Date for the picker.
+      setLocalNextReviewAt(
+        investigation.next_review_at ? new Date(investigation.next_review_at) : undefined,
+      );
     }
   }, [investigation?.id]); // Only update when investigation ID changes
 
-  // Save field on blur
-  const saveField = async (field: string, value: string) => {
+  // Save field on blur. Accepts null so callers (e.g. C.4 next_review_at)
+  // can persist a cleared value as SQL NULL rather than the empty string.
+  const saveField = async (field: string, value: string | null) => {
     if (!id || !investigation) return;
-    
+
     // Don't save if value hasn't changed
     if (investigation[field] === value) return;
 
@@ -1384,13 +1392,79 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
                       AI Generate
                     </Button>
                   </div>
-                  <Textarea 
+                  <Textarea
                     value={localSynopsis}
                     onChange={(e) => setLocalSynopsis(e.target.value)}
                     onBlur={() => saveField('synopsis', localSynopsis)}
                     placeholder="Brief overview of the investigation..."
                     className="min-h-[100px]"
                   />
+                </div>
+
+                {/* C.4 (Decision Layer adoption experiment): operator-set next review
+                    date. Optional. NULL by default — a populated value reflects operator
+                    intent, not a system default. Picker mirrors the entries-tab idiom.
+                    Single date granularity, persisted as timestamptz (noon-local of the
+                    picked date avoids cross-timezone same-day rollover). */}
+                <div>
+                  <Label>Next review date</Label>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "w-[220px] justify-start text-left font-normal",
+                            !localNextReviewAt && "text-muted-foreground"
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {localNextReviewAt
+                            ? format(localNextReviewAt, "MMM d, yyyy")
+                            : "Not set"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={localNextReviewAt}
+                          onSelect={(date) => {
+                            if (!date) {
+                              setLocalNextReviewAt(undefined);
+                              saveField('next_review_at', null);
+                              return;
+                            }
+                            // Noon-local: stable calendar-day roundtrip across timezones.
+                            const noon = new Date(
+                              date.getFullYear(),
+                              date.getMonth(),
+                              date.getDate(),
+                              12, 0, 0, 0,
+                            );
+                            setLocalNextReviewAt(noon);
+                            saveField('next_review_at', noon.toISOString());
+                          }}
+                          initialFocus
+                          className={cn("p-3 pointer-events-auto")}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    {localNextReviewAt && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setLocalNextReviewAt(undefined);
+                          saveField('next_review_at', null);
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Optional. Marks when this investigation should be reviewed next.
+                  </p>
                 </div>
 
                 <div>
