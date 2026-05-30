@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
+import { writeCopTimelineEvent } from "@/lib/cop-timeline-writer";
 
 interface COPCanvasProps {
   workspaceId: string;
@@ -174,22 +175,29 @@ export function COPCanvas({ workspaceId, briefingId }: COPCanvasProps) {
     return () => { supabase.removeChannel(channel); };
   }, [workspaceId, queryClient]);
 
-  // Add timeline event
+  // Add timeline event — routed through the canonical helper per Decision Layer C.2 (G2).
+  // The helper resolves canonical tenant_id via get_workspace_tenant_id RPC and inserts
+  // with explicit tenant_id (defense in depth above the C.1 trigger). See
+  // src/lib/cop-timeline-writer.ts and the RC4 CI guard at
+  // scripts/check-cop-timeline-writer-discipline.mjs.
   const addEvent = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
-        .from('cop_timeline_events')
-        .insert({
-          workspace_id: workspaceId,
-          title: newEvent.title,
-          description: newEvent.description || null,
-          event_type: newEvent.event_type,
-          severity: newEvent.severity,
-          event_time: new Date(newEvent.event_time).toISOString(),
-          source_type: 'manual',
-          added_by_user_id: user?.id
-        });
-      if (error) throw error;
+      const result = await writeCopTimelineEvent({
+        workspace_id: workspaceId,
+        title: newEvent.title,
+        description: newEvent.description || null,
+        event_type: newEvent.event_type as
+          | 'signal' | 'incident' | 'task' | 'decision'
+          | 'evidence' | 'entity' | 'general' | 'milestone',
+        severity: newEvent.severity as 'info' | 'low' | 'medium' | 'high' | 'critical',
+        event_time: new Date(newEvent.event_time).toISOString(),
+        source_type: 'manual',
+        added_by_user_id: user?.id ?? null,
+      });
+      if (!result.ok) {
+        // Surface the helper's error code so the toast message is informative.
+        throw new Error(`[${result.code}] ${result.error}`);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cop-timeline', workspaceId] });
@@ -203,7 +211,7 @@ export function COPCanvas({ workspaceId, briefingId }: COPCanvasProps) {
       });
       toast.success("Event added to timeline");
     },
-    onError: () => toast.error("Failed to add event")
+    onError: (err: Error) => toast.error(`Failed to add event: ${err.message}`)
   });
 
   return (

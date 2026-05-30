@@ -81,6 +81,22 @@ jobs:
       - name: Verify every import from supabase/functions/_shared/* resolves to a real export
         run: node scripts/check-shared-imports.mjs
 
+  cop-timeline-writer-discipline:
+    name: Decision Layer RC4 — cop_timeline_events writer discipline
+    # Per Decision Layer Option C (G2) — every cop_timeline_events write must route
+    # through src/lib/cop-timeline-writer.ts. Documented as TRANSITIONAL enforcement;
+    # long-term should trend toward canonical APIs + DB guarantees, not regex.
+    # See scripts/check-cop-timeline-writer-discipline.mjs header for rationale.
+    # Pure-Node implementation — no external grep/rg dependency.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Static check — cop_timeline_events writers route through canonical helper
+        run: node scripts/check-cop-timeline-writer-discipline.mjs
+
   workstream-d-tests:
     name: Workstream D — confidence + provenance suite
     runs-on: ubuntu-latest
