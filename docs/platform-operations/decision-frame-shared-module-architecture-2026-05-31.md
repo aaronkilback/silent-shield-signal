@@ -6,6 +6,13 @@ Tied to Commander's Intent: *"Preserve decision space by shortening Signal → D
 
 ---
 
+## §0 — Revision History
+
+- **2026-05-31 v1** — initial architecture; audit-table promoted to mandatory.
+- **2026-05-31 v2 (current)** — operator-directed scope revision: audit-table persistence DEFERRED; no authorized consumer exists today; `recordDecisionFrameAudit()` ships as a non-fatal no-op stub preserving the API contract for future persistence drop-in. New doctrine recorded: *no new persistence layer without a named consumer and operational use case.*
+
+---
+
 ## §1 — Proposed Module Interface
 
 ### File layout
@@ -20,7 +27,7 @@ supabase/functions/_shared/aegis-decision-frame.ts
   ├── §D — Validation / prose-lint API (R8-R10)
   ├── §E — AI prompt-fragment + parser API
   ├── §F — Render API (markdown / HTML / React-data JSON)
-  ├── §G — Audit persistence API (gated on table existence)
+  ├── §G — Audit no-op stub (preserves API; logs warning on call; no IO)
   └── §H — Helper utilities
 supabase/functions/_shared/aegis-decision-frame.test.ts  // unit tests
 ```
@@ -69,7 +76,13 @@ export function renderDecisionFrameMarkdown(frame: DecisionFrame): string;
 export function renderDecisionFrameHtml(frame: DecisionFrame): string;
 export function renderDecisionFrameJson(frame: DecisionFrame): DecisionFrameRenderJson;
 
-// ─── Audit persistence (optional; gated on table existence) ─────────
+// ─── Audit persistence stub (DEFERRED — no-op; logs warn; preserves contract) ─
+// Persistence is intentionally deferred per operator decision (2026-05-31).
+// Stub returns { ok: false, error: "audit-persistence-deferred" } and logs a
+// debug-level message. Generators MUST treat the return value as non-fatal.
+// When a named consumer + operational use case is approved, this stub is
+// replaced by a real implementation behind the same signature — zero generator
+// refactor required.
 export async function recordDecisionFrameAudit(
   supabase: SupabaseClient,
   frame: DecisionFrame,
@@ -77,7 +90,7 @@ export async function recordDecisionFrameAudit(
 ```
 
 **Discipline notes:**
-- Pure functions wherever possible — only `recordDecisionFrameAudit()` performs IO.
+- All functions are pure; the audit stub performs no IO and never throws.
 - No globals; no module-scoped mutable state.
 - All exports are tree-shakeable for generators that need only a subset.
 - All functions accept typed inputs; return typed outputs. No `any`.
@@ -236,11 +249,10 @@ if (!result.ok) {
 const frameHtml = result.frame ? renderDecisionFrameHtml(result.frame) : "";
 const reportHtml = `${frameHtml}\n\n${existingWildfireReportHtml}`;
 
-// Best-effort audit (non-fatal)
+// Audit stub call — currently a no-op; preserved for API stability when
+// persistence is later authorized. Non-fatal by contract.
 if (result.frame) {
-  await recordDecisionFrameAudit(supabaseClient, result.frame).catch(err =>
-    console.warn("[wildfire-daily] Decision frame audit persist failed:", err.message)
-  );
+  await recordDecisionFrameAudit(supabaseClient, result.frame);
 }
 ```
 
@@ -278,7 +290,7 @@ let reportBody = aiOutput.content;
 if (parseResult.ok && parseResult.frame) {
   frameHtml = renderDecisionFrameHtml(parseResult.frame);
   reportBody = stripDecisionFramePrefix(aiOutput.content);
-  await recordDecisionFrameAudit(supabaseClient, parseResult.frame).catch(noop);
+  await recordDecisionFrameAudit(supabaseClient, parseResult.frame); // currently no-op
 } else {
   // AI failed to emit a valid frame — log + fall back
   console.warn("[send-daily-briefing] AI Decision Frame parse failed", parseResult.errors);
@@ -292,7 +304,7 @@ const finalHtml = `${frameHtml}\n\n${formatBriefingLines(reportBody)}`;
 
 - **Same `DecisionFrame` output type** regardless of mode → render functions don't care about source
 - **Same lint surface** runs against both → AI-emitted and programmatic-emitted frames are both gated by R8/R9/R10
-- **Same audit surface** → forensic timeline (Campaign 3) sees both alongside Aegis traces
+- **Same audit stub surface** → API stability preserved for future drop-in persistence (currently no-op)
 - **No mode-specific render branches** → markdown/HTML/JSON renderers are pure functions over `DecisionFrame`
 
 ---
@@ -323,7 +335,7 @@ const REPORT_CLASS_DEFAULTS: Record<ReportClass, ReportClassDefault> = {
 The `default_check` is the **baseline expectation for an arbitrary instance**, NOT a runtime forcing function. Generators ALWAYS pass `decision_check` explicitly to `composeDecisionFrame()` — the default is informational, used:
 
 1. **As an input to the AI prompt fragment** — `decisionFrameSystemPromptFragment(report_class)` tells the AI "this report class typically defaults to X; promote to a higher tier only with grounded justification."
-2. **As an observability hint for the audit table** — to detect drift (e.g., daily briefings firing REQUIRED at 50% rate is anomalous; the expected distribution flags it).
+2. **As an observability hint for future drift detection** (capability not yet authorized; reserved use). The `expected_distribution` field is shipped today but consumed by zero callers until a named drift-detection consumer is authorized.
 3. **As a fallback** if a generator can't determine its own classification.
 
 Generators that have domain context (seasonal for wildfire, risk-driven for travel, incident-active for incident briefing) **always override** the default at composition time. The shared module never makes that call.
@@ -332,7 +344,6 @@ Generators that have domain context (seasonal for wildfire, risk-driven for trav
 
 - **Domain logic stays in generators** — the shared module never knows what "fire season" means.
 - **Per-class defaults stay testable** — static lookup, deterministic.
-- **Drift detection** — observed distribution vs expected distribution surfaces drift cheaply.
 - **Operator override** — generator can pass any `decision_check` at any time; shared module enforces validity, not policy.
 
 ### Doctrinal protection against AI promotion
@@ -347,62 +358,95 @@ Combined with R8 lint (server-side rejection of REQUIRED without justification),
 
 ---
 
-## §5 — How Auditability Works
+## §5 — How Auditability Works (Two Levels, Deferred Third)
 
-### Three levels of audit
+### Level 1 — Lint surface (always-on, no IO)
 
-**Level 1 — Lint surface (always-on, no IO).** Every `composeDecisionFrame()` call runs R8 + R9 + R10 lint and returns errors inline. Generators check `result.ok` before rendering. Lint surface is the *immediate* auditability — frames that violate doctrine never reach the renderer.
+Every `composeDecisionFrame()` call runs R8 + R9 + R10 lint and returns errors inline. Generators check `result.ok` before rendering. Lint surface is the *immediate* auditability — frames that violate doctrine never reach the renderer. This is the **primary enforcement layer** under the deferred-persistence scope.
 
-**Level 2 — Persistence (optional table; see §6).** Every emitted frame can persist to `aegis_decision_frame_audit`. Append-only. Tenant-scoped. CHECK constraints at the DB level enforce conditional-element invariants. This is the *durable* auditability — every Decision Frame Fortress has ever emitted is queryable.
+### Level 2 — Flight Recorder linkage (existing infrastructure)
 
-**Level 3 — Flight Recorder linkage.** `DecisionFrame.source_trace_id` ties to `aegis_request_trace.debug_trace_id` when the frame is AI-emitted. This means every Decision Frame can be replayed alongside the full Aegis trace that produced it (`aegis_trace_replay(<source_trace_id>)`). Forensic reconstructionability inherits from existing infrastructure.
+`DecisionFrame.source_trace_id` ties to `aegis_request_trace.debug_trace_id` when the frame is AI-emitted. Every AI-emitted Decision Frame can be replayed alongside the full Aegis trace that produced it (`aegis_trace_replay(<source_trace_id>)`). Forensic reconstructionability inherits from existing infrastructure — no new table required.
 
-### What this enables
+For programmatic Decision Frames (wildfire/SRA), the rendered HTML stored in `generated_reports` is the durable artifact.
 
-| Capability | Without audit table | With audit table |
-|---|---|---|
-| Real-time doctrine compliance | ✓ (lint surface) | ✓ |
-| Per-tenant trend ("CRT daily briefings REQUIRED rate last month") | ✗ | ✓ |
-| Drift detection ("daily briefings firing REQUIRED 50% — anomalous") | ✗ | ✓ |
-| Forensic reconstruction ("what frame fired during INC-X?") | partial (Flight Recorder only) | ✓ (frame + trace) |
-| Watchdog Campaign 1 W.5 doctrine-compliance sweeps | ✗ (no substrate) | ✓ |
-| Post-Mortem Campaign 3 forensic timelines | partial | ✓ |
-| Per-class distribution observability | ✗ | ✓ |
-| Operator review of all REQUIRED frames last week | ✗ | ✓ (one SQL query) |
+### Level 3 — DEFERRED (audit-table persistence)
 
-### Append-only discipline
+`recordDecisionFrameAudit()` ships as a no-op stub that preserves the API contract. When a named consumer + operational use case is authorized, the stub is replaced by a real implementation behind the same signature. Generators call the function today; switch-over is one module edit and one migration.
 
-Mirrors `aegis_request_trace` + `aegis_decision_threshold_trace` + `aegis_claim_confidence`. No `UPDATE`, no `DELETE` (except a 30-day retention purge if needed). The audit table is the *system of record* for what Decision Frames Fortress emitted; rewriting it is doctrinally forbidden.
+### What is auditable today (deferred-persistence scope)
+
+| Capability | Status under deferred scope |
+|---|---|
+| Real-time doctrine compliance | ✓ (lint surface) |
+| Doctrine non-bypassability at composition time | ✓ (composeDecisionFrame rejects partial frames) |
+| Forensic reconstruction of AI-emitted frames | ✓ (Flight Recorder via source_trace_id) |
+| Durable artifact of rendered frame | ✓ (generated_reports HTML) |
+| Per-tenant trend SQL queries | ✗ (deferred until named consumer) |
+| Drift detection vs expected distribution | ✗ (deferred until named consumer) |
+| Cross-report-class distribution observability | ✗ (deferred until named consumer) |
+| Single-SQL operator review of REQUIRED frames | ✗ (deferred until named consumer) |
+
+Operator surfaces with a concrete need for any of the deferred capabilities → the persistence layer ships behind the existing `recordDecisionFrameAudit()` signature with zero generator refactor.
 
 ---
 
-## §6 — Is the Audit Table Worth Implementing?
+## §6 — Audit Table: Decision
 
-### Verdict: **YES — include in F.0**
+### Verdict: **DEFERRED — out of scope for F.0** (operator decision, 2026-05-31)
 
-### Cost (small, bounded)
+### Operator-recorded doctrine
 
-| Item | Effort |
-|---|---|
-| Migration drafting + CHECK constraints + RLS policies | ~1 hour |
-| `recordDecisionFrameAudit()` implementation + tests | ~1 hour |
-| Schema review + ratification | per-operator cycle |
-| Per-write overhead at runtime | <50ms per report (single INSERT) |
-| Per-write IO cost | negligible (~1KB per row) |
-| Storage growth | ~1MB/month at projected report volume (estimated 100 reports/day × ~1KB) |
+> **No new persistence layer should be introduced without a named consumer and operational use case.**
 
-### Benefit (compounds across campaigns)
+This decision applies broadly — not just to Decision Frame audit. Future architecture work that proposes a new table/store must name its consumer and operational use case before authorization.
 
-1. **Watchdog Campaign 1 W.5 substrate** — already identified in Campaign 1 plan as gated on this audit table. Without it, W.5 is impossible to build cleanly.
-2. **Post-Mortem Campaign 3 forensic timelines** — already identified as a key evidence source. Without it, post-mortems lose visibility into "what Decision Frame fired when."
-3. **Drift detection** — observed distribution vs expected distribution surfaces AI calibration issues (over-classifying as REQUIRED, under-classifying as NONE).
-4. **DB-layer doctrine backstop** — CHECK constraints enforce conditional-element rules non-bypassably. A future generator can't accidentally emit a malformed frame even if the application-layer lint is bypassed.
-5. **Operator trend review** — "show me all REQUIRED frames in CRT this week" is one SQL query.
-6. **Decision Layer R1.x integration** — when R1.1+ ships, decision-frame audit rows align with `aegis_decision_threshold_trace` rows; joint analysis becomes possible.
+### Why deferred
 
-### Schema sketch (illustrative, not authorized)
+The audit-table-justification review (operator-directed challenge, 2026-05-31) surfaced that all proposed near-term consumers were speculative:
+
+- Watchdog Campaign 1 W.5 — drafted only, not authorized; W.5 has architectural alternatives (log-mining, report-HTML parsing).
+- Post-Mortem Campaign 3 forensic timelines — drafted only, not authorized; Flight Recorder + `generated_reports` HTML cover near-term needs.
+- Drift detection — concept-only; no data baseline exists yet; ~30+ days of baseline required regardless of when table ships.
+- DB-layer CHECK backstop — defense-in-depth; application-layer lint already enforces the same invariants at composition time.
+
+The cost was understated in v1 (review/operational overhead beyond just the migration). The "compounds across campaigns" benefit relies on Campaigns 1/3 being authorized, which they are not.
+
+### Stub API contract (what ships in F.0)
+
+```typescript
+export async function recordDecisionFrameAudit(
+  _supabase: SupabaseClient,
+  frame: DecisionFrame,
+): Promise<{ ok: boolean; error?: string }> {
+  console.debug(
+    "[aegis-decision-frame] audit persistence deferred",
+    { report_class: frame.report_class, decision_check: frame.decision_check },
+  );
+  return { ok: false, error: "audit-persistence-deferred" };
+}
+```
+
+Generators call this function today. When persistence is later authorized:
+1. Land the `aegis_decision_frame_audit` migration
+2. Replace the stub body with a real INSERT
+3. Zero generator refactor — same call site, same return shape
+
+### Trigger conditions for revisiting persistence
+
+Any one of these surfacing as a committed deliverable re-opens the persistence design discussion:
+
+- Campaign 1 GO'd with W.5 in scope
+- Campaign 3 GO'd with forensic timeline composer in scope
+- Drift detection becomes a committed deliverable
+- An operator observability question surfaces that genuinely requires SQL-queryable Decision Frame history (and Flight Recorder + `generated_reports` cannot answer it)
+
+### Schema sketch (preserved for future authorization, NOT for F.0 implementation)
+
+The schema below is design-only. **Do not apply.** Preserved so that if persistence is later authorized, the design work already exists.
 
 ```sql
+-- DEFERRED — DO NOT APPLY. Design-only sketch for future authorization.
 CREATE TABLE public.aegis_decision_frame_audit (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
@@ -424,14 +468,11 @@ CREATE TABLE public.aegis_decision_frame_audit (
   consequence        text,
   recommended_action text,
 
-  source_trace_id uuid,    -- optional FK to aegis_request_trace
+  source_trace_id uuid,
   lint_errors jsonb DEFAULT '[]'::jsonb,
   emitted_at timestamptz NOT NULL DEFAULT now(),
 
-  -- Provenance Doctrine backstop
   CONSTRAINT aegis_decision_frame_audit_provenance_ck CHECK (tenant_id IS NOT NULL),
-
-  -- Conditional-element discipline (non-bypassable)
   CONSTRAINT aegis_decision_frame_audit_required_complete_ck CHECK (
     decision_check != 'REQUIRED' OR (
       decision_required IS NOT NULL
@@ -454,41 +495,9 @@ CREATE TABLE public.aegis_decision_frame_audit (
     )
   )
 );
-
-CREATE INDEX idx_aegis_dfa_tenant_emitted ON public.aegis_decision_frame_audit (tenant_id, emitted_at DESC);
-CREATE INDEX idx_aegis_dfa_class_emitted  ON public.aegis_decision_frame_audit (report_class, emitted_at DESC);
-CREATE INDEX idx_aegis_dfa_required       ON public.aegis_decision_frame_audit (decision_check, emitted_at DESC)
-  WHERE decision_check = 'REQUIRED';
-CREATE INDEX idx_aegis_dfa_trace          ON public.aegis_decision_frame_audit (source_trace_id)
-  WHERE source_trace_id IS NOT NULL;
-
--- RLS
-ALTER TABLE public.aegis_decision_frame_audit ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "decision_frame_audit_super_admin_read"
-  ON public.aegis_decision_frame_audit FOR SELECT
-  USING (is_super_admin(auth.uid()));
-
-CREATE POLICY "decision_frame_audit_service_role"
-  ON public.aegis_decision_frame_audit TO service_role
-  USING (true) WITH CHECK (true);
-
--- Retention purge (consistent with aegis_request_trace 30-day pattern)
--- Implemented via cron job; not in this migration
 ```
 
-The DB-layer CHECK constraints make the doctrine non-bypassable. A generator that tries to emit a REQUIRED frame without justification fails at the DB layer even if application-layer lint is skipped or buggy. This is the Provenance Doctrine "service-role untrusted by default" pattern applied to Decision Frame discipline.
-
-### Why "optional" framing is misleading
-
-The audit table was framed as optional in the Convergence Plan (Task #116) because the operator might defer the migration cost. But after detailed analysis:
-
-- The migration cost is ~1 hour.
-- The benefit compounds across Campaigns 1, 3, and operator observability.
-- The DB-layer CHECK backstop is a meaningful additional layer of doctrine enforcement.
-- Without it, Watchdog W.5 has no clean substrate.
-
-**Recommendation: include the audit table in F.0 as a NON-optional component.** The "optional" framing was a budget hedge; the actual cost is below the threshold where deferring is wise.
+(Indexes + RLS + retention deferred along with the table.)
 
 ---
 
@@ -516,11 +525,11 @@ Generator passed invalid input (e.g., REQUIRED without justification).
 
 Doctrine compliance is non-negotiable; the function never returns a partial frame.
 
-### When `recordDecisionFrameAudit()` fails
+### When `recordDecisionFrameAudit()` is called (deferred-persistence scope)
 
-Persistence error (network, DB constraint, RLS).
+The stub returns `{ok: false, error: "audit-persistence-deferred"}` and emits a `console.debug` line. Generators MUST treat this as non-fatal. Report continues emitting normally.
 
-**Behavior:** logs warning; report still emits. Audit miss is non-fatal. Consistent with `aegis_claim_confidence` and `universal_learning_log` patterns.
+When persistence is later authorized, the stub is replaced. Generators see the same call site; failure modes at that point will include real network/DB/RLS errors. Those remain non-fatal — audit miss must never block report emission, consistent with `aegis_claim_confidence` and `universal_learning_log` patterns.
 
 ### When the AI emits Elements 4 + 5 outside REQUIRED
 
@@ -529,10 +538,6 @@ R9 lint catches it. `parseDecisionFramePrefix()` returns `ok: false` with R9 vio
 ### When the AI promotes to REQUIRED without justification
 
 R8 lint catches it. Same path as R9.
-
-### When the audit table doesn't exist (early F.0 deploy without migration)
-
-`recordDecisionFrameAudit()` catches the table-doesn't-exist error and returns `{ok: false, error: ...}`. Non-fatal. Same fall-through as persistence errors. Allows the shared module to deploy *before* the migration if needed for staged rollout.
 
 ---
 
@@ -552,7 +557,7 @@ Unit tests (`aegis-decision-frame.test.ts`) cover:
 | `renderDecisionFrameMarkdown()` | Each Decision Check tier produces correct shape; conditional sections suppressed correctly |
 | `renderDecisionFrameHtml()` | HTML safe (no unescaped user input); correct visual hierarchy per tier |
 | `renderDecisionFrameJson()` | Structured for React consumption |
-| `recordDecisionFrameAudit()` | Happy path; CHECK constraint violation; RLS rejection; table-missing graceful failure |
+| `recordDecisionFrameAudit()` (stub) | Returns `{ok: false, error: "audit-persistence-deferred"}`; emits debug log; never throws |
 
 Integration tests deferred to F.1+ (end-to-end with a synthetic report; AI parse-on-real-output).
 
@@ -567,31 +572,31 @@ Items explicitly NOT in F.0:
 - **No HTML email template changes** — F.1 modifies `send-daily-briefing/buildBriefingEmail()` separately
 - **No POI report template changes** — F.2 wires the POI report separately
 - **No frontend changes** — F.8 ships the React component separately
-- **No Watchdog tripwire** — Campaign 1 W.5 consumes the audit table; not built here
-- **No Post-Mortem integration** — Campaign 3 forensic timelines consume the audit table; not built here
-- **No retention cron** — 30-day purge is added later if needed (consistent with `aegis_request_trace` deferred-purge pattern)
-- **No backfill** — first row inserted at first emit post-deploy; no historical data to migrate
+- **No audit table** (DEFERRED — see §6)
+- **No migration** (DEFERRED — see §6)
+- **No CHECK constraints / RLS policies / retention cron** (DEFERRED — see §6)
+- **No Watchdog tripwire** — Campaign 1 W.5 is unauthorized; would re-engage persistence design
+- **No Post-Mortem integration** — Campaign 3 is unauthorized; would re-engage persistence design
+- **No backfill** — no persistence layer to backfill into
 
 ---
 
 ## §10 — F.0 Acceptance Criteria
 
-Operator-reviewable evidence that F.0 is complete:
+Operator-reviewable evidence that F.0 is complete (deferred-persistence scope):
 
 | # | Criterion |
 |---|---|
 | F.0.1 | `_shared/aegis-decision-frame.ts` exists with all exports listed in §1 |
-| F.0.2 | Unit tests pass (`npm run test` or equivalent harness; vitest precedent from C.2) |
+| F.0.2 | Unit tests pass (vitest harness; precedent from C.2) |
 | F.0.3 | TypeScript build green (`npm run build`) |
 | F.0.4 | `_shared/aegis-decision-frame.ts` is imported by ZERO generators (F.0 is module-only) |
-| F.0.5 | Migration draft for `aegis_decision_frame_audit` exists at `supabase/migrations/<timestamp>_aegis_decision_frame_audit.sql` |
-| F.0.6 | Migration applies cleanly on staging via `apply_migration` (parity-exact verification) |
-| F.0.7 | Migration applies cleanly on prod (parity-exact); CHECK constraints proven non-bypassable via negative tests (mirrors C.x verification pattern) |
-| F.0.8 | `recordDecisionFrameAudit()` integration test passes against staging fixture |
-| F.0.9 | Documentation updated in `docs/platform-operations/` with module reference + per-class default table |
-| F.0.10 | Zero runtime impact verified — no generator currently calls the module; existing reports unchanged |
+| F.0.5 | `recordDecisionFrameAudit()` ships as documented no-op stub; never throws; returns `{ok: false, error: "audit-persistence-deferred"}` |
+| F.0.6 | Documentation updated in `docs/platform-operations/` with module reference + per-class default table |
+| F.0.7 | Zero runtime impact verified — no generator currently calls the module; existing reports unchanged |
+| F.0.8 | No migration shipped; no table created; no RLS policy added |
 
-All criteria must pass before operator GO on R2 (F.1 + F.2 + F.6 bundle).
+All criteria must pass before operator GO on the F.1 + F.2 + F.6 wiring bundle.
 
 ---
 
@@ -599,17 +604,14 @@ All criteria must pass before operator GO on R2 (F.1 + F.2 + F.6 bundle).
 
 | Item | Effort |
 |---|---|
-| Module file (~500 LOC) | 6–8 hours |
-| Unit tests | 2–3 hours |
-| Migration drafting + ratification | 1 hour |
-| Staging apply + parity verification | 30 min |
-| Prod apply + parity-exact verification | 30 min |
-| Documentation update | 1 hour |
-| **Total F.0** | **11–14 hours** |
+| Module file (~500 LOC) | 5–7 hours |
+| Unit tests | 2 hours |
+| Documentation update | 30 min |
+| **Total F.0** | **7–9 hours** |
 
-Consistent with Convergence Plan Task #116 §4 estimate (~6–10 hours for F.0); refined estimate includes test coverage + migration discipline.
+Persistence work (migration drafting, staging apply, prod apply, integration tests) is deferred and removed from the estimate.
 
-Rollback path: `git revert` of the module file + migration (`DROP TABLE aegis_decision_frame_audit`). No generator depends on it yet, so rollback is clean.
+Rollback path: `git revert` of the module file. No database state to roll back. No generator depends on the module until F.1+. Rollback is clean.
 
 ---
 
@@ -623,11 +625,11 @@ Final tie-back to Commander's Intent: *"Preserve decision space by shortening Si
 | I1 invariant (statistical noise ≠ Decision Frame) | Decision Check classifier + per-class defaults + R8 lint |
 | Anti-fabrication (Aegis Authority Doctrine) | R8/R9/R10 lint surface; AI prompt fragment with anti-promotion language |
 | Grounding-State Doctrine (no provenance → no recommendation) | REQUIRED requires grounded justification; recommendation suppressed on NONE |
-| Provenance Doctrine (service-role untrusted) | DB-layer CHECK constraints non-bypassable; RLS policies |
 | Tenant isolation (CQ1) | `tenant_id` is mandatory at composition; never NULL |
-| Append-only audit (Aegis Flight Recorder pattern) | `aegis_decision_frame_audit` append-only; no UPDATE/DELETE |
+| Forensic reconstructionability (Aegis Flight Recorder pattern) | `source_trace_id` links to `aegis_request_trace` |
+| No persistence without named consumer (NEW doctrine 2026-05-31) | Audit table DEFERRED until a real consumer is authorized |
 
-The shared module IS the architectural commitment to operationalize Doctrine v2.
+The shared module IS the architectural commitment to operationalize Doctrine v2 — without speculative infrastructure.
 
 ---
 
@@ -635,10 +637,10 @@ The shared module IS the architectural commitment to operationalize Doctrine v2.
 
 - No implementation
 - No code, branch, migration, deploy
-- F.0 ratification requires operator GO on this architecture
-- Module file + unit tests + migration + persistence helper = single bundled PR shape recommended for F.0
-- Audit table recommended NON-optional (§6); operator may still defer if budget-driven
-- F.1 + F.2 + F.6 bundle (R2 in convergence plan) is the *next* gate after F.0 acceptance
-- This document supersedes the "optional audit table" framing in Task #116 §F.0; the refined recommendation is: include it
+- F.0 ratification (revised scope) approved by operator 2026-05-31 in principle; implementation authorization pending the F.0+F.1+F.2+F.6 execution package
+- Module file + unit tests = single bundled PR shape recommended for F.0
+- Audit table DEFERRED (§6); revisits only on named consumer + operational use case
+- F.1 (send-daily-briefing) + F.2 (generate-poi-report) + F.6 (generate-wildfire-daily-report) are bundled into one execution package alongside F.0 per operator direction
+- New doctrine recorded: *no new persistence layer without a named consumer and operational use case* — applies broadly
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
