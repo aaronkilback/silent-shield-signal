@@ -3539,6 +3539,269 @@ Deno.serve(async (req) => {
       console.warn('[Watchdog] Behavioral health check failed:', behavioralErr);
     }
 
+    // ═══ MISSION HEALTH ASSERTIONS (W-MISSION Phase 1) ═══
+    // Catches workflows that report healthy execution while failing their
+    // operational outcome. Heartbeat success ≠ mission success.
+    //
+    // Doctrine: docs/platform-operations/wmission-phase1-thresholds-2026-05-31.md
+    // Source diagnosis: docs/platform-operations/mission-success-watchdog-assessment-2026-05-31.md (Task #133)
+    // Prioritization: docs/platform-operations/mission-success-prioritization-2026-05-31.md (Task #134)
+    //
+    // Five checks, all reading existing columns:
+    //   P1.1 — Empty-approval (auto_approve_safe_actions returning zero
+    //          while eligible candidates exist)
+    //   P1.3 — Stuck-running (cron_heartbeat in 'running' > 10 min)
+    //   P1.2 — Zero-yield news (monitor-news-google 24h SUM signals = 0)
+    //   P1.4 — Undispatched alerts (alerts.dispatched_at NULL > 30 min)
+    //   P1.5 — Quarantine spike (24h rate > 15% OR > 3x 7d baseline)
+    const missionFindings: any[] = [];
+
+    try {
+      // ──── P1.1 — Empty-approval detector ────────────────────────────
+      try {
+        const { data: approvedRows } = await supabase
+          .from('cron_heartbeat')
+          .select('result_summary')
+          .eq('job_name', 'agent-action-auto-approve-hourly')
+          .eq('status', 'succeeded')
+          .gte('started_at', new Date(Date.now() - 24 * 3600000).toISOString());
+
+        const sumApproved24h = (approvedRows ?? []).reduce(
+          (acc: number, r: any) => acc + (Number(r.result_summary?.approved_count) || 0),
+          0,
+        );
+
+        if (sumApproved24h === 0) {
+          const { count: eligibleCount } = await supabase
+            .from('agent_actions')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'awaiting_approval')
+            .in('action_type', ['propose_severity_correction', 'flag_false_positive', 'dismiss_signal'])
+            .lt('created_at', new Date(Date.now() - 24 * 3600000).toISOString());
+
+          if (eligibleCount && eligibleCount > 0) {
+            // Severity escalates with persistence
+            const { data: weekRows } = await supabase
+              .from('cron_heartbeat')
+              .select('result_summary')
+              .eq('job_name', 'agent-action-auto-approve-hourly')
+              .eq('status', 'succeeded')
+              .gte('started_at', new Date(Date.now() - 7 * 24 * 3600000).toISOString());
+            const sumWeek = (weekRows ?? []).reduce(
+              (acc: number, r: any) => acc + (Number(r.result_summary?.approved_count) || 0),
+              0,
+            );
+            const weekRunCount = (weekRows ?? []).length;
+
+            let sev: 'warning' | 'high' | 'critical' = 'warning';
+            if (weekRunCount >= 6 && sumWeek === 0) sev = 'critical'; // 7d zero
+            else if (sumApproved24h === 0 && eligibleCount >= 5) sev = 'high';
+
+            missionFindings.push({
+              category: 'mission_health',
+              severity: sev,
+              title: `auto_approve_safe_actions: 0 approvals in 24h while ${eligibleCount} eligible actions await`,
+              analysis: `cron 'agent-action-auto-approve-hourly' ran ${(approvedRows ?? []).length} times in last 24h, sum(approved_count)=0. ` +
+                        `Across last 7d: ${weekRunCount} runs, total approvals ${sumWeek}. ` +
+                        `${eligibleCount} eligible actions (propose_severity_correction / flag_false_positive / dismiss_signal) aged >24h sit awaiting_approval.`,
+              plainEnglish: `The auto-approve job runs hourly and reports success but isn't approving anything. ${eligibleCount} actions that should auto-approve are stuck.`,
+              action: 'Investigate auto_approve_safe_actions predicate. Likely cause: INNER JOIN on context_signal_id excludes NULL-context rows.',
+            });
+          }
+        }
+      } catch (p11Err) {
+        console.warn('[Watchdog] W-MISSION P1.1 check failed:', p11Err);
+      }
+
+      // ──── P1.3 — Stuck-running detector ─────────────────────────────
+      try {
+        const { data: stuckRows } = await supabase
+          .from('cron_heartbeat')
+          .select('id, job_name, started_at')
+          .eq('status', 'running')
+          .lt('started_at', new Date(Date.now() - 10 * 60000).toISOString());
+
+        if (stuckRows && stuckRows.length > 0) {
+          // Group by job_name for per-job severity assessment
+          const byJob = new Map<string, number>();
+          for (const row of stuckRows) {
+            byJob.set(row.job_name, (byJob.get(row.job_name) ?? 0) + 1);
+          }
+
+          for (const [jobName, stuckCount] of byJob.entries()) {
+            // Check 7-day pattern for systemic severity
+            const { count: weekStuck } = await supabase
+              .from('cron_heartbeat')
+              .select('id', { count: 'exact', head: true })
+              .eq('status', 'running')
+              .eq('job_name', jobName)
+              .gte('started_at', new Date(Date.now() - 7 * 24 * 3600000).toISOString())
+              .lt('started_at', new Date(Date.now() - 10 * 60000).toISOString());
+
+            let sev: 'warning' | 'high' | 'critical' = 'warning';
+            if ((weekStuck ?? 0) >= 5) sev = 'critical'; // systemic (e.g., current monitor-github)
+            else if (stuckCount >= 3) sev = 'high';
+
+            const oldestStuckMin = Math.floor(
+              (Date.now() - new Date(stuckRows.find(r => r.job_name === jobName)!.started_at).getTime()) / 60000,
+            );
+
+            missionFindings.push({
+              category: 'mission_health',
+              severity: sev,
+              title: `stuck-running: ${jobName} has ${stuckCount} invocation(s) running > 10 min`,
+              analysis: `cron_heartbeat for '${jobName}' shows ${stuckCount} row(s) with status='running' and started_at < NOW() - 10 min. ` +
+                        `Oldest stuck row: ${oldestStuckMin} minutes. ` +
+                        `Last 7 days: ${weekStuck ?? 0} stuck-running occurrences for this job.`,
+              plainEnglish: `${jobName} has invocations stuck in 'running' state for over 10 minutes. The function likely SIGKILLed before writing completion, or it is genuinely hung.`,
+              action: 'Check function logs for the affected invocation. Consider resetting these rows to status=failed and re-running the function manually.',
+            });
+          }
+        }
+      } catch (p13Err) {
+        console.warn('[Watchdog] W-MISSION P1.3 check failed:', p13Err);
+      }
+
+      // ──── P1.2 — Zero-yield news monitor ────────────────────────────
+      try {
+        const { data: newsRuns } = await supabase
+          .from('cron_heartbeat')
+          .select('result_summary')
+          .eq('job_name', 'monitor-news-google-hourly')
+          .eq('status', 'succeeded')
+          .gte('started_at', new Date(Date.now() - 24 * 3600000).toISOString());
+
+        const runs24h = (newsRuns ?? []).length;
+        const sumSignals24h = (newsRuns ?? []).reduce(
+          (acc: number, r: any) => acc + (Number(r.result_summary?.signals_created) || 0),
+          0,
+        );
+
+        if (runs24h >= 12 && sumSignals24h === 0) {
+          // Check 48h for severity escalation
+          const { data: news48h } = await supabase
+            .from('cron_heartbeat')
+            .select('result_summary')
+            .eq('job_name', 'monitor-news-google-hourly')
+            .eq('status', 'succeeded')
+            .gte('started_at', new Date(Date.now() - 48 * 3600000).toISOString());
+
+          const sumSignals48h = (news48h ?? []).reduce(
+            (acc: number, r: any) => acc + (Number(r.result_summary?.signals_created) || 0),
+            0,
+          );
+
+          const sev: 'warning' | 'high' | 'critical' = sumSignals48h === 0 ? 'critical' : 'high';
+
+          missionFindings.push({
+            category: 'mission_health',
+            severity: sev,
+            title: `monitor-news-google: 0 signals produced in 24h across ${runs24h} runs`,
+            analysis: `cron 'monitor-news-google-hourly' completed ${runs24h} successful runs in last 24h. ` +
+                      `Total signals_created across those runs: 0. ` +
+                      `48h total: ${sumSignals48h} signals. ` +
+                      `Probability of natural 24h-zero given normal yield is ~1e-5; this is statistically a pipeline failure.`,
+            plainEnglish: 'The Google News monitor has produced zero signals in the last 24 hours despite running its normal hourly schedule. The pipeline is functionally dead.',
+            action: 'Investigate query/allowlist configuration. Reference: Task #100 prior incident (PROD-S Track G allowlist + empty tenant overlay).',
+          });
+        }
+      } catch (p12Err) {
+        console.warn('[Watchdog] W-MISSION P1.2 check failed:', p12Err);
+      }
+
+      // ──── P1.4 — Undispatched alerts ────────────────────────────────
+      try {
+        const { data: undispatched } = await supabase
+          .from('alerts')
+          .select('id, created_at')
+          .is('dispatched_at', null)
+          .lt('created_at', new Date(Date.now() - 30 * 60000).toISOString())
+          .order('created_at', { ascending: true });
+
+        const count = (undispatched ?? []).length;
+        if (count > 0) {
+          const oldestMin = Math.floor(
+            (Date.now() - new Date(undispatched![0].created_at).getTime()) / 60000,
+          );
+
+          let sev: 'warning' | 'high' | 'critical' = 'warning';
+          if (count >= 10 || oldestMin >= 120) sev = 'critical';
+          else if (count >= 3) sev = 'high';
+
+          missionFindings.push({
+            category: 'mission_health',
+            severity: sev,
+            title: `alert-delivery: ${count} undispatched alert(s) older than 30 min (oldest ${oldestMin} min)`,
+            analysis: `${count} rows in 'alerts' have dispatched_at IS NULL and were created over 30 minutes ago. ` +
+                      `alert-delivery cron runs every 15 min; allowing 2x interval as grace. ` +
+                      `Oldest undispatched alert is ${oldestMin} minutes old.`,
+            plainEnglish: `${count} alert(s) were generated but never delivered. The notification pipeline is failing silently.`,
+            action: 'Investigate alert-delivery function logs. Check whether channel credentials (Slack, email) are valid. Consider re-running alert-delivery manually.',
+          });
+        }
+      } catch (p14Err) {
+        console.warn('[Watchdog] W-MISSION P1.4 check failed:', p14Err);
+      }
+
+      // ──── P1.5 — Quarantine rate spike ──────────────────────────────
+      try {
+        const { count: total24h } = await supabase
+          .from('signals')
+          .select('id', { count: 'exact', head: true })
+          .gte('created_at', new Date(Date.now() - 24 * 3600000).toISOString());
+
+        const { count: quarantined24h } = await supabase
+          .from('signals')
+          .select('id', { count: 'exact', head: true })
+          .eq('quality_status', 'quarantined')
+          .gte('created_at', new Date(Date.now() - 24 * 3600000).toISOString());
+
+        const { count: total7d } = await supabase
+          .from('signals')
+          .select('id', { count: 'exact', head: true })
+          .gte('created_at', new Date(Date.now() - 8 * 24 * 3600000).toISOString())
+          .lt('created_at', new Date(Date.now() - 24 * 3600000).toISOString());
+
+        const { count: quarantined7d } = await supabase
+          .from('signals')
+          .select('id', { count: 'exact', head: true })
+          .eq('quality_status', 'quarantined')
+          .gte('created_at', new Date(Date.now() - 8 * 24 * 3600000).toISOString())
+          .lt('created_at', new Date(Date.now() - 24 * 3600000).toISOString());
+
+        if ((total24h ?? 0) >= 10) {
+          const rate24h = (quarantined24h ?? 0) / (total24h ?? 1);
+          const rate7d = (total7d ?? 0) > 0 ? (quarantined7d ?? 0) / (total7d ?? 1) : 0;
+
+          const triggerA = rate24h > 0.15;
+          const triggerB = rate7d > 0.02 && rate24h > 3 * rate7d;
+
+          if (triggerA || triggerB) {
+            let sev: 'warning' | 'high' | 'critical' = 'warning';
+            if (rate24h > 0.50) sev = 'critical';
+            else if (rate24h > 0.25 && triggerA) sev = 'high';
+
+            missionFindings.push({
+              category: 'mission_health',
+              severity: sev,
+              title: `ingest-signal: quarantine rate spike to ${Math.round(rate24h * 100)}% in last 24h`,
+              analysis: `24h: ${quarantined24h}/${total24h} signals quarantined (${(rate24h * 100).toFixed(1)}%). ` +
+                        `7d baseline (excluding last 24h): ${quarantined7d}/${total7d} (${(rate7d * 100).toFixed(1)}%). ` +
+                        `Trigger A (absolute >15%): ${triggerA}. Trigger B (relative >3x baseline): ${triggerB}.`,
+              plainEnglish: `An unusual percentage of incoming signals are being quarantined. Real threats may be hidden from the analyst feed.`,
+              action: 'Investigate quality_status reasons in raw_json. Check for source-feed corruption, dedup logic regressions, or AI threat-score model degradation.',
+            });
+          }
+        }
+      } catch (p15Err) {
+        console.warn('[Watchdog] W-MISSION P1.5 check failed:', p15Err);
+      }
+
+      console.log(`[Watchdog] Mission health: ${missionFindings.length} findings`);
+    } catch (missionErr) {
+      console.warn('[Watchdog] Mission health check failed:', missionErr);
+    }
+
     // ═══ PERSIST FINDINGS TO platform_findings TABLE ═══
     // Phase 2 of the Neural Constellation diagnostic overlay.
     // Each watchdog run writes its findings to platform_findings
@@ -3551,7 +3814,7 @@ Deno.serve(async (req) => {
     // title) so repeat findings upsert in place rather than
     // creating duplicate rows.
     try {
-      const allFindings = [...findings, ...behavioralFindings];
+      const allFindings = [...findings, ...behavioralFindings, ...missionFindings];
       const sha256Sync = (s: string): Promise<string> =>
         crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
           .then(b => Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, '0')).join(''));
