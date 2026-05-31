@@ -269,12 +269,17 @@ STRICT RULES — VIOLATIONS WILL BE REJECTED:
       const existingValues = new Set((existingPending || []).map(p => p.proposed_value.toLowerCase()));
 
       // Insert proposals
+      // QR1 (2026-05-31): the DB has a partial unique index on
+      // (client_id, proposal_type, normalized_value) WHERE status IN ('pending','applied').
+      // 23505 from this index is the intended behavior — log + skip, never throw.
+      // See docs/platform-operations/qr1-pre-flight-2026-05-31.md.
+      let qr1Deduped = 0;
       for (const proposal of validProposals) {
         if (existingValues.has(proposal.value.toLowerCase())) continue;
 
         const proposalType = proposal.type === 'add_entity' ? 'add_entity' : proposal.type;
 
-        await supabase.from('monitoring_proposals').insert({
+        const { error } = await supabase.from('monitoring_proposals').insert({
           client_id: client.id,
           proposal_type: proposalType,
           proposed_value: proposal.value,
@@ -288,7 +293,26 @@ STRICT RULES — VIOLATIONS WILL BE REJECTED:
           }
         });
 
+        if (error) {
+          // QR1 dedup index: intended behavior — duplicate caught at DB layer
+          if (error.code === '23505' && (error.message ?? '').includes('monitoring_proposals_dedup_idx')) {
+            qr1Deduped++;
+            console.info('[generate-monitoring-proposals] QR1 dedup blocked duplicate', {
+              client_id: client.id,
+              proposal_type: proposalType,
+              normalized_value: proposal.value.toLowerCase().trim(),
+            });
+            continue;
+          }
+          // Unexpected error — log but don't break the batch
+          console.error('[generate-monitoring-proposals] insert error (non-QR1)', error.message);
+          continue;
+        }
+
         totalProposals++;
+      }
+      if (qr1Deduped > 0) {
+        console.log(`[${client.name}] QR1 dedup blocked ${qr1Deduped} duplicate proposals`);
       }
 
       console.log(`[${client.name}] Accepted: ${validProposals.length}, Rejected: ${rejectedProposals}`);
