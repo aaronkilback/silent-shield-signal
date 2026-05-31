@@ -4,7 +4,22 @@
 
 **Commander's Intent:** *"Preserve decision space by shortening Signal → Decision → Action."*
 
-Every step in this package shortens — or refuses to manufacture — a decision loop. No package step manufactures noise. The Decision Check classifier (REQUIRED / MONITOR / NONE) is the anti-performative discipline that keeps the doctrine honest.
+**Operator-recorded success criterion (2026-05-31):**
+
+> NOT: *"Decision Frame deployed."*
+> IS: *"Decision owners reach the correct conclusion faster with less noise."*
+
+Shipping the artifact is necessary but not sufficient. Every step in this package shortens — or refuses to manufacture — a decision loop. The Decision Check classifier (REQUIRED / MONITOR / NONE) is the anti-performative discipline that keeps the doctrine honest. False-REQUIRED frames are worse than no frame at all.
+
+**Operator decisions ratified 2026-05-31 (post-package authoring):**
+
+| # | Decision | Operator answer |
+|---|---|---|
+| D1 | F.0 implementation under deferred-persistence scope | APPROVED |
+| D2 | F.2 sequencing — Path α (after Task #48) or Path β (bundle) | Path α APPROVED — Task #48 ships first |
+| D3 | Pre-prod visual review of rendered samples (quiet-day NONE / MONITOR / REQUIRED) | REQUIRED before any prod deploy |
+| D4 | Parse-failure policies — Policy A daily / Policy B POI / Policy C wildfire | APPROVED as proposed |
+| D5 | A.6 quiet-day NONE verification — manual classification matrix (Correct/False × NONE/MONITOR/REQUIRED) | APPROVED; no automation until empirical behavior is understood |
 
 ---
 
