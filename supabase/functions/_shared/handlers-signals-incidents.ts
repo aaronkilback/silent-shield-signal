@@ -23,35 +23,67 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 
 export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
 
-  get_signal_incident_status: async (args, supabaseClient) => {
+  // R6 (Task #107) — tenant-scope hardening. Mirrors PROD-EE pattern.
+  // Dispatcher passes tenantId as 4th argument (per executeTool at
+  // dashboard-ai-assistant/index.ts:488). Prior signature `(args, supabaseClient)`
+  // silently discarded the tenantId and ran against a SERVICE_ROLE client (RLS
+  // bypassed) — list mode returned cross-tenant signals and lookup mode resolved
+  // any signal UUID. Both modes now require an active tenant context and reject
+  // cross-tenant IDs as not-in-scope rather than returning foreign data.
+  get_signal_incident_status: async (args, supabaseClient, _userId, tenantId) => {
+    if (!tenantId) {
+      console.warn("[R6] get_signal_incident_status invoked without tenantId — denied");
+      return {
+        error: "TENANT_BOUNDARY: get_signal_incident_status requires an active tenant context.",
+        signals: [],
+      };
+    }
     const signalId = args.signal_id;
-    // Batch mode: no signal_id → list recent signals with their incident linkage
+    // Batch mode: no signal_id → list recent signals (tenant-scoped) with their
+    // incident linkage. Mirrors get_recent_signals' clients!inner join shape
+    // to defend the tenant filter at both signals.tenant_id and clients.tenant_id.
     if (!signalId) {
       const limit = args.limit || 10;
       const { data: recentSignals, error: listErr } = await supabaseClient
         .from("signals")
-        .select("id, title, severity, status, created_at")
+        .select("id, title, severity, status, created_at, clients!inner(tenant_id)")
+        .eq("tenant_id", tenantId)
+        .eq("clients.tenant_id", tenantId)
         .order("created_at", { ascending: false })
         .limit(limit);
       if (listErr) return { error: listErr.message };
-      return { signals: recentSignals, count: recentSignals?.length || 0 };
+      // Drop the join column from the returned payload — present only to enforce
+      // the second-axis tenant predicate.
+      const stripped = (recentSignals || []).map(({ clients: _clients, ...rest }: any) => rest);
+      return { signals: stripped, count: stripped.length };
     }
+    // Lookup mode — require the signal to belong to the caller's tenant.
+    // Foreign signal_ids resolve to maybeSingle null → honest "not in scope"
+    // response. Indistinguishable from "signal does not exist" — no metadata
+    // leakage about whether the row exists in another tenant.
     const { data: signal, error: signalError } = await supabaseClient
       .from("signals")
       .select("id, normalized_text, severity, raw_json, status")
       .eq("id", signalId)
+      .eq("tenant_id", tenantId)
       .maybeSingle();
-    if (signalError || !signal) return { error: `Signal not found: ${signalId}` };
+    if (signalError) return { error: signalError.message };
+    if (!signal) return { error: `Signal ${signalId} not found in current tenant scope` };
 
+    // Linked-incident lookups join through incidents.tenant_id to ensure the
+    // returned incident summary cannot reference a cross-tenant incident even
+    // if incident_signals carries a stale or cross-tenant linkage row.
     const { data: directIncident } = await supabaseClient
       .from("incidents")
       .select("id, status, created_at, priority, title")
       .eq("signal_id", signalId)
+      .eq("tenant_id", tenantId)
       .maybeSingle();
     const { data: linkedIncidents } = await supabaseClient
       .from("incident_signals")
-      .select("incident_id, incidents(id, status, created_at, priority, title)")
-      .eq("signal_id", signalId);
+      .select("incident_id, incidents!inner(id, status, created_at, priority, title, tenant_id)")
+      .eq("signal_id", signalId)
+      .eq("incidents.tenant_id", tenantId);
 
     const hasIncident = !!directIncident || (linkedIncidents && linkedIncidents.length > 0);
     const incident = directIncident || linkedIncidents?.[0]?.incidents;
@@ -193,13 +225,31 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     return enrichedSignals;
   },
 
-  get_active_incidents: async (args, supabaseClient) => {
+  // R2 (Task #107) — tenant-scope hardening. Mirrors PROD-EE pattern from
+  // get_recent_signals (lines 97-149). Prior signature `(args, supabaseClient)`
+  // silently discarded the tenantId passed by the dispatcher and ran against
+  // a SERVICE_ROLE client (RLS bypassed) — empirical: returned 52 cross-tenant
+  // active incidents to a CRT user whose scope contains 1. The TENANT_SCOPED_TOOLS
+  // gate fires but the gate is a presence-check on tenantId, not a filter.
+  // Tenant filter now enforced at both incidents.tenant_id and clients.tenant_id;
+  // any LLM-supplied client_id is validated against the caller's tenant before use.
+  get_active_incidents: async (args, supabaseClient, _userId, tenantId) => {
+    if (!tenantId) {
+      console.warn("[R2] get_active_incidents invoked without tenantId — denied");
+      return {
+        error: "TENANT_BOUNDARY: get_active_incidents requires an active tenant context.",
+        incidents: [],
+      };
+    }
     const now = new Date();
     const currentDateISO = now.toISOString();
 
     let query = supabaseClient
       .from("incidents")
-      .select("id, title, summary, status, priority, severity_level, opened_at, updated_at, client_id, clients(name)")
+      .select("id, title, summary, status, priority, severity_level, opened_at, updated_at, client_id, clients!inner(name, tenant_id)")
+      .eq("tenant_id", tenantId)
+      .eq("clients.tenant_id", tenantId)
+      .not("clients.name", "ilike", "\\_%")
       .in("status", ["open", "acknowledged", "contained"])
       .order("updated_at", { ascending: false });
 
@@ -212,7 +262,54 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
       }
     }
     if (args.priority) query = query.eq("priority", args.priority);
-    if (args.client_id) query = query.eq("client_id", args.client_id);
+    if (args.client_id) {
+      // Validate LLM-supplied client_id against tenant scope before applying the
+      // filter (PROD-EE pattern). Foreign client_id resolves to honest "not in
+      // tenant scope" empty response — never silently flows cross-tenant rows.
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(args.client_id)) {
+        const { data: clientCheck } = await supabaseClient
+          .from("clients")
+          .select("id")
+          .eq("id", args.client_id)
+          .eq("tenant_id", tenantId)
+          .maybeSingle();
+        if (!clientCheck) {
+          return {
+            current_date: currentDateISO.split("T")[0],
+            current_datetime: currentDateISO,
+            total_found: 0,
+            time_filter_applied: args.hours_back ? `Last ${args.hours_back} hours` : "None",
+            incidents: [],
+            summary: { p1_count: 0, p2_count: 0, stale_count: 0, recent_24h_count: 0 },
+            message: `Client ${args.client_id} not found in current tenant scope`,
+          };
+        }
+        query = query.eq("client_id", args.client_id);
+      } else {
+        // Name-based client lookup, scoped to tenant.
+        const { data: clientByName } = await supabaseClient
+          .from("clients")
+          .select("id")
+          .eq("tenant_id", tenantId)
+          .not("name", "ilike", "\\_%")
+          .ilike("name", `%${args.client_id}%`)
+          .limit(1)
+          .maybeSingle();
+        if (!clientByName) {
+          return {
+            current_date: currentDateISO.split("T")[0],
+            current_datetime: currentDateISO,
+            total_found: 0,
+            time_filter_applied: args.hours_back ? `Last ${args.hours_back} hours` : "None",
+            incidents: [],
+            summary: { p1_count: 0, p2_count: 0, stale_count: 0, recent_24h_count: 0 },
+            message: `No client matching "${args.client_id}" found in current tenant scope`,
+          };
+        }
+        query = query.eq("client_id", clientByName.id);
+      }
+    }
 
     const { data, error } = await query.limit(args.limit || 10);
     if (error) throw error;
