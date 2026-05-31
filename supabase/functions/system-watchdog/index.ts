@@ -3552,7 +3552,7 @@ Deno.serve(async (req) => {
     //          while eligible candidates exist)
     //   P1.3 — Stuck-running (cron_heartbeat in 'running' > 10 min)
     //   P1.2 — Zero-yield news (monitor-news-google 24h SUM signals = 0)
-    //   P1.4 — Undispatched alerts (alerts.dispatched_at NULL > 30 min)
+    //   P1.4 — Undispatched alerts (alerts.sent_at NULL > 30 min)
     //   P1.5 — Quarantine spike (24h rate > 15% OR > 3x 7d baseline)
     const missionFindings: any[] = [];
 
@@ -3714,7 +3714,7 @@ Deno.serve(async (req) => {
         const { data: undispatched } = await supabase
           .from('alerts')
           .select('id, created_at')
-          .is('dispatched_at', null)
+          .is('sent_at', null)
           .lt('created_at', new Date(Date.now() - 30 * 60000).toISOString())
           .order('created_at', { ascending: true });
 
@@ -3732,7 +3732,7 @@ Deno.serve(async (req) => {
             category: 'mission_health',
             severity: sev,
             title: `alert-delivery: ${count} undispatched alert(s) older than 30 min (oldest ${oldestMin} min)`,
-            analysis: `${count} rows in 'alerts' have dispatched_at IS NULL and were created over 30 minutes ago. ` +
+            analysis: `${count} rows in 'alerts' have sent_at IS NULL and were created over 30 minutes ago. ` +
                       `alert-delivery cron runs every 15 min; allowing 2x interval as grace. ` +
                       `Oldest undispatched alert is ${oldestMin} minutes old.`,
             plainEnglish: `${count} alert(s) were generated but never delivered. The notification pipeline is failing silently.`,
