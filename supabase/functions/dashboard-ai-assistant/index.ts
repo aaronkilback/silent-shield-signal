@@ -213,7 +213,7 @@ OPERATIONAL HONESTY (CRITICAL — ZERO TOLERANCE):
 • If a tool returned { success: false } or error → you MUST report it FAILED.
 • If you did NOT call a tool → you CANNOT claim the action happened.
 • NEVER claim to have sent alerts, dispatched patrols, contacted law enforcement, or notified staff unless a tool confirmed it.
-• NEVER say "I've updated the monitoring config" or "I've added keywords" without calling update_client_monitoring_config and getting a success response.
+• MONITORING CONFIG / BULK ENTITY TOGGLE: in this chat surface you do NOT have a tool to bulk-toggle entity monitoring (no update_entity case wired, no direct bulk handler). When the user asks to enable/disable monitoring for entities or to bulk-toggle, respond honestly: "I can identify which entities to toggle, but monitoring is configured per-entity in the Entities UI — please flip the toggle there." Do NOT claim "I've enabled monitoring," "I've toggled entities," or "I've updated the config" unless an actual tool call returned success=true in THIS turn. If a single-client monitoring config change is genuinely needed and update_client_monitoring_config is available as a tool to you, you may call it — otherwise refuse honestly.
 • NEVER say "I will add" or "I will update" without actually calling the tool in the same turn — this is fabrication.
 • NEVER say "I will continue to monitor" or promise real-time watching — you execute one-time actions only.
 • NEVER claim you shared documents with agents unless autonomous_actions_log confirms a 'document_dissemination' entry.
@@ -272,12 +272,21 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   "process_document",
   "analyze_visual_document",
   "create_entity",
-  "update_entity",
+  // R4 (Task #108) — phantom removed: `update_entity` had no case/handler
+  // anywhere and no declaration in aegis-tool-definitions.ts. Entry here
+  // did nothing because the gate only fires on tool calls the LLM can
+  // emit, and the LLM never had this tool in its function schema. Kept
+  // as a comment as INC-AEGIS-ACTION-INTEGRITY AR2 (no phantoms) audit
+  // breadcrumb. If a real tenant-scoped bulk-toggle tool is built later
+  // (AR5), re-add with backing case + handler + post-condition receipt.
   "read_intelligence_documents",
   "detect_signal_duplicates",
   "diagnose_feed_errors",
   "read_client_monitoring_config",
-  "update_client_monitoring_config",
+  // R4 (Task #108) — phantom removed: `update_client_monitoring_config`
+  // had no case/handler and no declaration. Persona prompt at the
+  // OPERATIONAL HONESTY block was also amended to remove the broken
+  // reference. Same AR2/AR5 disposition as `update_entity`.
   "analyze_signal_patterns",
   "suggest_categorization_rules",
   "analyze_cross_client_threats",
@@ -9336,7 +9345,13 @@ Return a JSON object (no markdown, only valid JSON):
           .eq("is_active", true),
         supabaseClient.from("signals").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
         supabaseClient.from("incidents").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
-        supabaseClient.from("entities").select("*", { count: "exact", head: true }),
+        // R3 (Task #108) — tenant-scope the entity count so the self-assessment
+        // surfaces the caller-tenant's entity total, not the cross-tenant
+        // global. Mirrors the signals/incidents predicate already in place.
+        // Empirical: pre-fix returned 2966 (global) to a CRT user whose scope
+        // is 62 entities — a visibly-wrong confident number presented to the
+        // operator alongside correctly-scoped signals/incidents counts.
+        supabaseClient.from("entities").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
       ]);
 
       if (agentsErr2 || !activeAgents2?.length) {
