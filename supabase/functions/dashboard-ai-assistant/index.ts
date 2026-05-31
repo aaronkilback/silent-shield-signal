@@ -4403,13 +4403,63 @@ Deno.serve(async (req) => {
     }
 
     case "lookup_ioc_indicator": {
-      // P0 Phase-C — fail-closed tenant gate; pass tenantId through to ai-tools-query
+      // Task #112 Phase 1 (Option C) — case body collapsed from ai-tools-query
+      // into the dashboard. Preserves PR #79 R5 tenant-scoping protections
+      // inline: caller tenant required, scoped client_ids resolved from the
+      // dashboard's tenantId, IOC search constrained via .in('client_id', …)
+      // with impossible-UUID fail-closed when the tenant has zero clients.
+      // No unscoped fallback path.
       assertTenantContext("lookup_ioc_indicator", tenantId);
-      const { data: iocResult, error: iocError } = await supabaseClient.functions.invoke("ai-tools-query", {
-        body: { toolName, parameters: { ...args, tenant_id: tenantId } }
+      const { indicator, indicator_type } = args ?? {};
+      if (!indicator) {
+        return { error: "indicator is required", message: "IOC lookup requires an indicator (domain, IP, URL, or hash)." };
+      }
+
+      const iocScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
+      const iocClientScope = iocScopedClientIds.length > 0
+        ? iocScopedClientIds
+        : ['00000000-0000-0000-0000-000000000000'];
+
+      const { data: iocMatches, error: iocError } = await supabaseClient
+        .from('signals')
+        .select('id, title, severity, confidence, received_at, source_url, raw_json, client_id, clients(name)')
+        .ilike('normalized_text', `%${indicator}%`)
+        .in('client_id', iocClientScope)
+        .order('received_at', { ascending: false })
+        .limit(10);
+
+      if (iocError) {
+        return { error: iocError.message, message: "IOC lookup failed" };
+      }
+
+      const iocMatchList = (iocMatches || []).map((sig: any) => {
+        const raw = sig.raw_json || {};
+        return {
+          signal_id:     sig.id,
+          signal_title:  sig.title,
+          severity:      sig.severity,
+          confidence:    sig.confidence,
+          received_at:   sig.received_at,
+          source_url:    sig.source_url,
+          client_name:   Array.isArray(sig.clients) ? sig.clients[0]?.name : sig.clients?.name,
+          // Surface the Defender TI article context if available
+          article_title: raw.article_title ?? null,
+          article_url:   raw.article_url   ?? null,
+          source_name:   raw.source_name   ?? null,
+          ioc_counts:    raw.ioc_counts    ?? null,
+        };
       });
-      if (iocError) return { error: iocError.message, message: "IOC lookup failed" };
-      return iocResult.result;
+
+      return {
+        indicator,
+        indicator_type: indicator_type ?? 'unknown',
+        verdict:        iocMatchList.length > 0 ? 'known_malicious' : 'unknown',
+        match_count:    iocMatchList.length,
+        matches:        iocMatchList,
+        note: iocMatchList.length > 0
+          ? `${indicator} appears in ${iocMatchList.length} Fortress signal(s). Treat as known-bad.`
+          : `${indicator} has no prior record in Fortress. Cannot confirm malicious without additional context.`,
+      };
     }
 
     case "assign_agent_mission": {
@@ -4552,13 +4602,58 @@ Deno.serve(async (req) => {
     }
 
     case "update_risk_profile": {
-      // P0 Phase-C — fail-closed tenant gate (promoted 2026-05-19)
+      // Task #112 Phase 1 (Option C) — case body collapsed from ai-tools-query
+      // into the dashboard. Preserves PR #79 R1 tenant-scoping protections
+      // inline: caller tenant required (assertTenantContext above), pre-check
+      // SELECT proves the target entity belongs to the caller's tenant before
+      // any mutation (Provenance Doctrine — also rejects NULL-tenant entities),
+      // UPDATE additionally constrained by .eq('tenant_id', tenantId) as
+      // belt-and-braces. Foreign / ownerless / nonexistent entity_ids are
+      // 404-indistinguishable.
       assertTenantContext("update_risk_profile", tenantId);
-      // update_risk_profile is a write operation — calls ai-tools-query
-      // P0 Phase-C — pass tenant_id to downstream so it can scope writes
-      const { data: urpResult, error: urpError } = await supabaseClient.functions.invoke("ai-tools-query", { body: { toolName, parameters: { ...args, tenant_id: tenantId } } });
-      if (urpError) return { error: urpError.message, message: "Failed to update risk profile" };
-      return urpResult.result;
+      const { entity_id: urpEntityId, risk_score: urpRiskScore, justifications: urpJustifications } = args ?? {};
+      if (!urpEntityId || urpRiskScore === undefined) {
+        return { error: "entity_id and risk_score required" };
+      }
+
+      // Pre-check: target entity must belong to the caller's tenant.
+      // .eq('tenant_id', …) rejects NULL-tenant entities (Provenance Doctrine).
+      const { data: urpOwnedEntity } = await supabaseClient
+        .from('entities')
+        .select('id')
+        .eq('id', urpEntityId)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+      if (!urpOwnedEntity) {
+        return {
+          error: `entity_id ${urpEntityId} not found in current tenant scope`,
+          entity_id: urpEntityId,
+        };
+      }
+
+      const { error: urpUpdateError } = await supabaseClient
+        .from('entities')
+        .update({
+          threat_score: urpRiskScore,
+          risk_level: urpRiskScore >= 80 ? 'critical' :
+                     urpRiskScore >= 60 ? 'high' :
+                     urpRiskScore >= 40 ? 'medium' : 'low',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', urpEntityId)
+        .eq('tenant_id', tenantId);
+
+      if (urpUpdateError) {
+        return { error: urpUpdateError.message, message: "Failed to update risk profile" };
+      }
+
+      return {
+        success: true,
+        entity_id: urpEntityId,
+        updated_risk_score: urpRiskScore,
+        justifications: urpJustifications,
+        timestamp: new Date().toISOString(),
+      };
     }
 
     case "recommend_playbook": {
