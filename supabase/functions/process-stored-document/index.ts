@@ -1540,11 +1540,29 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
             },
           }));
 
-          const { error: propErr } = await supabase.from('monitoring_proposals').insert(sourceProposals);
-          if (propErr) {
-            console.error('Monitoring proposals insert error:', propErr.message);
-          } else {
-            console.log(`Generated ${sourceProposals.length} monitoring proposals from document sources`);
+          // QR1 (2026-05-31): the DB has a partial unique index on
+          // (client_id, proposal_type, normalized_value) WHERE status IN ('pending','applied').
+          // Bulk insert would fail the whole batch on first dup -> switch to per-row insert
+          // with 23505 handled as expected behavior. See docs/platform-operations/qr1-pre-flight-2026-05-31.md.
+          let insertedCount = 0;
+          let qr1DedupedCount = 0;
+          for (const proposal of sourceProposals) {
+            const { error: propErr } = await supabase.from('monitoring_proposals').insert(proposal);
+            if (propErr) {
+              if (propErr.code === '23505' && (propErr.message ?? '').includes('monitoring_proposals_dedup_idx')) {
+                qr1DedupedCount++;
+                continue;
+              }
+              console.error('Monitoring proposals insert error:', propErr.message);
+              continue;
+            }
+            insertedCount++;
+          }
+          if (insertedCount > 0 || qr1DedupedCount > 0) {
+            console.log(
+              `Generated ${insertedCount} monitoring proposals from document sources` +
+              (qr1DedupedCount > 0 ? ` (QR1 dedup blocked ${qr1DedupedCount} duplicates)` : '')
+            );
           }
         }
       } catch (sourceError) {
