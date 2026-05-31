@@ -1,5 +1,6 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
+import { recordTelemetry } from "../_shared/observability.ts";
 
 /**
  * Generate Monitoring Proposals
@@ -301,6 +302,19 @@ STRICT RULES — VIOLATIONS WILL BE REJECTED:
               client_id: client.id,
               proposal_type: proposalType,
               normalized_value: proposal.value.toLowerCase().trim(),
+            });
+            // Persist a measurable record. recordTelemetry never throws.
+            // See docs/platform-operations/qr1-measurement-integrity-assessment-2026-05-31.md (Task #129).
+            await recordTelemetry(supabase, {
+              functionName: 'generate-monitoring-proposals',
+              durationMs: 0,
+              status: 'success',
+              context: {
+                event: 'qr1_dedup_blocked',
+                client_id: client.id,
+                proposal_type: proposalType,
+                normalized_value: proposal.value.toLowerCase().trim(),
+              },
             });
             continue;
           }
