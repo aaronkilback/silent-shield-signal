@@ -368,10 +368,45 @@ Deno.serve(async (req) => {
         break;
 
       case "update_risk_profile":
-        const { entity_id: entityId, risk_score, justifications } = parameters;
+        // R1 (Task #109) — close the cross-tenant WRITE surface. The dashboard
+        // caller (dashboard-ai-assistant:4550) passes tenant_id alongside
+        // entity_id; the prior receiver destructured but never consumed it,
+        // so .update().eq('id', entityId) mutated any entity by UUID regardless
+        // of tenant ownership (cross-tenant WRITE). The fix is receiver-side
+        // tenant validation: require tenant_id, verify the target entity
+        // belongs to that tenant via a SELECT pre-check, then mutate only
+        // on that proven-ownership id. Foreign / ownerless / nonexistent
+        // entity_ids are 404-indistinguishable (Quarantine Doctrine read-leak
+        // rule applied to write attempts).
+        const { entity_id: entityId, risk_score, justifications, tenant_id: urpCallerTenantId } = parameters;
         if (!entityId || risk_score === undefined) {
           return new Response(JSON.stringify({ error: 'entity_id and risk_score required' }), {
             status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        if (!urpCallerTenantId) {
+          return new Response(JSON.stringify({ error: 'TENANT_BOUNDARY: tenant_id is required for update_risk_profile' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Pre-check: target entity must belong to the caller's tenant.
+        // Note .eq('tenant_id', …) rejects NULL-tenant entities → defends
+        // Provenance Doctrine (no ownerless mutations).
+        const { data: urpOwnedEntity } = await supabase
+          .from('entities')
+          .select('id')
+          .eq('id', entityId)
+          .eq('tenant_id', urpCallerTenantId)
+          .maybeSingle();
+        if (!urpOwnedEntity) {
+          return new Response(JSON.stringify({
+            error: `entity_id ${entityId} not found in current tenant scope`,
+            entity_id: entityId,
+          }), {
+            status: 404,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
@@ -380,12 +415,13 @@ Deno.serve(async (req) => {
           .from('entities')
           .update({
             threat_score: risk_score,
-            risk_level: risk_score >= 80 ? 'critical' : 
+            risk_level: risk_score >= 80 ? 'critical' :
                        risk_score >= 60 ? 'high' :
                        risk_score >= 40 ? 'medium' : 'low',
             updated_at: new Date().toISOString(),
           })
           .eq('id', entityId)
+          .eq('tenant_id', urpCallerTenantId)
           .select()
           .single();
 
@@ -808,25 +844,49 @@ Deno.serve(async (req) => {
         break;
 
       case "lookup_ioc_indicator": {
-        const { indicator, indicator_type, client_id: iocClientId } = parameters;
+        // R5 (Task #109) — close the cross-tenant IOC verdict surface. The
+        // prior receiver destructured `client_id: iocClientId` and applied
+        // the filter only when present. The dashboard caller
+        // (dashboard-ai-assistant:4399) passes `tenant_id` (not `client_id`),
+        // so the filter never fired on the canonical call path → every IOC
+        // lookup searched all signals platform-wide → cross-tenant verdict
+        // returned to caller (e.g., CRT user told "yes hash X seen in
+        // [Petronas signal]"). Fix: require tenant_id, resolve scoped
+        // client_ids from it, search only within that tenant's signals.
+        const { indicator, indicator_type, tenant_id: iocCallerTenantId } = parameters;
         if (!indicator) {
           return new Response(JSON.stringify({ error: 'indicator is required' }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
+        if (!iocCallerTenantId) {
+          return new Response(JSON.stringify({ error: 'TENANT_BOUNDARY: tenant_id is required for lookup_ioc_indicator' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Resolve scoped client IDs from the caller's tenant. Fail-closed:
+        // tenant with zero clients → impossible-UUID filter → empty result,
+        // honest "unknown" verdict (never an unscoped fallback).
+        const { data: iocClientRows } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('tenant_id', iocCallerTenantId);
+        const iocScopedClientIds = (iocClientRows ?? []).map((c: { id: string }) => c.id);
+        const iocClientScope = iocScopedClientIds.length > 0
+          ? iocScopedClientIds
+          : ['00000000-0000-0000-0000-000000000000'];
 
         // Search normalized_text — covers all ingested signals regardless of source format
-        let iocQuery = supabase
+        const iocQuery = supabase
           .from('signals')
           .select('id, title, severity, confidence, received_at, source_url, raw_json, client_id, clients(name)')
           .ilike('normalized_text', `%${indicator}%`)
+          .in('client_id', iocClientScope)
           .order('received_at', { ascending: false })
           .limit(10);
-
-        if (iocClientId) {
-          iocQuery = iocQuery.eq('client_id', iocClientId);
-        }
 
         const { data: iocMatches, error: iocError } = await iocQuery;
 
