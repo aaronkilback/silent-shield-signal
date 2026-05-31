@@ -70,44 +70,40 @@ After running the two deploy commands, the operator can call back here with conf
 
 > *Track: duplicate insert attempts prevented · duplicates by proposal_type · duplicates by client · top duplicate-generating workflows. Objective: quantify operator attention recovered.*
 
-### Where the data lives
+### Where the data lives (CORRECTED 2026-05-31, Task #129/#130)
 
 Duplicate-prevention events surface in three places:
 
-1. **`edge_function_errors`** — service-role-captured `23505` errors that the writer code logs (when the dedup gate fires)
-2. **Edge function `console.info` logs** — the new QR1 logging lines: `[generate-monitoring-proposals] QR1 dedup blocked duplicate {...}`
-3. **`monitoring_proposals.status='superseded'` rows** — the historical cleanup (this stays static after migration)
+1. **`function_telemetry`** — the writers now call `recordTelemetry()` with `context.event = 'qr1_dedup_blocked'` and `context.client_id / proposal_type / normalized_value`. This is the load-bearing persistent record. *(Corrected from the original assumption of `edge_function_errors`; that table is only populated by THROWN errors, not by swallowed-and-handled ones.)*
+2. **Edge function `console.info` logs** — the diagnostic log line: `[generate-monitoring-proposals] QR1 dedup blocked duplicate {...}` — useful for live tailing via `get_logs`; not used for analytical SQL.
+3. **`monitoring_proposals.status='superseded'` rows** — the historical cleanup (this stays static after migration).
 
-### Metric definitions (reproducible SQL)
+### Metric definitions (reproducible SQL — function_telemetry-based)
 
 ```sql
 -- M1: Total duplicate insert attempts prevented (since deploy)
--- Counts 23505 errors mentioning the QR1 index.
 SELECT COUNT(*) AS dup_attempts_prevented
-FROM public.edge_function_errors
-WHERE created_at > '2026-05-31 17:08:00 UTC'   -- post-migration
-  AND (error_message ILIKE '%monitoring_proposals_dedup_idx%'
-       OR error_message ILIKE '%duplicate key value violates unique constraint%');
+FROM public.function_telemetry
+WHERE context->>'event' = 'qr1_dedup_blocked'
+  AND started_at > '2026-05-31 17:08:00 UTC';   -- post-migration
 
--- M2: Duplicate attempts BY proposal_type (parsed from error_message)
--- The error message contains: Key (..., proposal_type, ...) = (..., <type>, ...)
+-- M2: Duplicate attempts BY proposal_type
 SELECT
-  substring(error_message FROM 'add_keyword|add_entity|remove_keyword|add_source|update_source') AS proposal_type,
+  context->>'proposal_type' AS proposal_type,
   COUNT(*) AS dup_count
-FROM public.edge_function_errors
-WHERE created_at > '2026-05-31 17:08:00 UTC'
-  AND error_message ILIKE '%monitoring_proposals_dedup_idx%'
+FROM public.function_telemetry
+WHERE context->>'event' = 'qr1_dedup_blocked'
+  AND started_at > '2026-05-31 17:08:00 UTC'
 GROUP BY 1
 ORDER BY dup_count DESC;
 
--- M3: Duplicate attempts BY client_id (parsed from error_message)
--- Error format: Key (client_id, proposal_type, ...)=(<uuid>, ...)
+-- M3: Duplicate attempts BY client_id
 SELECT
-  substring(error_message FROM '\(([0-9a-f-]{36})') AS client_uuid_in_error,
+  context->>'client_id' AS client_id,
   COUNT(*) AS dup_count
-FROM public.edge_function_errors
-WHERE created_at > '2026-05-31 17:08:00 UTC'
-  AND error_message ILIKE '%monitoring_proposals_dedup_idx%'
+FROM public.function_telemetry
+WHERE context->>'event' = 'qr1_dedup_blocked'
+  AND started_at > '2026-05-31 17:08:00 UTC'
 GROUP BY 1
 ORDER BY dup_count DESC
 LIMIT 20;
@@ -116,9 +112,9 @@ LIMIT 20;
 SELECT
   function_name,
   COUNT(*) AS dup_attempts
-FROM public.edge_function_errors
-WHERE created_at > '2026-05-31 17:08:00 UTC'
-  AND error_message ILIKE '%monitoring_proposals_dedup_idx%'
+FROM public.function_telemetry
+WHERE context->>'event' = 'qr1_dedup_blocked'
+  AND started_at > '2026-05-31 17:08:00 UTC'
 GROUP BY function_name
 ORDER BY dup_attempts DESC;
 
@@ -137,26 +133,24 @@ SELECT COUNT(*) AS pending_depth
 FROM public.monitoring_proposals
 WHERE status = 'pending';
 
--- M7: Estimated operator attention recovered (per the success criterion)
+-- M7: Estimated operator attention recovered
 -- Assumes 30 seconds per dup that would have reached the operator at avg approval cost.
 SELECT
-  (SELECT COUNT(*) FROM public.edge_function_errors
-   WHERE created_at > '2026-05-31 17:08:00 UTC'
-     AND error_message ILIKE '%monitoring_proposals_dedup_idx%') * 30 / 60.0
+  (SELECT COUNT(*) FROM public.function_telemetry
+   WHERE context->>'event' = 'qr1_dedup_blocked'
+     AND started_at > '2026-05-31 17:08:00 UTC') * 30 / 60.0
   AS estimated_minutes_recovered_since_deploy;
 ```
 
-### Important caveat for metric reliability
+### Telemetry path resolved (Task #129 / #130)
 
-These metrics depend on `edge_function_errors` capturing the 23505 events. The new writer code uses `console.info` and `continue` — it does NOT throw. So whether `edge_function_errors` captures these depends on:
-- The `_shared/error-logger.ts` mechanism (whether it captures all console output or only errors)
-- The `_shared/observability.ts` telemetry pattern
+The original draft assumed `edge_function_errors` would capture the swallowed 23505 events. That assumption was wrong — that table is only populated by THROWN errors via the `withErrorLogging` wrapper or explicit `logError()` calls. The QR1 writer code catches and continues.
 
-I should verify this assumption AT T+24h with a test query. If `edge_function_errors` is silent (because the writer swallows + logs only via `console.info`), I'll need to either:
-- Switch the writer to also call `recordTelemetry()` with a `dedup_blocked` event
-- Add a dedicated audit table for the dedup-blocked events
+**Resolution (Task #130, branch `feat/qr1-telemetry-add`):** writers now also call `recordTelemetry()` with `context.event = 'qr1_dedup_blocked'` plus `client_id`, `proposal_type`, `normalized_value`. This persists each blocked event to `function_telemetry` — the table the M1–M4 queries above now read from.
 
-This is a known instrumentation gap. Document it explicitly so we don't claim success without measurement evidence.
+`recordTelemetry()` is documented as never-throws; failures log to console without disturbing the dedup logic.
+
+This is now consistent with the ratified *"Measurability is part of the feature"* doctrine — three-part completion gate (function works · outcome observable · outcome measurable in SQL).
 
 ---
 

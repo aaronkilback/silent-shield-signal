@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
+import { recordTelemetry } from "../_shared/observability.ts";
 // NOTE: pdfjs-dist is loaded dynamically inside the PDF extraction block to avoid
 // crashing the entire function on cold start if the CDN import is slow or fails.
 
@@ -1551,6 +1552,19 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
             if (propErr) {
               if (propErr.code === '23505' && (propErr.message ?? '').includes('monitoring_proposals_dedup_idx')) {
                 qr1DedupedCount++;
+                // Persist a measurable record. recordTelemetry never throws.
+                // See docs/platform-operations/qr1-measurement-integrity-assessment-2026-05-31.md (Task #129).
+                await recordTelemetry(supabase, {
+                  functionName: 'process-stored-document',
+                  durationMs: 0,
+                  status: 'success',
+                  context: {
+                    event: 'qr1_dedup_blocked',
+                    client_id: (proposal as any).client_id ?? null,
+                    proposal_type: (proposal as any).proposal_type ?? null,
+                    normalized_value: ((proposal as any).proposed_value ?? '').toLowerCase().trim(),
+                  },
+                });
                 continue;
               }
               console.error('Monitoring proposals insert error:', propErr.message);
