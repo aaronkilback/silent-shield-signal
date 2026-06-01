@@ -91,6 +91,12 @@ jobs:
           deno-version: v1.x
       - name: Run Deno test suite (evaluator · framing · prose-lint)
         run: deno test --allow-none --no-check supabase/functions/_shared/aegis-confidence.test.ts
+      - name: ER v1 Slice 2 — axes + cluster confidence + sufficiency-first gate
+        run: |
+          deno test --allow-none --no-check supabase/functions/_shared/er-axes/posting-time.test.ts
+          deno test --allow-none --no-check supabase/functions/_shared/er-axes/vocabulary.test.ts
+          deno test --allow-none --no-check supabase/functions/_shared/er-axes/source-class.test.ts
+          deno test --allow-none --no-check supabase/functions/_shared/er-cluster-confidence.test.ts
 
   no-auto-exec-on-score:
     name: Workstream D — no autonomous execution on score
