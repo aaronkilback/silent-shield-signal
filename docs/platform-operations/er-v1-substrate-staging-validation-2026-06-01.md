@@ -173,9 +173,21 @@ Substrate fully reversible in prod.
 
 Prod probe surfaced **74 entities with NULL `tenant_id`** — pre-existing INC-XTEN-class data (sibling of task #19 / #53). The tenant-match trigger correctly fail-closes against this surface (Test 4 above used one of these as the probe entity). No remediation action triggered by this slice; surfaced for separate triage under INC-XTEN sibling sweep.
 
-### §10.6 — T+1h watch
+### §10.6 — T+1h watch — **GREEN** (fired 2026-06-01T16:49Z via background task `b6v1gun8w`)
 
-Scheduled for `~2026-06-01T15:11Z`. Watch checks: (a) `clusters_count` + `members_count` remain 0 (no rogue writer), (b) schema unchanged (same constraints/indexes/RLS/trigger counts as §10.1), (c) no new edge-function errors referencing `actor_clusters` or `actor_cluster_members`.
+Watch ran approximately 2h38m after apply (apply 14:11:10Z → watch 16:49:52Z; overshoot due to in-flight Slice 2 validation work in parallel).
+
+| Check | T+0 | T+1h | Status |
+|---|---|---|---|
+| `actor_clusters` count | 0 | 0 | ✅ no rogue writer |
+| `actor_cluster_members` count | 0 | 0 | ✅ no rogue writer |
+| Tables present | 2 | 2 | ✅ schema stable |
+| Constraints | 10 | 10 | ✅ stable |
+| Indexes | 9 | 9 | ✅ stable |
+| RLS policies | 2 | 2 | ✅ stable |
+| Trigger present | 1 | 1 | ✅ stable |
+
+Substrate prod workstream is **CLOSED** (task #180). Slice 2 + Slice 3+ work continues separately.
 
 ## Status (prod)
 
