@@ -163,12 +163,27 @@ T-0 has **zero downstream consumers** today. All HELD per operator:
 
 ---
 
+## §5 — T+1h watch (2026-06-01T14:13Z — fired via background task `bxr8kv75a`)
+
+Watch ran ~89 minutes after T-0 apply (12:44:54Z → 14:13:01Z, exceeded planned ~1h due to scheduling overhead inside ER substrate work).
+
+| Check | Value | Status |
+|---|---|---|
+| `column_state` | `text NOT NULL DEFAULT 'unknown'::text` | ✅ unchanged |
+| `check_constraint` | `signals_temporal_grounding_check` — same 5-value ARRAY | ✅ unchanged |
+| `full_distribution` | 1,488 rows, all `unknown` (was 1,487 at T+0; +1 new signal in window) | ✅ no rogue writer |
+| `distribution_since_t0` | 1 signal created since `2026-06-01T12:44:54Z` — also `unknown` | ✅ new INSERTs honor default |
+
+**Live-insert default-value proof now satisfied.** A new prod signal was ingested in the watch window and correctly defaulted to `'unknown'`. No writer code has been changed to set this column to anything else (per substrate-first discipline).
+
+---
+
 ## §10 — Verdict
 
-**T-0 PROD: APPLIED + T+0 GREEN.**
+**T-0 PROD: APPLIED + T+0 GREEN + T+1h GREEN.**
 
-All staging-validated success criteria reproduced on prod at production scale. Constraint enforcement proven non-bypassable. Zero behavioral change observed. Rollback procedure ready.
+All staging-validated success criteria reproduced on prod at production scale. Constraint enforcement proven non-bypassable. Zero behavioral change observed across 89 minutes of production traffic (1 new signal, defaulted correctly). Rollback procedure ready.
 
-**T+1h validation pending** (background watch in flight). Will report final outcome when watch returns. No further operator action required at this time.
+T-0 substrate workstream is **CLOSED**. T-1 / T-2 / T-3 remain operator-gated separately.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
