@@ -44,14 +44,30 @@ export interface CapabilityEntry {
   /** Example questions that LOOK like they belong to this capability but are NOT supported today. */
   unsupported_questions: string[];
   /**
-   * Operator-facing language Aegis MUST use VERBATIM (or near-verbatim) when
+   * Customer-facing language Aegis MUST use VERBATIM (or near-verbatim) when
    * the capability is invoked but NOT_OPERATIONAL or PARTIAL. This is the
    * honest framing that prevents capability misrepresentation.
+   *
+   * TENANT-BOUNDARY RULE (operator-ratified 2026-06-01):
+   *   This string is EMITTED to the customer. It MUST be tenant-agnostic and
+   *   customer-safe. Forbidden in this string:
+   *     • Specific customer / tenant names (CRT, Petronas, BC Place, etc.)
+   *     • Internal roadmap tiers (Tier A, Tier B, etc.)
+   *     • Internal project labels (Workstream D, T-3 chain, etc.)
+   *     • Internal function names (analyze-threat-escalation, etc.)
+   *     • Internal audit classifications (RED/GREEN/Overconfidence Audit)
+   *     • Engineering implementation details (feature flags, budget, token state)
+   *     • References to other tenants existing
+   *   Allowed: generic capability concepts (entity resolution, temporal grounding,
+   *   etc.) — these are platform-wide concepts symmetric across tenants.
    */
   required_language: string;
   /** Keywords for server-side detection (lower-cased; matches via regex word-boundary). */
   detection_keywords: string[];
-  /** Roadmap pointer (Task ID, doc, etc.) for operator drill-down. */
+  /**
+   * Roadmap pointer (Task ID, doc, etc.) for operator drill-down.
+   * INTERNAL-ONLY: never emitted to customer-facing prompt blocks.
+   */
   roadmap_ref?: string;
 }
 
@@ -83,7 +99,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
     ],
     required_language:
       "Account Cycling Detection is not yet operational. Fortress cannot detect cycling activity at this time. " +
-      "This capability is on the roadmap (CRT Tier B) but requires social acquisition and Entity Resolution prerequisites. " +
+      "This capability is planned but currently requires additional development. " +
       "Note: this is a capability gap, not an absence of findings — Fortress is not yet able to look.",
     detection_keywords: [
       "cycling", "cycle accounts", "alternate account", "alt account", "alt-account",
@@ -92,13 +108,13 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
       "new identity", "same person new account",
       "account fingerprint",
     ],
-    roadmap_ref: "Task #154 §1 (CRT Tier B); Task #173 #9",
+    roadmap_ref: "Task #154 §1; Task #173 #9 (internal — never emitted)",
   },
   {
     id: "image-recognition",
     name: "Image Recognition / Suspect Identification",
     status: "NOT_OPERATIONAL",
-    description: "Face matching against CRT-curated ban list or entity-photos; visual evidence correlation.",
+    description: "Face matching against operator-curated ban list or entity-photos; visual evidence correlation.",
     supported_questions: [],
     unsupported_questions: [
       "Is this person in the photo on our ban list?",
@@ -108,8 +124,8 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
     ],
     required_language:
       "Image Recognition is not yet operational. Fortress cannot perform face matching at this time. " +
-      "This capability is on the roadmap (CRT Tier B) but requires a Legal Authorization Surface (face-matching legal regime) " +
-      "and a pre-deployment bias audit as hard gates. " +
+      "This capability requires a legal-authorization framework and a pre-deployment bias audit as hard gates " +
+      "before it can ship. " +
       "Note: this is a capability gap, not an absence of findings.",
     detection_keywords: [
       "face match", "face matching", "facial recognition", "facial-recognition",
@@ -118,7 +134,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
       "match this image", "match this photo",
       "visual identification",
     ],
-    roadmap_ref: "Task #154 §2 (CRT Tier B); Task #173 #10",
+    roadmap_ref: "Task #154 §2; Task #173 #10 (internal — never emitted)",
   },
   {
     id: "historical-reconstruction",
@@ -127,7 +143,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
     description: "Defensible chronology of past events with original-content evidence, suitable for legal / board / insurance use.",
     supported_questions: [],
     unsupported_questions: [
-      "Reconstruct what happened at the BC Place protest in 2022.",
+      "Reconstruct what happened at a past protest event.",
       "Build a defensible timeline of activity since date X.",
       "Produce a forensic chronology for this incident.",
       "Show me the legally-defensible reconstruction of the event.",
@@ -135,8 +151,8 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
     required_language:
       "Defensible Historical Reconstruction is not yet operational. Fortress can summarize available signals about a past " +
       "event, but cannot produce a defensible chronological reconstruction at this time. " +
-      "This is a compound capability that depends on Temporal Integrity (T-3 chain), Information Fidelity (original-content " +
-      "snapshotting), Flight Recorder coverage expansion, and Entity Resolution — all currently held or not yet built. " +
+      "This is a compound capability that depends on temporal grounding, original-content preservation, retrieval-chain " +
+      "coverage, and cross-platform entity resolution — components that are currently incomplete. " +
       "Note: when summarizing past signals, Fortress will mark them as best-effort summary, not defensible reconstruction.",
     detection_keywords: [
       "reconstruct", "reconstruction",
@@ -163,7 +179,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
     required_language:
       "Cross-platform Entity Resolution is not yet operational. Fortress can show operator-curated entity relationships " +
       "(currently a sparse graph) but cannot automatically link accounts across platforms. " +
-      "This capability is on the roadmap (CRT Tier B foundation; required by Account Cycling and Image Recognition). " +
+      "This capability is planned but currently requires additional development. " +
       "Note: this is a capability gap, not an absence of findings.",
     detection_keywords: [
       "same person", "same actor",
@@ -172,7 +188,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
       "identity correlation", "resolve identity",
       "find all accounts for", "find accounts belonging to",
     ],
-    roadmap_ref: "Task #154 §1.3 (CRT Tier B); Task #173 #8",
+    roadmap_ref: "Task #154 §1.3; Task #173 #8 (internal — never emitted)",
   },
   {
     id: "trajectory-analysis",
@@ -191,8 +207,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
       "Trajectory Analysis (behavioral-change-over-time claims) is not yet operational at defensible coverage. Fortress can " +
       "report point-in-time signal severity but cannot produce defensible trajectory or escalation-probability claims. " +
       "Per-entity behavioral baselines (the foundation for anomaly detection) are not yet computed. " +
-      "Note: this is a capability gap. The current analyze-threat-escalation output is classified RED in the Overconfidence " +
-      "Audit and should be treated as exploratory, not authoritative.",
+      "Note: this is a capability gap; numeric trajectory probabilities should not be relied upon today.",
     detection_keywords: [
       "trajectory", "escalating", "de-escalating", "deescalating",
       "getting worse", "getting more dangerous", "becoming more dangerous",
@@ -217,7 +232,7 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
       "Original-Content Snapshotting is not yet operational. Fortress preserves source URLs but does NOT snapshot the " +
       "content at acquisition time. URLs may decay or change between acquisition and review. For legal/insurance use, " +
       "additional independent preservation is recommended. " +
-      "Note: this gap directly limits Evidence Package and Historical Reconstruction quality.",
+      "Note: this gap directly limits evidence-package defensibility and historical reconstruction quality.",
     detection_keywords: [
       "snapshot", "snapshotted", "snapshotting",
       "preserve evidence", "preserve the content",
@@ -240,8 +255,8 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
     ],
     required_language:
       "Image Content Extraction (OCR / description / face vectors) is not yet operational. Fortress preserves image URLs " +
-      "but does not extract image content. This is a prerequisite for Image Recognition and a contributor to Information " +
-      "Fidelity in Coverage Confidence.",
+      "but does not extract image content. This is a prerequisite for Image Recognition and contributes to overall " +
+      "information fidelity.",
     detection_keywords: [
       "image content", "what's in the image", "what is in this image",
       "ocr", "read the text in", "extract text from image",
@@ -269,10 +284,10 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
       "What's trending on Instagram about X?",
     ],
     required_language:
-      "Direct Social Media Collection is currently limited. X (Twitter) is retired (budget); Meta (Facebook/Instagram) is " +
-      "currently offline (token reactivation pending); Instagram CSE path produces zero yield; Reddit, Discord, Telegram, " +
-      "and TikTok are not collected. When a question requires social context, Fortress will NOTE the explicit collection " +
-      "gap (e.g., 'Reddit not collected for this entity').",
+      "Direct Social Media Collection is currently limited. Twitter/X is not currently collected; Meta (Facebook/Instagram) " +
+      "is not currently collected; Reddit, Discord, Telegram, and TikTok are not collected. News articles that reference " +
+      "social-media content may still be collected. When a question requires direct social-platform context, Fortress will " +
+      "NOTE the explicit collection gap (e.g., 'Reddit not collected for this entity').",
     detection_keywords: [
       "twitter", "x.com",
       "reddit", "subreddit",
@@ -354,9 +369,9 @@ export const CAPABILITY_REGISTRY: CapabilityEntry[] = [
       "Compile an Evidence Package with full chain-of-custody for every claim.",
     ],
     required_language:
-      "Evidence Package Generation produces cited-source POI reports with operator-curated content. Original-content " +
-      "snapshots are NOT preserved (URLs may decay). Workstream D claim-frames are feature-flagged dark. For legal / " +
-      "insurance use, additional independent verification is recommended. " +
+      "Evidence Package Generation produces cited-source reports with operator-curated content. Original-content " +
+      "snapshots are NOT preserved (URLs may decay). Structured per-claim confidence framing is available but not yet " +
+      "default. For legal / insurance use, additional independent verification is recommended. " +
       "Note: this is the closest-to-defensible artifact Fortress can produce today; gaps are explicit.",
     detection_keywords: [
       "evidence package",

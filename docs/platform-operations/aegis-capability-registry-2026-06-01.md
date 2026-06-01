@@ -26,8 +26,8 @@ These capabilities do **not** exist in production today. Aegis must refuse with 
 - **Description**: Detection of single actor controlling multiple new accounts to evade bans / rate limits / takedowns
 - **Supported questions**: NONE
 - **Unsupported questions (samples)**: *"Has any threat actor been cycling between accounts?"* · *"Is this banned user reappearing under a new identity?"*
-- **Required language**: *"Account Cycling Detection is not yet operational. Fortress cannot detect cycling activity at this time. This capability is on the roadmap (CRT Tier B) but requires social acquisition and Entity Resolution prerequisites. Note: this is a capability gap, not an absence of findings — Fortress is not yet able to look."*
-- **Roadmap**: Task #154 §1; Task #173 #9
+- **Required language** (customer-safe, post-sanitization 2026-06-01): *"Account Cycling Detection is not yet operational. Fortress cannot detect cycling activity at this time. This capability is planned but currently requires additional development. Note: this is a capability gap, not an absence of findings — Fortress is not yet able to look."*
+- **Internal roadmap ref** (never emitted): Task #154 §1; Task #173 #9
 
 ### Image Recognition / Suspect Identification
 - **Status**: NOT_OPERATIONAL

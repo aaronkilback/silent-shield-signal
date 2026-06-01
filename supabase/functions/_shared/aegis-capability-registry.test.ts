@@ -201,6 +201,94 @@ Deno.test("per-question warning: mixed NOT_OP + PARTIAL — NOT_OP block first",
   assert(notOpIdx >= 0 && partialIdx > notOpIdx, "NOT_OPERATIONAL must appear before PARTIAL");
 });
 
+// ─── Tenant-boundary guard (operator-ratified 2026-06-01) ──────────────────
+// Customer-facing strings (description + required_language + unsupported_questions)
+// MUST be tenant-agnostic. These regression tests fail if any entry reintroduces
+// a customer name, roadmap tier, internal project label, internal function name,
+// or engineering implementation detail.
+const FORBIDDEN_IN_CUSTOMER_FACING = [
+  // Specific customer / tenant names
+  /\bCRT\b/i,
+  /\bPetronas\b/i,
+  /\bBC[- ]Place\b/i,
+  /\bFIFA\b/i,
+  // Internal roadmap tiers
+  /\bTier [ABC]\b/,
+  // Internal project labels
+  /\bWorkstream [A-Z]\b/,
+  /\bT-[0-9]\s*chain\b/i,
+  /\bC-[0-9]\b/,
+  /\bPhase [A-Z]\b/,
+  // Internal function names
+  /\banalyze-threat-escalation\b/,
+  /\bgenerate-poi-report\b/,
+  /\bdashboard-ai-assistant\b/,
+  // Internal audit labels
+  /\bOverconfidence Audit\b/i,
+  /\bclassified RED\b/i,
+  /\bclassified GREEN\b/i,
+  // Engineering implementation details
+  /\bfeature[- ]?flag/i,
+  /\btoken reactivation\b/i,
+  /\bCSE path\b/i,
+  // Internal task references
+  /\bTask #\d+\b/,
+];
+
+function scanForLeaks(label: string, text: string): { pattern: string; match: string }[] {
+  const out: { pattern: string; match: string }[] = [];
+  for (const re of FORBIDDEN_IN_CUSTOMER_FACING) {
+    const m = re.exec(text);
+    if (m) out.push({ pattern: re.toString(), match: m[0] });
+  }
+  return out;
+}
+
+for (const c of CAPABILITY_REGISTRY) {
+  Deno.test(`tenant-boundary: ${c.id} description is customer-safe`, () => {
+    const leaks = scanForLeaks(`${c.id}.description`, c.description);
+    assertEquals(leaks, [], `${c.id}.description contains forbidden tokens: ${JSON.stringify(leaks)}`);
+  });
+  Deno.test(`tenant-boundary: ${c.id} required_language is customer-safe`, () => {
+    const leaks = scanForLeaks(`${c.id}.required_language`, c.required_language);
+    assertEquals(leaks, [], `${c.id}.required_language contains forbidden tokens: ${JSON.stringify(leaks)}`);
+  });
+  Deno.test(`tenant-boundary: ${c.id} supported_questions are customer-safe`, () => {
+    for (const q of c.supported_questions) {
+      const leaks = scanForLeaks(`${c.id}.supported_question`, q);
+      assertEquals(leaks, [], `${c.id}.supported_questions item contains forbidden tokens: ${JSON.stringify(leaks)}`);
+    }
+  });
+  Deno.test(`tenant-boundary: ${c.id} unsupported_questions are customer-safe`, () => {
+    for (const q of c.unsupported_questions) {
+      const leaks = scanForLeaks(`${c.id}.unsupported_question`, q);
+      assertEquals(leaks, [], `${c.id}.unsupported_questions item contains forbidden tokens: ${JSON.stringify(leaks)}`);
+    }
+  });
+}
+
+Deno.test("tenant-boundary: buildCapabilityRegistryPromptBlock emits no forbidden tokens", () => {
+  const block = buildCapabilityRegistryPromptBlock();
+  const leaks = scanForLeaks("registry-prompt-block", block);
+  assertEquals(leaks, [], `registry prompt block contains forbidden tokens: ${JSON.stringify(leaks)}`);
+});
+
+Deno.test("tenant-boundary: per-question warning emits no forbidden tokens for any NOT_OPERATIONAL entry", () => {
+  for (const c of CAPABILITY_REGISTRY.filter((c) => c.status === "NOT_OPERATIONAL")) {
+    const warn = buildPerQuestionCapabilityWarning([c]);
+    const leaks = scanForLeaks(`warning(${c.id})`, warn);
+    assertEquals(leaks, [], `per-question warning for ${c.id} contains forbidden tokens: ${JSON.stringify(leaks)}`);
+  }
+});
+
+Deno.test("tenant-boundary: per-question warning emits no forbidden tokens for any PARTIAL entry", () => {
+  for (const c of CAPABILITY_REGISTRY.filter((c) => c.status === "PARTIAL")) {
+    const warn = buildPerQuestionCapabilityWarning([c]);
+    const leaks = scanForLeaks(`warning(${c.id})`, warn);
+    assertEquals(leaks, [], `per-question warning for ${c.id} contains forbidden tokens: ${JSON.stringify(leaks)}`);
+  }
+});
+
 // ─── End-to-end scenario probes (the operator's named test cases) ─────────
 const scenarios: Array<{ q: string; mustMatchId: string }> = [
   {
