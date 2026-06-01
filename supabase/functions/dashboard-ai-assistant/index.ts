@@ -20,6 +20,21 @@ import { recordRecommendation } from "../_shared/aegis-recommendations.ts";
 import { scoreClaim, type SourceRecord, type ClaimClass, type ClaimType } from "../_shared/aegis-confidence.ts";
 import { frameClaim, noActionConsideration, type ClaimFrame } from "../_shared/aegis-claim-frame.ts";
 import { proseLintReport } from "../_shared/aegis-prose-lint.ts";
+// Per-response Coverage Confidence — Aegis Communication Doctrine slim slice (Task #174).
+// Class is DERIVED FROM EVIDENCE here; LLM cannot reverse-engineer.
+import {
+  buildPromptInjectionBlock as buildCoverageConfidenceBlock,
+  computeCoverageConfidence,
+  scanProhibitedPhrases,
+  type CitedSignal,
+} from "../_shared/aegis-coverage-confidence.ts";
+// Capability Registry — distinguish 'found nothing' from 'cannot answer that' (Task #175).
+// Principle: Fortress must never imply a capability exists when it does not.
+import {
+  buildCapabilityRegistryPromptBlock,
+  buildPerQuestionCapabilityWarning,
+  detectTargetedCapabilities,
+} from "../_shared/aegis-capability-registry.ts";
 import { recordClaimConfidence } from "../_shared/aegis-claim-confidence-store.ts";
 
 const corsHeaders = {
@@ -156,7 +171,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = "", coverageConfidenceContext: string = "", capabilityRegistryContext: string = "", perQuestionCapabilityWarning: string = ""): string {
   const timeContext = getTimeContext();
 
   const tenantBoundaryBlock = tenantName
@@ -186,6 +201,9 @@ ${agentIntelligenceContext}
 ${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
+${perQuestionCapabilityWarning ? `\n${perQuestionCapabilityWarning}\n` : ''}
+${capabilityRegistryContext ? `\n${capabilityRegistryContext}\n` : ''}
+${coverageConfidenceContext ? `\n${coverageConfidenceContext}\n` : ''}
 ${FORTRESS_PLATFORM_OVERVIEW}
 
 ${FORTRESS_AEGIS_CAPABILITIES}
@@ -10209,6 +10227,24 @@ Deno.serve(async (req) => {
     let copContext = "";
     // ────────────────────────────────────────────────────────────────────────
 
+    // ── COVERAGE CONFIDENCE (Task #174 — Aegis Communication Doctrine slim slice) ──
+    // Per-response Coverage Confidence is computed DETERMINISTICALLY from tenant
+    // evidence at chat-init time and injected into the system prompt with the
+    // mandatory output template. The LLM is given the CLASS + REASON BULLETS;
+    // it cannot reverse-engineer (per operator's evidence-not-backfill constraint).
+    let coverageConfidenceContext = "";
+    // ────────────────────────────────────────────────────────────────────────
+
+    // ── CAPABILITY REGISTRY (Task #175 — capability-awareness layer) ─────────
+    // Distinguishes "found nothing" from "cannot answer that question".
+    // The registry block is injected into every prompt; the per-question
+    // warning fires only when the user's question matches NOT_OPERATIONAL or
+    // PARTIAL capability keywords (defense in depth for the LLM-side check).
+    // Principle: Fortress must never imply a capability exists when it does not.
+    const capabilityRegistryContext = buildCapabilityRegistryPromptBlock();
+    let perQuestionCapabilityWarning = "";
+    // ────────────────────────────────────────────────────────────────────────
+
     // Extract authenticated user ID from Authorization header for memory tools
     let authenticatedUserId: string | undefined;
     let userTenantId: string | undefined;
@@ -10449,6 +10485,168 @@ Deno.serve(async (req) => {
       });
     } catch (copErr) {
       console.warn("[Aegis] COP build failed (non-fatal):", copErr);
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
+    // ── PER-QUESTION CAPABILITY DETECTION (Task #175) ────────────────────────
+    // Detect whether the user's question targets a NOT_OPERATIONAL or PARTIAL
+    // capability. Inject a per-question warning at the top of the prompt so
+    // Aegis CANNOT default to "no signals indicating <X>" phrasing when the
+    // underlying capability doesn't exist.
+    const lastUserMsgForCapability: string = (() => {
+      try {
+        for (let i = (body.messages || []).length - 1; i >= 0; i--) {
+          const m = body.messages[i];
+          if (m?.role === "user" && typeof m.content === "string") return m.content;
+        }
+      } catch {
+        // ignore
+      }
+      return "";
+    })();
+    if (lastUserMsgForCapability) {
+      try {
+        const capMatches = detectTargetedCapabilities(lastUserMsgForCapability);
+        if (capMatches.length > 0) {
+          perQuestionCapabilityWarning = buildPerQuestionCapabilityWarning(capMatches);
+          console.log(
+            `[Aegis] Capability detection: matched ${capMatches.length} capability/capabilities;` +
+              ` first=${capMatches[0].id} (${capMatches[0].status})`,
+          );
+        }
+      } catch (capErr) {
+        console.warn("[Aegis] Capability detection failed (non-fatal):", capErr);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── COVERAGE CONFIDENCE COMPUTATION (Task #174 — Communication Doctrine) ──
+    // Compute Coverage Confidence over the tenant's recent signal set BEFORE the
+    // LLM call. Class + reason bullets are determined here from evidence; the
+    // LLM is given them verbatim and instructed NOT to modify (evidence-not-
+    // backfill). No tenant → no Coverage Confidence (fail-closed).
+    if (userTenantId) {
+      try {
+        const cutoff7dIso = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+        const [ccSignalsRes, missionFindingsRes] = await Promise.all([
+          supabaseClient
+            .from("signals")
+            .select(
+              "id, raw_json, event_date, created_at, quality_status, temporal_grounding",
+            )
+            .eq("tenant_id", userTenantId)
+            .eq("is_test", false)
+            .gte("created_at", cutoff7dIso)
+            .order("created_at", { ascending: false })
+            .limit(50),
+          supabaseClient
+            .from("platform_findings")
+            .select("id", { count: "exact", head: true })
+            .eq("category", "mission_health")
+            .eq("severity", "critical")
+            .is("resolved_at", null),
+        ]);
+
+        const ccSignals = (ccSignalsRes?.data ?? []) as Array<{
+          id: string;
+          raw_json: { source?: string; source_url?: string } | null;
+          event_date: string | null;
+          created_at: string;
+          quality_status: string | null;
+          temporal_grounding?: string | null;
+        }>;
+        const missionCriticalCount = missionFindingsRes?.count ?? 0;
+
+        // Build CitedSignal[] from query rows
+        const cited: CitedSignal[] = ccSignals.map((s) => {
+          const sourceLabel = (s.raw_json?.source as string) || "unknown_source";
+          // Publisher lineage = host(source_url) when present; else source_label
+          let publisher_lineage = sourceLabel;
+          const urlStr = s.raw_json?.source_url as string | undefined;
+          if (urlStr) {
+            try {
+              publisher_lineage = new URL(urlStr).host || sourceLabel;
+            } catch {
+              // ignore — fall back to sourceLabel
+            }
+          }
+          return {
+            signal_id: s.id,
+            source_class: sourceLabel,
+            publisher_lineage,
+            event_date: s.event_date,
+            created_at: s.created_at,
+            temporal_grounding: (s.temporal_grounding as
+              | "unknown"
+              | "current_grounded"
+              | "historical_grounded"
+              | "current_inferred"
+              | "historical_inferred"
+              | null
+              | undefined) || undefined,
+            is_quarantined: s.quality_status === "quarantined",
+          };
+        });
+
+        // Heuristic detection from latest user message
+        const lastUserMsg = (() => {
+          for (let i = (body.messages || []).length - 1; i >= 0; i--) {
+            const m = body.messages[i];
+            if (m?.role === "user" && typeof m.content === "string") return m.content;
+          }
+          return "";
+        })();
+        const operator_requested_detail =
+          /\b(why|explain|detail|in detail|more detail|expand|how do you know)\b/i.test(
+            lastUserMsg,
+          );
+        const material_risk =
+          /\b(urgent|emergency|imminent|active threat|active risk|right now|happening now)\b/i.test(
+            lastUserMsg,
+          );
+
+        const ccResult = computeCoverageConfidence({
+          cited_signals: cited,
+          question_requires_signal_grounding: true,
+          is_unknowable_question: false,
+          open_mission_health_critical_count: missionCriticalCount,
+          operator_requested_detail,
+          material_risk,
+        });
+
+        coverageConfidenceContext = buildCoverageConfidenceBlock(ccResult);
+        console.log(
+          `[Aegis] Coverage Confidence (tenant=${userTenantId}): ${ccResult.class}` +
+            ` | signals=${ccResult.contributors.cited_signal_count}` +
+            ` | source_classes=${ccResult.contributors.source_diversity_count}` +
+            ` | corroboration=${ccResult.contributors.corroboration_strength}` +
+            ` | temporal_pct=${Math.round(ccResult.contributors.temporal_grounding_rate * 100)}` +
+            ` | mission_critical=${ccResult.contributors.mission_integrity_critical_count}` +
+            ` | expanded=${ccResult.expanded_mode}` +
+            ` | trigger=${ccResult.expanded_trigger ?? "none"}`,
+        );
+
+        // Flight recorder: Coverage Confidence retrieval trace (so the audit
+        // shows class + contributor values came from real evidence)
+        rec.retrieval({
+          surface: "CoverageConfidence",
+          tenantScope: userTenantId,
+          returnedObjectIds: cited.map((c) => c.signal_id),
+          fallbackPath: "none",
+          provenance: {
+            class: ccResult.class,
+            reason_bullets: ccResult.reason_bullets,
+            contributors: ccResult.contributors,
+            expanded_mode: ccResult.expanded_mode,
+            expanded_trigger: ccResult.expanded_trigger,
+          },
+        });
+      } catch (ccErr) {
+        // Non-fatal: if Coverage Confidence cannot be computed, the response
+        // ships without the section (LLM has no system-prompt instruction to
+        // emit it). Operator-visible degradation, not failure.
+        console.warn("[Aegis] Coverage Confidence computation failed (non-fatal):", ccErr);
+      }
     }
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -10899,7 +11097,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
-        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "");
+        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "", coverageConfidenceContext, capabilityRegistryContext, perQuestionCapabilityWarning);
         // Flight recorder: prompt-assembly trace (final system prompt + context blocks).
         rec.prompt({
           systemPrompt: __recSystemPrompt,
@@ -10911,6 +11109,9 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             { name: 'cop', size: copContext?.length ?? 0 },
             { name: 'agent_intelligence', size: agentIntelligenceContext?.length ?? 0 },
             { name: 'login_summary', size: loginSummaryContext?.length ?? 0 },
+            { name: 'coverage_confidence', size: coverageConfidenceContext?.length ?? 0 },
+            { name: 'capability_registry', size: capabilityRegistryContext?.length ?? 0 },
+            { name: 'per_question_capability_warning', size: perQuestionCapabilityWarning?.length ?? 0 },
           ],
         });
         const firstResult = await callAiGatewayStream({
