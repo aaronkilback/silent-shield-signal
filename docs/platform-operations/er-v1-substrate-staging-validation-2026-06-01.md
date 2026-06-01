@@ -109,22 +109,85 @@ DROP FUNCTION IF EXISTS public.actor_cluster_member_tenant_match() CASCADE;
 - D5 modification: useful-insight metric (instrumented later)
 - T+1h watch — staging has no downstream consumers; T+1h applies post-prod-apply only.
 
-## Status
+## Status (staging)
 
 **Staging validation: COMPLETE — GREEN across §1–§7.**
 
-Substrate is correct, enforced, and reversible. Awaiting operator GO for prod apply.
+Substrate is correct, enforced, and reversible.
 
-### What operator GO authorizes (proposed)
+---
 
-1. Apply identical migration to prod (`kpuqukppbmwebiptqmog`) via MCP `apply_migration`.
-2. Run T+0 prod validation (same §1–§7 sequence).
-3. Schedule T+1h prod watch.
-4. Merge `feat/er-v1-actor-clusters-substrate` to main after prod T+0 GREEN.
+## §10 — Production application (2026-06-01)
 
-### What operator GO does NOT authorize
+**Operator GO recorded 2026-06-01** — operator decision: *"APPROVE production application of migration 20260601131544_er_v1_actor_clusters_substrate."* Constraints: no writer/reader/Aegis integration, no Capability Registry change.
 
-- No writer/reader implementation.
-- No Capability Registry status change.
-- No autonomous clustering.
+**Apply timestamp (prod):** `2026-06-01T14:11:10Z`
+**Prod project:** `kpuqukppbmwebiptqmog`
+**Method:** MCP `apply_migration` with byte-identical SQL (only header comments differ from staging — substantive DDL is identical).
+
+### §10.1 — Prod schema parity
+
+| Check | Staging | Prod | Match |
+|---|---|---|---|
+| `actor_clusters` columns | 8 | 8 | ✅ |
+| `actor_cluster_members` columns | 7 | 7 | ✅ |
+| Constraints (PK+FK+CHECK+UNIQUE) | 10 | 10 | ✅ |
+| Indexes (incl. PK + UNIQUE) | 9 | 9 | ✅ |
+| RLS-enabled tables | 2 | 2 | ✅ |
+| SELECT policies | 2 | 2 | ✅ |
+| Triggers (non-internal) | 1 | 1 | ✅ |
+
+### §10.2 — Prod constraint enforcement (5/5 PASS, SQLSTATE 23514)
+
+| # | Test | Result |
+|---|---|---|
+| 1 | INSERT cluster `status='invalid_status'` | PASS — rejected |
+| 2 | INSERT cluster `suggested` + `resolved_at=now()` | PASS — rejected |
+| 3 | INSERT member `role='invalid_role'` | PASS — rejected |
+| 4 | INSERT member referencing entity with NULL `tenant_id` (entity `2f01018f-…`) | PASS — *"refers to entity with NULL tenant_id (Provenance Doctrine violation)"* |
+| 5 | INSERT member where cluster.tenant_id (CRT) ≠ entity.tenant_id (Silent Shield Ops) | PASS — *"tenant mismatch: cluster tenant_id=0aaaaaaa-… but entity tenant_id=feff5c44-… (Aegis Authority + Memory: cross-tenant clustering forbidden)"* |
+
+### §10.3 — Prod clean state
+
+```
+clusters_count = 0
+members_count  = 0
+```
+
+No row debris from positive control or negative tests.
+
+### §10.4 — Prod rollback drill — PASS
+
+Same DROP CASCADE + RAISE pattern as staging. Post-drill:
+
+```
+tables_present  = 2
+fn_present      = 1
+trigger_present = 1
+policies_present = 2
+```
+
+Substrate fully reversible in prod.
+
+### §10.5 — Side-finding (pre-existing; not introduced by this migration)
+
+Prod probe surfaced **74 entities with NULL `tenant_id`** — pre-existing INC-XTEN-class data (sibling of task #19 / #53). The tenant-match trigger correctly fail-closes against this surface (Test 4 above used one of these as the probe entity). No remediation action triggered by this slice; surfaced for separate triage under INC-XTEN sibling sweep.
+
+### §10.6 — T+1h watch
+
+Scheduled for `~2026-06-01T15:11Z`. Watch checks: (a) `clusters_count` + `members_count` remain 0 (no rogue writer), (b) schema unchanged (same constraints/indexes/RLS/trigger counts as §10.1), (c) no new edge-function errors referencing `actor_clusters` or `actor_cluster_members`.
+
+## Status (prod)
+
+**Prod validation: COMPLETE — GREEN across §10.1–§10.5.** T+1h watch pending.
+
+---
+
+## What ships next (gated)
+
+- No writer/reader implementation in this slice.
+- No Capability Registry status change in this slice.
+- No autonomous clustering in this slice.
 - Any v1 scope expansion remains gated behind a separate work proposal per established discipline.
+
+Next operator-gated step: writer slice work proposal (clustering candidate generation) — separate authorization required.
