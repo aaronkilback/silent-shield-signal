@@ -22,11 +22,40 @@
 import type {
   AxesEvidenceV1,
   ClusterConfidence,
+  ClusterConfidenceClass,
+  EvidenceStrengthLabel,
   PostingTimeEvidence,
   VocabularyEvidence,
   SourceClassEvidence,
   SufficiencyResult,
 } from "./er-axes/_evidence-schema.ts";
+import { CLASS_MEANING } from "./er-axes/_evidence-schema.ts";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G-1 (2026-06-01) — Axis taxonomy: distinguish topical vs behavioral evidence.
+//
+// Why this matters: domain-clustered actors (e.g., two distinct activists in
+// the same movement) WILL share distinctive vocabulary terms. Vocabulary alone
+// — even at high-confidence levels — produces false positives on domain-shared
+// pairs. The tightened predicate requires a behavioral axis to corroborate
+// before MODERATE OVERLAP can be claimed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Axes that measure WHAT an actor talks about (susceptible to domain FP). */
+const TOPICAL_AXES = ["vocabulary"] as const;
+
+/** Axes that measure HOW an actor behaves (more identity-bearing). */
+const BEHAVIORAL_AXES = ["posting_time", "source_class"] as const;
+
+/** Maps the persisted enum class to the operator-facing overlap label. */
+export function evidenceStrengthLabel(cls: ClusterConfidenceClass): EvidenceStrengthLabel {
+  switch (cls) {
+    case "HIGH":    return "STRONG OVERLAP";
+    case "MEDIUM":  return "MODERATE OVERLAP";
+    case "LOW":     return "WEAK OVERLAP";
+    case "UNKNOWN": return "INSUFFICIENT EVIDENCE";
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §A — Sufficiency gate
@@ -114,7 +143,12 @@ export function runPredicateAggregation(
     (a) => a.has_high_confidence_evidence === true,
   );
 
-  let cls: "HIGH" | "MEDIUM" | "LOW" = "LOW";
+  // G-1: count BEHAVIORAL axes specifically (posting_time + source_class).
+  const behavioral_axes_moderate =
+    (input.postingTime.exceeds_moderate ? 1 : 0) +
+    (input.sourceClass.exceeds_moderate ? 1 : 0);
+
+  let cls: ClusterConfidenceClass = "LOW";
   let rationale: string;
 
   if (
@@ -124,31 +158,62 @@ export function runPredicateAggregation(
   ) {
     cls = "HIGH";
     rationale =
-      `HIGH: all 3 axes computed and exceed STRONG threshold; ` +
-      `at least one axis emits high-confidence evidence`;
-  } else if (axes_exceeding_moderate >= 2) {
+      `STRONG OVERLAP: all 3 axes exceeded STRONG threshold; ≥1 axis emits ` +
+      `high-confidence evidence. Operator confirmation required to assert identity.`;
+  } else if (
+    axes_exceeding_moderate >= 2 &&
+    has_high_confidence_evidence &&        // G-1: high-confidence axis required
+    behavioral_axes_moderate >= 1          // G-1: behavioral corroboration required
+  ) {
     cls = "MEDIUM";
     const which = [
       input.postingTime.exceeds_moderate ? "posting_time" : null,
       input.vocabulary.exceeds_moderate ? "vocabulary" : null,
       input.sourceClass.exceeds_moderate ? "source_class" : null,
     ].filter(Boolean).join(" + ");
-    rationale = `MEDIUM: ${axes_exceeding_moderate}/3 axes exceeded MODERATE threshold (${which})`;
+    rationale =
+      `MODERATE OVERLAP: ${axes_exceeding_moderate}/3 axes exceeded MODERATE ` +
+      `(${which}), ≥1 axis emits high-confidence evidence, and behavioral ` +
+      `corroboration is present (not topical alone). Operator confirmation ` +
+      `required to assert identity.`;
+  } else if (
+    axes_exceeding_moderate >= 2 &&
+    !has_high_confidence_evidence
+  ) {
+    cls = "LOW";
+    rationale =
+      `WEAK OVERLAP: ${axes_exceeding_moderate}/3 axes exceeded MODERATE but ` +
+      `no axis emits high-confidence evidence — possible domain or topic ` +
+      `overlap without identity match.`;
+  } else if (
+    axes_exceeding_moderate >= 2 &&
+    behavioral_axes_moderate === 0
+  ) {
+    cls = "LOW";
+    rationale =
+      `WEAK OVERLAP: ${axes_exceeding_moderate}/3 axes exceeded MODERATE but ` +
+      `only on topical evidence (vocabulary); behavioral corroboration ` +
+      `(posting time / source diversity) is absent. Topic-shared actors are ` +
+      `not the same actor.`;
   } else {
     cls = "LOW";
     rationale =
-      `LOW: ${axes_computed_count}/3 axes computed; ` +
-      `${axes_exceeding_moderate}/3 axes exceeded MODERATE — not enough corroboration`;
+      `WEAK OVERLAP: ${axes_computed_count}/3 axes computed; ` +
+      `${axes_exceeding_moderate}/3 axes exceeded MODERATE — not enough ` +
+      `corroboration to suggest moderate overlap.`;
   }
 
   return {
     cluster_confidence_class: cls,
+    evidence_strength_label: evidenceStrengthLabel(cls),
+    class_meaning: CLASS_MEANING,
     rationale,
     predicates: {
       axes_computed_count,
       axes_exceeding_moderate,
       axes_exceeding_strong,
       has_high_confidence_evidence,
+      behavioral_axes_moderate,
     },
   };
 }
@@ -178,7 +243,11 @@ export function deriveClusterConfidence(
       sufficiency,
       cluster_confidence: {
         cluster_confidence_class: "UNKNOWN",
-        rationale: `UNKNOWN: ${sufficiency.reason}`,
+        evidence_strength_label: evidenceStrengthLabel("UNKNOWN"),
+        class_meaning: CLASS_MEANING,
+        rationale: `INSUFFICIENT EVIDENCE: ${sufficiency.reason}. ` +
+          `Insufficient evidence is not weak evidence — re-evaluate once more ` +
+          `signals are collected for the thinly-covered entities.`,
         // Keep predicate counts for audit; the class is UNKNOWN because of sufficiency.
         predicates: aggregated.predicates,
       },

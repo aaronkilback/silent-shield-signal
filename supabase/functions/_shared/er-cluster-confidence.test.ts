@@ -140,9 +140,9 @@ Deno.test("predicate aggregation: all-3 strong + high-confidence → HIGH", () =
   assert(r.rationale.startsWith("HIGH"));
 });
 
-Deno.test("predicate aggregation: all-3 strong but no high-confidence → MEDIUM", () => {
-  // Strong overlap without an axis flagged as has_high_confidence_evidence
-  // should NOT promote to HIGH; this keeps HIGH rare.
+Deno.test("G-1: all-3 strong but no high-confidence → LOW (was MEDIUM pre-G-1)", () => {
+  // G-1 tightening: MEDIUM now requires ≥1 high-confidence axis.
+  // 3 strong axes without any high-confidence flag → LOW.
   const r = runPredicateAggregation({
     postingTime: computedPostingTime({
       exceeds_moderate: true, exceeds_strong: true, has_high_confidence_evidence: false,
@@ -154,19 +154,71 @@ Deno.test("predicate aggregation: all-3 strong but no high-confidence → MEDIUM
       exceeds_moderate: true, exceeds_strong: true, has_high_confidence_evidence: false,
     }),
   });
-  assertEquals(r.cluster_confidence_class, "MEDIUM");
+  assertEquals(r.cluster_confidence_class, "LOW");
+  assert(r.rationale.includes("no axis emits high-confidence evidence"));
   assertEquals(r.predicates.axes_exceeding_strong, 3);
-  assertEquals(r.predicates.has_high_confidence_evidence, false);
 });
 
-Deno.test("predicate aggregation: 2/3 axes moderate → MEDIUM", () => {
+Deno.test("G-1 CRITICAL: vocabulary high-confidence ALONE → LOW (domain FP scenario)", () => {
+  // The dangerous-failure-mode scenario from the adversarial review:
+  // two distinct activists in the same movement share distinctive domain
+  // vocabulary (≥10 terms) but no behavioral corroboration.
+  // PRE-G-1: this would have produced MEDIUM. POST-G-1: must produce LOW.
   const r = runPredicateAggregation({
-    postingTime: computedPostingTime({ exceeds_moderate: true, exceeds_strong: false }),
-    vocabulary: computedVocabulary({ exceeds_moderate: true, exceeds_strong: false }),
-    sourceClass: computedSourceClass({ exceeds_moderate: false, exceeds_strong: false }),
+    postingTime: computedPostingTime({ exceeds_moderate: false, exceeds_strong: false, has_high_confidence_evidence: false }),
+    vocabulary: computedVocabulary({
+      top_shared_distinctive_terms: Array.from({ length: 15 }, (_, i) => `term${i}`),
+      exceeds_moderate: true, exceeds_strong: true, has_high_confidence_evidence: true,
+    }),
+    sourceClass: computedSourceClass({ exceeds_moderate: false, exceeds_strong: false, has_high_confidence_evidence: false }),
+  });
+  // Only 1 axis moderate → cannot meet MEDIUM's "≥2 moderate" floor.
+  assertEquals(r.cluster_confidence_class, "LOW");
+});
+
+Deno.test("G-1: vocabulary high-confidence + posting-time moderate (no high-conf) → MEDIUM", () => {
+  // 2 axes moderate + 1 high-confidence axis (vocab) + 1 behavioral axis (posting-time) moderate
+  // = all three G-1 predicates met → MEDIUM.
+  const r = runPredicateAggregation({
+    postingTime: computedPostingTime({ exceeds_moderate: true, exceeds_strong: false, has_high_confidence_evidence: false }),
+    vocabulary: computedVocabulary({
+      top_shared_distinctive_terms: Array.from({ length: 12 }, (_, i) => `term${i}`),
+      exceeds_moderate: true, exceeds_strong: false, has_high_confidence_evidence: true,
+    }),
+    sourceClass: computedSourceClass({ exceeds_moderate: false, exceeds_strong: false, has_high_confidence_evidence: false }),
   });
   assertEquals(r.cluster_confidence_class, "MEDIUM");
-  assertEquals(r.predicates.axes_exceeding_moderate, 2);
+  assertEquals(r.predicates.behavioral_axes_moderate, 1);
+});
+
+Deno.test("G-1: vocabulary moderate + source-class moderate, NO high-confidence → LOW", () => {
+  // 2 moderates but no axis emits has_high_confidence_evidence.
+  // PRE-G-1: this would have produced MEDIUM. POST-G-1: LOW.
+  const r = runPredicateAggregation({
+    postingTime: computedPostingTime({ exceeds_moderate: false, exceeds_strong: false, has_high_confidence_evidence: false }),
+    vocabulary: computedVocabulary({ exceeds_moderate: true, exceeds_strong: false, has_high_confidence_evidence: false }),
+    sourceClass: computedSourceClass({ exceeds_moderate: true, exceeds_strong: false, has_high_confidence_evidence: false }),
+  });
+  assertEquals(r.cluster_confidence_class, "LOW");
+});
+
+Deno.test("G-1: 2 moderates BUT all topical (vocab only behavior with no behavioral) → LOW", () => {
+  // This codifies the explicit topical-vs-behavioral rule.
+  // Impossible at present because there's only ONE topical axis (vocabulary)
+  // and 2 moderates requires it + at least one behavioral. The test is a
+  // belt+suspenders guard if future schema adds more topical axes.
+  const r = runPredicateAggregation({
+    postingTime: computedPostingTime({ exceeds_moderate: false, exceeds_strong: false, has_high_confidence_evidence: false }),
+    vocabulary: computedVocabulary({
+      exceeds_moderate: true, exceeds_strong: false,
+      top_shared_distinctive_terms: Array.from({ length: 12 }, (_, i) => `term${i}`),
+      has_high_confidence_evidence: true,
+    }),
+    sourceClass: computedSourceClass({ exceeds_moderate: false, exceeds_strong: false, has_high_confidence_evidence: false }),
+  });
+  // Only 1 axis moderate (vocabulary) — fails MEDIUM's "≥2 moderate" base predicate.
+  assertEquals(r.cluster_confidence_class, "LOW");
+  assertEquals(r.predicates.behavioral_axes_moderate, 0);
 });
 
 Deno.test("predicate aggregation: 0 axes moderate → LOW", () => {

@@ -123,19 +123,48 @@ export interface SufficiencyResult {
   computed_axes_count: number;
 }
 
-/** Predicate-based Cluster Confidence verdict. */
+/** Predicate-based evidence-strength verdict.
+ *
+ * G-2 reframing (2026-06-01): the enum values are preserved for downstream
+ * consumers, but the operator-facing label uses overlap-strength language to
+ * make clear this is a system observation, NOT an identity verdict.
+ */
 export type ClusterConfidenceClass = "UNKNOWN" | "LOW" | "MEDIUM" | "HIGH";
+
+/** Operator-facing label that pairs with the enum class. G-2 reframing. */
+export type EvidenceStrengthLabel =
+  | "INSUFFICIENT EVIDENCE"   // UNKNOWN
+  | "WEAK OVERLAP"            // LOW
+  | "MODERATE OVERLAP"        // MEDIUM
+  | "STRONG OVERLAP";         // HIGH
+
+/** Stable message the operator can read to understand what the class IS and ISN'T. */
+export const CLASS_MEANING =
+  "This is evidence strength reported by the system; it is NOT an identity verdict. " +
+  "Identity confirmation remains the operator's call. STRONG and MODERATE overlap " +
+  "should be reviewed against the per-axis evidence before any confirm decision.";
 
 export interface ClusterConfidence {
   cluster_confidence_class: ClusterConfidenceClass;
   /**
+   * G-2: human-readable overlap-strength label paired with the class enum.
+   * Operator-facing surfaces should use this label, not the raw enum value.
+   */
+  evidence_strength_label: EvidenceStrengthLabel;
+  /**
+   * G-2: explicit framing — class is evidence strength, not identity verdict.
+   * Always populated with the same stable string so downstream surfaces can
+   * inject it verbatim without inventing language.
+   */
+  class_meaning: string;
+  /**
    * One-line plain-English rationale. Must answer the operator's
    * most-important question: "exactly why this class was selected".
    * Examples:
-   *   "UNKNOWN: posting_time + vocabulary lacked sufficient samples"
-   *   "LOW: 3 axes computed; no axis exceeded moderate-overlap threshold"
-   *   "MEDIUM: posting_time + vocabulary exceeded moderate threshold"
-   *   "HIGH: all 3 axes exceeded strong threshold; posting_time pearson_r=0.83 above high-confidence floor"
+   *   "INSUFFICIENT EVIDENCE: posting_time + vocabulary lacked sufficient samples"
+   *   "WEAK OVERLAP: 3 axes computed; no axis exceeded moderate-overlap threshold"
+   *   "MODERATE OVERLAP: 2/3 axes exceeded MODERATE with behavioral corroboration"
+   *   "STRONG OVERLAP: all 3 axes exceeded STRONG; ≥1 axis emits high-confidence evidence"
    */
   rationale: string;
   /** Bookkeeping the predicate aggregation used, for audit. */
@@ -144,6 +173,8 @@ export interface ClusterConfidence {
     axes_exceeding_moderate: number;
     axes_exceeding_strong: number;
     has_high_confidence_evidence: boolean;
+    /** G-1: behavioral-axis corroboration count (posting_time + source_class). */
+    behavioral_axes_moderate: number;
   };
 }
 

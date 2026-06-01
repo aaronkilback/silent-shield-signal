@@ -93,11 +93,23 @@ export async function writeClusterSuggestion(
   }
 
   // §B — INSERT the cluster row.
+  //
+  // G-3 (2026-06-01): UNKNOWN comparisons persist with status='auto_unknown'
+  // distinct from 'suggested'. The operator review queue (Slice 5) filters
+  // 'auto_unknown' out by default — preserving audit while preventing the
+  // queue from drowning in sparse-data noise. See:
+  //   docs/platform-operations/er-v1-slice-2-staging-jwt-platform-debt-…
+  //   feedback_maintenance_debt_is_operational_risk
+  const status =
+    input.axes_evidence.cluster_confidence.cluster_confidence_class === "UNKNOWN"
+      ? "auto_unknown"
+      : "suggested";
+
   const { data: clusterRow, error: clusterErr } = await input.supabase
     .from("actor_clusters")
     .insert({
       tenant_id: input.tenant_id,
-      status: "suggested",
+      status,
       summary_text: input.summary_text,
     })
     .select("id")
