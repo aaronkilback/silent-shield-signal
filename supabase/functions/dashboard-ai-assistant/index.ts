@@ -28,6 +28,13 @@ import {
   scanProhibitedPhrases,
   type CitedSignal,
 } from "../_shared/aegis-coverage-confidence.ts";
+// Capability Registry — distinguish 'found nothing' from 'cannot answer that' (Task #175).
+// Principle: Fortress must never imply a capability exists when it does not.
+import {
+  buildCapabilityRegistryPromptBlock,
+  buildPerQuestionCapabilityWarning,
+  detectTargetedCapabilities,
+} from "../_shared/aegis-capability-registry.ts";
 import { recordClaimConfidence } from "../_shared/aegis-claim-confidence-store.ts";
 
 const corsHeaders = {
@@ -164,7 +171,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = "", coverageConfidenceContext: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = "", coverageConfidenceContext: string = "", capabilityRegistryContext: string = "", perQuestionCapabilityWarning: string = ""): string {
   const timeContext = getTimeContext();
 
   const tenantBoundaryBlock = tenantName
@@ -194,6 +201,8 @@ ${agentIntelligenceContext}
 ${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
+${perQuestionCapabilityWarning ? `\n${perQuestionCapabilityWarning}\n` : ''}
+${capabilityRegistryContext ? `\n${capabilityRegistryContext}\n` : ''}
 ${coverageConfidenceContext ? `\n${coverageConfidenceContext}\n` : ''}
 ${FORTRESS_PLATFORM_OVERVIEW}
 
@@ -10226,6 +10235,16 @@ Deno.serve(async (req) => {
     let coverageConfidenceContext = "";
     // ────────────────────────────────────────────────────────────────────────
 
+    // ── CAPABILITY REGISTRY (Task #175 — capability-awareness layer) ─────────
+    // Distinguishes "found nothing" from "cannot answer that question".
+    // The registry block is injected into every prompt; the per-question
+    // warning fires only when the user's question matches NOT_OPERATIONAL or
+    // PARTIAL capability keywords (defense in depth for the LLM-side check).
+    // Principle: Fortress must never imply a capability exists when it does not.
+    const capabilityRegistryContext = buildCapabilityRegistryPromptBlock();
+    let perQuestionCapabilityWarning = "";
+    // ────────────────────────────────────────────────────────────────────────
+
     // Extract authenticated user ID from Authorization header for memory tools
     let authenticatedUserId: string | undefined;
     let userTenantId: string | undefined;
@@ -10468,6 +10487,38 @@ Deno.serve(async (req) => {
       console.warn("[Aegis] COP build failed (non-fatal):", copErr);
     }
     // ──────────────────────────────────────────────────────────────────────────
+
+    // ── PER-QUESTION CAPABILITY DETECTION (Task #175) ────────────────────────
+    // Detect whether the user's question targets a NOT_OPERATIONAL or PARTIAL
+    // capability. Inject a per-question warning at the top of the prompt so
+    // Aegis CANNOT default to "no signals indicating <X>" phrasing when the
+    // underlying capability doesn't exist.
+    const lastUserMsgForCapability: string = (() => {
+      try {
+        for (let i = (body.messages || []).length - 1; i >= 0; i--) {
+          const m = body.messages[i];
+          if (m?.role === "user" && typeof m.content === "string") return m.content;
+        }
+      } catch {
+        // ignore
+      }
+      return "";
+    })();
+    if (lastUserMsgForCapability) {
+      try {
+        const capMatches = detectTargetedCapabilities(lastUserMsgForCapability);
+        if (capMatches.length > 0) {
+          perQuestionCapabilityWarning = buildPerQuestionCapabilityWarning(capMatches);
+          console.log(
+            `[Aegis] Capability detection: matched ${capMatches.length} capability/capabilities;` +
+              ` first=${capMatches[0].id} (${capMatches[0].status})`,
+          );
+        }
+      } catch (capErr) {
+        console.warn("[Aegis] Capability detection failed (non-fatal):", capErr);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // ── COVERAGE CONFIDENCE COMPUTATION (Task #174 — Communication Doctrine) ──
     // Compute Coverage Confidence over the tenant's recent signal set BEFORE the
@@ -11046,7 +11097,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
-        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "", coverageConfidenceContext);
+        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "", coverageConfidenceContext, capabilityRegistryContext, perQuestionCapabilityWarning);
         // Flight recorder: prompt-assembly trace (final system prompt + context blocks).
         rec.prompt({
           systemPrompt: __recSystemPrompt,
@@ -11059,6 +11110,8 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             { name: 'agent_intelligence', size: agentIntelligenceContext?.length ?? 0 },
             { name: 'login_summary', size: loginSummaryContext?.length ?? 0 },
             { name: 'coverage_confidence', size: coverageConfidenceContext?.length ?? 0 },
+            { name: 'capability_registry', size: capabilityRegistryContext?.length ?? 0 },
+            { name: 'per_question_capability_warning', size: perQuestionCapabilityWarning?.length ?? 0 },
           ],
         });
         const firstResult = await callAiGatewayStream({
