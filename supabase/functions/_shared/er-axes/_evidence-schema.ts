@@ -111,7 +111,15 @@ export interface SourceClassEvidence extends AxisThresholdResult {
   classes_b: string[];
   /** Intersection of A's and B's classes. */
   shared_classes: string[];
-  /** |intersection| / |union|. Range [0, 1]. */
+  /**
+   * A′ guard: the subset of `shared_classes` that are DISTINCTIVE (specific
+   * institutional sources, not ubiquitous publication infrastructure like
+   * news/social). ONLY these qualify as behavioral corroboration. Shared
+   * ubiquitous classes are reported in `shared_classes` for transparency but
+   * excluded here — they reflect common publication infrastructure, not identity.
+   */
+  distinctive_shared_classes: string[];
+  /** |intersection| / |union| over ALL classes. Descriptive only; does NOT gate. */
   overlap_ratio: number;
   evidence_summary: string;
 }
@@ -283,6 +291,7 @@ export const EMPTY_SOURCE_CLASS: SourceClassEvidence = {
   classes_a: [],
   classes_b: [],
   shared_classes: [],
+  distinctive_shared_classes: [],
   overlap_ratio: 0,
   evidence_summary: "",
   exceeds_moderate: false,

@@ -2,12 +2,27 @@
 // ER v1 Slice 2 — Source-Class Overlap axis
 // =============================================================================
 //
-// Measures whether two actors appear on the same set of source classes — the
+// Measures whether two actors share a DISTINCTIVE source footprint — the
 // normalized taxonomy already in prod (`aegis-coverage-confidence.ts`).
 //
-// Why this axis matters: cross-platform reach is corroborative. Two actors
-// posting only to a single dominant platform (e.g., both "news") is a weak
-// signal — the axis stubs out below `SOURCE_CLASS_MIN_CLASSES_PER_ACTOR`.
+// A′ NON-UBIQUITOUS SHARED-CLASS GUARD (2026-06-02):
+//   Sharing ubiquitous publication infrastructure (news, social platforms, rss,
+//   blogs, video, local/community news) is NOT identity-corroborating — nearly
+//   any entity appears there. Read-only prod evidence: 96% of entities are
+//   {news} or {news+social}, so raw class overlap fired moderate/strong for
+//   almost every pair — a shared-infrastructure artifact, the same failure mode
+//   as the posting-time / monitor-cadence confound (G-9).
+//
+//   Therefore source-class contributes behavioral corroboration ONLY when the
+//   two actors share a class on the DISTINCTIVE allowlist (a specific
+//   institutional source, e.g. government / government_cyber). Overlap that is
+//   purely on ubiquitous classes is reported for transparency but does NOT
+//   exceed any threshold and does NOT count as behavioral corroboration.
+//
+//   This is fail-closed: the allowlist names what CAN corroborate; everything
+//   else — including unknown/future classes — cannot. The objective is
+//   trustworthiness, not sensitivity: prevent false MEDIUM/HIGH, never
+//   manufacture one from shared news/social coverage.
 //
 // Pure function given inputs. Caller is responsible for deduping + tenant-
 // scoping the source labels passed in.
@@ -21,17 +36,32 @@ import { normalizeSourceClass } from "../aegis-coverage-confidence.ts";
 
 /**
  * Minimum DISTINCT source classes per actor for this axis to be meaningful.
- * Below this, the axis emits insufficient_samples — an actor posting to only
- * one platform offers no diversity-based evidence.
+ * Below this, the axis emits insufficient_samples — an actor seen on only one
+ * class offers no diversity-based evidence.
  */
 export const SOURCE_CLASS_MIN_CLASSES_PER_ACTOR = 2;
 
-/** Overlap ratio ≥ this AND ≥1 shared class → moderate threshold. */
-export const SOURCE_CLASS_MODERATE_OVERLAP = 0.2;
+/**
+ * A′ allowlist: source classes that are DISTINCTIVE enough to count as behavioral
+ * corroboration when SHARED. These are specific institutional sources — appearing
+ * in a CISA/NVD/KEV cyber bulletin (government_cyber) or a CSIS/RCMP/gov source
+ * (government) is a characteristic far more specific than "mentioned in the news"
+ * or "posted on social". Everything NOT on this list (news, all social_*, rss,
+ * blog, video, community_local, court, wildfire, emergency_alert, unknown) is
+ * treated as ubiquitous and cannot corroborate. Operator-tunable (PR + sign-off).
+ * 'court' is intentionally EXCLUDED for now: on an energy/activism corpus,
+ * litigation/injunction coverage is common (topical), not identity-bearing.
+ */
+export const SOURCE_CLASS_CORROBORATING_CLASSES: ReadonlySet<string> = new Set([
+  "government",
+  "government_cyber",
+]);
 
-/** Overlap ratio ≥ this AND ≥2 shared classes → strong threshold. */
-export const SOURCE_CLASS_STRONG_OVERLAP = 0.5;
-export const SOURCE_CLASS_STRONG_SHARED_COUNT = 2;
+/** ≥ this many SHARED DISTINCTIVE classes → moderate behavioral corroboration. */
+export const SOURCE_CLASS_MODERATE_DISTINCTIVE_COUNT = 1;
+
+/** ≥ this many SHARED DISTINCTIVE classes → strong behavioral corroboration. */
+export const SOURCE_CLASS_STRONG_DISTINCTIVE_COUNT = 2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §B — Main axis function
@@ -70,6 +100,7 @@ export function computeSourceClassAxis(input: SourceClassInput): SourceClassEvid
       classes_a,
       classes_b,
       shared_classes: [],
+      distinctive_shared_classes: [],
       overlap_ratio: 0,
       evidence_summary: "",
       exceeds_moderate: false,
@@ -83,16 +114,34 @@ export function computeSourceClassAxis(input: SourceClassInput): SourceClassEvid
   const unionSize = new Set([...classes_a, ...classes_b]).size;
   const overlap_ratio = unionSize === 0 ? 0 : shared.length / unionSize;
 
-  const exceeds_moderate =
-    shared.length >= 1 && overlap_ratio >= SOURCE_CLASS_MODERATE_OVERLAP;
-  const exceeds_strong =
-    shared.length >= SOURCE_CLASS_STRONG_SHARED_COUNT &&
-    overlap_ratio >= SOURCE_CLASS_STRONG_OVERLAP;
+  // A′ guard: only shared DISTINCTIVE (allowlisted) classes corroborate. Shared
+  // ubiquitous classes (news/social/etc.) are reported but do not gate.
+  const distinctive_shared = shared.filter((c) => SOURCE_CLASS_CORROBORATING_CLASSES.has(c));
+  const ubiquitous_shared = shared.filter((c) => !SOURCE_CLASS_CORROBORATING_CLASSES.has(c));
 
-  const evidence_summary = shared.length === 0
-    ? `no shared source classes; A: [${classes_a.join(", ")}]; B: [${classes_b.join(", ")}]`
-    : `${shared.length} shared source classes (${shared.join(", ")}); ` +
-      `overlap_ratio=${overlap_ratio.toFixed(2)}`;
+  const exceeds_moderate = distinctive_shared.length >= SOURCE_CLASS_MODERATE_DISTINCTIVE_COUNT;
+  const exceeds_strong = distinctive_shared.length >= SOURCE_CLASS_STRONG_DISTINCTIVE_COUNT;
+
+  let evidence_summary: string;
+  if (shared.length === 0) {
+    evidence_summary =
+      `no shared source classes; A: [${classes_a.join(", ")}]; B: [${classes_b.join(", ")}]`;
+  } else if (distinctive_shared.length === 0) {
+    // The confound case: overlap exists but only on ubiquitous infrastructure.
+    evidence_summary =
+      `shared classes [${shared.join(", ")}] are all ubiquitous publication ` +
+      `infrastructure (news/social/etc.) — common to most entities, NOT ` +
+      `identity-corroborating; source-class contributes no behavioral evidence ` +
+      `(overlap_ratio=${overlap_ratio.toFixed(2)} reported for transparency only)`;
+  } else {
+    evidence_summary =
+      `${distinctive_shared.length} shared DISTINCTIVE source class(es) ` +
+      `[${distinctive_shared.join(", ")}]` +
+      (ubiquitous_shared.length
+        ? ` (ubiquitous shared [${ubiquitous_shared.join(", ")}] excluded as common infrastructure)`
+        : ``) +
+      `; overlap_ratio=${overlap_ratio.toFixed(2)}`;
+  }
 
   return {
     status: "computed",
@@ -100,6 +149,7 @@ export function computeSourceClassAxis(input: SourceClassInput): SourceClassEvid
     classes_a,
     classes_b,
     shared_classes: shared,
+    distinctive_shared_classes: distinctive_shared,
     overlap_ratio,
     evidence_summary,
     exceeds_moderate,
