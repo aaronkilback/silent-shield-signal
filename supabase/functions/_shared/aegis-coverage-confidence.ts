@@ -217,13 +217,15 @@ export function isTemporallyGrounded(s: CitedSignal): boolean {
   if (s.temporal_grounding === "historical_grounded") return true;
   if (
     s.temporal_grounding === "current_inferred" ||
-    s.temporal_grounding === "historical_inferred" ||
-    s.temporal_grounding === "unknown"
+    s.temporal_grounding === "historical_inferred"
   ) {
     return false;
   }
 
-  // Column not populated (today's prod state) — fall back to structural check
+  // 'unknown' (schema default = no determination; 100% of prod today) OR column
+  // null/unset — fall back to structural check. (Bug fix: 'unknown' previously
+  // short-circuited to false, making this structural path dead code in prod and
+  // forcing temporal_grounding_rate≈0 on every real response.)
   if (!s.event_date) return false;
 
   const eventMs = Date.parse(s.event_date);

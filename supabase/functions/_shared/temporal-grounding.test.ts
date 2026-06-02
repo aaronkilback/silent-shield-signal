@@ -51,14 +51,28 @@ Deno.test("isActorTimeGrounded: column current_grounded wins even if event==crea
   assertEquals(groundedActorTime(s), "2024-01-05T14:00:00Z");
 });
 
-Deno.test("isActorTimeGrounded: column unknown → not grounded (even with good event_date)", () => {
+Deno.test("isActorTimeGrounded: column 'unknown' = no determination → falls through to structural", () => {
+  // 'unknown' is the schema default (100% of prod today) — "no determination
+  // made", NOT an assertion that the signal is ungrounded. It must fall through
+  // to the structural event_date check; here event_date is real (30-min latency,
+  // not cosmetic, not copied) so the signal IS grounded.
   const s: TemporalSignal = {
     created_at: "2024-01-05T14:30:00Z",
     event_date: "2024-01-05T14:00:00Z",
     temporal_grounding: "unknown",
   };
-  assertEquals(isActorTimeGrounded(s), false);
-  assertEquals(groundedActorTime(s), null);
+  assertEquals(isActorTimeGrounded(s), true);
+  assertEquals(groundedActorTime(s), "2024-01-05T14:00:00Z");
+});
+
+Deno.test("isActorTimeGrounded: 'unknown' + cosmetic/NULL event_date → still not grounded (structural rejects)", () => {
+  // Fall-through to structural must still reject write-artifact / missing event_date.
+  assertEquals(isActorTimeGrounded({
+    created_at: "2024-01-05T08:00:00Z", event_date: "2024-01-05T00:00:00Z", temporal_grounding: "unknown",
+  }), false); // cosmetic-midnight
+  assertEquals(isActorTimeGrounded({
+    created_at: "2024-01-05T08:00:00Z", event_date: null, temporal_grounding: "unknown",
+  }), false); // no event_date
 });
 
 Deno.test("isActorTimeGrounded: column inferred → not grounded", () => {

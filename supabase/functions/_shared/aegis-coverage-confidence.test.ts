@@ -65,12 +65,16 @@ Deno.test("isTemporallyGrounded: explicit column current_grounded → true", () 
     ),
   );
 });
-Deno.test("isTemporallyGrounded: explicit unknown → false", () => {
+Deno.test("isTemporallyGrounded: 'unknown' = no determination → falls through to structural", () => {
+  // 'unknown' is the schema default (100% of prod today) — not a determination
+  // that the signal is ungrounded. It falls through to the structural check; a
+  // real event_date 2 days before created_at is grounded. (Previously this
+  // returned false, zeroing temporal_grounding_rate across all of prod.)
   assertEquals(
     isTemporallyGrounded(
       sig({ temporal_grounding: "unknown", event_date: iso(daysAgo(2)) }),
     ),
-    false,
+    true,
   );
 });
 Deno.test("isTemporallyGrounded: NULL event_date and no column → false", () => {

@@ -118,10 +118,11 @@ export function isCopiedFromCreated(eventMs: number, createdMs: number): boolean
  * The grounded-timestamp hierarchy, in resolution order:
  *
  *   1. Explicit column: temporal_grounding ∈ {current_grounded, historical_grounded}
- *      → grounded (authoritative; inert today — column is 100% 'unknown' in prod,
- *      becomes live when the T-1 writer ships).
- *   2. Explicit column says inferred/unknown → NOT grounded.
- *   3. Column unpopulated → structural fallback on event_date:
+ *      → grounded (authoritative; becomes the primary path when the T-1 writer ships).
+ *   2. Explicit INFERRED (current_inferred / historical_inferred) → NOT grounded
+ *      (a real determination that the time was inferred, not directly grounded).
+ *   3. 'unknown' (the schema default — 100% of prod today, i.e. "no determination
+ *      made") OR column null/unset → structural fallback on event_date:
  *        - event_date NULL or unparseable → NOT grounded
  *        - cosmetic-midnight-of-created → NOT grounded (write artifact)
  *        - copied-from-created → NOT grounded (no independent actor-time)
@@ -135,11 +136,15 @@ export function isActorTimeGrounded(s: TemporalSignal): boolean {
   if (s.temporal_grounding === "historical_grounded") return true;
   if (
     s.temporal_grounding === "current_inferred" ||
-    s.temporal_grounding === "historical_inferred" ||
-    s.temporal_grounding === "unknown"
+    s.temporal_grounding === "historical_inferred"
   ) {
+    // Explicit determination that the time was inferred, not directly grounded.
     return false;
   }
+  // 'unknown' (schema default = no determination; 100% of prod today) OR column
+  // null/unset → fall through to the structural check below. Treating 'unknown'
+  // as hard-false makes the structural fallback dead code in prod (the bug fixed
+  // here): prod is 100% the string 'unknown', so nothing would ever ground.
 
   // Branch 3 — structural fallback (today's prod path)
   if (!s.event_date) return false;
