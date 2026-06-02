@@ -120,6 +120,14 @@ Deno.test("computeVocabularyAxis: disjoint distinctive terms → low overlap", (
   const textsB = makeTexts(20, distinctiveB);
   const globalDf = new Map<string, number>();
   for (const t of [...distinctiveA, ...distinctiveB]) globalDf.set(t, 20);
+  // The makeTexts `base` boilerplate is shared by BOTH actors. It must be modeled
+  // as common (in ~all global signals → idf ≤ 0 → excluded as non-distinctive),
+  // exactly as prod's tenant DF would. Omitting it (the original fixture bug) made
+  // the boilerplate score as maximally distinctive and "shared", defeating the
+  // disjoint scenario. Code was verified correct 2026-06-01; this is a fixture fix.
+  for (const t of ["pipeline","regulation","environment","activist","coalition","operations","infrastructure","development","project"]) {
+    globalDf.set(t, 1000);
+  }
   const result = computeVocabularyAxis({
     textsA, textsB, globalDf, globalSignalCount: 1000,
   });
