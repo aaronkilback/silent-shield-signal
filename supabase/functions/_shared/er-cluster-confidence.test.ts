@@ -137,7 +137,8 @@ Deno.test("predicate aggregation: all-3 strong + high-confidence → HIGH", () =
   assertEquals(r.cluster_confidence_class, "HIGH");
   assertEquals(r.predicates.axes_exceeding_strong, 3);
   assertEquals(r.predicates.has_high_confidence_evidence, true);
-  assert(r.rationale.startsWith("HIGH"));
+  // G-2: operator-facing rationale leads with the overlap label, not the raw enum.
+  assert(r.rationale.startsWith("STRONG OVERLAP"));
 });
 
 Deno.test("G-1: all-3 strong but no high-confidence → LOW (was MEDIUM pre-G-1)", () => {
@@ -228,7 +229,8 @@ Deno.test("predicate aggregation: 0 axes moderate → LOW", () => {
     sourceClass: computedSourceClass({ exceeds_moderate: false, exceeds_strong: false }),
   });
   assertEquals(r.cluster_confidence_class, "LOW");
-  assert(r.rationale.startsWith("LOW"));
+  // G-2: rationale leads with the overlap label.
+  assert(r.rationale.startsWith("WEAK OVERLAP"));
 });
 
 Deno.test("predicate aggregation: 1/3 axes moderate → LOW (not enough corroboration)", () => {
@@ -258,7 +260,8 @@ Deno.test("CRITICAL: insufficient sufficiency → UNKNOWN, NEVER LOW (operator a
   );
   assertEquals(result.sufficiency.passed, false);
   assertEquals(result.cluster_confidence.cluster_confidence_class, "UNKNOWN");
-  assert(result.cluster_confidence.rationale.startsWith("UNKNOWN"));
+  // G-2: UNKNOWN rationale leads with the operator-facing label.
+  assert(result.cluster_confidence.rationale.startsWith("INSUFFICIENT EVIDENCE"));
   // Predicate counts are preserved for audit
   assertEquals(result.cluster_confidence.predicates.axes_computed_count, 1);
   assertEquals(result.cluster_confidence.predicates.axes_exceeding_strong, 1);
@@ -274,14 +277,17 @@ Deno.test("sufficient + 0 moderate → LOW (the 'we looked and found nothing' st
   assertEquals(result.cluster_confidence.cluster_confidence_class, "LOW");
 });
 
-Deno.test("sufficient + 2 moderate → MEDIUM", () => {
+Deno.test("G-1: sufficient + 2 moderate but NO high-confidence axis → LOW (was MEDIUM pre-G-1)", () => {
+  // G-1 tightening: 2 moderate axes are no longer sufficient for MEDIUM on their
+  // own — MEDIUM additionally requires ≥1 high-confidence axis + behavioral
+  // corroboration. With neither high-confidence flag set, this is WEAK OVERLAP.
   const result = deriveClusterConfidence(
     computedPostingTime({ exceeds_moderate: true, exceeds_strong: false }),
     computedVocabulary({ exceeds_moderate: true, exceeds_strong: false }),
     computedSourceClass({ exceeds_moderate: false, exceeds_strong: false }),
   );
   assertEquals(result.sufficiency.passed, true);
-  assertEquals(result.cluster_confidence.cluster_confidence_class, "MEDIUM");
+  assertEquals(result.cluster_confidence.cluster_confidence_class, "LOW");
 });
 
 // =============================================================================
@@ -305,9 +311,10 @@ Deno.test("assembleAxesEvidence: produces v:1 with all required fields", () => {
   assertEquals(evidence.tenant_id, "00000000-0000-0000-0000-000000000001");
   assertEquals(evidence.flight_recorder_trace_id, "trace-abc");
   assertEquals(evidence.sufficiency.passed, true);
-  // Class with this combination: 2 moderates (posting_time + vocab) + 1 strong (source_class)
-  // → MEDIUM (2/3 exceed moderate)
-  assertEquals(evidence.cluster_confidence.cluster_confidence_class, "MEDIUM");
+  // Class with this combination: 3 moderate (posting_time + vocab + source_class)
+  // but NO axis emits high-confidence evidence → G-1 caps this at LOW (WEAK OVERLAP),
+  // since MEDIUM requires a high-confidence axis + behavioral corroboration.
+  assertEquals(evidence.cluster_confidence.cluster_confidence_class, "LOW");
   // All three axis blocks must be present
   assert(evidence.axes.posting_time);
   assert(evidence.axes.vocabulary);
