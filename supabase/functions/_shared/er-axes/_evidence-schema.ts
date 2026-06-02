@@ -50,6 +50,17 @@ export interface PostingTimeEvidence extends AxisThresholdResult {
   /** Total non-quarantined signals retrieved for entity B in the window. */
   n_signals_b: number;
   /**
+   * G-9: of the `n_signals_a` retrieved, how many carried a defensible
+   * ACTOR-TIME timestamp (per `_shared/temporal-grounding.ts::isActorTimeGrounded`)
+   * and therefore contributed to the histogram. The remainder were excluded as
+   * collection-cadence / write-artifact timestamps. The histogram + pearson_r
+   * are computed over ONLY these grounded signals. Makes the filtering visible
+   * so the operator can see "14 of 52 signals carried real posting time".
+   */
+  grounded_signal_count_a: number;
+  /** G-9: grounded actor-time signal count for entity B (see above). */
+  grounded_signal_count_b: number;
+  /**
    * Pearson correlation coefficient over the 168-hour-week activity vectors.
    * Range [-1, 1]. NaN when either vector has zero variance — represented as
    * `null` in JSON to keep the schema typed.
@@ -179,6 +190,32 @@ export interface ClusterConfidence {
 }
 
 /**
+ * G-4: debuggability telemetry. Additive, non-load-bearing for the verdict —
+ * present so a defect in a prod comparison can be diagnosed from the persisted
+ * row alone. Optional so v:1 readers predating G-4 tolerate its absence.
+ */
+export interface AxesTelemetry {
+  /** Per-axis wall-clock compute time, keyed by axis name. */
+  axis_timing_ms: {
+    posting_time: number;
+    vocabulary: number;
+    source_class: number;
+  };
+  /**
+   * True when the per-actor signal load hit MAX_SIGNALS_PER_ACTOR and was
+   * truncated — the comparison saw a capped view, not the full history.
+   */
+  signals_truncated_a: boolean;
+  signals_truncated_b: boolean;
+  /**
+   * SHA-256 over the deterministic tenant DF sample (sorted signal ids) used to
+   * build the vocabulary distinctiveness table. Lets a later run prove it
+   * compared against the same DF basis.
+   */
+  df_sample_sha256: string | null;
+}
+
+/**
  * The full `axes_evidence` jsonb stored in `actor_cluster_members.axes_evidence`.
  *
  * Operator-review contract: an operator inspecting this object can read every
@@ -209,6 +246,8 @@ export interface AxesEvidenceV1 {
   };
   /** Final Cluster Confidence verdict + audit predicates. */
   cluster_confidence: ClusterConfidence;
+  /** G-4: optional debuggability telemetry (additive to v:1). */
+  telemetry?: AxesTelemetry;
 }
 
 /** Empty per-axis evidence stubs, used to keep the schema fully populated. */
@@ -217,6 +256,8 @@ export const EMPTY_POSTING_TIME: PostingTimeEvidence = {
   stub_reason: "axis not yet computed",
   n_signals_a: 0,
   n_signals_b: 0,
+  grounded_signal_count_a: 0,
+  grounded_signal_count_b: 0,
   pearson_r: null,
   most_active_shared_hours: [],
   evidence_summary: "",

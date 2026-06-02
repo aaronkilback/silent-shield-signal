@@ -3,10 +3,21 @@
 // =============================================================================
 //
 // Measures whether two actors share a posting-time fingerprint by:
-//   1. Bucketing each actor's signals into a 168-cell vector (hour-of-week, UTC,
-//      0 = Monday 00:00).
-//   2. Computing Pearson correlation over the two vectors.
-//   3. Identifying the hours where both actors were heavily active.
+//   1. Filtering each actor's signals to those with a defensible ACTOR-TIME
+//      timestamp (G-9: `isActorTimeGrounded`). Signals whose only timestamp is
+//      collection-cadence (`created_at`) or a write-artifact `event_date`
+//      (cosmetic-midnight / copied-from-created) are excluded — they would
+//      otherwise inject the monitor's cron schedule into the histogram.
+//   2. Bucketing the GROUNDED signals' `event_date` (never `created_at`) into a
+//      168-cell vector (hour-of-week, UTC, 0 = Monday 00:00).
+//   3. Computing Pearson correlation over the two vectors.
+//   4. Identifying the hours where both actors were heavily active.
+//
+// G-9 (docs/platform-operations/g9-axis-interpretability-audit-2026-06-01.md):
+// reading `created_at` made this axis measure monitor collection cadence, not
+// actor activity — a structural false positive between any two entities scraped
+// by the same job. The sample floor now applies to the GROUNDED count, so an
+// actor whose signals are all cadence-only cannot reach it and the axis stubs.
 //
 // Determinism: no randomness; signals must be passed in deterministic order;
 // vector indexes are pure arithmetic. Same inputs → same outputs every run.
@@ -15,6 +26,10 @@
 // a PR + operator sign-off per Workstream D convention. Inline tuning is banned.
 
 import type { PostingTimeEvidence } from "./_evidence-schema.ts";
+import {
+  groundedActorTime,
+  type TemporalSignal,
+} from "../temporal-grounding.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §A — Operator-tunable thresholds
@@ -89,37 +104,57 @@ export function formatHourOfWeek(hw: number): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PostingTimeInput {
-  /** Sorted, deduped signal created_at timestamps for entity A (UTC). */
-  signalsCreatedAtA: readonly string[];
-  /** Sorted, deduped signal created_at timestamps for entity B (UTC). */
-  signalsCreatedAtB: readonly string[];
+  /**
+   * Signal records for entity A. Each must carry `created_at` + `event_date`
+   * (+ optional `temporal_grounding`). The axis itself decides which are
+   * actor-time-grounded and buckets ONLY those, on `event_date`.
+   */
+  signalsA: readonly TemporalSignal[];
+  /** Signal records for entity B (see above). */
+  signalsB: readonly TemporalSignal[];
 }
 
 /**
  * Compute the Posting-Time Fingerprint axis.
  *
- * Returns `PostingTimeEvidence` with status="computed" when both actors have
- * ≥ `POSTING_TIME_MIN_SIGNALS_PER_ACTOR` signals, else status="insufficient_samples".
+ * Returns `PostingTimeEvidence` with status="computed" when BOTH actors have
+ * ≥ `POSTING_TIME_MIN_SIGNALS_PER_ACTOR` actor-time-GROUNDED signals, else
+ * status="insufficient_samples". The grounded filter (`groundedActorTime`) is
+ * what prevents collection-cadence timestamps from driving the histogram.
  *
  * Never throws on valid input. Never calls external APIs. Pure math.
  */
 export function computePostingTimeAxis(
   input: PostingTimeInput,
 ): PostingTimeEvidence {
-  const n_signals_a = input.signalsCreatedAtA.length;
-  const n_signals_b = input.signalsCreatedAtB.length;
+  const n_signals_a = input.signalsA.length;
+  const n_signals_b = input.signalsB.length;
+
+  // G-9: keep only signals with defensible actor-time; bucket on event_date.
+  const groundedA = input.signalsA
+    .map(groundedActorTime)
+    .filter((t): t is string => t !== null);
+  const groundedB = input.signalsB
+    .map(groundedActorTime)
+    .filter((t): t is string => t !== null);
+  const grounded_signal_count_a = groundedA.length;
+  const grounded_signal_count_b = groundedB.length;
 
   if (
-    n_signals_a < POSTING_TIME_MIN_SIGNALS_PER_ACTOR ||
-    n_signals_b < POSTING_TIME_MIN_SIGNALS_PER_ACTOR
+    grounded_signal_count_a < POSTING_TIME_MIN_SIGNALS_PER_ACTOR ||
+    grounded_signal_count_b < POSTING_TIME_MIN_SIGNALS_PER_ACTOR
   ) {
     return {
       status: "insufficient_samples",
       stub_reason:
-        `posting-time axis needs ≥${POSTING_TIME_MIN_SIGNALS_PER_ACTOR} signals per actor; ` +
-        `entity A has ${n_signals_a}, entity B has ${n_signals_b}`,
+        `posting-time axis needs ≥${POSTING_TIME_MIN_SIGNALS_PER_ACTOR} actor-time-grounded ` +
+        `signals per actor (event_date that is not collection-cadence); ` +
+        `entity A: ${grounded_signal_count_a} grounded of ${n_signals_a} retrieved, ` +
+        `entity B: ${grounded_signal_count_b} grounded of ${n_signals_b} retrieved`,
       n_signals_a,
       n_signals_b,
+      grounded_signal_count_a,
+      grounded_signal_count_b,
       pearson_r: null,
       most_active_shared_hours: [],
       evidence_summary: "",
@@ -129,11 +164,11 @@ export function computePostingTimeAxis(
     };
   }
 
-  // Build 168-cell hour-of-week vectors
+  // Build 168-cell hour-of-week vectors from GROUNDED actor-time (event_date).
   const vecA = new Array<number>(168).fill(0);
   const vecB = new Array<number>(168).fill(0);
-  for (const ts of input.signalsCreatedAtA) vecA[hourOfWeekUTC(new Date(ts))]++;
-  for (const ts of input.signalsCreatedAtB) vecB[hourOfWeekUTC(new Date(ts))]++;
+  for (const ts of groundedA) vecA[hourOfWeekUTC(new Date(ts))]++;
+  for (const ts of groundedB) vecB[hourOfWeekUTC(new Date(ts))]++;
 
   const r = pearson(vecA, vecB);
 
@@ -169,7 +204,8 @@ export function computePostingTimeAxis(
     ? "no shared active hours"
     : topShared.slice(0, 3).map(s => formatHourOfWeek(s.hour_of_week)).join(", ");
   const evidence_summary =
-    `pearson_r=${rText} over ${n_signals_a}/${n_signals_b} signals; ` +
+    `pearson_r=${rText} over ${grounded_signal_count_a}/${grounded_signal_count_b} ` +
+    `actor-time-grounded signals (of ${n_signals_a}/${n_signals_b} retrieved); ` +
     `top shared active hours: ${topHoursText}`;
 
   return {
@@ -177,6 +213,8 @@ export function computePostingTimeAxis(
     stub_reason: null,
     n_signals_a,
     n_signals_b,
+    grounded_signal_count_a,
+    grounded_signal_count_b,
     pearson_r: r,
     most_active_shared_hours: topShared,
     evidence_summary,

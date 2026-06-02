@@ -38,6 +38,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { startTrace } from "../_shared/flight-recorder.ts";
 import { computePostingTimeAxis } from "../_shared/er-axes/posting-time.ts";
+import type { TemporalGroundingValue } from "../_shared/temporal-grounding.ts";
 import { computeVocabularyAxis, tokenize } from "../_shared/er-axes/vocabulary.ts";
 import { computeSourceClassAxis } from "../_shared/er-axes/source-class.ts";
 import { assembleAxesEvidence } from "../_shared/er-cluster-confidence.ts";
@@ -58,6 +59,10 @@ const GLOBAL_DF_SAMPLE_LIMIT = 2000; // sample tenant signals to build the DF ta
 interface SignalRow {
   id: string;
   created_at: string;
+  /** G-9: actor/event timestamp — the only field that can carry actor-time. */
+  event_date: string | null;
+  /** G-9: explicit grounding column (100% 'unknown' in prod today). */
+  temporal_grounding: string | null;
   title: string | null;
   normalized_text: string | null;
   raw_json: Record<string, unknown> | null;
@@ -69,7 +74,7 @@ async function loadSignalsForEntity(
   sb: any,
   tenantId: string,
   entityId: string,
-): Promise<{ signals: SignalRow[]; sourceLabels: string[] }> {
+): Promise<{ signals: SignalRow[]; sourceLabels: string[]; truncated: boolean }> {
   // Resolve signal ids via entity_mentions, then load the signals tenant-scoped
   // with the quarantine filter applied at SQL level (not in-process).
   const cutoff = new Date(Date.now() - SIGNAL_LOOKBACK_DAYS * 24 * 3600 * 1000).toISOString();
@@ -80,12 +85,15 @@ async function loadSignalsForEntity(
     .order("detected_at", { ascending: false })
     .limit(MAX_SIGNALS_PER_ACTOR);
   if (mErr) throw new Error(`entity_mentions load failed: ${mErr.message}`);
+  // G-4: the mentions query is capped at MAX_SIGNALS_PER_ACTOR; if we hit the cap
+  // the comparison saw a truncated view of the actor's history.
+  const truncated = (mentions || []).length >= MAX_SIGNALS_PER_ACTOR;
   const signalIds = Array.from(new Set((mentions || []).map((m: { signal_id: string }) => m.signal_id).filter(Boolean)));
-  if (signalIds.length === 0) return { signals: [], sourceLabels: [] };
+  if (signalIds.length === 0) return { signals: [], sourceLabels: [], truncated };
 
   const { data: signalsRaw, error: sErr } = await sb
     .from("signals")
-    .select("id, created_at, title, normalized_text, raw_json, source_id, quality_status")
+    .select("id, created_at, event_date, temporal_grounding, title, normalized_text, raw_json, source_id, quality_status")
     .eq("tenant_id", tenantId)
     .neq("quality_status", "quarantined")
     .in("id", signalIds)
@@ -119,7 +127,7 @@ async function loadSignalsForEntity(
       }
     }
   }
-  return { signals, sourceLabels };
+  return { signals, sourceLabels, truncated };
 }
 
 /** Build a tenant-scoped document-frequency table by sampling recent signals. */
@@ -127,7 +135,7 @@ async function buildTenantDf(
   // deno-lint-ignore no-explicit-any
   sb: any,
   tenantId: string,
-): Promise<{ df: Map<string, number>; globalSignalCount: number }> {
+): Promise<{ df: Map<string, number>; globalSignalCount: number; sampleSha256: string | null }> {
   const cutoff = new Date(Date.now() - SIGNAL_LOOKBACK_DAYS * 24 * 3600 * 1000).toISOString();
   const { data, error } = await sb
     .from("signals")
@@ -145,7 +153,16 @@ async function buildTenantDf(
     const distinct = new Set(tokenize(text));
     for (const t of distinct) df.set(t, (df.get(t) || 0) + 1);
   }
-  return { df, globalSignalCount: rows.length };
+  // G-4: deterministic fingerprint of the DF basis (sorted ids → SHA-256).
+  const sampleSha256 = await sha256Hex(rows.map((r) => r.id).sort().join(","));
+  return { df, globalSignalCount: rows.length, sampleSha256 };
+}
+
+/** SHA-256 of a string as lowercase hex. Used for the G-4 df_sample fingerprint. */
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function loadEntityProvenance(
@@ -277,10 +294,23 @@ Deno.serve(async (req) => {
     });
 
     // §C.3 — Compute axes deterministically. Skip nothing — emit insufficient_samples per axis if sparse.
+    // G-9: pass full signal records; the axis filters to actor-time-grounded
+    // signals and buckets on event_date (never created_at). G-4: time each axis.
+    const tPosting = Date.now();
     const postingTime = computePostingTimeAxis({
-      signalsCreatedAtA: aData.signals.map((s) => s.created_at).sort(),
-      signalsCreatedAtB: bData.signals.map((s) => s.created_at).sort(),
+      signalsA: aData.signals.map((s) => ({
+        created_at: s.created_at,
+        event_date: s.event_date,
+        temporal_grounding: s.temporal_grounding as TemporalGroundingValue | null,
+      })),
+      signalsB: bData.signals.map((s) => ({
+        created_at: s.created_at,
+        event_date: s.event_date,
+        temporal_grounding: s.temporal_grounding as TemporalGroundingValue | null,
+      })),
     });
+    const postingTimeMs = Date.now() - tPosting;
+    const tVocab = Date.now();
     const textsA = aData.signals.map((s) => `${s.title || ""} ${s.normalized_text || ""}`);
     const textsB = bData.signals.map((s) => `${s.title || ""} ${s.normalized_text || ""}`);
     const vocabulary = computeVocabularyAxis({
@@ -288,9 +318,12 @@ Deno.serve(async (req) => {
       globalDf: tenantDf.df,
       globalSignalCount: tenantDf.globalSignalCount,
     });
+    const vocabularyMs = Date.now() - tVocab;
+    const tSource = Date.now();
     const sourceClass = computeSourceClassAxis({
       sourceLabelsA: aData.sourceLabels, sourceLabelsB: bData.sourceLabels,
     });
+    const sourceClassMs = Date.now() - tSource;
 
     // §C.4 — Assemble evidence + cluster confidence (sufficiency-first).
     const axesEvidence = assembleAxesEvidence({
@@ -300,6 +333,17 @@ Deno.serve(async (req) => {
       flight_recorder_trace_id: recorder.traceId,
       postingTime, vocabulary, sourceClass,
     });
+    // G-4: attach debuggability telemetry (additive; not load-bearing for verdict).
+    axesEvidence.telemetry = {
+      axis_timing_ms: {
+        posting_time: postingTimeMs,
+        vocabulary: vocabularyMs,
+        source_class: sourceClassMs,
+      },
+      signals_truncated_a: aData.truncated,
+      signals_truncated_b: bData.truncated,
+      df_sample_sha256: tenantDf.sampleSha256,
+    };
 
     // §C.5 — Persist via the canonical writer (trigger pre-flight enforced).
     const summary =
