@@ -1741,10 +1741,16 @@ Score this signal's relevance and classify the connection.`
     const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date
                     || signalRaw?.published || signalRaw?.date
                     || signalRaw?.article_published_time;
+    // Real publication ("became-news") date — persisted as signals.surface_date for
+    // the corrected recency axis. NULL when the source gave no pubDate: we must NOT
+    // persist the "now" default (that would make every undated item read as current,
+    // re-creating the temporal-integrity defect). surfaceDate (now-default) is kept
+    // unchanged for the staleness gate below.
+    let realSurfaceDate: Date | null = null;
     if (rawPubDate) {
       try {
         const parsed = new Date(rawPubDate);
-        if (!isNaN(parsed.getTime())) surfaceDate = parsed;
+        if (!isNaN(parsed.getTime())) { surfaceDate = parsed; realSurfaceDate = parsed; }
       } catch { /* ignore */ }
     }
 
@@ -1846,6 +1852,7 @@ Score this signal's relevance and classify the connection.`
         is_test: is_test || false,
         content_hash: contentHash,
         event_date: eventDate,
+        surface_date: realSurfaceDate ? realSurfaceDate.toISOString() : null,
         triage_override: triageOverride,
         signal_type: isHistorical ? 'historical' : null,
         source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
