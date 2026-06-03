@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 import type { ToolHandlerRegistry } from "./aegis-tool-executor.ts";
 import { entityIntelligence, entityDetails, entitySignals, entityRelationships } from "./tenant-entity-graph.ts";
+import { annotateTemporal, classifyTemporalBucket, effectiveRecencyDate, TEMPORAL_LABELS } from "./temporal-recency.ts";
 
 // Helper — reused across handlers for edge function calls with timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
@@ -46,15 +47,18 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
       const limit = args.limit || 10;
       const { data: recentSignals, error: listErr } = await supabaseClient
         .from("signals")
-        .select("id, title, severity, status, created_at, clients!inner(tenant_id)")
+        .select("id, title, severity, status, created_at, event_date, surface_date, temporal_grounding, clients!inner(tenant_id)")
         .eq("tenant_id", tenantId)
         .eq("clients.tenant_id", tenantId)
         .order("created_at", { ascending: false })
         .limit(limit);
       if (listErr) return { error: listErr.message };
       // Drop the join column from the returned payload — present only to enforce
-      // the second-axis tenant predicate.
-      const stripped = (recentSignals || []).map(({ clients: _clients, ...rest }: any) => rest);
+      // the second-axis tenant predicate — and attach each signal's temporal bucket.
+      const nowMs = Date.now();
+      const stripped = (recentSignals || []).map(({ clients: _clients, ...rest }: any) =>
+        annotateTemporal(rest, 7, nowMs)
+      );
       return { signals: stripped, count: stripped.length };
     }
     // Lookup mode — require the signal to belong to the caller's tenant.
@@ -136,7 +140,7 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
 
     let query = supabaseClient
       .from("signals")
-      .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, source_url, clients!inner(name, tenant_id)")
+      .select("id, title, description, severity, received_at, created_at, event_date, surface_date, temporal_grounding, status, client_id, source_url, clients!inner(name, tenant_id)")
       .eq("tenant_id", tenantId)
       .eq("clients.tenant_id", tenantId)
       .not("clients.name", "ilike", "\\_%")
@@ -180,43 +184,48 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     const { data, error } = await query;
     if (error) throw error;
 
-    const now = new Date();
+    // Temporal classification via the shared helper (single source of truth).
+    // Replaces a prior ad-hoc classifier that (a) defaulted NULL event_date to
+    // "current" — the exact masquerade this repair targets — and (b) trusted raw
+    // event_date without the G-9 grounding check (cosmetic-midnight / copied-from-
+    // created dates passed as real). The helper keys on surface_date → grounded
+    // event_date, treats NULL as Timing-Unknown (never current), and rejects
+    // cosmetic/copied dates. A human age_description is derived from the same
+    // effective date so callers retain the friendly phrasing.
+    const nowMs = Date.now();
     const enrichedSignals = (data || []).map((signal: any) => {
-      const eventDate = signal.event_date ? new Date(signal.event_date) : null;
-      let ageCategory = "current";
+      const bucket = classifyTemporalBucket(signal, 7, nowMs);
+      const eff = effectiveRecencyDate(signal); // null => timing unknown
       let ageDescription = "";
-
-      if (eventDate) {
-        const ageDays = Math.floor((now.getTime() - eventDate.getTime()) / (1000 * 60 * 60 * 24));
-        if (ageDays <= 7) {
-          ageCategory = "current";
-          ageDescription = ageDays === 0 ? "Today" : ageDays === 1 ? "Yesterday" : `${ageDays} days ago`;
-        } else if (ageDays <= 30) {
-          ageCategory = "recent";
-          ageDescription = `${Math.ceil(ageDays / 7)} weeks ago`;
-        } else if (ageDays <= 365) {
-          ageCategory = "dated";
-          ageDescription = `${Math.floor(ageDays / 30)} months ago`;
-        } else {
-          ageCategory = "historical";
-          const years = Math.floor(ageDays / 365);
-          ageDescription = years === 1 ? "1 year ago" : `${years} years ago`;
-        }
+      if (eff) {
+        const ageDays = Math.floor((nowMs - Date.parse(eff)) / (1000 * 60 * 60 * 24));
+        if (ageDays <= 0) ageDescription = "Today";
+        else if (ageDays === 1) ageDescription = "Yesterday";
+        else if (ageDays <= 7) ageDescription = `${ageDays} days ago`;
+        else if (ageDays <= 30) ageDescription = `${Math.ceil(ageDays / 7)} weeks ago`;
+        else if (ageDays <= 365) ageDescription = `${Math.floor(ageDays / 30)} months ago`;
+        else { const y = Math.floor(ageDays / 365); ageDescription = y === 1 ? "1 year ago" : `${y} years ago`; }
+      } else {
+        ageDescription = "event date not established";
       }
 
       return {
         ...signal,
+        temporal_bucket: bucket,
+        temporal_label: TEMPORAL_LABELS[bucket],
         temporal_context: {
           event_date: signal.event_date,
+          surface_date: signal.surface_date,
+          effective_recency_date: eff,
           ingested_at: signal.received_at || signal.created_at,
-          age_category: ageCategory,
+          bucket,
           age_description: ageDescription,
-          is_historical: ageCategory === "historical" || ageCategory === "dated",
+          is_historical: bucket === "historical",
           warning:
-            ageCategory === "historical"
-              ? `⚠️ HISTORICAL: This event occurred ${ageDescription}. Do NOT present as current threat.`
-              : ageCategory === "dated"
-                ? `📜 DATED: This event occurred ${ageDescription}. Provide temporal context when reporting.`
+            bucket === "historical"
+              ? `⚠️ HISTORICAL/RESURFACED: this event occurred ${ageDescription} (recently ingested). Do NOT present as a current threat.`
+              : bucket === "timing_unknown"
+                ? `❓ TIMING UNKNOWN: no grounded event date — ingested ${(signal.received_at || signal.created_at)?.slice(0, 10)}. Do NOT assert recency.`
                 : null,
         },
       };
@@ -860,7 +869,7 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
 
     let query = supabaseClient
       .from('signals')
-      .select('id, title, normalized_text, severity, category, composite_confidence, relevance_score, confidence, source_url, created_at, client_id, clients(name)')
+      .select('id, title, normalized_text, severity, category, composite_confidence, relevance_score, confidence, source_url, created_at, event_date, surface_date, temporal_grounding, client_id, clients(name)')
       .is('deleted_at', null)
       .not('composite_confidence', 'is', null)
       .gte('composite_confidence', 0.40)
@@ -886,19 +895,24 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     return {
       monitored_count: signals.length,
       threshold_explanation: 'Composite score = (ai_confidence \u00d7 0.50) + (relevance_score \u00d7 0.35) + (source_credibility \u00d7 0.15). Scores 0.40\u20130.64 are watched; \u22650.65 trigger incident creation.',
-      signals: signals.map((s: any) => ({
-        id: s.id,
-        title: s.title || s.normalized_text?.substring(0, 80),
-        severity: s.severity,
-        category: s.category,
-        composite_confidence: s.composite_confidence,
-        ai_confidence: s.confidence,
-        relevance_score: s.relevance_score,
-        client: s.clients?.name,
-        source_url: s.source_url,
-        created_at: s.created_at,
-        gap_to_threshold: Math.round((0.65 - s.composite_confidence) * 100) / 100,
-      })),
+      signals: signals.map((s: any) => {
+        const t = annotateTemporal(s, 7, Date.now());
+        return {
+          id: s.id,
+          title: s.title || s.normalized_text?.substring(0, 80),
+          severity: s.severity,
+          category: s.category,
+          composite_confidence: s.composite_confidence,
+          ai_confidence: s.confidence,
+          relevance_score: s.relevance_score,
+          client: s.clients?.name,
+          source_url: s.source_url,
+          created_at: s.created_at,
+          temporal_bucket: t.temporal_bucket,
+          temporal_caption: t.temporal_caption,
+          gap_to_threshold: Math.round((0.65 - s.composite_confidence) * 100) / 100,
+        };
+      }),
     };
   },
 

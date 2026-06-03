@@ -9,6 +9,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { partitionByRecency } from "../_shared/temporal-recency.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -61,7 +62,7 @@ Deno.serve(async (req) => {
       supabase.from("clients").select("id, name, industry, locations").eq("id", clientId).single(),
       supabase
         .from("signals")
-        .select("id, title, category, severity, normalized_text, created_at, relevance_score")
+        .select("id, title, category, severity, normalized_text, created_at, event_date, surface_date, temporal_grounding, relevance_score")
         .eq("client_id", clientId)
         .gte("created_at", cutoff24h)
         .neq("status", "false_positive")
@@ -143,9 +144,29 @@ Deno.serve(async (req) => {
       return errorResponse("Client not found", 404);
     }
 
-    const signalSummary = (recentSignals ?? [])
-      .map((s: any) => `[${s.severity?.toUpperCase() ?? "INFO"}] ${s.title ?? s.normalized_text?.slice(0, 120) ?? ""}`)
-      .join("\n");
+    // Temporal-integrity: the 24h window is INGESTION-based (created_at), so it
+    // can include re-ingested OLD events. Partition by the corrected recency axis
+    // (surface_date → grounded event_date; created_at is never event time) so the
+    // briefing labels each signal Current / Timing-Unknown / Historical-Resurfaced
+    // and AEGIS-CMD can never present a resurfaced 2022 item as "today."
+    const nowMs = Date.now();
+    const signalLine = (s: any) => {
+      const base = `[${s.severity?.toUpperCase() ?? "INFO"}] ${s.title ?? s.normalized_text?.slice(0, 120) ?? ""}`;
+      const ev = (s.surface_date || s.event_date)?.slice(0, 10);
+      return ev ? `${base} (event ${ev})` : base;
+    };
+    const sigBuckets = partitionByRecency(recentSignals ?? [], 7, nowMs);
+    const signalSummary = [
+      sigBuckets.current.length
+        ? `— CURRENT (event within 7d) —\n${sigBuckets.current.map(signalLine).join("\n")}`
+        : "",
+      sigBuckets.timing_unknown.length
+        ? `— TIMING UNKNOWN (recently ingested, event date not established — do NOT assert recency) —\n${sigBuckets.timing_unknown.map(signalLine).join("\n")}`
+        : "",
+      sigBuckets.historical.length
+        ? `— HISTORICAL / RESURFACED (old event, recently ingested — NOT a new development) —\n${sigBuckets.historical.map(signalLine).join("\n")}`
+        : "",
+    ].filter(Boolean).join("\n\n");
 
     const incidentSummary = (openIncidents ?? [])
       .map((i: any) => `[${i.priority?.toUpperCase() ?? "MEDIUM"}] ${i.title ?? "Untitled incident"}`)
@@ -199,8 +220,13 @@ ${assessment}`;
 
 Date: ${new Date().toISOString().split("T")[0]}
 
-══ RAW SIGNALS (last 24h, ${(recentSignals ?? []).length} total) ══
-${signalSummary || "No signals in the last 24 hours."}
+══ SIGNALS INGESTED last 24h (${(recentSignals ?? []).length} total), grouped by WHEN THE EVENT OCCURRED ══
+TEMPORAL DISCIPLINE: "ingested in the last 24h" ≠ "happened recently." Treat ONLY
+the CURRENT group as new developments. Never describe a TIMING-UNKNOWN or
+HISTORICAL/RESURFACED item as today's / this week's news; if you cite one, say it
+resurfaced and give its event date. Do not manufacture a recency claim a signal's
+event date does not support.
+${signalSummary || "No signals ingested in the last 24 hours."}
 
 ══ OPEN INCIDENTS (${(openIncidents ?? []).length}) ══
 ${incidentSummary || "No open incidents."}

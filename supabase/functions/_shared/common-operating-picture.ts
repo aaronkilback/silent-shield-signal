@@ -12,13 +12,14 @@
  */
 
 import { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { annotateTemporal, type TemporalBucket } from "./temporal-recency.ts";
 
 export interface COPSnapshot {
   generated_at: string;
   risk_score: number | null;
   risk_trend: 'rising' | 'falling' | 'stable' | 'unknown';
   open_incidents: { id: string; title: string; priority: string; opened_at: string }[];
-  critical_signals: { id: string; title: string; severity: string; category: string; created_at: string }[];
+  critical_signals: { id: string; title: string; severity: string; category: string; created_at: string; temporal_bucket: TemporalBucket; temporal_caption: string }[];
   high_probability_escalations: { signal_id: string; probability: number; predicted_severity: string }[];
   top_entities: { name: string; type: string; risk_level: string; threat_score: number }[];
   watched_entities: { name: string; type: string; watch_level: string; reason: string }[];
@@ -74,7 +75,7 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       .limit(8),
     supabase
       .from('signals')
-      .select('id, title, severity, rule_category, created_at')
+      .select('id, title, severity, rule_category, created_at, event_date, surface_date, temporal_grounding')
       .eq('tenant_id', tenantId)
       .in('severity', ['critical', 'high'])
       .eq('is_test', false)
@@ -159,13 +160,20 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       priority: i.priority,
       opened_at: i.opened_at,
     })),
-    critical_signals: (criticalSignals || []).map(s => ({
-      id: s.id,
-      title: s.title,
-      severity: s.severity,
-      category: s.rule_category,
-      created_at: s.created_at,
-    })),
+    critical_signals: (criticalSignals || []).map(s => {
+      // 24h window is INGESTION-based; classify by the corrected recency axis so a
+      // resurfaced old critical signal is never shown in the COP as a new event.
+      const t = annotateTemporal(s, 7, now.getTime());
+      return {
+        id: s.id,
+        title: s.title,
+        severity: s.severity,
+        category: s.rule_category,
+        created_at: s.created_at,
+        temporal_bucket: t.temporal_bucket,
+        temporal_caption: t.temporal_caption,
+      };
+    }),
     high_probability_escalations: (escalations || []).map(e => ({
       signal_id: e.signal_id,
       probability: e.escalation_probability,
@@ -218,10 +226,13 @@ export function formatCOPForPrompt(cop: COPSnapshot): string {
   }
 
   if (cop.critical_signals.length > 0) {
-    lines.push('CRITICAL/HIGH SIGNALS (24h):');
+    lines.push('CRITICAL/HIGH SIGNALS (ingested last 24h — label = WHEN THE EVENT OCCURRED):');
+    const tagFor = (b: TemporalBucket) =>
+      b === 'current' ? 'CURRENT' : b === 'historical' ? 'HISTORICAL/RESURFACED' : 'TIMING-UNKNOWN';
     cop.critical_signals.forEach(s =>
-      lines.push(`  [${s.severity.toUpperCase()}] ${s.title} (${s.category}) [signal:${s.id}]`)
+      lines.push(`  [${s.severity.toUpperCase()}] [${tagFor(s.temporal_bucket)}] ${s.title} (${s.category}) [signal:${s.id}] — ${s.temporal_caption}`)
     );
+    lines.push('  NOTE: only CURRENT items are new developments; do not narrate HISTORICAL/RESURFACED or TIMING-UNKNOWN signals as today\'s news.');
     lines.push('');
   }
 
