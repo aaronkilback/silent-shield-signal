@@ -8,7 +8,7 @@ import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
 import { SignalFeedback } from "@/components/SignalFeedback";
 import { differenceInDays } from "date-fns";
-import { classifyTemporalBucket, type RecencySignal } from "@/lib/temporal-recency";
+import { classifyTemporalBucket, effectiveRecencyDate, isUpcoming, type RecencySignal } from "@/lib/temporal-recency";
 
 
 
@@ -258,6 +258,15 @@ export const LiveEventFeed = () => {
       7,
     );
   const isHistoric = (signal: Signal): boolean => bucketOf(signal) === "historical";
+  const recencySignalOf = (signal: Signal): RecencySignal => ({
+    created_at: signal.created_at || signal.received_at,
+    event_date: signal.event_date,
+    surface_date: signal.surface_date,
+    temporal_grounding: signal.temporal_grounding,
+  });
+  // Within timing_unknown, a known FUTURE date is "upcoming/scheduled", not unknown.
+  const isUpcomingSignal = (signal: Signal): boolean =>
+    bucketOf(signal) === "timing_unknown" && isUpcoming(recencySignalOf(signal));
 
   // Filter signals by date range
   const filteredSignals = signals.filter(signal => {
@@ -334,7 +343,13 @@ export const LiveEventFeed = () => {
                   HISTORICAL / RESURFACED — Event from {(signal.surface_date || signal.event_date) ? new Date(signal.surface_date || signal.event_date!).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'unknown date'} (recently ingested — not a current development)
                 </div>
               )}
-              {bucketOf(signal) === "timing_unknown" && (
+              {bucketOf(signal) === "timing_unknown" && isUpcomingSignal(signal) && (
+                <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-mono">
+                  <History className="w-3.5 h-3.5" />
+                  UPCOMING / SCHEDULED — event {(() => { const e = effectiveRecencyDate(recencySignalOf(signal)); return e ? new Date(e).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown'; })()} (not yet occurred — not a current development)
+                </div>
+              )}
+              {bucketOf(signal) === "timing_unknown" && !isUpcomingSignal(signal) && (
                 <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-mono">
                   <History className="w-3.5 h-3.5" />
                   TIMING UNKNOWN — no grounded event date; ingested {new Date(signal.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} (not treated as current)

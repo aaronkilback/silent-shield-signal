@@ -60,10 +60,23 @@ export function classifyTemporalBucket(s: RecencySignal, windowDays = 7, now: Da
   return t >= nowMs - windowDays * 24 * 3600 * 1000 ? "current" : "historical";
 }
 
-/** Operator-facing one-liner so the UI never implies an old/undated item is current. */
+/**
+ * True when the signal's grounded effective date is in the FUTURE (scheduled /
+ * upcoming). Not "current" (hasn't occurred) but the date IS known — caption it
+ * honestly rather than as "timing unknown". Sits inside the timing_unknown bucket.
+ */
+export function isUpcoming(s: RecencySignal, now: Date = new Date()): boolean {
+  const eff = effectiveRecencyDate(s);
+  if (!eff) return false;
+  const t = Date.parse(eff);
+  return Number.isFinite(t) && t > now.getTime() + 24 * 3600 * 1000;
+}
+
+/** Operator-facing one-liner so the UI never implies an old/undated/future item is current. */
 export function temporalCaption(s: RecencySignal): string {
   const b = classifyTemporalBucket(s);
   if (b === "current") return `Current (event ${effectiveRecencyDate(s)?.slice(0, 10)})`;
   if (b === "historical") return `Historical / Resurfaced — event ${effectiveRecencyDate(s)?.slice(0, 10)}; ingested ${s.created_at.slice(0, 10)}`;
+  if (isUpcoming(s)) return `Upcoming / scheduled — event ${effectiveRecencyDate(s)?.slice(0, 10)} (not yet occurred); ingested ${s.created_at.slice(0, 10)}`;
   return `Timing unknown — ingested ${s.created_at.slice(0, 10)} (event date not established)`;
 }

@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   classifyTemporalBucket,
   effectiveRecencyDate,
+  isUpcoming,
   TEMPORAL_LABELS,
   type RecencySignal,
   type TemporalBucket,
@@ -67,26 +68,29 @@ export function SignalAgeBadge({ eventDate, ingestedAt, surfaceDate, temporalGro
   const bucket = classifyTemporalBucket(s, WINDOW_DAYS);
   const eff = effectiveRecencyDate(s);
   const ingested = new Date(ingestedAt);
+  const upcoming = bucket === "timing_unknown" && eff !== null && isUpcoming(s);
   const style = BUCKET_STYLES[bucket];
-  const label = TEMPORAL_LABELS[bucket];
+  const label = upcoming ? "Upcoming / Scheduled" : TEMPORAL_LABELS[bucket];
 
   if (compact) {
     return (
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge variant="outline" className={`${style.bg} gap-1 text-xs`}>
-              {style.icon}
-              {bucket === "timing_unknown" ? "Timing unknown" : eff ? describeEffective(s) : label}
+            <Badge variant="outline" className={`${upcoming ? "bg-blue-500/10 text-blue-700 border-blue-500/30" : style.bg} gap-1 text-xs`}>
+              {upcoming ? <Calendar className="w-3 h-3" /> : style.icon}
+              {upcoming ? `Upcoming · ${format(new Date(eff!), "MMM d, yyyy")}` : bucket === "timing_unknown" ? "Timing unknown" : eff ? describeEffective(s) : label}
             </Badge>
           </TooltipTrigger>
           <TooltipContent>
             <div className="text-xs space-y-1">
-              {eff && <p><strong>Event / surfaced:</strong> {format(new Date(eff), "PPP")}</p>}
+              {eff && <p><strong>{upcoming ? "Scheduled event" : "Event / surfaced"}:</strong> {format(new Date(eff), "PPP")}</p>}
               <p><strong>Ingested:</strong> {format(ingested, "PPP p")}</p>
               <p className="text-muted-foreground">
                 {bucket === "historical" && "⚠️ Resurfaced — old event, recently ingested. Not a current development."}
-                {bucket === "timing_unknown" && "❓ No grounded event date — timing cannot be confirmed. Not treated as current."}
+                {bucket === "timing_unknown" && (upcoming
+                  ? "🗓️ Scheduled / not yet occurred — not a current development."
+                  : "❓ No grounded event date — timing cannot be confirmed. Not treated as current.")}
                 {bucket === "current" && "Event within the recency window."}
               </p>
             </div>
@@ -98,8 +102,8 @@ export function SignalAgeBadge({ eventDate, ingestedAt, surfaceDate, temporalGro
 
   return (
     <div className="flex flex-col gap-1">
-      <Badge variant="outline" className={`${style.bg} gap-1`}>
-        {style.icon}
+      <Badge variant="outline" className={`${upcoming ? "bg-blue-500/10 text-blue-700 border-blue-500/30" : style.bg} gap-1`}>
+        {upcoming ? <Calendar className="w-3 h-3" /> : style.icon}
         <span>{label}</span>
       </Badge>
       {eff ? (
@@ -147,22 +151,31 @@ export function SignalAgeIndicator({
     );
   }
 
-  // Timing unknown: explicitly say so — do NOT render an ingestion "X ago" that
-  // reads as recency. This is the fix for old/undated signals masquerading as current.
+  // Timing unknown: either a known FUTURE/scheduled event (date IS known, just
+  // hasn't occurred) or a genuinely undated signal. Either way NOT current — but
+  // label them differently so a known schedule isn't called "timing unknown",
+  // and an undated/old signal never renders an ingestion "X ago" that reads as
+  // recency (the masquerade fix).
   if (bucket === "timing_unknown") {
+    const upcoming = eff !== null && isUpcoming(s);
     return (
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className={`flex items-center gap-1.5 text-xs ${style.inline}`}>
-              <HelpCircle className="w-3.5 h-3.5" />
-              Timing unknown
+            <span className={`flex items-center gap-1.5 text-xs ${upcoming ? "text-blue-600 font-medium" : style.inline}`}>
+              {upcoming ? <Calendar className="w-3.5 h-3.5" /> : <HelpCircle className="w-3.5 h-3.5" />}
+              {upcoming ? `Upcoming · ${format(new Date(eff!), "MMM d, yyyy")}` : "Timing unknown"}
             </span>
           </TooltipTrigger>
           <TooltipContent>
             <div className="text-xs space-y-1">
+              {upcoming && <p><strong>Scheduled event:</strong> {format(new Date(eff!), "PPP")}</p>}
               <p><strong>Ingested:</strong> {formatDistanceToNow(ingested, { addSuffix: true })}</p>
-              <p className="text-amber-500">❓ No grounded event date — not treated as current.</p>
+              <p className={upcoming ? "text-blue-500" : "text-amber-500"}>
+                {upcoming
+                  ? "🗓️ Scheduled / not yet occurred — not a current development."
+                  : "❓ No grounded event date — not treated as current."}
+              </p>
             </div>
           </TooltipContent>
         </Tooltip>
