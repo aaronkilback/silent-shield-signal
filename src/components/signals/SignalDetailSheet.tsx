@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, History, Clock, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText, ThumbsUp, ThumbsDown, ShieldAlert, Brain, ChevronDown, ChevronUp, ListChecks } from "lucide-react";
+import { UserPlus, XCircle, Calendar, MapPin, Tag, AlertTriangle, ExternalLink, Shield, Check, Heart, MessageCircle, Eye, Hash, AtSign, Instagram, Twitter, Facebook, FileText, ThumbsUp, ThumbsDown, ShieldAlert, Brain, ChevronDown, ChevronUp, ListChecks } from "lucide-react";
 import { AskAegisButton } from "@/components/AskAegisButton";
 import { SignalManualOverride } from "./SignalManualOverride";
 import { formatSignalRef } from "@/lib/signal-ref";
 import { CopyableSignalRef } from "@/components/signals/CopyableSignalRef";
-import { format, differenceInDays } from "date-fns";
+import { format } from "date-fns";
 import { SignalAgeBadge } from "./SignalAgeBadge";
 import { FacebookVideoEmbed, isFacebookVideoUrl } from "./FacebookVideoEmbed";
 import { SignalUpdatesTimeline } from "./SignalUpdatesTimeline";
@@ -40,6 +40,8 @@ interface SignalDetailSheetProps {
     source_reliability?: string | null;
     information_accuracy?: string | null;
     event_date?: string | null;
+    surface_date?: string | null;
+    temporal_grounding?: string | null;
     // Social media fields
     post_caption?: string | null;
     thumbnail_url?: string | null;
@@ -328,33 +330,22 @@ export function SignalDetailSheet({
               onUpdated={onAssign}
             />
 
-            {/* Date Information - Enhanced with Event Date */}
+            {/* Date Information — temporal bucket via shared helper. Always render
+                the badge (it labels current / timing-unknown / historical) so an
+                undated or resurfaced signal can never read as current. */}
             <div className="space-y-3">
-              {signal.event_date && (
-                <div className="p-3 rounded-lg bg-muted/50 border">
-                  <div className="flex items-center gap-2 mb-2">
-                    {differenceInDays(new Date(), new Date(signal.event_date)) > 365 ? (
-                      <AlertTriangle className="h-4 w-4 text-orange-500" />
-                    ) : differenceInDays(new Date(), new Date(signal.event_date)) > 30 ? (
-                      <History className="h-4 w-4 text-amber-500" />
-                    ) : (
-                      <Calendar className="h-4 w-4 text-primary" />
-                    )}
-                    <span className="text-sm font-medium">Event Timeline</span>
-                  </div>
-                  <SignalAgeBadge 
-                    eventDate={signal.event_date} 
-                    ingestedAt={signal.created_at} 
-                  />
+              <div className="p-3 rounded-lg bg-muted/50 border">
+                <div className="flex items-center gap-2 mb-2">
+                  <Calendar className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium">Event Timeline</span>
                 </div>
-              )}
-              
-              {!signal.event_date && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Clock className="h-4 w-4" />
-                  <span>Discovered: {format(new Date(signal.created_at), "PPp")}</span>
-                </div>
-              )}
+                <SignalAgeBadge
+                  eventDate={signal.event_date}
+                  ingestedAt={signal.created_at}
+                  surfaceDate={signal.surface_date}
+                  temporalGrounding={signal.temporal_grounding}
+                />
+              </div>
             </div>
 
             {/* Metadata */}

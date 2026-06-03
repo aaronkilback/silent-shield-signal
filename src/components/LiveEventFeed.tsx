@@ -8,13 +8,17 @@ import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
 import { SignalFeedback } from "@/components/SignalFeedback";
 import { differenceInDays } from "date-fns";
+import { classifyTemporalBucket, type RecencySignal } from "@/lib/temporal-recency";
 
 
 
 interface Signal {
   id: string;
   received_at: string;
+  created_at?: string | null;
   event_date: string | null;
+  surface_date?: string | null;
+  temporal_grounding?: string | null;
   source_id: string | null;
   category: string | null;
   severity: string | null;
@@ -238,11 +242,22 @@ export const LiveEventFeed = () => {
     );
   }
 
-  // Helper: is this signal historic? (event_date > 90 days old)
-  const isHistoric = (signal: Signal): boolean => {
-    if (!signal.event_date) return false;
-    return differenceInDays(new Date(), new Date(signal.event_date)) > 90;
-  };
+  // Temporal bucket via the shared helper (single source of truth). Keys on
+  // surface_date -> grounded event_date; NULL/cosmetic/copied => timing_unknown.
+  // Replaces the prior isHistoric() which defaulted NULL event_date to "not
+  // historic" (so old/undated signals showed as current) and used a raw 90-day
+  // cutoff with no grounding check.
+  const bucketOf = (signal: Signal) =>
+    classifyTemporalBucket(
+      {
+        created_at: signal.created_at || signal.received_at,
+        event_date: signal.event_date,
+        surface_date: signal.surface_date,
+        temporal_grounding: signal.temporal_grounding,
+      } as RecencySignal,
+      7,
+    );
+  const isHistoric = (signal: Signal): boolean => bucketOf(signal) === "historical";
 
   // Filter signals by date range
   const filteredSignals = signals.filter(signal => {
@@ -313,10 +328,16 @@ export const LiveEventFeed = () => {
                     : 'bg-secondary/50 border-border hover:border-primary/50'
               } animate-fade-in`}
             >
-              {isHistoric(signal) && (
+              {bucketOf(signal) === "historical" && (
+                <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-orange-500/10 border border-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-mono">
+                  <History className="w-3.5 h-3.5" />
+                  HISTORICAL / RESURFACED — Event from {(signal.surface_date || signal.event_date) ? new Date(signal.surface_date || signal.event_date!).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'unknown date'} (recently ingested — not a current development)
+                </div>
+              )}
+              {bucketOf(signal) === "timing_unknown" && (
                 <div className="flex items-center gap-2 mb-2 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-mono">
                   <History className="w-3.5 h-3.5" />
-                  HISTORICAL — Event from {signal.event_date ? new Date(signal.event_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'unknown date'}
+                  TIMING UNKNOWN — no grounded event date; ingested {new Date(signal.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} (not treated as current)
                 </div>
               )}
               <div className="flex items-start justify-between gap-4">
@@ -369,7 +390,7 @@ export const LiveEventFeed = () => {
                       </Badge>
                     )}
                     <span className="ml-auto">
-                      <SignalAgeIndicator eventDate={signal.event_date} ingestedAt={signal.received_at} />
+                      <SignalAgeIndicator eventDate={signal.event_date} ingestedAt={signal.received_at} surfaceDate={signal.surface_date} temporalGrounding={signal.temporal_grounding} />
                     </span>
                   </div>
                   
