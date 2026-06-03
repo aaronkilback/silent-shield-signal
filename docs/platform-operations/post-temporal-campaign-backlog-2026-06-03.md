@@ -164,6 +164,74 @@ back into contention (3), collection ahead of retrieval (4), retrieval ahead of 
 
 ---
 
+## 6. Operator Question Test — Bottleneck Attribution Framework
+
+**Purpose:** replace intuition about the next bottleneck with a **measured failure distribution**. This is
+the instrument that executes §5's tie-breaker. Run **after** Temporal Integrity is fully deployed and Trust
+Validation passes. *(Planning artifact only — not run here; no production investigation performed.)*
+
+### Method
+1. **Pre-register** (before scoring) the question set and the definition of a "weak" answer, so scoring
+   cannot be reverse-fit to a desired verdict.
+2. **Sample** a representative set of **real** operator questions across three lenses — **CRT**, **PETRONAS**,
+   and **executive** — run in the correct tenant. Seed set (extend with real logged questions):
+   - What changed this week? · What is forming? · What deserves leadership attention? · What should I be
+     monitoring? · Tell me about BC Place. · Tell me about Fort St. John. · Tell me about this person/entity. ·
+     Is activity around this issue escalating? · What should CRT know? · What should PETRONAS know?
+3. **Verdict each answer** good vs weak (weak = incomplete / incorrect / unhelpful / misleading), with a
+   one-line reason.
+4. **Classify every weak answer's PRIMARY failure mode** (exactly one — the dominant cause) using the
+   evidence-based decision tree below. Optionally record a secondary contributor.
+
+### Failure-mode codebook (R / C / A / P)
+| Code | Definition |
+|---|---|
+| **C — Collection** | The needed data was never collected / monitored / attributed. It does not exist in the tenant's stores. |
+| **R — Retrieval** | The data **exists** in the stores but Aegis could not reach it (tool empty/error, wrong path, scope filter, F-TEMPORAL-3-class defect). |
+| **A — Reasoning** | The data was available **and** retrieved, but interpreted poorly (misranked, ignored, wrong inference, fabricated despite evidence). |
+| **P — Presentation** | Data and reasoning were correct, but communicated poorly (unclear, buried, mislabeled, wrong emphasis). |
+
+### Decision tree (forces evidence, not guesswork — disambiguates R vs C and A vs P)
+```
+Does the needed data exist in the tenant's stores?  (check DB / retrieval trace)
+   ├─ NO  ───────────────────────────────────────────────► C (Collection)
+   └─ YES → Was it surfaced to Aegis? (tool result / grounding trace shows the rows)
+            ├─ NO  ──────────────────────────────────────► R (Retrieval)
+            └─ YES → Was the synthesis/judgment correct?
+                     ├─ NO  ─────────────────────────────► A (Reasoning)
+                     └─ YES, but communicated poorly ────► P (Presentation)
+```
+> The first two branches must be settled by **evidence** (a store check + the retrieval/flight-recorder
+> trace), not by the rater's impression. This is precisely why Wave A #2 (harness) and #3 (silent-empty fix)
+> are prerequisites for a *trustworthy* run of this test — without them, R vs C is guesswork.
+
+### Scoring template
+| Q# | Lens (CRT/PET/EXEC) | Question | Verdict (good/weak) | Primary code | Evidence (store check + trace) | Secondary |
+|----|----|----|----|----|----|----|
+| … | | | | C/R/A/P | | |
+
+### Aggregation & decision rule
+- Report **counts and rates** per code (rate = weak-of-that-code ÷ total questions), and a per-lens
+  breakdown (does CRT fail differently than Petronas?).
+- Example distribution: `Collection 12 · Retrieval 5 · Reasoning 2 · Presentation 1`.
+- **Decision rule:** the **dominant category is the primary candidate** for the next campaign.
+- **Caveats (state explicitly in the result):**
+  - **Severity weighting:** a few high-trust-impact failures may outrank a pile of trivial ones — report
+    counts *and* flag any high-severity outliers; the dominant-count rule is the default, not the only lens.
+  - **Tie / near-tie (within ~20%):** do not force a winner; run a second sample or split the campaign.
+  - **Minimum sample:** ≥ ~30 questions across the three lenses before the distribution is decision-grade.
+  - **Known-bug control:** if run **before** F-TEMPORAL-3 (#1) is fixed, tag its empties separately — that
+    single known defect would otherwise inflate **R** and bias the verdict. Prefer running after #1, or
+    subtract the tagged subset.
+
+### Bias guards
+- Two independent raters classify blind; reconcile disagreements; report inter-rater agreement.
+- Include **good** answers in the denominator (measure rates, not just failure counts).
+- The test's job is **not** to confirm the collection-primary hypothesis — it is to find what is actually
+  preventing useful answers. A result that contradicts §4's verdict **reorders the backlog.**
+
+---
+
 ## Decision posture
 
 - This package uses **only** evidence from the Temporal Integrity campaign and clearly-labeled prior
