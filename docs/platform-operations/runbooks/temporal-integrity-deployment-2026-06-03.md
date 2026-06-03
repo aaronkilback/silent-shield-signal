@@ -147,6 +147,14 @@ done
   2. the **real BC Place 2022** signal (`8fe0704f`) classifies **Historical / Resurfaced**,
   3. a **real timing-unknown** signal classifies **Timing Unknown**,
   4. **Aegis entity-context retrieval honors those classifications** (does not narrate the 2022 signal as current).
+
+  **RESULT — C3 = PASS (2026-06-03), verified at runtime on the deployed prod functions:**
+  1. ✅ `get_recent_signals` → LNG/fire/World-Cup grounded-recent signals = `current`.
+  2. ✅ `query_fortress_data` (CRT scope) → `8fe0704f` = `historical` ("event 2022-10-14; ingested 2026-05-22"). *Acceptance oracle met.*
+  3. ✅ `get_recent_signals` → NULL-event `[PATTERN]` + cosmetic-midnight signals = `timing_unknown`.
+  4. ✅ **(path/data layer)** entity-context retrieval emits the correct bucket for BC Place; `AEGIS_TEMPORAL_DISCIPLINE` + `tenant-entity-graph` tagging verified in the deployed bundle.
+  Live bonus: `f5421e52` (event 2025-01-01, ingested *today*) → `historical`, not current — masquerade prevented on a fresh ingestion.
+  **DEFERRED (operator UX trust-validation, NOT a C3 blocker):** ask Aegis in CRT *"Tell me about BC Place"* → expect the 2022 item framed historical/resurfaced, not current. Confirm during the post-deploy trust-validation package (§5.1.5 of the validation doc), after C4. **Do not run before C4.**
 - **C4 (post frontend):** load the live feed; confirm temporal badges render (see §5). **After C3+C4,
   execute the full trust-validation package:** `temporal-integrity-post-deploy-validation-2026-06-03.md`
   (Aegis / CRT / Petronas / regression — proves Fortress tells time correctly; any FAIL → §3 rollback).
