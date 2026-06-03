@@ -227,3 +227,137 @@ No-Action = response types** that service it; **Incident remains an output, neve
 **No work started, no backlog item created, no sequencing changed** (per directive). This section captures the
 deeper object question so that, if/when the operating-model campaign opens, we evaluate **Intelligence
 Requirement** as the candidate root — driven by decision support, not workflow mechanics.
+
+---
+
+## 8. The two layers — Operator Experience vs System Architecture
+
+**Meta-finding (the commander's real challenge):** §1–§7 reasoned almost entirely about the **internal
+operating model** (incident → mission → IR). The copper-theft failure — *"I cannot, there is no incident"* —
+is a **different axis**: the **operator-experience** layer. We were evaluating the architecture layer and the
+UX layer **as if they were one thing.** They are not. That conflation *is* the defect: the incident precondition
+is an internal mechanism that **leaked** into the operator's experience.
+
+**Verdict: yes — next-gen Aegis should be two separate-but-coupled concepts.**
+```
+EXTERNAL (Operator Experience)        INTERNAL (System Architecture)
+User Intent                           Signals
+   → Best Execution Path                 → Intelligence Requirements
+        (router hides mechanism)            → Missions / Watches / Incidents / Briefings
+                                               → Decision Support
+            └──────── coupled by: (a) an intent→path ROUTER, and ────────┘
+                      (b) an EPISTEMIC-SURFACING CONTRACT
+```
+The external layer optimizes for **effortlessness + intent-fidelity** (feel like Claude/Perplexity for simple
+asks). The internal layer optimizes for **rigor, provenance, durable decision support** (feel like an
+Intelligence Officer for deep asks). What connects them is a **router** (classify intent → select execution
+path → invoke internal objects) and — the crux — an **epistemic-surfacing contract**.
+
+> **The one asymmetry that governs everything: hide the *mechanism*, never hide the *epistemic state*.**
+> The operator must never need to know "incident vs mission vs IR." The operator must **always** be told
+> "I have grounded data / I don't / this is low-confidence / this isn't collected." Mechanism is private;
+> uncertainty and coverage are public. Get this wrong in either direction and the system fails.
+
+### Q1 — Is Intelligence Requirement still the correct first-class object *internally*? **Yes.**
+The two-layer framing does not weaken §7; it **clarifies** it. IR remains the internal first-class object
+(decision-anchored, persistent). The earlier confusion came partly from imagining the operator must *see* or
+*name* the IR — they must not. IR is internal; the operator speaks intent. (Still a hypothesis pending the
+Operator Question Test.)
+
+### Q2 — Should User Intent be the primary routing construct *externally*? **Yes.**
+Intent (advisory / search / assessment / research / monitoring / operations) is how operators actually think.
+The system classifies intent → routes to the best execution path (direct answer / retrieval / product search /
+assessment / mission / watch / incident / briefing) **without the operator choosing or seeing the path.** Two
+guardrails: the router (a) asks **one** brief clarifying question when intent is genuinely ambiguous, and (b)
+defaults to the **least-effort path that honestly serves the intent**, then *offers* escalation — never forces
+the heavy path.
+
+### Q3 — Relationship between Intent / IR / Mission / Watch / Incident / Briefing
+Layered, and explicitly **not 1:1**:
+- **User Intent** — external, per-utterance, transient. The entry event.
+- **Best Execution Path** — the router's decision; maps an intent to one or more internal actions.
+- **Intelligence Requirement** — internal, durable, first-class. Created/updated **only when** an intent
+  implies a knowledge need worth tracking. *Most simple intents resolve without ever minting an IR.*
+- **Missions / Watches / Incidents / Briefings** — internal **responses** that service IRs (per §7); never
+  operator-invoked primitives.
+- **Decision Support** — terminal output, surfaced back as a natural answer/briefing.
+Mapping is **many-to-many over time**: many intents converge on one IR (everyone asking about copper theft);
+one IR accumulates many responses; one briefing answers many intents. The router mediates; the operator sees
+none of it.
+
+### Q4 — Mistakes if we EXPOSE internal workflow concepts to operators
+- **Abstraction leak** (the copper-theft failure) — forces operators to learn internal preconditions.
+- **Cognitive burden** — must learn mission/incident/IR vocabulary to get an answer.
+- **Workflow gaming** — operators manufacture incidents/missions to unlock capability → **corrupts the incident
+  ledger** (exactly what we found).
+- **Brittleness** — UI vocabulary couples to internal schema; refactors break the user's mental model.
+- **Adoption loss** — feels like enterprise workflow software, not an intelligence partner.
+
+### Q5 — Mistakes if we HIDE too much and Aegis becomes a generic chatbot
+The symmetric, equally-dangerous failure:
+- **Loss of grounding/provenance** — answers from parametric knowledge, not cited tenant intelligence (the
+  INC-CTX-CONTAM fabrication mode).
+- **Breaks the epistemic-surfacing contract** — hides "I don't actually have data on this" → fabrication
+  instead of honest "not collected." *This is the cardinal sin of over-hiding.*
+- **No durable intelligence** — stateless; loses "what do we know about X over time," loses decision memory.
+- **No proactive capability** — only reacts to prompts; loses standing watches / "what's forming" → collapses
+  Marks III–IV.
+- **False effortlessness** — fast, confident, shallow/wrong answer on a question that actually *required*
+  collection. **Over-hiding = confident shallowness; over-exposing = bureaucratic friction.** The target sits
+  between: effortless surface, rigorous core, honest about which mode it is in.
+
+### Q6 — Fit with Commander's Intent ("preserve decision space by shortening Signal → Decision → Action")
+The separation serves it **directly and on both halves**:
+- **Shortens S→D→A** — the external router removes workflow friction (no manufacturing incidents) → faster
+  question-to-decision-support; the internal IR layer keeps the substance grounded.
+- **Preserves decision space** — the epistemic-surfacing contract refuses false certainty (honest "I don't
+  know / not collected / low-confidence"). The internal layer is *where* confidence/coverage is tracked; the
+  external layer *honestly surfaces* it.
+- Both failure modes attack decision space: over-exposure *lengthens* the loop (friction); over-hiding
+  *manufactures false certainty*. **The two-layer split, done right, is precisely what avoids both** — which is
+  why it fits the doctrine better than either a pure-workflow or pure-chatbot model.
+
+### Q7 — Copper-theft, specifically
+This was a **dual external-layer failure**: (1) no intent routing, and (2) an abstraction leak.
+- **"What tracker do you recommend for copper theft?"** = **Advisory / Product-Research** intent → execution
+  path: **Direct Answer + Product Search + comparison**, grounded in tenant context (copper theft as a known
+  threat to the assets). No incident, no mission. Effortless, Perplexity-class.
+- **"Dispatch a specialist agent."** = **Operations / Investigation** intent → open/attach an **IR**
+  ("understand copper-theft threat to PETRONAS NE-BC assets") → select agent → **Collection Mission** — *without
+  an incident.* Aegis should never have surfaced "no incident."
+
+**How Aegis should differentiate intent** (verb + object signature, not internal state):
+| Operator says… | Intent | Execution path |
+|---|---|---|
+| "recommend / compare / which / best tool for…" | Advisory / Product-Research | Direct Answer / Product Search |
+| "what do we know about / tell me about…" | Search / Retrieval | Grounded retrieval (escalate iff coverage insufficient) |
+| "what's forming / assess / how serious is…" | Assessment | Intelligence Assessment (retrieve + analyze) |
+| "investigate / dispatch / dig into / look into…" | Operations / Investigation | IR → Collection Mission |
+| "watch / monitor / alert me on…" | Monitoring | Standing Watch |
+Ambiguity → one clarifying question, or answer-first-then-offer-escalation. Crucially, the **answer-vs-collect**
+decision is part of path selection and depends on **retrieval honesty** (can we ground this now?) — coupling
+this whole model back to Wave A.
+
+### 8.1 — Crux, caveats, and anti-anchoring
+- **The crux is the epistemic-surfacing contract**, not the object taxonomy. Hiding mechanism is easy; the hard,
+  high-stakes part is surfacing *exactly* the right epistemic state so the system is effortless **without**
+  becoming a confident fabricator. That is where the design risk concentrates.
+- **Capability-integrity labels:** today Aegis is **one layer** that leaks internal objects (incident) and
+  partially hides others. The external **User-Intent router** is **NOT PRESENT**; the internal **IR object** is
+  **NOT PRESENT**; the epistemic-surfacing contract is **PARTIAL** (grounding doctrine exists; intent-aware
+  honesty does not). All three are hypotheses, not capabilities.
+- **Anti-anchoring (this is the 4th reframe: incident → mission → IR → two-layer):** the two-layer model is the
+  strongest organizing hypothesis yet, but it is still a hypothesis. Validate against **real operator behavior**
+  via the Operator Question Test (backlog §6) — which already measures *intents in the wild* and failure modes
+  (R/C/A/P). Let observed behavior confirm both the intent taxonomy (external) and the IR construct (internal)
+  before any commitment. **Decision support over conceptual elegance.**
+
+### 8.2 — Bottom line
+Yes: build next-gen Aegis as **two separate-but-coupled layers** —
+1. **External:** *User Intent → Best Execution Path* (interpretation + routing; mechanism hidden; effortless).
+2. **Internal:** *Intelligence Requirement → Decision Support* (the intelligence operating model; rigorous; durable).
+Connected by a **router** and an **epistemic-surfacing contract** (hide mechanism, never hide uncertainty).
+This is what lets Aegis be **as effortless as ChatGPT when a simple answer is right, and as capable as an
+Intelligence Officer when collection/analysis/action is required** — the stated goal. The separation is more
+useful than either layer alone, and it explains every prior finding: the incident-gate, the mission/IR debate,
+and the copper-theft leak were all symptoms of a **missing layer boundary.** Evaluation only — nothing built.
