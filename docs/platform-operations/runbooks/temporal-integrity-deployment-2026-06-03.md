@@ -142,7 +142,9 @@ done
   2. the **real BC Place 2022** signal (`8fe0704f`) classifies **Historical / Resurfaced**,
   3. a **real timing-unknown** signal classifies **Timing Unknown**,
   4. **Aegis entity-context retrieval honors those classifications** (does not narrate the 2022 signal as current).
-- **C4 (post frontend):** load the live feed; confirm temporal badges render (see §5).
+- **C4 (post frontend):** load the live feed; confirm temporal badges render (see §5). **After C3+C4,
+  execute the full trust-validation package:** `temporal-integrity-post-deploy-validation-2026-06-03.md`
+  (Aegis / CRT / Petronas / regression — proves Fortress tells time correctly; any FAIL → §3 rollback).
 
 ---
 
