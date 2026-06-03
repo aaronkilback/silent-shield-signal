@@ -60,6 +60,8 @@ interface Signal {
   is_test: boolean;
   source_id: string | null;
   event_date?: string | null;
+  surface_date?: string | null;
+  temporal_grounding?: string | null;
   // Rule-based categorization fields - applied_rules is JSONB (string[] in JSON format)
   applied_rules?: any; // JSONB array
   rule_tags?: string[];
@@ -226,6 +228,8 @@ export const SignalHistory = () => {
           is_test,
           source_id,
           event_date,
+          surface_date,
+          temporal_grounding,
           applied_rules,
           rule_tags,
           rule_category,
@@ -933,9 +937,11 @@ export const SignalHistory = () => {
             
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <div className="flex items-center gap-3">
-                <SignalAgeIndicator 
-                  eventDate={signal.event_date} 
-                  ingestedAt={signal.created_at} 
+                <SignalAgeIndicator
+                  eventDate={signal.event_date}
+                  ingestedAt={signal.created_at}
+                  surfaceDate={signal.surface_date}
+                  temporalGrounding={signal.temporal_grounding}
                 />
                 {/* Source link */}
                 {(() => {
