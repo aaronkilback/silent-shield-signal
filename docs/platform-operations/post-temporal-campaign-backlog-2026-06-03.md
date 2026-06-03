@@ -99,6 +99,71 @@ Trust impact scale: ⬤⬤⬤ high / ⬤⬤ med / ⬤ low. Complexity: S / M / L
 
 ---
 
+## 5. Evidence That Would Prove This Assessment Wrong
+
+The bottleneck verdict (**collection primary, retrieval secondary; not reasoning, not presentation**) is a
+**hypothesis**, not a conclusion. Each Wave A initiative, once executed, is also an *experiment* whose
+outcome can confirm or disconfirm it. Below, per initiative: what would confirm it as a true bottleneck (1),
+what would suggest it is not (2), and what its outcome would reveal about the macro ordering — reasoning
+back into contention (3), collection ahead of retrieval (4), retrieval ahead of collection (5).
+
+> Pre-registering these *before* committing avoids anchoring: we agree now what would change our mind.
+
+### F-TEMPORAL-3 (broken-column entity/related-signal tools)
+1. **Confirms bottleneck:** after correcting the column names, `search_signals`/`get_related_signals` return
+   rows that provably exist in the tables, and previously-empty operator/Aegis answers now contain real,
+   relevant signals. → retrieval was genuinely blocking reachable data.
+2. **Suggests not:** post-fix the tools still return ~empty because the matching rows truly don't exist, **or**
+   Aegis never routes through these tools (no behavioral change). → the defect was cosmetic/low-traffic, not a
+   bottleneck.
+3. **Reasoning back to primary:** the fixed tools return correct, complete rows, yet Aegis's synthesized
+   answer is still wrong/misranked/ignored. → the limiter is reasoning over good data.
+4. **Collection ahead of retrieval:** the fix returns rows, but they are sparse / stale / mostly
+   timing-unknown / low-relevance. → what was *collected* binds, not whether retrieval works.
+5. **Retrieval ahead of collection:** the fix surfaces a large volume of relevant, **already-collected**
+   signals operators could not previously reach. → data existed all along; retrieval was the binding constraint.
+
+### Validation Harness (target staging, decode per-tool errors, health taxonomy)
+1. **Confirms bottleneck (observability as the constraint on *diagnosis*):** the improved harness uncovers
+   **additional** silently-failing tools we did not know about. → we had been flying blind; our visibility was
+   itself limiting.
+2. **Suggests not:** the harness shows nearly all tools were already healthy and the earlier failures were
+   purely the no-tenant/opaque-label artifact. → a validation-convenience gap, not a capability bottleneck.
+3. **Reasoning back to primary:** the harness shows tools return correct data broadly, while the standing
+   complaints are about *answer quality*. → reasoning is implicated, not plumbing.
+4. **Collection ahead:** tool-by-tool yield shows most signal tools return **genuinely empty** (no data,
+   not errors). → collection is the binding constraint.
+5. **Retrieval ahead:** the harness uncovers many tools that error / return-empty-**despite**-data
+   (the F-TEMPORAL-3 class, at scale). → retrieval is the binding constraint.
+   *(Note: the harness is a measurement instrument — its primary job is to make 3–5 answerable across all
+   tools with real evidence rather than inference.)*
+
+### Silent-Empty Failure Mode (stop swallowing query errors)
+1. **Confirms bottleneck:** once swallowed errors surface, a **material** fraction of past "empty" results
+   prove to have been *failures*, not genuine emptiness. → hidden retrieval failure was real and consequential.
+2. **Suggests not:** surfacing errors shows the "empties" were overwhelmingly **genuine** (no matching data).
+   → the fix improves honesty/trust labeling but does not change outcomes → UX/trust fix, not a bottleneck.
+3. **Reasoning back to primary:** errors turn out rare and data flows, yet answers remain poor. → reasoning.
+4. **Collection ahead:** the now-visible split is dominated by "empty = truly no data." → collection.
+5. **Retrieval ahead:** the now-visible split is dominated by "empty = actually a failure." → retrieval.
+
+### Synthesis — what would reorder the macro verdict
+- **Reasoning becomes primary** if, across Wave A, tools demonstrably return **correct and complete** data
+  but Aegis's conclusions are still wrong/unhelpful (misranking, ignoring grounded rows, fabricating despite
+  evidence). No campaign evidence shows this today — but it is the cleanest disconfirmer and must be watched.
+- **Collection stays/becomes clearly primary** if, after retrieval is provably sound, the dominant failure
+  is "no relevant data exists" (genuinely-empty tools, sparse POIs, scoped corpora). This is the *expected*
+  result if the hypothesis holds.
+- **Retrieval leapfrogs collection** if Wave A reveals large volumes of **already-collected** intelligence
+  that operators simply could not reach — i.e., the data was there and plumbing was the wall. If this
+  happens, reorder: retrieval becomes the primary frontier and Wave D (collection bets) is deferred.
+- **Tie-breaker measurement:** for a sample of real operator questions, classify each failed/weak answer as
+  *retrieval-failed-despite-data* vs *no-data-collected* vs *good-data-bad-reasoning*. The dominant class is
+  the next campaign's true target. (This classification is itself enabled by initiatives #2 and #3 — which is
+  why Wave A is recommended first regardless of where the verdict lands.)
+
+---
+
 ## Decision posture
 
 - This package uses **only** evidence from the Temporal Integrity campaign and clearly-labeled prior
