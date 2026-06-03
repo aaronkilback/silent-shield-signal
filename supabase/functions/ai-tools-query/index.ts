@@ -1,4 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { annotateTemporal } from "../_shared/temporal-recency.ts";
+
+// Temporal-integrity: every signal returned to Aegis carries its bucket
+// (Current / Timing Unknown / Historical-Resurfaced) regardless of retrieval
+// path. Recency keys on surface_date → grounded event_date, never created_at.
+const TEMPORAL_WINDOW_DAYS = 7;
+const tagSignals = (rows: any[] | null | undefined) =>
+  (rows ?? []).map((s) => annotateTemporal(s, TEMPORAL_WINDOW_DAYS, Date.now()));
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,11 +32,11 @@ Deno.serve(async (req) => {
       case "get_recent_signals":
         const { data: signals } = await supabase
           .from("signals")
-          .select("id, title, description, severity, confidence, received_at, status, client_id, source_url, clients(name)")
+          .select("id, title, description, severity, confidence, received_at, created_at, event_date, surface_date, temporal_grounding, status, client_id, source_url, clients(name)")
           .gte("received_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
           .order("received_at", { ascending: false })
           .limit(parameters?.limit || 50);
-        result = signals;
+        result = tagSignals(signals);
         break;
 
       case "get_active_incidents":
@@ -134,11 +142,11 @@ Deno.serve(async (req) => {
         const sigQuery = parameters?.query || "";
         const { data: signalResults } = await supabase
           .from("signals")
-          .select("id, title, description, severity, confidence, received_at, status, source, client_id, clients(name)")
+          .select("id, title, description, severity, confidence, received_at, created_at, event_date, surface_date, temporal_grounding, status, source, client_id, clients(name)")
           .or(`title.ilike.%${sigQuery}%,description.ilike.%${sigQuery}%`)
           .order("received_at", { ascending: false })
           .limit(parameters?.limit || 10);
-        result = signalResults;
+        result = tagSignals(signalResults);
         break;
 
       case "get_entity_summary_for_signal":
@@ -212,7 +220,7 @@ Deno.serve(async (req) => {
 
         let relatedQuery = supabase
           .from('signals')
-          .select('id, normalized_text, category, severity, created_at, correlated_entity_ids')
+          .select('id, normalized_text, category, severity, created_at, event_date, surface_date, temporal_grounding, correlated_entity_ids')
           .neq('id', relSigId)
           .order('created_at', { ascending: false })
           .limit(20);
@@ -225,7 +233,7 @@ Deno.serve(async (req) => {
 
         const { data: relatedSignals } = await relatedQuery;
         result = {
-          related_signals: relatedSignals || [],
+          related_signals: tagSignals(relatedSignals),
           criteria,
           source_signal_id: relSigId
         };
@@ -694,7 +702,7 @@ Deno.serve(async (req) => {
             signalsQ = signalsQ.or(kf);
           }
           const { data: sigData } = await signalsQ.order('created_at', { ascending: false });
-          fortressResults.signals = sigData;
+          fortressResults.signals = tagSignals(sigData);
         }
 
         // Query incidents
@@ -704,7 +712,11 @@ Deno.serve(async (req) => {
           if (fortressFilters.priority?.length) incQ = incQ.in('priority', fortressFilters.priority);
           if (fortressFilters.status?.length) incQ = incQ.in('status', fortressFilters.status);
           const { data: incData } = await incQ.order('created_at', { ascending: false });
-          fortressResults.incidents = incData;
+          // Tag the signals nested under each incident so resurfaced/historical
+          // incident evidence is never narrated as current.
+          fortressResults.incidents = (incData ?? []).map((inc: any) =>
+            Array.isArray(inc?.signals) ? { ...inc, signals: tagSignals(inc.signals) } : inc
+          );
         }
 
         // Query entities
@@ -882,7 +894,7 @@ Deno.serve(async (req) => {
         // Search normalized_text — covers all ingested signals regardless of source format
         const iocQuery = supabase
           .from('signals')
-          .select('id, title, severity, confidence, received_at, source_url, raw_json, client_id, clients(name)')
+          .select('id, title, severity, confidence, received_at, created_at, event_date, surface_date, temporal_grounding, source_url, raw_json, client_id, clients(name)')
           .ilike('normalized_text', `%${indicator}%`)
           .in('client_id', iocClientScope)
           .order('received_at', { ascending: false })
@@ -899,9 +911,14 @@ Deno.serve(async (req) => {
 
         const matches = (iocMatches || []).map((sig: any) => {
           const raw = sig.raw_json || {};
+          const t = annotateTemporal(sig, TEMPORAL_WINDOW_DAYS, Date.now());
           return {
-            signal_id:     sig.id,
-            signal_title:  sig.title,
+            signal_id:       sig.id,
+            signal_title:    sig.title,
+            // When this IOC sighting actually occurred vs. when Fortress ingested
+            // it — a 2022 sighting must not read as a current detection.
+            temporal_bucket:  t.temporal_bucket,
+            temporal_caption: t.temporal_caption,
             severity:      sig.severity,
             confidence:    sig.confidence,
             received_at:   sig.received_at,

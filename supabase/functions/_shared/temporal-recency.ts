@@ -52,6 +52,38 @@ export function classifyTemporalBucket(
   return t >= nowMs - windowDays * 24 * 3600 * 1000 ? "current" : "historical";
 }
 
+/** Human one-liner that names occurred/surfaced vs ingested so nothing reads as current by accident. */
+export function temporalCaption(s: RecencySignal, windowDays: number, nowMs: number): string {
+  const b = classifyTemporalBucket(s, windowDays, nowMs);
+  const eff = effectiveRecencyDate(s);
+  if (b === "current") return `Current (event ${eff?.slice(0, 10)})`;
+  if (b === "historical") return `Historical / Resurfaced — event ${eff?.slice(0, 10)}; ingested ${s.created_at?.slice(0, 10)}`;
+  return `Timing unknown — ingested ${s.created_at?.slice(0, 10)} (event date not established)`;
+}
+
+/**
+ * Attach the temporal bucket + label + caption to a signal row so EVERY signal
+ * carries its bucket regardless of retrieval path (recency window, entity
+ * context, feed, COP, briefing, Aegis tools). Spread over the original row:
+ *   rows.map((s) => annotateTemporal(s, 7, Date.now()))
+ * The added fields make the classification visible to Aegis and the UI; they do
+ * NOT filter or drop anything (intelligence is re-labeled, never deleted).
+ */
+export function annotateTemporal<T extends RecencySignal>(
+  s: T,
+  windowDays: number,
+  nowMs: number,
+): T & { temporal_bucket: TemporalBucket; temporal_label: string; temporal_caption: string; effective_recency_date: string | null } {
+  const bucket = classifyTemporalBucket(s, windowDays, nowMs);
+  return {
+    ...s,
+    temporal_bucket: bucket,
+    temporal_label: TEMPORAL_LABELS[bucket],
+    temporal_caption: temporalCaption(s, windowDays, nowMs),
+    effective_recency_date: effectiveRecencyDate(s),
+  };
+}
+
 /** Partition a candidate set (e.g. recently-ingested rows) into the three buckets. */
 export function partitionByRecency<T extends RecencySignal>(
   rows: readonly T[],

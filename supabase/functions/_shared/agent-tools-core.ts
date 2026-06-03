@@ -16,6 +16,7 @@
  */
 
 import { registerTool, type ToolHandler } from "./agent-tools.ts";
+import { annotateTemporal } from "./temporal-recency.ts";
 import { callAiGatewayJson } from "./ai-gateway.ts";
 import { embedText } from "./embed.ts";
 import { proposeAction } from "./agent-actions.ts";
@@ -44,7 +45,7 @@ const lookupHistoricalSignals: ToolHandler = {
     const since = new Date(Date.now() - days * 86400_000).toISOString();
     const { data, error } = await supabase
       .from('signals')
-      .select('id, title, severity, severity_score, category, created_at, normalized_text')
+      .select('id, title, severity, severity_score, category, created_at, event_date, surface_date, temporal_grounding, normalized_text')
       .or(`title.ilike.%${term.replace(/[%,]/g, '')}%,normalized_text.ilike.%${term.replace(/[%,]/g, '')}%`)
       .gte('created_at', since)
       .is('deleted_at', null)
@@ -55,16 +56,26 @@ const lookupHistoricalSignals: ToolHandler = {
     return {
       term,
       days_searched: days,
+      // NOTE: days_searched filters on created_at (ingestion). A match within the
+      // window may describe an OLD event — temporal_bucket/caption below tell the
+      // truth so entity-context results are never narrated as current by recency.
       count: data?.length ?? 0,
-      signals: (data ?? []).map((s) => ({
-        id: s.id,
-        title: (s.title || '').substring(0, 120),
-        severity: s.severity,
-        severity_score: s.severity_score,
-        category: s.category,
-        created_at: s.created_at,
-        excerpt: (s.normalized_text || '').substring(0, 200),
-      })),
+      signals: (data ?? []).map((s) => {
+        const t = annotateTemporal(s, 7, Date.now());
+        return {
+          id: s.id,
+          title: (s.title || '').substring(0, 120),
+          severity: s.severity,
+          severity_score: s.severity_score,
+          category: s.category,
+          created_at: s.created_at,
+          temporal_bucket: t.temporal_bucket,
+          temporal_label: t.temporal_label,
+          temporal_caption: t.temporal_caption,
+          effective_recency_date: t.effective_recency_date,
+          excerpt: (s.normalized_text || '').substring(0, 200),
+        };
+      }),
     };
   },
 };
@@ -417,7 +428,7 @@ const detectEscalationPattern: ToolHandler = {
     const since = new Date(Date.now() - days * 86400_000).toISOString();
     const { data, error } = await supabase
       .from('signals')
-      .select('created_at, severity, severity_score, title')
+      .select('created_at, event_date, surface_date, temporal_grounding, severity, severity_score, title')
       .or(`title.ilike.%${term.replace(/[%,]/g, '')}%,normalized_text.ilike.%${term.replace(/[%,]/g, '')}%`)
       .gte('created_at', since)
       .is('deleted_at', null)
@@ -425,6 +436,13 @@ const detectEscalationPattern: ToolHandler = {
       .order('created_at', { ascending: true });
     if (error) return { error: error.message };
     const rows = data ?? [];
+    // The timeline below buckets by INGESTION date (created_at) — by design, this
+    // is an ingestion-volume trend. But a burst of re-ingested OLD items can fake
+    // an escalation. Count how many in-window signals are historical/resurfaced so
+    // the verdict can be discounted rather than read as a genuine recent surge.
+    const resurfacedInWindow = rows.filter(
+      (r: any) => annotateTemporal(r, 7, Date.now()).temporal_bucket === 'historical',
+    ).length;
     if (rows.length === 0) {
       return { term, days, count: 0, verdict: 'no signals in window', timeline: [] };
     }
@@ -464,6 +482,11 @@ const detectEscalationPattern: ToolHandler = {
       timeline,
       verdict,
       severity_delta_first_to_second_half: Math.round(delta * 10) / 10,
+      // Temporal-integrity caveat: timeline is by ingestion date.
+      resurfaced_in_window: resurfacedInWindow,
+      timeline_note: resurfacedInWindow > 0
+        ? `${resurfacedInWindow} of ${rows.length} in-window signals describe HISTORICAL/resurfaced events (old event date, recently ingested). The trend reflects ingestion volume, not necessarily new activity — discount the escalation verdict accordingly.`
+        : 'Timeline reflects ingestion dates; no resurfaced-historical signals detected in window.',
     };
   },
 };
