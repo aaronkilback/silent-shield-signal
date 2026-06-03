@@ -141,3 +141,113 @@ Stated as a single durable line for the doctrine wall:
   describes the *target*, not the *current state*.
 - **Nothing built.** This review is a decision input for whoever ratifies Fortress doctrine; it changes no code,
   no campaign, and no sequencing. Temporal Integrity remains the only active workstream.
+
+---
+
+## 8. Red-team — an aggressive attempt to kill the doctrine
+
+Candidate (refined): **"Hide the mechanism. Reveal the decision-relevant epistemic state."** Below I assume it
+is wrong and try to break it. The kill-shots that *landed* are marked **(LANDS)**; the doctrine's survival, if
+any, is stated only after.
+
+### Q1–Q2 — Where it fails, and the new failure modes it creates
+- **(LANDS) It violates itself.** "Reveal the *decision-relevant* epistemic state" requires a judgment of
+  *relevance* — a **hidden, fallible mechanism (the salience filter)**. The doctrine smuggles in exactly the
+  thing it forbids: a hidden mechanism that can suppress the one caveat that mattered (low-probability /
+  high-impact). The second clause quietly depends on a hidden first-clause violation.
+- **(LANDS) "Hide the mechanism" hides the router's own mistakes.** If the intent→path router misroutes
+  (treats an investigation as an advisory answer), hiding the path makes the **misroute invisible** to the
+  operator. The property that makes it effortless makes routing errors undetectable — a new, silent failure
+  class.
+- **(LANDS) It enables hidden automation / loss of agency.** "Mechanism" can be stretched to hide *that* an
+  action was taken or that automation occurred — not just *how*. An operator thinks they got advice; an action
+  was auto-executed. The doctrine, unsharpened, is a license for automation laundering.
+- **(LANDS) Calibration theater.** Revealing confidence/coverage that is itself **uncalibrated** is a *more
+  sophisticated lie* than silence — a "73% confidence" with no empirical basis manufactures false precision.
+  The doctrine assumes the epistemic state is accurate; if it isn't, "reveal it" spreads a better-dressed
+  falsehood.
+- **(LANDS) Caveat fatigue → self-defeat.** Surface uncertainty on everything and operators habituate and stop
+  reading it — epistemic indicators become wallpaper, i.e. *hidden by overexposure.* "Proportionate" is the
+  intended fix, but it is enforced by the same fallible salience filter (above).
+- **Over-hedging → decision paralysis / weaponized uncertainty.** A system that constantly flags low confidence
+  can erode willingness to act (lengthening the loop — the opposite of intent) and become an **accountability
+  shield** ("Aegis said low confidence") for decisions people didn't want to own.
+- **Felt-trust vs warranted-trust gap.** Humans often trust *confident* advisors more, even wrongly. Surfacing
+  uncertainty can *lower felt trust and adoption* even as it raises warranted trust — and adoption is what
+  determines whether the doctrine ever matters.
+
+### Q3 — Competing doctrines, and where they beat it
+The doctrine is **not context-free**; at the extremes, competitors win:
+- **Simplicity > transparency** — trivial, high-volume, low-stakes asks: just answer; epistemic furniture is
+  pure cost.
+- **Operator control > automation** *and* **Explainability > speed** — high-consequence / irreversible /
+  auditable / legal decisions (CRT posture, exec protection): the operator must *see and choose* the
+  mechanism to defend the call. Here **"hide the mechanism" is actively dangerous** (un-auditable,
+  un-defensible, deskilling, automation bias).
+- **Automation > explainability** — time-critical at scale (mass triage): act/route fast; per-item explanation
+  is a luxury.
+- **Decisiveness > honesty** — sometimes the commander wants a *call*, not an enumeration of doubt; an IO is
+  valued for judgment under uncertainty, not for cataloguing it.
+**Finding:** the doctrine dominates only a **band** — medium-stakes, conversational decision-support. Outside
+that band it is wrong or secondary. An unqualified "Hide the mechanism" is too strong.
+
+### Q4 — What would disprove it (Operator Question Test signals)
+Downgrade from doctrine → heuristic if any hold:
+- Operators **repeatedly ask "why / how / what did you do"** → this user base *wants* mechanism; hiding it is wrong.
+- Operators **ignore epistemic indicators** (decisions identical with/without them) → the reveal half adds cost, no benefit.
+- **Decision quality unchanged** with vs without the doctrine.
+- **Routing accuracy is the dominant problem** (misroutes ≫ presentation issues) → the binding constraint is
+  router *quality* (a mechanism problem), not the honesty contract → doctrine addresses the wrong layer.
+- **Presentation-class (P) failures are a small fraction** of weak answers in the R/C/A/P distribution → it is
+  solving a minor surface; the real bottleneck is C (collection), R (retrieval), or A (reasoning).
+- **Adoption/trust *drops*** when uncertainty is surfaced.
+
+### Q5 — Minimum viable *operator* behavior
+**"Match your action to the uncertainty Aegis shows — don't act on a hedged answer as if it were certain."**
+(One habit: glance at what's missing/uncertain *before a consequential decision*; ignore it freely on trivial
+ones.) The irreducible value is **action calibration**, not comprehension of internals.
+
+### Q6 — Minimum viable *Aegis* behavior
+**"Never imply certainty you don't have."** (Refuse false certainty; state the load-bearing unknown unprompted
+when it would change the decision.) — **(LANDS, partially)** Note this is *nearly a restatement of the existing
+Grounding-State doctrine + calibration.* Which means the **novel** content of the candidate is mostly the
+*"hide the mechanism"* half (the UX/routing insight); the epistemic half is largely **already canon**. That
+shrinks its claim to be a *new* foundational doctrine.
+
+### Q7 — Is it actually about trust? — No; trust is downstream.
+Stripping it down: it is about **information-asymmetry management at the human–machine boundary** — deciding
+*which* asymmetries to close (epistemic state) and which to keep (mechanism). Its true target is **calibrated
+action under uncertainty**: preventing both *false certainty* (act beyond the evidence) and *false doubt*
+(withhold action the evidence supports). Cognitive load is a *constraint* (why you hide/filter), not the core.
+**The fundamental problem is decision quality under uncertainty via calibration — trust is the felt by-product
+of being well-calibrated.** Framing it as a "trust doctrine" undersells and mis-locates it.
+
+### Does it survive? — Yes, but smaller and sharper than claimed
+It **does not survive** as an unqualified, context-free, foundational law. It **does survive** as a **bounded
+domain doctrine** after four forced amendments:
+1. **Boundaries, not universality** — it governs the *medium-stakes conversational decision-support band*. At
+   the extremes, Simplicity / Operator-Control / Explainability / Automation explicitly override it.
+2. **Hide the HOW, never the THAT** — mechanism (how) is hidden-by-default / revealable-on-demand *and*
+   proactively revealed when stakes or auditability demand; but **agency** (that an action was taken, that
+   automation occurred, that a path was chosen) is part of the epistemic state and is **never** hidden. This
+   closes the hidden-automation and invisible-misroute holes.
+3. **Calibrated, or silent** — only reveal epistemic state that is *itself trustworthy*; an uncalibrated
+   confidence number is worse than none. (Depends on real calibration — backlog territory.)
+4. **Acknowledge overlap** — the epistemic half is largely the existing Grounding-State doctrine + calibration;
+   the candidate's genuinely new contribution is the *hide-the-mechanism / route-by-intent* half plus the
+   *make-retrieval-failures-visible* clause (silent-empty).
+
+**Restated to survive:**
+> *Within decision-support: don't make the operator fight the architecture (hide the how, reveal it on demand
+> and whenever stakes demand) — but never let them act miscalibrated (reveal the decision-relevant, trustworthy
+> epistemic state, and never hide that an action or automation occurred).*
+
+### Final honesty — foundational, or attractive-because-recent?
+**Undetermined by reasoning alone.** It is *more than a heuristic* (explanatory, prescriptive, unifying — §6)
+but *less than a universal doctrine* (context-bounded, half-redundant with Grounding-State, self-referential via
+the salience filter). Whether it is **foundational for Fortress** hinges on one empirical fact we do not yet
+have: **the R/C/A/P failure distribution.** If presentation/honesty (P) and *had-data-but-unreached* (R) failures
+dominate, it is foundational. If collection (C) or reasoning (A) dominate, it is a *correct but secondary*
+discipline and should be ranked as such. **Do not ratify it as foundational until the Operator Question Test
+returns that distribution.** It survived the attack — but as a sharpened, bounded, empirically-contingent
+domain doctrine, not the one universal law.
