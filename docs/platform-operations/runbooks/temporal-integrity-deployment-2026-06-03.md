@@ -105,16 +105,27 @@ done
 
 ## 2. Validation checkpoints
 
-### Staging (after Phase A)
-- **S1 — schema:** `surface_date` column + `idx_signals_effective_recency` present (already true).
-- **S2 — writer:** trigger one monitor run (or `ingest-signal` test call); confirm a freshly-ingested
-  signal with a real upstream pubDate has `surface_date` populated, and one without leaves it `NULL`
-  (never defaulted to `now()`).
-- **S3 — Aegis tool smoke:** `node scripts/test-aegis-tools.mjs` → green. Spot-check that
-  `get_recent_signals` / entity-context results include a `temporal_bucket` field.
-- **S4 — entity-context (canonical):** query Aegis about an entity with a known old signal; confirm
-  the response carries the bucket and does not narrate an old event as current.
-- **S5 — frontend build:** `npm run build` exits 0.
+### Staging (after Phase A) — EXECUTED 2026-06-03; see §7 for the full record
+- **S1 — schema:** ✅ PASS — staging `surface_date` column + `idx_signals_effective_recency` present.
+- **S2 — writer:** ⏸ DEFERRED to prod **C2** — staging had 0 ingestion post-deploy (idle dataset), so
+  `surface_date` population could not be exercised without inserting data (declined by directive).
+- **S3 — deployment integrity (non-invasive):** ✅ PASS — the *deployed* staging bundles were inspected
+  via `get_edge_function`: `ai-tools-query` v25, `dashboard-ai-assistant` v85, `ingest-signal` v44 all
+  contain the reviewed temporal code (`temporal-recency.ts`, `temporal-grounding.ts`, entity-graph
+  `tagEntitySignals`, COP tagging, `AEGIS_TEMPORAL_DISCIPLINE`, `surface_date` writer); `verify_jwt=false`
+  preserved on all. The deployed artifact IS the reviewed code.
+- **S3b — runtime health:** ✅ PASS — `search_entities` + `get_active_incidents` return real staging
+  data (service-role reads work, functions execute, HTTP 200, no temporal errors).
+- **S4 — helper logic:** ✅ PASS — committed helper run over all 78 staging rows → 78/78 `timing_unknown`
+  (every row has NULL / cosmetic-midnight / copied event_date; G-9 grounding correctly demotes them);
+  synthetic grounded rows → `historical`/`current`. Logic is correct; the all-timing-unknown result is a
+  staging-**data** property.
+- **S5 — positive bucket observation:** ⏸ **NOT OBSERVABLE on staging → deferred to prod C3** (authoritative
+  gate). Staging has no in-window/grounded/BC-Place data, and the schema-safe signal tools either window-out
+  (`get_recent_signals`, 24h) or are blocked by a **pre-existing** column defect (`search_signals` selects
+  non-existent `source`; `get_related_signals` selects non-existent `correlated_entity_ids` — absent on
+  prod too, see §6 F-TEMPORAL-3). Not a Temporal-Integrity issue.
+- **S6 — frontend build:** ✅ PASS — `npm run build` exits 0.
 
 ### Production checkpoints (gates between phases)
 - **C1 (post-migration):** column + index exist; **old (still-live) functions remain healthy** — run
@@ -122,7 +133,15 @@ done
   column must not perturb current behavior. If C1 fails → §3 rollback (drop column).
 - **C2 (post ingest-signal):** ingest a real signal; confirm `surface_date` populates from genuine
   pubDate only; confirm signal-pipeline health (`get_logs` shows no insert failures).
-- **C3 (post all functions):** run the **§5 production verification checklist**.
+- **C3 (post all functions) — AUTHORITATIVE POSITIVE-OBSERVATION GATE.** Staging could not produce a
+  positive bucket observation (idle/synthetic data + pre-existing tool defects), so by operator decision
+  (2026-06-03) **C3 on real production data is the gate that proves the runtime emits correct buckets.**
+  C3 is **blocking**: frontend promotion (C4) does not proceed until all four checks below pass. Run the
+  **§5 production verification checklist**, which MUST explicitly verify:
+  1. a **real current** signal classifies **Current**,
+  2. the **real BC Place 2022** signal (`8fe0704f`) classifies **Historical / Resurfaced**,
+  3. a **real timing-unknown** signal classifies **Timing Unknown**,
+  4. **Aegis entity-context retrieval honors those classifications** (does not narrate the 2022 signal as current).
 - **C4 (post frontend):** load the live feed; confirm temporal badges render (see §5).
 
 ---
@@ -185,16 +204,35 @@ never substituted for event/created time).
 
 ## 5. Production verification checklist (run at C3 / C4)
 
-Backend (run after the 11 functions are live):
-- [ ] `node scripts/test-aegis-tools.mjs` → all green (no "column does not exist", no 401 inter-function auth regressions).
-- [ ] **Canonical:** ask Aegis (CRT tenant `0aaaaaaa`) about **BC Place** → response frames the
-      2022-10-14 signal as **historical / resurfaced**, NOT current. (This is the campaign's acceptance oracle.)
-- [ ] Entity-context tool output includes `temporal_bucket` / `temporal_caption` on returned signals.
+> **C3 is the authoritative positive-observation gate** (staging could not produce it — §7). It is
+> **blocking**: do not promote the frontend (C4) until all four positive-observation checks pass.
+>
+> **Tool caveat (false-negative trap):** do **NOT** use `search_signals` or `get_related_signals` to
+> observe buckets — they select columns absent on prod (`source`, `correlated_entity_ids`) and return
+> empty regardless (§6 F-TEMPORAL-3). Use `get_recent_signals` (24h, schema-safe) and the real Aegis
+> entity-context path (`dashboard-ai-assistant` → `tenant-entity-graph`, which uses the correct
+> `auto_correlated_entities`).
+
+**C3 — the four mandatory positive observations (BLOCKING):**
+- [ ] **(1) Real current → Current.** Pick a prod signal with a grounded `event_date` within 7 days
+      (e.g. a current FIFA/operational item). Via the live runtime (`get_recent_signals` or Aegis),
+      confirm it carries `temporal_bucket:"current"`.
+- [ ] **(2) Real BC Place 2022 → Historical / Resurfaced.** Signal `8fe0704f` (event 2022-10-14,
+      tenant `0aaaaaaa`). Via the entity-context path, confirm `temporal_bucket:"historical"` /
+      caption "Historical / Resurfaced — event 2022-10-14". *(Campaign acceptance oracle.)*
+- [ ] **(3) Real timing-unknown → Timing Unknown.** A prod signal with NULL/ungrounded `event_date`
+      confirms `temporal_bucket:"timing_unknown"` ("event date not established").
+- [ ] **(4) Aegis entity-context honors the classifications.** Ask Aegis (CRT tenant `0aaaaaaa`) about
+      **BC Place**; the response must frame the 2022-10-14 signal as historical/resurfaced and must
+      **not** narrate it as current — while genuinely-recent items remain current.
+
+**C3 — supporting checks:**
+- [ ] `node scripts/test-aegis-tools.mjs` (harness targets prod by design) — pass rate ≥ the pre-deploy
+      baseline; **no new** failures, and specifically no "column does not exist" for `surface_date`/
+      `event_date`/`temporal_grounding`. *(Pre-existing harness failures are out of scope — compare to baseline.)*
 - [ ] Daily briefing for a real client renders the 3 temporal groups; no resurfaced item under "current."
-- [ ] A genuinely-recent signal still reads as **Current** (no over-correction).
 - [ ] `get_logs` (prod) clean for ingest-signal + ai-tools-query + dashboard-ai-assistant (no insert/select errors).
-- [ ] `verify_jwt` unchanged: the 8 `false` functions still authenticate inter-function calls
-      (a passing `test-aegis-tools.mjs` confirms the dashboard→ai-tools-query path).
+- [ ] `verify_jwt` unchanged: the 8 `false` functions still authenticate inter-function calls.
 
 Frontend (after C4):
 - [ ] Live Event Feed: the BC Place 2022 signal shows a **Historical / Resurfaced** banner/badge.
@@ -213,3 +251,57 @@ Frontend (after C4):
   filter/sort/UI treatment. **Out of scope for this deployment by directive.**
 - **F-TEMPORAL-2 — surface_date backfill.** Forward-only today (monitors populate going forward).
   Historical backfill is net-~0 from existing `raw_json` and is a separate monitor-capture workstream.
+- **F-TEMPORAL-3 — pre-existing broken-column Aegis tools (discovered 2026-06-03, NOT introduced here).**
+  `ai-tools-query.search_signals` selects a non-existent `source` column; `get_related_signals` and
+  `get_entity_summary_for_signal` select a non-existent `correlated_entity_ids` column. Confirmed absent
+  on **both** staging and prod `signals` (`information_schema`), and present in the selects **before** the
+  Temporal-Integrity change. PostgREST 400s, the error is swallowed, the tools return `{"result":[]}`.
+  Consequence: these tools have returned empty in production all along, and their temporal tagging is inert
+  until the column names are corrected (likely `source_url`/`auto_correlated_entities`). **Do not fix as part
+  of this deployment.** The certified entity-context seam (`tenant-entity-graph.ts`) is unaffected (uses
+  `auto_correlated_entities`).
+
+---
+
+## 7. Staging Validation Record & Decision Package (2026-06-03)
+
+### 7.1 Smoke run on 2026-06-03T12:23Z was INVALID as a staging gate
+`scripts/test-aegis-tools.mjs` hardcodes the **production** URL/key (no env override), so the `26 passed /
+60 failed` result was produced against **prod running the OLD code** — Temporal-Integrity was not in the
+execution path. Attribution: **0 of 60 failures are Temporal-Integrity regressions** (would-still-occur-if-
+reverted = all 60); 59 are an opaque harness `"error"` (prod tool_test executor, no tenant context), 1 is an
+expected `TENANT_CONTEXT_MISSING`. No `surface_date`/`verify_jwt`/import/`column does not exist` signatures.
+
+### 7.2 What staging validation PASSED (read-only, no test data inserted)
+| Evidence | Result |
+|---|---|
+| Schema (column + index) | ✅ present on staging |
+| Helper logic over all 78 staging rows | ✅ 78/78 `timing_unknown`; G-9 correctly demotes 60 cosmetic/copied + 18 NULL |
+| Helper on synthetic grounded rows | ✅ → `historical` (BC-2022 analog) / `current` |
+| Runtime health | ✅ `search_entities` + `get_active_incidents` return real data; HTTP 200 |
+| **Deployment integrity** (deployed bundle inspection) | ✅ `ai-tools-query` v25, `dashboard-ai-assistant` v85, `ingest-signal` v44 contain the reviewed temporal code (helper, grounding, entity-graph tagging, COP, `AEGIS_TEMPORAL_DISCIPLINE`, `surface_date` writer); `verify_jwt=false` preserved |
+| No temporal-attributable errors | ✅ none observed |
+
+### 7.3 What staging could NOT validate (and why — none are code faults)
+- **Positive bucket value on a live signal payload** — staging has no in-window/grounded/BC-Place data;
+  schema-safe `get_recent_signals` windows out (24h); `search_signals`/`get_related_signals` blocked by the
+  F-TEMPORAL-3 column defect; the only data-bearing alternative (`query_fortress_data`) writes an audit row
+  (excluded by the no-state-change directive). **Deferred to prod C3.**
+- **Writer (`surface_date` population)** — staging idle (0 ingestion post-deploy). **Deferred to prod C2.**
+
+### 7.4 Residual risk going into production (bounded)
+| # | Residual | Severity | Covered by |
+|---|---|---|---|
+| R1 | Runtime join (query → `annotateTemporal` → payload) never positively observed pre-prod | **Low** — code verified present in deployed bundle; helper deterministic incl. real BC Place row; functions proven live | **C3** (blocking, real data) |
+| R2 | `surface_date` writer never exercised post-deploy | **Low** — code present; logic reviewed; column nullable | **C2** |
+| R3 | search_signals / get_related_signals emit no buckets (F-TEMPORAL-3) | **Low** — pre-existing, not a regression; certified entity seam unaffected | follow-up, not this deploy |
+| R4 | Prod data composition differs from validated set | **Low** — prod has in-window + grounded + the real BC Place row, enabling full C3 | **C3** |
+
+### 7.5 Decision package — recommendation
+- Temporal-Integrity is **exonerated of regressions** and **proven deployed-as-reviewed** on staging.
+- Everything verifiable without inserting synthetic data has been verified and **passes**.
+- The single un-observed item (positive bucket value) is **bounded Low** and is, by operator decision,
+  owned by the **blocking C3 positive-observation gate on real prod data**.
+- **Recommendation:** proceed to production execution **when authorized**, treating C3 (§5, four mandatory
+  checks) as the hard gate before frontend promotion (C4). Production gate remains **CLOSED** until that
+  authorization is given.
