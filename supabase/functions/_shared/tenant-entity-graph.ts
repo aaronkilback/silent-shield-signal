@@ -16,6 +16,16 @@
 // separate future write-side task and is NOT performed here.
 
 import type { Recorder } from "./flight-recorder.ts";
+import { annotateTemporal } from "./temporal-recency.ts";
+
+// Temporal-integrity: tag each entity-context signal with its bucket
+// (Current / Timing-Unknown / Historical-Resurfaced) so Aegis never narrates a
+// resurfaced/old correlated signal as current. This is the entity-context path
+// that produced the BC Place 2022 failure.
+const tagEntitySignals = <T extends { created_at?: string | null; received_at?: string | null }>(rows: T[]) =>
+  (rows ?? []).map((s) =>
+    annotateTemporal({ ...s, created_at: (s.created_at ?? s.received_at ?? null) } as any, 7, Date.now())
+  );
 
 export interface Provenance {
   surface: string;          // certified node surface read
@@ -134,12 +144,12 @@ export async function entitySignals(sb: SB, tenantId: string, ref: string) {
   let correlated: any[] = [];
   if (correlatedIds.length > 0) {
     const { data } = await sb.from("signals")
-      .select("id, title, severity, status, category, received_at")
+      .select("id, title, severity, status, category, received_at, created_at, event_date, surface_date, temporal_grounding")
       .eq("tenant_id", tenantId)            // defense-in-depth: only this tenant's signals
       .in("id", correlatedIds)
       .order("received_at", { ascending: false })
       .limit(50);
-    correlated = data ?? [];
+    correlated = tagEntitySignals(data ?? []);
   }
 
   // Uncorrelated client-context signals: the entity's client, tenant-scoped, minus correlated.
@@ -147,12 +157,12 @@ export async function entitySignals(sb: SB, tenantId: string, ref: string) {
   let clientUncorrelatedCount = 0;
   if (entity.client_id) {
     let q = sb.from("signals")
-      .select("id, title, severity, status, category, received_at", { count: "exact" })
+      .select("id, title, severity, status, category, received_at, created_at, event_date, surface_date, temporal_grounding", { count: "exact" })
       .eq("tenant_id", tenantId)
       .eq("client_id", entity.client_id);
     if (correlatedIds.length > 0) q = q.not("id", "in", `(${correlatedIds.join(",")})`);
     const { data, count } = await q.order("received_at", { ascending: false }).limit(50);
-    clientUncorrelated = data ?? [];
+    clientUncorrelated = tagEntitySignals(data ?? []);
     clientUncorrelatedCount = count ?? clientUncorrelated.length;
   }
 
@@ -386,9 +396,17 @@ export async function resolveCanonicalEntity(
 // must elect" rather than silently picking one).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Each signal carries its temporal bucket so the entity-context path never
+// narrates a resurfaced/old correlated signal as current (the BC Place class).
+type EntityGraphSignal = {
+  id: string; title: string; created_at: string;
+  event_date?: string | null; surface_date?: string | null; temporal_grounding?: string | null;
+  temporal_bucket?: string; temporal_label?: string; temporal_caption?: string; effective_recency_date?: string | null;
+};
+
 export interface EntityGraphSignals {
-  directly_correlated: { id: string; title: string; created_at: string }[];
-  client_context: { id: string; title: string; created_at: string }[];
+  directly_correlated: EntityGraphSignal[];
+  client_context: EntityGraphSignal[];
 }
 
 export interface EntityGraphRelationship {
@@ -449,27 +467,27 @@ export async function entityGraph(
   const { data: mentionRows } = await sb.from("entity_mentions").select("signal_id").eq("entity_id", cid).limit(1000);
   const mentionIds: string[] = (mentionRows || []).map((r: { signal_id: string }) => r.signal_id);
   const { data: autoSignals } = await sb.from("signals")
-    .select("id, title, created_at")
+    .select("id, title, created_at, event_date, surface_date, temporal_grounding")
     .eq("tenant_id", tenantId).eq("is_test", false).contains("auto_correlated_entities", [cid]).limit(500);
-  let mentionSignals: { id: string; title: string; created_at: string }[] = [];
+  let mentionSignals: EntityGraphSignal[] = [];
   if (mentionIds.length > 0) {
     const { data } = await sb.from("signals")
-      .select("id, title, created_at")
+      .select("id, title, created_at, event_date, surface_date, temporal_grounding")
       .eq("tenant_id", tenantId).eq("is_test", false).in("id", mentionIds);
     mentionSignals = data || [];
   }
-  const direct: { id: string; title: string; created_at: string }[] = [];
+  const direct: EntityGraphSignal[] = [];
   const seenIds = new Set<string>();
   for (const s of mentionSignals) { if (!seenIds.has(s.id)) { direct.push(s); seenIds.add(s.id); } }
-  for (const s of autoSignals || []) { if (!seenIds.has(s.id)) { direct.push(s); seenIds.add(s.id); } }
+  for (const s of (autoSignals || []) as EntityGraphSignal[]) { if (!seenIds.has(s.id)) { direct.push(s); seenIds.add(s.id); } }
 
-  let clientContext: { id: string; title: string; created_at: string }[] = [];
+  let clientContext: EntityGraphSignal[] = [];
   if (resolution.canonical.client_id) {
     const { data: ctx } = await sb.from("signals")
-      .select("id, title, created_at")
+      .select("id, title, created_at, event_date, surface_date, temporal_grounding")
       .eq("tenant_id", tenantId).eq("client_id", resolution.canonical.client_id).eq("is_test", false)
       .order("created_at", { ascending: false }).limit(50);
-    clientContext = (ctx || []).filter((s: { id: string }) => !seenIds.has(s.id));
+    clientContext = ((ctx || []) as EntityGraphSignal[]).filter((s) => !seenIds.has(s.id));
   }
   rec?.retrieval({
     surface: "entityGraph:signals", tenantScope: tenantId,
@@ -666,7 +684,7 @@ export async function entityGraph(
 
   return {
     ...resolution,
-    signals: { directly_correlated: direct, client_context: clientContext },
+    signals: { directly_correlated: tagEntitySignals(direct), client_context: tagEntitySignals(clientContext) },
     investigations,
     sources,
     reports,
