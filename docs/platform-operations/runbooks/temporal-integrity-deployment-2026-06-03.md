@@ -131,8 +131,13 @@ done
 - **C1 (post-migration):** column + index exist; **old (still-live) functions remain healthy** — run
   `node scripts/test-aegis-tools.mjs` and confirm no "column does not exist" errors. Adding a nullable
   column must not perturb current behavior. If C1 fails → §3 rollback (drop column).
-- **C2 (post ingest-signal):** ingest a real signal; confirm `surface_date` populates from genuine
-  pubDate only; confirm signal-pipeline health (`get_logs` shows no insert failures).
+- **C2 (post ingest-signal) — PASS (A-only), 2026-06-03.** Verified on real organic ingestion: the writer
+  **never defaults `surface_date` to now()** (0 suspects) and a pubDate-less source (`google_news_api`,
+  `article_published_time`=null) **correctly stayed NULL** → degrades toward *Timing Unknown*, never toward
+  false *Current*. The **anti-masquerade (trust-critical) obligation is satisfied.** Operator decision: C2
+  PASS with observation **B** ("real pubDate present → `surface_date` populated") deferred — it is **no longer
+  a trust gate** (failure mode is honest degradation, not deception). B is tracked as a **post-deploy
+  observation** (watcher `bvp3t7mtq` continues until a pubDate-bearing source — RSS/NAAD/CISA — ingests).
 - **C3 (post all functions) — AUTHORITATIVE POSITIVE-OBSERVATION GATE.** Staging could not produce a
   positive bucket observation (idle/synthetic data + pre-existing tool defects), so by operator decision
   (2026-06-03) **C3 on real production data is the gate that proves the runtime emits correct buckets.**
