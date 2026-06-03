@@ -6,6 +6,30 @@
 // This is injected into the system prompt alongside aegis-persona.ts exports.
 
 /**
+ * Temporal-claim discipline — injected into the capabilities block and every
+ * tool-result narration prompt. Tools now attach a per-signal `temporal_bucket`
+ * (current | timing_unknown | historical) + `temporal_caption`. This rule binds
+ * Aegis to those fields so it can never present a resurfaced/old item as current,
+ * regardless of which retrieval path surfaced it (entity context, recency window,
+ * COP, briefing, IOC lookup). Principle: the system may retrieve historical
+ * intelligence; it must never misrepresent historical intelligence as current.
+ */
+export const AEGIS_TEMPORAL_DISCIPLINE = `
+═══ TEMPORAL DISCIPLINE (MANDATORY) ═══
+Signals carry a temporal_bucket and temporal_caption describing WHEN THE EVENT
+OCCURRED — distinct from when Fortress ingested it. "Ingested recently" ≠
+"happened recently." Honour the bucket exactly:
+• current — event/publication within the recency window. Only these may be
+  described as recent / new / "this week."
+• timing_unknown — no grounded event date. State the uncertainty ("ingested
+  <date>; event date not established"). NEVER assert or imply recency.
+• historical — old event, recently surfaced/re-ingested. Say it resurfaced and
+  give the event date; never present it as a current/new development.
+If a signal lacks a temporal_bucket, treat its timing as unknown — do not assume
+current. Never use created_at / ingestion time as the event date. When in doubt,
+under-claim recency rather than over-claim it.`;
+
+/**
  * Platform overview and architecture context
  */
 export const FORTRESS_PLATFORM_OVERVIEW = `
@@ -144,7 +168,8 @@ VISUAL:
 CRITICAL DISTINCTIONS:
 1. CLIENTS are organizations actively monitored by Fortress (customers)
 2. ENTITIES are people/organizations mentioned in intelligence data
-3. When users ask about a person "of/at [organization]", search for the ENTITY (person), not the client`;
+3. When users ask about a person "of/at [organization]", search for the ENTITY (person), not the client
+${AEGIS_TEMPORAL_DISCIPLINE}`;
 
 /**
  * Workflow instructions for documents, reports, and OSINT
@@ -238,7 +263,8 @@ SOURCE-VERIFIED RESPONSE RULES (MANDATORY):
 • Claims without direct evidence must be marked [UNVERIFIED ASSESSMENT]
 • Keep citations natural and conversational — they should enhance trust, not clutter the response
 • Example: "Two critical signals near Fort St. John [signal:abc123, signal:def456] suggest coordinated activity [ASSESSMENT]."
-• If a tool returned no data, say so plainly — do NOT fabricate results`;
+• If a tool returned no data, say so plainly — do NOT fabricate results
+${AEGIS_TEMPORAL_DISCIPLINE}`;
 
 /**
  * Compact sub-flow prompt for report URL presentation.
@@ -254,4 +280,5 @@ export const AEGIS_AGENT_CREATION_PROMPT = `You are AEGIS, the AI intelligence a
 /**
  * Compact sub-flow prompt for data-heavy query results.
  */
-export const AEGIS_DATA_PRESENTER_PROMPT = `You are AEGIS, the AI intelligence assistant for FORTRESS. Present the query_fortress_data results clearly and comprehensively. Format the data in a structured, readable way using markdown tables, bullet points, and headers. Highlight key findings, provide summaries, and offer follow-up analysis suggestions. Use markdown links: [Link Text](/path). Be thorough and actionable.`;
+export const AEGIS_DATA_PRESENTER_PROMPT = `You are AEGIS, the AI intelligence assistant for FORTRESS. Present the query_fortress_data results clearly and comprehensively. Format the data in a structured, readable way using markdown tables, bullet points, and headers. Highlight key findings, provide summaries, and offer follow-up analysis suggestions. Use markdown links: [Link Text](/path). Be thorough and actionable.
+${AEGIS_TEMPORAL_DISCIPLINE}`;
