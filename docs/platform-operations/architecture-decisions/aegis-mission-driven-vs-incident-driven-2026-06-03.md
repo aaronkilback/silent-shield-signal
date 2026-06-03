@@ -141,3 +141,89 @@ incidents, when doctrine wants an Intelligence Officer that runs **missions** an
 possible outcome. The fix is an operating-model change (mission as the unit of work; incident as a gated
 output), not a tracker tweak. It is **eligible for the next campaign slate**, explicitly **after** retrieval
 honesty (Wave A) so the "do I answer or collect?" decision rests on trustworthy evidence. No work started.
+
+---
+
+## 7. Deeper challenge — is the first-class object actually the *Intelligence Requirement*?
+
+**Raised by the commander after §1–§6.** Caution flag: §2–§4 elevated **Mission** to the organizing object.
+That may repeat the incident mistake one level up — privileging a *workflow verb* (tasking) over the
+*decision-anchored noun* (the need). Evaluating the alternative:
+
+```
+Question / Threat / Concern
+   → Intelligence Requirement              (the stable object — "what must we know, to decide what?")
+       → satisfied by: Answer | Mission | Watch | Incident | Briefing | No-Action
+           → Decision Support
+```
+
+### 7.1 — Is Mission the correct first-class object? **No.**
+A Mission is **one possible response** to a need, and it is **transient** (it completes, fails, or is
+superseded). Making it first-class reproduces the incident error: it forces every need through one workflow.
+A question answerable from existing knowledge, a standing watch, or a "no action required" determination do
+not fit cleanly under "Mission." Mission is a **verb**; we were about to enthrone a verb.
+
+### 7.2 — Would Intelligence Requirement be a better organizing construct? **Yes.**
+The **IR is the stable, decision-anchored noun.** It captures *why* (the decision it supports), *what* must be
+known, *for whom*, *by when*, and *at what confidence* — and it **outlives** any single response. This is not a
+new invention: it is the mature **PIR / intelligence-cycle** model (Requirements → Direction → Collection →
+Processing → Analysis → Dissemination → feedback). Adopting a proven construct is a strength, not a risk.
+Advantages over Mission-centric:
+- **Decision-first** — an IR must name the decision it serves → satisfies the commander's intent that doctrine
+  be driven by **decision support, not workflow mechanics**.
+- **Stable thread** — "what do we know about copper theft, and how confident are we?" is answerable from the
+  IR's state regardless of how many missions ran. Missions/incidents/briefings become *events against* the IR.
+- **Honest partial state** — an IR can be `open / partially-satisfied / satisfied / stale`, independent of any
+  mission's success → operationalizes "false certainty destroys decision space" ([[feedback_signal_decision_action]]).
+- **Tames mission-explosion** — the IR's *default* service is **Answer from existing intelligence**; a mission
+  is an escalation, not a reflex.
+
+### 7.3 — What objects may satisfy an IR?
+A response set, one or more, over time, each carrying grounding/provenance and linked back to the IR:
+- **Answer** (grounded retrieval) — existing intelligence suffices → cite, mark satisfied.
+- **Collection Mission** — retrieval insufficient (the §Q2 criteria) → bounded tasking.
+- **Standing Watch** — the need is ongoing (recurring pattern / persistent entity surveillance).
+- **Incident** — findings reveal a confirmed, actionable event needing response (now an *output serving* the IR).
+- **Briefing / Decision-Support product** — the dissemination artifact delivered to the decision-maker.
+- **No-Action / Accept-Risk / Dismiss** — a **legitimate, recorded** outcome with rationale (intelligence often
+  concludes "nothing actionable" — it needs a home, which neither incident- nor mission-centric models give it).
+IRs may be **partially satisfied, re-opened, and superseded** without losing the thread.
+
+### 7.4 — Fit with Commander's Intent + Signal → Decision → Action
+The IR is arguably the **missing middle** that makes Signal→Decision→Action coherent: it is the explicit
+articulation of "what must I know to make this decision?" sitting between raw signal and decision. It turns
+ambient signal into a **decision-anchored question**, preserves decision space (named confidence + gaps), and
+makes the **Intelligence-Officer** claim structurally true — a real IO manages a **requirements list (PIRs)** and
+reports satisfaction, not "runs missions." This is the construct that unlocks Marks III–IV (Trajectory,
+Decision Advantage) on the Fortress roadmap. Mission-centric optimizes *workflow*; IR-centric optimizes
+*decision support* — which is exactly the commander's stated intent.
+
+### 7.5 — Risks if every intelligence gap becomes a mission (and the new risks IR introduces)
+- **Mission-explosion (the original worry) — *reduced* by IR:** because the IR's default is Answer, missions
+  become the exception. Still cap with budget, dedup, bounded scope, collection-safe/action-gated (per §Q5).
+- **New risk — over-formalization / ceremony:** if every trivial question must mint a formal IR, the fast path
+  slows. *Mitigation:* IRs are lightweight; only **durable, decision-bearing** needs get promoted to tracked
+  IRs — a one-off lookup stays implicit.
+- **New risk — IR sprawl / zombie requirements:** un-closed IRs accumulate. *Mitigation:* satisfaction criteria
+  + review/expiry + dedup (one "copper theft NE BC" IR, not ten).
+- **New risk — coverage illusion:** a tidy IR list can *imply* coverage that collection isn't actually
+  delivering (the dead-monitor failure mode at a higher level). *Mitigation:* IR state must reflect **real**
+  collection/answer status → again coupled to retrieval honesty + IBA.
+- **New risk — priority inflation:** everything becomes "priority." *Mitigation:* distinguish PIR from routine.
+
+### 7.6 — Verdict + anti-anchoring guard
+**The more fundamental object is the Intelligence Requirement, not the Mission.** Recommended hierarchy:
+**IR = first-class** (decision-anchored, persistent); **Mission / Watch / Answer / Incident / Briefing /
+No-Action = response types** that service it; **Incident remains an output, never an input.**
+- **Capability-integrity label:** an Intelligence-Requirement object is **NOT PRESENT** today (current
+  first-class objects are incident + partial mission/investigation primitives). IR-centric is a *hypothesis*,
+  not a current capability.
+- **Anti-anchoring (we have now reframed incident → mission → IR):** do **not** lock IR as the final answer and
+  start architecting it. Subject it to the same disconfirming discipline as the backlog §5/§6: validate against
+  **real operator behavior** (the Operator Question Test) — do operators actually reason in *requirements*, or
+  is IR an analyst's elegant abstraction that adds ceremony to the fast path? Let observed behavior, not
+  conceptual elegance, confirm the construct before commitment.
+
+**No work started, no backlog item created, no sequencing changed** (per directive). This section captures the
+deeper object question so that, if/when the operating-model campaign opens, we evaluate **Intelligence
+Requirement** as the candidate root — driven by decision support, not workflow mechanics.
