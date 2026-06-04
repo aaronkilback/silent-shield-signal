@@ -1741,12 +1741,31 @@ Score this signal's relevance and classify the connection.`
     const rawPubDate = signalRaw?.pubDate || signalRaw?.published_date
                     || signalRaw?.published || signalRaw?.date
                     || signalRaw?.article_published_time;
-    if (rawPubDate) {
+    const rawPostDate = signalRaw?.created_time || signalRaw?.timestamp
+                    || signalRaw?.post_timestamp;
+    // surfaceBasis is non-null ONLY when a TRUSTED upstream time was supplied.
+    // It gates persistence of surface_date — ingestion "now" is never trusted,
+    // so an ingestion-echo can never satisfy the downstream Window conjunct.
+    let surfaceBasis: string | null = null;
+    const rawSrcTime = rawPubDate || rawPostDate;
+    if (rawSrcTime) {
       try {
-        const parsed = new Date(rawPubDate);
-        if (!isNaN(parsed.getTime())) surfaceDate = parsed;
+        const parsed = new Date(rawSrcTime);
+        if (!isNaN(parsed.getTime())) {
+          surfaceDate = parsed;
+          surfaceBasis = rawPubDate ? "source_published" : "platform_posted";
+        }
       } catch { /* ignore */ }
     }
+
+    // event_time_basis — provenance of the time trusted for the Window conjunct:
+    //   extracted_text_date : AI pulled a real date from the text
+    //   source_published / platform_posted : upstream feed/post timestamp
+    //   ingestion_echo : no trusted time — fell back to "now" (NEVER satisfies Window)
+    let eventTimeBasis: string;
+    if (eventDate) eventTimeBasis = "extracted_text_date";
+    else if (surfaceBasis) eventTimeBasis = surfaceBasis;
+    else eventTimeBasis = "ingestion_echo";
 
     // Fall back to surface date if AI gave us nothing (preserves prior
     // behaviour where event_date column was populated from rawPubDate).
@@ -1846,6 +1865,11 @@ Score this signal's relevance and classify the connection.`
         is_test: is_test || false,
         content_hash: contentHash,
         event_date: eventDate,
+        // Persist surface_date ONLY when from a trusted source/platform time
+        // (surfaceBasis != null). Ingestion-"now" is left NULL so it can never
+        // ground the Window conjunct downstream.
+        surface_date: surfaceBasis ? surfaceDate.toISOString() : null,
+        event_time_basis: eventTimeBasis,
         triage_override: triageOverride,
         signal_type: isHistorical ? 'historical' : null,
         source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
