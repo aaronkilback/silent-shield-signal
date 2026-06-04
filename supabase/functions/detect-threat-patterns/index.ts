@@ -160,6 +160,11 @@ Deno.serve(async (req) => {
           severity,
           status: 'new',
           is_test: false,
+          // Synthetic pattern signal: the "event" is the pattern's emergence NOW,
+          // not the original source events. surface_date = detection time gives a
+          // legitimate OPEN/OPENING Window; event_date stays null (no source date).
+          surface_date: new Date().toISOString(),
+          event_time_basis: 'pattern_detected',
           raw_json: {
             pattern_type: 'entity_escalation',
             pattern_window_hours: 168,
@@ -231,6 +236,11 @@ Deno.serve(async (req) => {
           location,
           status: 'new',
           is_test: false,
+          // Synthetic pattern signal: the "event" is the pattern's emergence NOW,
+          // not the original source events. surface_date = detection time gives a
+          // legitimate OPEN/OPENING Window; event_date stays null (no source date).
+          surface_date: new Date().toISOString(),
+          event_time_basis: 'pattern_detected',
           raw_json: {
             pattern_type: 'geographic_cluster',
             pattern_window_hours: 48,
@@ -294,6 +304,9 @@ Deno.serve(async (req) => {
             severity,
             status: 'new',
             is_test: false,
+            // Synthetic pattern signal: event = pattern emergence NOW (see above).
+            surface_date: new Date().toISOString(),
+            event_time_basis: 'pattern_detected',
             raw_json: {
               pattern_type: 'frequency_spike',
               pattern_window_hours: 168,
@@ -357,6 +370,9 @@ Deno.serve(async (req) => {
             severity,
             status: 'new',
             is_test: false,
+            // Synthetic pattern signal: event = pattern emergence NOW (see above).
+            surface_date: new Date().toISOString(),
+            event_time_basis: 'pattern_detected',
             raw_json: {
               pattern_type: 'type_cluster',
               pattern_window_hours: 72,

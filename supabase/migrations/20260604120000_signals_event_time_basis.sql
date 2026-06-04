@@ -8,5 +8,6 @@ ALTER TABLE public.signals DROP CONSTRAINT IF EXISTS signals_event_time_basis_ck
 ALTER TABLE public.signals ADD CONSTRAINT signals_event_time_basis_ck
   CHECK (event_time_basis IS NULL OR event_time_basis IN (
     'source_published','platform_posted','article_metadata',
-    'extracted_text_date','incident_opened','ingestion_echo','unknown'
+    'extracted_text_date','incident_opened','ingestion_echo','unknown',
+    'pattern_detected'
   ));
