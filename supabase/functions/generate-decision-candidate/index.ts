@@ -17,7 +17,7 @@ import {
 } from "../_shared/aegis-recommendations.ts";
 
 const GENERATOR = "generate-decision-candidate";
-const VERSION = "0.3-act-predicate";
+const VERSION = "0.3.1-temporal-hierarchy";
 const DEFAULT_LRM_HOURS = 72;
 const RECENCY_DAYS = 21; // window-recency horizon (NOT a confidence threshold)
 const MAX_RECO = 1200;
@@ -57,7 +57,9 @@ const CYBER = new Set(["malware", "vulnerability", "intrusion", "cybersecurity"]
 const AWARENESS = new Set(["social_sentiment", "community_outreach", "general", "public_statement", "economic_impact", "regulatory", "litigation", "legal"]);
 const RESPONSE_CATS = new Set(["activism", "protest", "protest_posture", "theft", "active_threat", "crime", "sabotage", "intrusion"]);
 
-const ESCALATION_RE = /(open letter|blockade|occupation|arrest|anticipat|planned|escalat|mobiliz|filed|advanc|issued|called|spread|out of control|exploit|breach|injunction|notice to proceed|sabotage|threat to|march|rally|encampment)/i;
+// Tightened: strong movement/escalation only. Removed weak verbs (issued|filed|advanced|
+// called) so a static statement does not become a trajectory merely by containing them.
+const ESCALATION_RE = /(open letter|blockade|occupation|arrest|encampment|march|rally|mobiliz|escalat|spread|out of control|exploit|breach|injunction|sabotage|notice to proceed|anticipat|planned|imminent|threaten)/i;
 const ANTICIPATORY_RE = /(anticipat|planned|upcoming|scheduled|to proceed|pre-?mobiliz|expected|will (occur|take place)|ahead of)/i;
 const ACTION_RE = /(recommend|deploy|evacuat|harden|isolate|patch|notify|pre-position|lock ?down|suspend|liaison|restrict|increase (the )?posture|escalate|engage|coordinate)/i;
 const MONITOR_RE = /(continue to monitor|monitor only|no action|routine|no immediate|low threat|not (a )?(significant|immediate|real))/i;
@@ -156,17 +158,34 @@ Deno.serve(async (req: Request) => {
   const T = (escalatedSeq || isPattern || clustered || hasMomentum || escEvent) ? "TRUE" : "FALSE";
 
   // --- Window: OPEN | OPENING | CLOSED | UNCERTAIN (refinement) ---
+  // Temporal-grounding hierarchy. The temporal_grounding column is uniformly 'unknown'
+  // (carries no information) and is intentionally NOT used. Trust order:
+  //   T1  surface_date            — grounded actor/publication time
+  //   T2  event_date predating ingestion by > SOURCE_GAP — real source/extracted date
+  //   T3  event_date ~= received_at — ingestion-echo: NOT a trusted event time
+  // Only T1/T2 (or anticipatory text) can yield OPEN/OPENING and thus be ACT-eligible.
+  // T3 / no-time stays UNCERTAIN and can never become ACT (Window refinement preserved).
   const anticipatory = ANTICIPATORY_RE.test(haystack);
-  const anyUnknownTime = sigs.some((s: any) => s.temporal_grounding === "unknown" || !s.event_date);
+  const SOURCE_GAP_MS = 24 * 3.6e6;
+  const trustedTimes: number[] = sigs
+    .map((s: any) => {
+      if (s.surface_date) return new Date(s.surface_date).getTime();
+      const ev = s.event_date ? new Date(s.event_date).getTime() : null;
+      const rc = s.received_at ? new Date(s.received_at).getTime()
+        : (s.created_at ? new Date(s.created_at).getTime() : null);
+      if (ev != null && (rc == null || rc - ev > SOURCE_GAP_MS)) return ev;
+      return null;
+    })
+    .filter((t: number | null): t is number => t != null);
   let W: string;
   if (anticipatory) W = "OPENING";
-  else if (anyUnknownTime) W = "UNCERTAIN";
-  else {
-    const newest = Math.max(...sigs.map((s: any) => (s.event_date ? new Date(s.event_date).getTime() : 0)));
-    const ageDays = (now - newest) / 86400000;
+  else if (trustedTimes.length) {
+    const ageDays = (now - Math.max(...trustedTimes)) / 86400000;
     W = ageDays <= RECENCY_DAYS ? "OPEN" : "CLOSED";
-  }
-  const timingKnowable = sigs.some((s: any) => !!s.event_date) || anticipatory;
+  } else W = "UNCERTAIN";
+  // ASK (vs KNOW) on UNCERTAIN only when the true timing is cheaply resolvable —
+  // i.e., a discrete datable event is referenced. Static items → KNOW, not ASK.
+  const timingKnowable = escEvent || anticipatory;
 
   // --- Owner (category role map; RESOLVED unless generic fallback) ---
   const O = OWNER[category] != null ? "RESOLVED" : "DEFAULT";
@@ -248,7 +267,7 @@ Deno.serve(async (req: Request) => {
 
   const unknowns: string[] = [];
   if (sigs.length === 1) unknowns.push("Single-signal basis — limited corroboration.");
-  if (anyUnknownTime) unknowns.push("Event timing unconfirmed (temporal_grounding=unknown).");
+  if (W === "UNCERTAIN") unknowns.push("Event timing unconfirmed (ingestion-echo only; no grounded event time).");
   if (redTeam) unknowns.push("Red-team dissent on file — confidence capped.");
   for (const b of blocked_conjuncts) unknowns.push("Blocked: " + b + ".");
   if (!unknowns.length) unknowns.push("No explicit gaps captured; treat confidence as provisional.");
@@ -317,7 +336,7 @@ Deno.serve(async (req: Request) => {
 async function loadSignals(sb: any, ids: any[]): Promise<any[]> {
   if (!ids?.length) return [];
   const { data } = await sb.from("signals")
-    .select("id,signal_number,tenant_id,client_id,title,category,composite_confidence,event_date,temporal_grounding,severity_score,momentum,proximity")
+    .select("id,signal_number,tenant_id,client_id,title,category,composite_confidence,event_date,surface_date,received_at,created_at,temporal_grounding,severity_score,momentum,proximity")
     .in("id", ids).is("deleted_at", null);
   return data ?? [];
 }
@@ -344,7 +363,7 @@ async function resolveTrigger(type: string, id: string, sb: any): Promise<any> {
   }
   if (type === "cluster") {
     const { data } = await sb.from("signals")
-      .select("id,signal_number,tenant_id,client_id,title,category,composite_confidence,event_date,temporal_grounding,severity_score,momentum,proximity")
+      .select("id,signal_number,tenant_id,client_id,title,category,composite_confidence,event_date,surface_date,received_at,created_at,temporal_grounding,severity_score,momentum,proximity")
       .eq("correlation_group_id", id).is("deleted_at", null).order("severity_score", { ascending: false }).limit(50);
     if (!data?.length) return { error: { status: 404, msg: "cluster has no signals" } };
     return { signals: data, analyses: await loadAnalyses(sb, data.map((s: any) => s.id)), anchor_label: (data[0].title ?? "cluster").slice(0, 48), client_id: data[0].client_id, category: modeCat(data), trigger_ids: [id] };
