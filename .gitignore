@@ -36,3 +36,6 @@ dist-ssr
 
 # Supabase CLI runtime cache (machine-local, regenerated on every CLI run)
 supabase/.temp/
+
+# Deno lockfile — regenerated locally; not tracked.
+deno.lock
