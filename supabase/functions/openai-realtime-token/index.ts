@@ -339,30 +339,37 @@ WHEN TO USE:
 
     console.log('Requesting ephemeral token from OpenAI with full tool set...');
 
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    // GA Realtime API: ephemeral keys are minted at /v1/realtime/client_secrets
+    // (the old beta /v1/realtime/sessions path now 404s). Session config is nested
+    // under `session`, audio config moved under session.audio.{input,output},
+    // and `modalities` became `output_modalities`.
+    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-realtime-2025-08-28',
-        modalities: ['audio', 'text'],
-        voice: 'ash',
-        input_audio_format: 'pcm16',
-        output_audio_format: 'pcm16',
-        instructions: instructions,
-        tools: tools,
-        tool_choice: 'auto',
-        input_audio_transcription: {
-          model: 'whisper-1'
-        },
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 800,
-          create_response: true
+        session: {
+          type: 'realtime',
+          model: 'gpt-realtime-2025-08-28',
+          output_modalities: ['audio'],
+          instructions: instructions,
+          audio: {
+            input: {
+              transcription: { model: 'whisper-1' },
+              turn_detection: {
+                type: 'server_vad',
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 800,
+                create_response: true
+              }
+            },
+            output: { voice: 'ash' }
+          },
+          tools: tools,
+          tool_choice: 'auto'
         }
       }),
     });
@@ -387,15 +394,19 @@ WHEN TO USE:
     const data = await response.json();
     console.log('Ephemeral token created successfully with', tools.length, 'tools');
 
+    // GA response is flat: { value: 'ek_...', expires_at, session: {...} }.
+    // Preserve the prior response contract so the client keeps reading client_secret.value.
+    const ephemeralValue = data?.value ?? data?.client_secret?.value ?? data?.client_secret ?? null;
+    const ephemeralExpiry = data?.expires_at ?? data?.client_secret?.expires_at ?? null;
     return new Response(
       JSON.stringify({
-        client_secret: data.client_secret,
-        expires_at: data.expires_at,
-        session_id: data.id
+        client_secret: { value: ephemeralValue, expires_at: ephemeralExpiry },
+        expires_at: ephemeralExpiry,
+        session_id: data?.session?.id ?? data?.id ?? null
       }),
-      { 
-        status: 200, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       }
     );
 

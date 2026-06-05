@@ -464,7 +464,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       // Send offer to OpenAI and get answer
       console.log('Sending SDP offer to OpenAI...');
-      const sdpResponse = await fetch('https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17', {
+      const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${ephemeralKey}`,
