@@ -36,3 +36,7 @@ dist-ssr
 
 # Supabase CLI runtime cache (machine-local, regenerated on every CLI run)
 supabase/.temp/
+
+# Deno lockfile — regenerated locally on `deno test`/`deno check`; the repo does
+# not track it (edge functions resolve deps at deploy time). Do not commit.
+deno.lock

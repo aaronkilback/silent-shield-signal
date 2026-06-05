@@ -12,6 +12,7 @@
  */
 
 import { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { getThreatMetrics, isCountableObservation } from "./threat-metrics.ts";
 
 export interface COPSnapshot {
   generated_at: string;
@@ -24,6 +25,7 @@ export interface COPSnapshot {
   watched_entities: { name: string; type: string; watch_level: string; reason: string }[];
   active_agents: { call_sign: string; codename: string; specialty: string }[];
   broadcast_messages: { message: string; priority: string; created_at: string }[];
+  excluded: { projections: number; quarantined: number; test: number };
   summary: string;
 }
 
@@ -46,6 +48,7 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       generated_at: now.toISOString(), risk_score: null, risk_trend: 'unknown',
       open_incidents: [], critical_signals: [], high_probability_escalations: [],
       top_entities: [], watched_entities: [], active_agents: [], broadcast_messages: [],
+      excluded: { projections: 0, quarantined: 0, test: 0 },
       summary: 'No tenant context — common operating picture is empty (fail-closed).',
     } as COPSnapshot;
   }
@@ -74,7 +77,7 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       .limit(8),
     supabase
       .from('signals')
-      .select('id, title, severity, rule_category, created_at')
+      .select('id, title, severity, rule_category, created_at, signal_type, quality_status, is_test, status')
       .eq('tenant_id', tenantId)
       .in('severity', ['critical', 'high'])
       .eq('is_test', false)
@@ -135,10 +138,48 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
     }
   }
 
+  // ── P1.1 Single Source of Truth wiring ──────────────────────────────────
+  // Canonical critical/high counts come from getThreatMetrics (no row LIMIT;
+  // excludes pattern projections / quarantined / test). The legacy in-place
+  // tally is preserved for rollback and one-cycle old-vs-new comparison logging.
+  // ROLLBACK: set env COP_USE_CANONICAL_METRICS=false to serve the legacy tally.
+  const useCanonical = (Deno.env.get('COP_USE_CANONICAL_METRICS') ?? 'true') !== 'false';
+
+  // LEGACY tally (rollback path): counts among the ≤10 fetched crit/high rows,
+  // with NO pattern/quarantine exclusion — i.e. the old behaviour exactly.
+  const legacyCrit = criticalSignals?.filter(s => s.severity === 'critical').length || 0;
+  const legacyHigh = criticalSignals?.filter(s => s.severity === 'high').length || 0;
+
+  // CANONICAL tally (single source of truth). Fail safe to legacy on any error.
+  let canonical: Awaited<ReturnType<typeof getThreatMetrics>> | null = null;
+  try {
+    canonical = await getThreatMetrics(supabase, { tenantId, windowHours: 24, asOf: now });
+  } catch (e) {
+    console.error('[COP_METRICS_COMPARE] getThreatMetrics failed, using legacy:', e instanceof Error ? e.message : String(e));
+  }
+
+  const serveCanonical = useCanonical && canonical != null;
+  const critCount = serveCanonical ? canonical!.signals.by_severity.critical : legacyCrit;
+  const highCount = serveCanonical ? canonical!.signals.by_severity.high : legacyHigh;
+  const excluded = canonical?.excluded ?? { projections: 0, quarantined: 0, test: 0 };
+
+  // One-cycle old-vs-new comparison logging (remove after burn-in review).
+  console.log('[COP_METRICS_COMPARE]', JSON.stringify({
+    tenant_id: tenantId,
+    served: serveCanonical ? 'canonical' : 'legacy',
+    legacy: { critical: legacyCrit, high: legacyHigh },
+    canonical: canonical ? canonical.signals.by_severity : null,
+    excluded,
+  }));
+
+  // Display list: when serving canonical, drop pattern/quarantined/test rows so
+  // the rendered CRITICAL/HIGH list matches the counts (no projection noise).
+  const displaySignals = serveCanonical
+    ? (criticalSignals || []).filter(isCountableObservation)
+    : (criticalSignals || []);
+
   // Build plain-text summary
   const incidentCount = openIncidents?.length || 0;
-  const critCount = criticalSignals?.filter(s => s.severity === 'critical').length || 0;
-  const highCount = criticalSignals?.filter(s => s.severity === 'high').length || 0;
   const escCount = escalations?.length || 0;
 
   const summary = [
@@ -147,6 +188,7 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
     critCount > 0 ? `${critCount} CRITICAL signal${critCount !== 1 ? 's' : ''} (24h)` : null,
     highCount > 0 ? `${highCount} HIGH signal${highCount !== 1 ? 's' : ''} (24h)` : null,
     escCount > 0 ? `${escCount} high-probability escalation${escCount !== 1 ? 's' : ''} flagged` : null,
+    (serveCanonical && excluded.projections > 0) ? `${excluded.projections} projection${excluded.projections !== 1 ? 's' : ''} excluded from counts` : null,
   ].filter(Boolean).join(' | ');
 
   return {
@@ -159,7 +201,7 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       priority: i.priority,
       opened_at: i.opened_at,
     })),
-    critical_signals: (criticalSignals || []).map(s => ({
+    critical_signals: displaySignals.map(s => ({
       id: s.id,
       title: s.title,
       severity: s.severity,
@@ -193,6 +235,7 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       priority: b.priority,
       created_at: b.created_at,
     })),
+    excluded,
     summary,
   };
 }
