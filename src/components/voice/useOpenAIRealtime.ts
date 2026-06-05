@@ -195,7 +195,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         }
         break;
 
-      case 'response.audio_transcript.delta':
+      case 'response.output_audio_transcript.delta': // GA
+      case 'response.audio_transcript.delta': // beta (back-compat)
         {
           const delta = (event as Record<string, unknown>).delta as string;
           console.log('Agent response delta:', delta);
@@ -204,7 +205,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         }
         break;
 
-      case 'response.audio_transcript.done':
+      case 'response.output_audio_transcript.done': // GA
+      case 'response.audio_transcript.done': // beta (back-compat)
         {
           // Full transcript is complete - notify with final text
           const fullTranscript = (event as Record<string, unknown>).transcript as string;
@@ -214,7 +216,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         }
         break;
 
-      case 'response.audio.delta':
+      case 'response.output_audio.delta': // GA
+      case 'response.audio.delta': // beta (back-compat)
         // Audio is handled by WebRTC track, but this indicates agent is speaking
         // Clear fallback timer since we're getting a response
         if (responseFallbackRef.current) {
@@ -225,7 +228,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         updateStatus('speaking');
         break;
 
-      case 'response.audio.done':
+      case 'response.output_audio.done': // GA
+      case 'response.audio.done': // beta (back-compat)
         setIsAgentSpeaking(false);
         updateStatus('connected');
         break;
@@ -431,7 +435,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           dc.send(JSON.stringify({
             type: 'response.create',
             response: {
-              modalities: ['audio', 'text'],
+              output_modalities: ['audio'],
               instructions:
                 'Greet the user briefly. Say something like "Aegis here. How can I help?" Keep it under 10 words.',
             },
