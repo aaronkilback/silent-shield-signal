@@ -144,7 +144,7 @@ export const Header = () => {
     { path: "/command-center", icon: Bot, label: "Agents" },
     { path: "/agent-actions", icon: CheckCircle, label: "Agent Actions", badge: pendingAgentActions },
     { path: "/task-force", icon: Swords, label: "Task Force" },
-    ...(isSuperAdmin ? [{ path: "/vip-deep-scan", icon: ScanEye, label: "Vulnerability Scan" }] : []),
+    { path: "/vip-deep-scan", icon: ScanEye, label: "Vulnerability Scan" },
     { path: "/site-audits", icon: ClipboardCheck, label: "Site Audits", matchPrefix: true },
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },

@@ -62,11 +62,11 @@ export const CommandPalette = () => {
     { path: "/clients", label: "Clients", icon: UserCheck, keywords: ["clients", "accounts", "organizations"], group: "operations" },
     { path: "/command-center", label: "AI Agents", icon: Zap, keywords: ["agents", "command", "automation", "ai"], group: "operations" },
     { path: "/security-advisor", label: "Cyber Defense", icon: Shield, keywords: ["cyber", "defense", "security", "advisor", "wraith", "breach", "phishing", "wifi", "bluetooth", "password", "hack"], group: "operations" },
+    { path: "/vip-deep-scan", label: "Vulnerability Scan", icon: Activity, keywords: ["vip", "scan", "deep", "osint", "vulnerability"], group: "operations" },
     { path: "/integrations", label: "Integrations", icon: Settings, keywords: ["integrations", "api", "connections"], group: "operations" },
 
     // Admin (conditional)
     ...(isSuperAdmin ? [
-      { path: "/vip-deep-scan", label: "Vulnerability Scan", icon: Activity, keywords: ["vip", "scan", "deep", "osint", "vulnerability"], group: "admin" as const },
       { path: "/super-admin", label: "Super Admin", icon: Shield, keywords: ["admin", "super", "system"], group: "admin" as const },
     ] : []),
     ...((isSuperAdmin || isAdmin) ? [

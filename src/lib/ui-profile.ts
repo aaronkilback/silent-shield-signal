@@ -28,12 +28,15 @@ const CRT_ACTIVE_PATHS = new Set<string>([
                         // tenant-isolated via client_assets/site_audits/
                         // site_observations/site_features RLS, all gated by
                         // get_user_accessible_client_ids()).
+  '/travel',            // Travel risk — active for every tenant.
+  '/vip-deep-scan',     // Vulnerability Scan — active for every tenant + every
+                        // role (the page's own compliance/authorization gate
+                        // governs who can actually run a scan).
 ]);
 
-const CRT_GREYED_PATHS = new Set<string>([
-  '/vip-deep-scan',     // Vulnerability Scan
-  '/travel',
-]);
+// Nothing is currently greyed; every CRT-reachable surface is either active
+// above or hidden by default. Kept for the visible-but-disabled affordance.
+const CRT_GREYED_PATHS = new Set<string>([]);
 
 export type NavVisibility = 'active' | 'greyed' | 'hidden';
 

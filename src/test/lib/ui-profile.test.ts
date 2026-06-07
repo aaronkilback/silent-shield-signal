@@ -19,13 +19,10 @@ describe("canAccessRoute — CRT tenant route restrictions", () => {
     }
   });
 
-  it("CRT profile blocks the two explicitly-restricted paths", () => {
-    expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(false);
-    expect(canAccessRoute(crt, "/travel")).toBe(false);
-  });
-
-  it("CRT profile allows /site-audits (now active for every tenant)", () => {
+  it("CRT profile allows the cross-tenant operational pages (now active for every tenant)", () => {
     expect(canAccessRoute(crt, "/site-audits")).toBe(true);
+    expect(canAccessRoute(crt, "/travel")).toBe(true);
+    expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(true);
   });
 
   it("CRT profile blocks everything not in the allowed set (default-deny)", () => {
@@ -58,19 +55,19 @@ describe("canAccessRoute — state-bug regression", () => {
 
   it("is stateless — repeated calls in any order return identical results", () => {
     const sequence = [
-      "/vip-deep-scan", "/signals", "/vip-deep-scan",
-      "/entities", "/vip-deep-scan",
+      "/command-center", "/signals", "/command-center",
+      "/entities", "/command-center",
       "/incidents", "/site-audits",
-      "/", "/vip-deep-scan", "/travel",
+      "/", "/command-center", "/travel",
     ];
     const expected: Record<string, boolean> = {
-      "/vip-deep-scan": false,
+      "/command-center": false,
       "/signals": true,
       "/entities": true,
       "/incidents": true,
       "/site-audits": true,
       "/": true,
-      "/travel": false,
+      "/travel": true,
     };
     for (const path of sequence) {
       expect(canAccessRoute(crt, path)).toBe(expected[path]);
@@ -78,7 +75,7 @@ describe("canAccessRoute — state-bug regression", () => {
   });
 
   it("simulated navigation: restricted → allowed → restricted preserves denial", () => {
-    expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(false);
+    expect(canAccessRoute(crt, "/command-center")).toBe(false);
     expect(canAccessRoute(crt, "/signals")).toBe(true);
     expect(canAccessRoute(crt, "/incidents")).toBe(true);
     expect(canAccessRoute(crt, "/entities")).toBe(true);
@@ -86,14 +83,14 @@ describe("canAccessRoute — state-bug regression", () => {
     // After navigating through five allowed pages, restricted routes
     // must STILL be denied. The regression report described this exact
     // sequence breaking.
-    expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(false);
+    expect(canAccessRoute(crt, "/command-center")).toBe(false);
     expect(canAccessRoute(crt, "/site-audits")).toBe(true);
-    expect(canAccessRoute(crt, "/travel")).toBe(false);
+    expect(canAccessRoute(crt, "/travel")).toBe(true);
   });
 
   it("running the same check 1000 times never changes the answer", () => {
     for (let i = 0; i < 1000; i++) {
-      expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(false);
+      expect(canAccessRoute(crt, "/command-center")).toBe(false);
       expect(canAccessRoute(crt, "/signals")).toBe(true);
     }
   });
@@ -107,11 +104,13 @@ describe("getNavVisibility delegates to canAccessRoute (single source of truth)"
     expect(getNavVisibility(crt, "/investigations")).toBe("active");
     expect(getNavVisibility(crt, "/investigation/abc")).toBe("active");
     expect(getNavVisibility(crt, "/site-audits")).toBe("active");
+    expect(getNavVisibility(crt, "/travel")).toBe("active");
+    expect(getNavVisibility(crt, "/vip-deep-scan")).toBe("active");
   });
 
-  it("returns 'greyed' for explicitly-greyed paths (visible-but-disabled affordance)", () => {
-    expect(getNavVisibility(crt, "/vip-deep-scan")).toBe("greyed");
-    expect(getNavVisibility(crt, "/travel")).toBe("greyed");
+  it("returns 'hidden' (not greyed) — CRT_GREYED_PATHS is now empty", () => {
+    // Nothing is greyed anymore; a non-allowed path is hidden.
+    expect(getNavVisibility(crt, "/command-center")).toBe("hidden");
   });
 
   it("returns 'hidden' for paths that are neither allowed nor explicitly greyed", () => {
