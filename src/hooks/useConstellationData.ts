@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
+import { useTenant } from "@/hooks/useTenant";
+import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
 
 export const ACTIVITY_METRICS_VERSION = "2.0.0-absolute-thresholds"; // f08c87c
 
@@ -959,14 +961,20 @@ export function useSignalRealtime(
 ) {
   const callbackRef = useRef(onNewSignal);
   callbackRef.current = onNewSignal;
+  // Tenant boundary on the realtime channel (super_admin bypasses RLS). signals
+  // carries tenant_id, so the server-side filter is exact. `deny` (hydrating /
+  // no selection) → no subscription.
+  const { getFilterTenantIds, currentTenant, isAllTenantsView, isHydrating } = useTenant();
 
   useEffect(() => {
     if (!enabled) return;
+    const scope = resolveTenantScope(getFilterTenantIds());
+    if (scope.kind === "deny") return;
     const channel = supabase
-      .channel("constellation-signals-realtime")
+      .channel(`constellation-signals-realtime-${scope.kind === "tenant" ? scope.tenantId : "all"}`)
       .on(
         "postgres_changes" as any,
-        { event: "INSERT", schema: "public", table: "signals" },
+        { event: "INSERT", schema: "public", table: "signals", ...realtimeTenantFilter(scope) },
         (payload: any) => {
           const row = payload.new;
           callbackRef.current({
@@ -982,7 +990,7 @@ export function useSignalRealtime(
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [enabled]);
+  }, [enabled, currentTenant?.id, isAllTenantsView, isHydrating]);
 }
 
 /** Subscribe to new AI assistant messages; calls onNewMessage for each INSERT */
@@ -992,14 +1000,19 @@ export function useMessageRealtime(
 ) {
   const callbackRef = useRef(onNewMessage);
   callbackRef.current = onNewMessage;
+  // Tenant boundary on the realtime channel (super_admin bypasses RLS).
+  // ai_assistant_messages carries tenant_id. `deny` → no subscription.
+  const { getFilterTenantIds, currentTenant, isAllTenantsView, isHydrating } = useTenant();
 
   useEffect(() => {
     if (!enabled) return;
+    const scope = resolveTenantScope(getFilterTenantIds());
+    if (scope.kind === "deny") return;
     const channel = supabase
-      .channel("constellation-messages-realtime")
+      .channel(`constellation-messages-realtime-${scope.kind === "tenant" ? scope.tenantId : "all"}`)
       .on(
         "postgres_changes" as any,
-        { event: "INSERT", schema: "public", table: "ai_assistant_messages" },
+        { event: "INSERT", schema: "public", table: "ai_assistant_messages", ...realtimeTenantFilter(scope) },
         (payload: any) => {
           const row = payload.new;
           callbackRef.current({
@@ -1013,7 +1026,7 @@ export function useMessageRealtime(
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [enabled]);
+  }, [enabled, currentTenant?.id, isAllTenantsView, isHydrating]);
 }
 
 // ── Knowledge Growth Data ──

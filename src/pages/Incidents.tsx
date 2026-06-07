@@ -18,6 +18,7 @@ import { DeleteIncidentDialog } from "@/components/DeleteIncidentDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
+import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
 import { DashboardClientSelector } from "@/components/ClientSelector";
 
 
@@ -46,7 +47,7 @@ const Incidents = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { selectedClientId } = useClientSelection();
-  const { currentTenant, isAllTenantsView } = useTenant();
+  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
 
   const [searchParams, setSearchParams] = useSearchParams();
   
@@ -121,15 +122,22 @@ const Incidents = () => {
 
     loadIncidents();
 
-    // Set up realtime subscription
-    const channel = supabase
-      .channel("incidents-changes")
+    // Set up realtime subscription. Tenant boundary is the primary control
+    // (super_admin bypasses RLS here); loadIncidents (above) is already
+    // tenant-scoped, this prevents other tenants' incident payloads from
+    // crossing the wire and triggering refetches.
+    const scope = resolveTenantScope(getFilterTenantIds());
+    const channel = scope.kind === "deny"
+      ? null
+      : supabase
+      .channel(`incidents-changes-${scope.kind === "tenant" ? scope.tenantId : "all"}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "incidents",
+          ...realtimeTenantFilter(scope),
         },
         () => {
           loadIncidents();
@@ -138,7 +146,7 @@ const Incidents = () => {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [user, selectedClientId, statusFilter, priorityFilter, toast, reloadTrigger, currentTenant?.id, isAllTenantsView]);
 

@@ -7,6 +7,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
+import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
 
 interface Incident {
   id: string;
@@ -43,10 +45,20 @@ const getTimeAgo = (date: string) => {
 export const TripwireAlerts = () => {
   const navigate = useNavigate();
   const { selectedClientId } = useClientSelection();
+  const { getFilterTenantIds, currentTenant, isAllTenantsView, isHydrating } = useTenant();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Phase 4 tenant-isolation: scope server-side for ALL roles (super_admin
+    // bypasses RLS on this channel). `deny` renders nothing / no subscription.
+    const scope = resolveTenantScope(getFilterTenantIds());
+    if (scope.kind === "deny") {
+      setIncidents([]);
+      setLoading(false);
+      return;
+    }
+
     const loadIncidents = async () => {
       try {
         let query = supabase
@@ -56,6 +68,14 @@ export const TripwireAlerts = () => {
           .order("opened_at", { ascending: false })
           .limit(5);
 
+        // Tenant boundary (primary control — applies to super_admin too). The
+        // realtime handler re-invokes loadIncidents(), so the scope must live
+        // on the query, not only on the subscription.
+        if (scope.kind === "tenant") {
+          query = query.eq("tenant_id", scope.tenantId);
+        }
+
+        // Client-level narrowing (within-tenant presentation preference).
         if (selectedClientId) {
           query = query.eq("client_id", selectedClientId);
         }
@@ -73,15 +93,16 @@ export const TripwireAlerts = () => {
 
     loadIncidents();
 
-    // Set up realtime subscription
+    // Set up realtime subscription with the server-side tenant filter.
     const channel = supabase
-      .channel("incident-alerts")
+      .channel(`incident-alerts-${scope.kind === "tenant" ? scope.tenantId : "all"}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "incidents",
+          ...realtimeTenantFilter(scope),
         },
         () => {
           loadIncidents();
@@ -92,7 +113,9 @@ export const TripwireAlerts = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedClientId]);
+    // tenant scope + hydration added so a tenant switch / All-Tenants toggle
+    // re-subscribes with the correct filter.
+  }, [selectedClientId, currentTenant?.id, isAllTenantsView, isHydrating]);
 
   if (loading) {
     return (

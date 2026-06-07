@@ -12,6 +12,7 @@ import { Building2, Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
+import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
 import { getClientNoun } from "@/lib/ui-profile";
 
 interface Client {
@@ -55,7 +56,7 @@ export const ClientSelector = ({
   // selectByUser carries explicit user intent and is the channel
   // the validation effects in useClientSelection respect (fix A).
   const { selectedClientId, setSelectedClientId, selectByUser } = useClientSelection();
-  const { currentTenant, isAllTenantsView } = useTenant();
+  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
   // PROD-CC fix A: gate auto-select-first-client to the first
   // fetchClients per mount. Subsequent refetches (realtime channel,
   // tenant switch) update the dropdown list but MUST NOT auto-mutate
@@ -80,20 +81,28 @@ export const ClientSelector = ({
 
       await fetchClients();
 
-      channel = supabase
-        .channel('client-selector-changes')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'clients'
-          },
-          () => {
-            fetchClients();
-          }
-        )
-        .subscribe();
+      // Tenant boundary on the realtime channel (super_admin bypasses RLS).
+      // fetchClients() is already tenant-scoped; this stops other tenants'
+      // client rows from crossing the wire and triggering refetches. `clients`
+      // carries tenant_id, so the server-side filter is exact.
+      const scope = resolveTenantScope(getFilterTenantIds());
+      if (scope.kind !== "deny") {
+        channel = supabase
+          .channel(`client-selector-changes-${scope.kind === "tenant" ? scope.tenantId : "all"}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'clients',
+              ...realtimeTenantFilter(scope),
+            },
+            () => {
+              fetchClients();
+            }
+          )
+          .subscribe();
+      }
     };
 
     // Check current session first, then listen for auth changes

@@ -4,6 +4,8 @@ import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon, History } from 
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenant } from "@/hooks/useTenant";
+import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { extractHttpUrl } from "@/lib/extractHttpUrl";
 import { SignalFeedback } from "@/components/SignalFeedback";
@@ -84,6 +86,7 @@ const getSeverityIcon = (severity: string | null) => {
 
 export const LiveEventFeed = () => {
   const { selectedClientId, isContextReady } = useClientSelection();
+  const { getFilterTenantIds, currentTenant, isAllTenantsView, isHydrating } = useTenant();
   const [signals, setSignals] = useState<Signal[]>([]);
   const visibleSignalIdsRef = useRef<Set<string>>(new Set());
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
@@ -95,6 +98,17 @@ export const LiveEventFeed = () => {
   useEffect(() => {
     // Wait for context to be ready before fetching
     if (!isContextReady) {
+      return;
+    }
+
+    // Phase 4 tenant-isolation: derive the observed-tenant scope from the
+    // canonical resolver. RLS does NOT isolate a super_admin on the realtime
+    // channel, so we scope server-side for ALL roles. `deny` (hydrating or no
+    // selection) renders nothing and does not subscribe — fail closed.
+    const scope = resolveTenantScope(getFilterTenantIds());
+    if (scope.kind === "deny") {
+      setSignals([]);
+      setLoading(false);
       return;
     }
 
@@ -137,7 +151,15 @@ export const LiveEventFeed = () => {
         .order('received_at', { ascending: false })
         .limit(20);
 
-      // Only filter by client_id if a specific client is selected
+      // Tenant boundary (primary control — applies to super_admin too). The
+      // realtime handler below re-invokes fetchSignals(), so this scope must
+      // live on the query itself, not only on the subscription.
+      if (scope.kind === "tenant") {
+        query = query.eq('tenant_id', scope.tenantId);
+      }
+
+      // Client-level narrowing (within-tenant presentation preference, not a
+      // security boundary).
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
       }
@@ -156,15 +178,17 @@ export const LiveEventFeed = () => {
 
     fetchSignals();
 
-    // Subscribe to realtime updates (new signals)
+    // Subscribe to realtime updates (new signals). Server-side tenant filter
+    // is the primary cross-tenant control (super_admin bypasses RLS here).
     const signalsChannel = supabase
-      .channel(`signals-changes-${selectedClientId || 'all'}`)
+      .channel(`signals-changes-${scope.kind === "tenant" ? scope.tenantId : "all"}-${selectedClientId || 'all'}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
-          table: 'signals'
+          table: 'signals',
+          ...realtimeTenantFilter(scope)
         },
         (payload) => {
           console.log('New signal received:', payload);
@@ -179,9 +203,22 @@ export const LiveEventFeed = () => {
       )
       .subscribe();
 
-    // Subscribe to realtime updates (signal updates) so the "Updated" badge stays fresh
+    // Subscribe to realtime updates (signal updates) so the "Updated" badge
+    // stays fresh.
+    //
+    // signal_updates has NEITHER tenant_id NOR client_id, so it cannot be
+    // server-side tenant-filtered. Parent-derived strategy (per the
+    // table-lacks-owner rule): the parent is signals (signal_id → signals).
+    // The visibility-set guard below is the tenant boundary — we ONLY act on a
+    // signal_id that is already present in visibleSignalIdsRef, which is
+    // populated exclusively from the tenant-scoped fetchSignals() above. A
+    // cross-tenant update is therefore never rendered or counted. Named
+    // residual risk: the raw payload (a bare signal_id UUID, no content, no
+    // tenant attribution) crosses the wire for super_admin; it is discarded
+    // without side effect. Eliminating that transport requires a tenant_id
+    // column on signal_updates (deferred — schema change).
     const updatesChannel = supabase
-      .channel(`signal-updates-feed-${selectedClientId || 'all'}`)
+      .channel(`signal-updates-feed-${scope.kind === "tenant" ? scope.tenantId : "all"}-${selectedClientId || 'all'}`)
       .on(
         'postgres_changes',
         {
@@ -194,7 +231,8 @@ export const LiveEventFeed = () => {
           const sid = update?.signal_id as string | undefined;
           if (!sid) return;
 
-          // Only increment if this signal is currently visible in the feed
+          // Tenant boundary for signal_updates: only act on signals already in
+          // the tenant-scoped visible set (see channel comment above).
           if (!visibleSignalIdsRef.current.has(sid)) return;
 
           setUpdateCounts((prev) => ({
@@ -225,7 +263,10 @@ export const LiveEventFeed = () => {
       supabase.removeChannel(signalsChannel);
       supabase.removeChannel(updatesChannel);
     };
-  }, [selectedClientId, isContextReady]);
+    // currentTenant?.id + isAllTenantsView + isHydrating added so a tenant
+    // switch / All-Tenants toggle / hydration completion re-derives the scope
+    // and re-subscribes with the correct server-side tenant filter.
+  }, [selectedClientId, isContextReady, currentTenant?.id, isAllTenantsView, isHydrating]);
 
   if (loading || !isContextReady) {
     return (

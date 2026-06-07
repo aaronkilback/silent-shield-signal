@@ -10,6 +10,7 @@ import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, S
 import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
+import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { SignalAgeIndicator } from "@/components/signals/SignalAgeBadge";
 import { SignalDetailDialog } from "./SignalDetailDialog";
@@ -108,7 +109,7 @@ export const SignalHistory = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [updateCounts, setUpdateCounts] = useState<Record<string, number>>({});
   const { selectedClientId } = useClientSelection();
-  const { currentTenant, isAllTenantsView } = useTenant();
+  const { currentTenant, isAllTenantsView, getFilterTenantIds } = useTenant();
   const { startViewing, stopViewing, trackEvent } = useImplicitFeedback();
   
   // Filter states
@@ -128,16 +129,31 @@ export const SignalHistory = () => {
     // Load signals regardless of client selection - show all if none selected
     loadSignals();
 
-    // Subscribe to real-time updates for selected client only
-    const channel = supabase
-      .channel(`signal-history-${selectedClientId || 'all'}`)
+    // Subscribe to real-time updates. Tenant boundary is the primary control
+    // (super_admin bypasses RLS on this channel). Filter precedence:
+    //   selected client (most specific, tenant-safe) > observed tenant > none.
+    // A selected client can never be cross-tenant (useClientSelection enforces a
+    // cross-tenant trust check). For the tenant-level view we fall back to a
+    // server-side tenant_id filter so a super_admin doesn't receive other
+    // tenants' signals.
+    const scope = resolveTenantScope(getFilterTenantIds());
+    const rtFilter = selectedClientId
+      ? { filter: `client_id=eq.${selectedClientId}` }
+      : realtimeTenantFilter(scope);
+    // Deny (hydrating / no selection) with no client narrows to nothing — do
+    // not subscribe unfiltered.
+    const denySubscription = !selectedClientId && scope.kind === "deny";
+    const channel = denySubscription
+      ? null
+      : supabase
+      .channel(`signal-history-${selectedClientId || (scope.kind === "tenant" ? scope.tenantId : "all")}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'signals',
-          ...(selectedClientId ? { filter: `client_id=eq.${selectedClientId}` } : {})
+          ...rtFilter
         },
         (payload) => {
           // Deduplicate by updating existing signal or adding new one
@@ -175,7 +191,7 @@ export const SignalHistory = () => {
     window.addEventListener('online', onOnline);
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
       clearInterval(pollId);
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);

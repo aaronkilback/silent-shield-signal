@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Loader2, CheckCircle, XCircle, Clock, Brain, Plus, Minus, Building2 } from "lucide-react";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 interface MonitoringProposal {
   id: string;
@@ -39,29 +40,49 @@ export function MonitoringProposals({ userId }: Props) {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [clientNames, setClientNames] = useState<Record<string, string>>({});
+  // Tenant boundary for the observed tenant. undefined=loading, null=All-Tenants
+  // (no filter), string[]=scope (fail-closed on empty). monitoring_proposals has
+  // only client_id (no tenant_id), so the render boundary is enforced on the
+  // FETCH via the tenant's client_ids; the realtime channel cannot be
+  // server-side tenant-filtered (named residual below).
+  const { clientIds } = useTenantScopedClientIds();
 
   useEffect(() => {
+    if (clientIds === undefined) return; // wait for tenant hydration (fail closed)
     fetchProposals();
 
-    // Realtime subscription
+    // Realtime subscription. monitoring_proposals lacks tenant_id, so we cannot
+    // express a server-side tenant filter. Parent-derived guard: only refetch
+    // when the changed row's client_id is within the observed tenant's clients
+    // (null = All-Tenants → always). The fetch itself is the render boundary;
+    // named residual: the raw payload (a proposal row) still crosses the wire
+    // for a super_admin. Eliminating that needs a tenant_id column on
+    // monitoring_proposals (deferred — schema change).
     const channel = supabase
       .channel('monitoring-proposals')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'monitoring_proposals',
-      }, () => fetchProposals())
+      }, (payload: any) => {
+        const cid = (payload.new ?? payload.old)?.client_id as string | undefined;
+        if (Array.isArray(clientIds) && cid && !clientIds.includes(cid)) return;
+        fetchProposals();
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [clientIds]);
 
   const fetchProposals = async () => {
     try {
-      const { data, error } = await supabase
+      let q = supabase
         .from('monitoring_proposals')
         .select('*')
         .order('created_at', { ascending: false });
+      // Tenant boundary (primary render control — applies to super_admin too).
+      if (Array.isArray(clientIds)) q = q.in('client_id', clientIds);
+      const { data, error } = await q;
 
       if (error) throw error;
       setProposals((data as MonitoringProposal[]) || []);
