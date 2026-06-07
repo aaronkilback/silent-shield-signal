@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MatchConfidenceChart } from "@/components/matching/MatchConfidenceChart";
 import { MatchingTrendChart } from "@/components/matching/MatchingTrendChart";
@@ -21,6 +22,12 @@ const MatchingDashboard = () => {
   const navigate = useNavigate();
   const [dateRange, setDateRange] = useState<string>("30d");
   const isEmbedded = useIsEmbedded();
+  // signal_correlation_groups has client_id; super_admin BYPASSES RLS, so an
+  // explicit .in('client_id', clientIds) filter is required to avoid leaking
+  // another tenant's rows when viewing a specific tenant.
+  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
+  // [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -43,7 +50,7 @@ const MatchingDashboard = () => {
 
   // Fetch overall stats
   const { data: stats, isLoading: statsLoading } = useQuery({
-    queryKey: ["matching-stats", dateRange],
+    queryKey: ["matching-stats", dateRange, clientIds ?? "all"],
     queryFn: async () => {
       const dateFilter = getDateFilter();
       let query = supabase
@@ -53,6 +60,7 @@ const MatchingDashboard = () => {
       if (dateFilter) {
         query = query.gte("created_at", dateFilter);
       }
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -89,18 +97,20 @@ const MatchingDashboard = () => {
         matchRate: total > 0 ? ((matched / total) * 100).toFixed(1) : "0",
       };
     },
-    enabled: !!user,
+    enabled: !!user && clientIds !== undefined,
   });
 
   // Fetch close match warnings (runner-up score > 70% of best)
   const { data: closeMatchWarnings } = useQuery({
-    queryKey: ["close-match-warnings", dateRange],
+    queryKey: ["close-match-warnings", dateRange, clientIds ?? "all"],
     queryFn: async () => {
       const dateFilter = getDateFilter();
-      const { data, error } = await supabase
+      let query = supabase
         .from("signal_correlation_groups")
         .select("*")
         .order("created_at", { ascending: false });
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -125,7 +135,7 @@ const MatchingDashboard = () => {
         client_id: item.client_id,
       }));
     },
-    enabled: !!user,
+    enabled: !!user && clientIds !== undefined,
   });
 
   if (loading) {

@@ -4,6 +4,7 @@ import { OrbitControls, Sphere, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import earthTexture from "@/assets/earth-texture.jpg";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -293,6 +294,12 @@ export const ThreatGlobe = () => {
   const [selectedPin, setSelectedPin] = useState<GlobePin | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<GlobeDataType>>(new Set(['entity', 'signal', 'incident', 'cluster']));
   const { selectedClientId } = useClientSelection();
+  // entities/signals/incidents/travel_itineraries have client_id; super_admin
+  // BYPASSES RLS, so an explicit .in('client_id', clientIds) filter is required
+  // to avoid showing another tenant's rows when viewing a specific tenant.
+  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
+  // [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
 
   const toggleFilter = useCallback((type: GlobeDataType) => {
     setActiveFilters(prev => {
@@ -304,19 +311,22 @@ export const ThreatGlobe = () => {
 
   useEffect(() => {
     loadAllData();
-  }, [selectedClientId]);
+  }, [selectedClientId, clientIds]);
 
   const loadAllData = async () => {
+    if (clientIds === undefined) return; // still loading tenant scope
     try {
       setLoading(true);
       const allPins: GlobePin[] = [];
 
       // 1. Entities (existing behavior)
-      const { data: entities } = await supabase
+      let entitiesQuery = supabase
         .from("entities")
         .select("id, name, type, current_location, risk_level")
         .not("current_location", "is", null)
         .eq("is_active", true);
+      if (Array.isArray(clientIds)) entitiesQuery = entitiesQuery.in("client_id", clientIds);
+      const { data: entities } = await entitiesQuery;
 
       entities?.forEach(entity => {
         const coords = parseLocationCoords(entity.current_location!);
@@ -330,7 +340,7 @@ export const ThreatGlobe = () => {
 
       // 2. Recent signals with locations
       const signalCutoff = new Date(Date.now() - 7 * 24 * 3600000).toISOString();
-      const { data: signals } = await supabase
+      let signalsQuery = supabase
         .from("signals")
         .select("id, title, location, severity, rule_category, received_at, normalized_text")
         .not("location", "is", null)
@@ -338,6 +348,8 @@ export const ThreatGlobe = () => {
         .gte("received_at", signalCutoff)
         .order("received_at", { ascending: false })
         .limit(200);
+      if (Array.isArray(clientIds)) signalsQuery = signalsQuery.in("client_id", clientIds);
+      const { data: signals } = await signalsQuery;
 
       signals?.forEach(sig => {
         const coords = parseLocationCoords(sig.location!);
@@ -352,12 +364,14 @@ export const ThreatGlobe = () => {
       });
 
       // 3. Recent incidents (via their linked signals' locations)
-      const { data: incidents } = await supabase
+      let incidentsQuery = supabase
         .from("incidents")
         .select("id, status, priority, opened_at, signal_id")
         .gte("opened_at", signalCutoff)
         .order("opened_at", { ascending: false })
         .limit(50);
+      if (Array.isArray(clientIds)) incidentsQuery = incidentsQuery.in("client_id", clientIds);
+      const { data: incidents } = await incidentsQuery;
 
       if (incidents?.length) {
         const signalIds = incidents.map(i => i.signal_id).filter(Boolean) as string[];
@@ -420,12 +434,14 @@ export const ThreatGlobe = () => {
 
       // 5. Travel itineraries (if table exists)
       try {
-        const { data: travel } = await supabase
+        let travelQuery = supabase
           .from("travel_itineraries" as any)
           .select("id, destination, travel_start, travel_end, risk_level, client_id")
           .gte("travel_end", new Date().toISOString())
           .order("travel_start", { ascending: true })
           .limit(30);
+        if (Array.isArray(clientIds)) travelQuery = travelQuery.in("client_id", clientIds);
+        const { data: travel } = await travelQuery;
 
         (travel as any[])?.forEach((t: any) => {
           if (t.destination) {

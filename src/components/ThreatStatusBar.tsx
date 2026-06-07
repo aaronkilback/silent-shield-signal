@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Activity } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 const getThreatColor = (level: string) => {
   switch (level?.toLowerCase()) {
@@ -16,18 +17,26 @@ const getThreatColor = (level: string) => {
 
 export function ThreatStatusBar() {
   const { selectedClientId } = useClientSelection();
+  // threat_radar_snapshots and signal_correlation_groups have client_id;
+  // super_admin BYPASSES RLS, so an explicit .in('client_id', clientIds) filter
+  // is required to avoid leaking another tenant's rows when viewing a specific
+  // tenant. clientIds: undefined = loading (don't run); null = All-Tenants (no
+  // filter); [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: snapshot } = useQuery({
-    queryKey: ["status-bar-threat"],
+    queryKey: ["status-bar-threat", clientIds ?? "all"],
     queryFn: async () => {
-      const { data } = await supabase
+      let query = supabase
         .from("threat_radar_snapshots")
         .select("threat_level, overall_score")
         .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data } = await query.maybeSingle();
       return data;
     },
+    enabled: clientIds !== undefined,
     refetchInterval: 60000,
   });
 
@@ -51,14 +60,17 @@ export function ThreatStatusBar() {
   });
 
   const { data: unmatchedCount } = useQuery({
-    queryKey: ["status-bar-unmatched"],
+    queryKey: ["status-bar-unmatched", clientIds ?? "all"],
     queryFn: async () => {
-      const { count } = await supabase
+      let query = supabase
         .from("signal_correlation_groups")
         .select("*", { count: "exact", head: true })
         .or("match_confidence.eq.none,match_confidence.is.null");
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { count } = await query;
       return count ?? 0;
     },
+    enabled: clientIds !== undefined,
     refetchInterval: 60000,
   });
 

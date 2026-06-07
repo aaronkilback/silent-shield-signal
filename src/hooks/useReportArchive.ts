@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 export interface GeneratedReport {
   id: string;
@@ -34,18 +35,27 @@ export interface ReportSchedule {
 
 export function useReportArchive() {
   const queryClient = useQueryClient();
+  // generated_reports has client_id; super_admin BYPASSES RLS, so an explicit
+  // .in('client_id', clientIds) filter is required to avoid leaking another
+  // tenant's reports when viewing a specific tenant.
+  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
+  // [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: reports, isLoading } = useQuery({
-    queryKey: ["generated-reports"],
+    queryKey: ["generated-reports", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("generated_reports")
         .select("id, user_id, client_id, report_type, title, period_start, period_end, pdf_storage_path, metadata, created_at")
         .order("created_at", { ascending: false })
         .limit(50);
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data as Omit<GeneratedReport, 'html_content'>[];
     },
+    enabled: clientIds !== undefined,
   });
 
   const persistReport = useMutation({
@@ -103,17 +113,26 @@ export function useReportArchive() {
 
 export function useReportSchedules() {
   const queryClient = useQueryClient();
+  // report_schedules has client_id; super_admin BYPASSES RLS, so an explicit
+  // .in('client_id', clientIds) filter is required to avoid leaking another
+  // tenant's schedules when viewing a specific tenant.
+  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
+  // [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: schedules, isLoading } = useQuery({
-    queryKey: ["report-schedules"],
+    queryKey: ["report-schedules", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("report_schedules")
         .select("*, clients(name)")
         .order("created_at", { ascending: false });
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    enabled: clientIds !== undefined,
   });
 
   const createSchedule = useMutation({

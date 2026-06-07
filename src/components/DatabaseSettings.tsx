@@ -7,19 +7,35 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { Database, AlertCircle, CheckCircle, Loader2 } from "lucide-react";
 
 export const DatabaseSettings = () => {
   const { toast } = useToast();
   const [isRunningMaintenance, setIsRunningMaintenance] = useState(false);
+  // signals/incidents/entities have client_id; super_admin BYPASSES RLS, so an
+  // explicit .in('client_id', clientIds) filter is required so these counts
+  // reflect the observed tenant rather than every tenant's rows.
+  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
+  // [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: stats } = useQuery({
-    queryKey: ['db-stats'],
+    queryKey: ['db-stats', clientIds ?? "all"],
     queryFn: async () => {
+      let signalsQuery = supabase.from('signals').select('*', { count: 'exact', head: true });
+      let incidentsQuery = supabase.from('incidents').select('*', { count: 'exact', head: true });
+      let entitiesQuery = supabase.from('entities').select('*', { count: 'exact', head: true });
+      if (Array.isArray(clientIds)) {
+        signalsQuery = signalsQuery.in('client_id', clientIds);
+        incidentsQuery = incidentsQuery.in('client_id', clientIds);
+        entitiesQuery = entitiesQuery.in('client_id', clientIds);
+      }
       const [signals, incidents, entities, relationships] = await Promise.all([
-        supabase.from('signals').select('*', { count: 'exact', head: true }),
-        supabase.from('incidents').select('*', { count: 'exact', head: true }),
-        supabase.from('entities').select('*', { count: 'exact', head: true }),
+        signalsQuery,
+        incidentsQuery,
+        entitiesQuery,
+        // @qa-allow:operator-surface-unfiltered entity_relationships has no client_id
         supabase.from('entity_relationships').select('*', { count: 'exact', head: true })
       ]);
 
@@ -29,7 +45,8 @@ export const DatabaseSettings = () => {
         entities: entities.count || 0,
         relationships: relationships.count || 0
       };
-    }
+    },
+    enabled: clientIds !== undefined,
   });
 
   const runMaintenance = async () => {

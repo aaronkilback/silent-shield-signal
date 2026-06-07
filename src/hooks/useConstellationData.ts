@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 export const ACTIVITY_METRICS_VERSION = "2.0.0-absolute-thresholds"; // f08c87c
 
@@ -1846,12 +1847,18 @@ export interface SignalSequence {
 
 /** Active (open + escalated) sequences. Lazy: only queries when enabled. */
 export function useSignalSequences(enabled: boolean = true) {
+  // signal_sequences has client_id; super_admin BYPASSES RLS, so an explicit
+  // .in('client_id', clientIds) filter is required to avoid leaking another
+  // tenant's sequences when viewing a specific tenant.
+  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
+  // [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
   return useQuery({
-    queryKey: ['signal-sequences-active'],
-    enabled,
+    queryKey: ['signal-sequences-active', clientIds ?? "all"],
+    enabled: enabled && clientIds !== undefined,
     refetchInterval: 60_000,
     queryFn: async (): Promise<SignalSequence[]> => {
-      const { data, error } = await supabase
+      let query = supabase
         .from('signal_sequences')
         .select(`
           id,
@@ -1869,6 +1876,8 @@ export function useSignalSequences(enabled: boolean = true) {
         .in('status', ['open', 'escalated'])
         .order('last_event_at', { ascending: false })
         .limit(50);
+      if (Array.isArray(clientIds)) query = query.in('client_id', clientIds);
+      const { data, error } = await query;
 
       if (error) {
         console.warn('[useSignalSequences] query failed:', error.message);
