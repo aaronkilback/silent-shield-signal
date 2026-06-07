@@ -9,29 +9,36 @@ import { CreateTravelerDialog } from "./CreateTravelerDialog";
 import { EditTravelerDialog } from "./EditTravelerDialog";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 export function TravelersList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingTraveler, setEditingTraveler] = useState<any>(null);
   const queryClient = useQueryClient();
   const { selectedClientId, isContextReady } = useClientSelection();
+  // travelers has client_id but no tenant_id, and super_admin BYPASSES RLS —
+  // so without an explicit .in('client_id', clientIds) filter a super_admin
+  // viewing tenant A sees tenant B's travelers (PII incl. passports).
+  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
+  // [] or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: travelers, isLoading } = useQuery({
-    queryKey: ["travelers"],
+    queryKey: ["travelers", clientIds ?? "all"],
     queryFn: async () => {
-      console.log('[Travelers] Fetching travelers...');
-      const { data, error } = await supabase
+      let query = supabase
         .from("travelers")
         .select("*")
         .order("name");
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) {
         console.error('[Travelers] Error fetching:', error);
         throw error;
       }
-      console.log('[Travelers] Fetched count:', data?.length || 0);
       return data;
     },
-    enabled: isContextReady,
+    enabled: isContextReady && clientIds !== undefined,
   });
 
   const deleteMutation = useMutation({

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,17 +35,21 @@ export function EditItineraryDialog({
 }: EditItineraryDialogProps) {
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: travelers } = useQuery({
-    queryKey: ["travelers"],
+    queryKey: ["travelers", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("travelers")
         .select("id, name")
         .order("name");
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    enabled: clientIds !== undefined,
   });
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {

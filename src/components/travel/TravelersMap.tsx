@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { Card } from "@/components/ui/card";
@@ -146,26 +147,36 @@ export function TravelersMap() {
   const [tokenInput, setTokenInput] = useState("");
   const [mapReady, setMapReady] = useState(false);
 
+  // Tenant scope — travelers/itineraries have client_id; super_admin bypasses
+  // RLS, so map data must be filtered to the observed tenant's clients.
+  const { clientIds } = useTenantScopedClientIds();
+
   const { data: travelers, refetch: refetchTravelers } = useQuery({
-    queryKey: ["travelers-with-location"],
+    queryKey: ["travelers-with-location", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("travelers").select("*");
+      let query = supabase.from("travelers").select("*");
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    enabled: clientIds !== undefined,
     refetchInterval: 30000,
   });
 
   const { data: allItineraries, refetch: refetchItineraries } = useQuery({
-    queryKey: ["itineraries-map"],
+    queryKey: ["itineraries-map", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("itineraries")
         .select(`*, travelers:traveler_id (*)`)
         .order("departure_date", { ascending: false });
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    enabled: clientIds !== undefined,
     refetchInterval: 30000,
   });
 

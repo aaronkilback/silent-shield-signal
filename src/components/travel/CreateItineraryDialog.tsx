@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Upload } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 interface CreateItineraryDialogProps {
   open: boolean;
@@ -29,17 +30,21 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const { selectedClientId } = useClientSelection();
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: travelers } = useQuery({
-    queryKey: ["travelers"],
+    queryKey: ["travelers", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("travelers")
         .select("id, name")
         .order("name");
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    enabled: clientIds !== undefined,
   });
 
   const createMutation = useMutation({

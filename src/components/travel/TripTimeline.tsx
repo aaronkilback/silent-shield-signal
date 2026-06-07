@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -71,19 +72,24 @@ function RiskChangeIcon({ current, previous }: { current: string; previous: stri
 
 export function TripTimeline() {
   const [selectedItineraryId, setSelectedItineraryId] = useState<string | null>(null);
+  // itineraries has client_id; super_admin bypasses RLS → scope to observed tenant.
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: itineraries } = useQuery({
-    queryKey: ["itineraries-for-timeline"],
+    queryKey: ["itineraries-for-timeline", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("itineraries")
         .select("id, trip_name, status, risk_level, monitoring_enabled, travelers:traveler_id(name)")
         .in("status", ["upcoming", "active"])
         .eq("monitoring_enabled", true)
         .order("departure_date", { ascending: true });
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    enabled: clientIds !== undefined,
   });
 
   // Auto-select first itinerary

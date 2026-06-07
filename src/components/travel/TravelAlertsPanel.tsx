@@ -7,10 +7,16 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, CheckCircle, MapPin, Plane, Scan, TrendingUp, TrendingDown, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 export function TravelAlertsPanel() {
   const queryClient = useQueryClient();
   const [showAcknowledged, setShowAcknowledged] = useState(false);
+  // travel_alerts has no client_id — scope via its traveler parent. super_admin
+  // bypasses RLS, so without this an operator viewing tenant A sees tenant B's
+  // travel alerts. When scoped, an inner join on travelers + client_id filter
+  // returns only in-tenant alerts (fail-closed: alerts with no traveler drop).
+  const { clientIds } = useTenantScopedClientIds();
 
   const scanMutation = useMutation({
     mutationFn: async () => {
@@ -30,25 +36,31 @@ export function TravelAlertsPanel() {
   });
 
   const { data: alerts, isLoading } = useQuery({
-    queryKey: ["travel-alerts", showAcknowledged],
+    queryKey: ["travel-alerts", showAcknowledged, clientIds ?? "all"],
     queryFn: async () => {
+      const scoped = Array.isArray(clientIds);
       let query = supabase
         .from("travel_alerts")
         .select(`
           *,
-          travelers:traveler_id (name),
+          travelers:traveler_id${scoped ? "!inner" : ""} (name, client_id),
           itineraries:itinerary_id (trip_name)
         `)
         .order("created_at", { ascending: false });
-      
+
+      // Tenant scope via the alert's traveler.client_id (no client_id on the
+      // alert row itself). null = All-Tenants view → unfiltered.
+      if (scoped) query = query.in("travelers.client_id", clientIds);
+
       if (!showAcknowledged) {
         query = query.eq("is_active", true);
       }
-      
+
       const { data, error } = await query;
       if (error) throw error;
       return data;
     },
+    enabled: clientIds !== undefined,
   });
 
   const { data: riskChanges } = useQuery({

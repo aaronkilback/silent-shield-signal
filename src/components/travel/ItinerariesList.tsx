@@ -14,6 +14,7 @@ import { EditItineraryDialog } from "./EditItineraryDialog";
 import { format, formatDistanceToNow, isPast, isFuture, isWithinInterval } from "date-fns";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,10 @@ export function ItinerariesList() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const { selectedClientId, isContextReady } = useClientSelection();
+  // Tenant scope — itineraries has client_id; super_admin bypasses RLS, so an
+  // explicit .in('client_id', clientIds) filter is required to avoid showing
+  // another tenant's itineraries when viewing a specific tenant.
+  const { clientIds } = useTenantScopedClientIds();
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -72,19 +77,21 @@ export function ItinerariesList() {
   });
 
   const { data: itineraries, isLoading, refetch } = useQuery({
-    queryKey: ["itineraries"],
+    queryKey: ["itineraries", clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("itineraries")
         .select(`
           *,
           travelers:traveler_id (name, map_color)
         `)
         .order("departure_date", { ascending: true });
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
-    enabled: isContextReady,
+    enabled: isContextReady && clientIds !== undefined,
     refetchInterval: 60000, // re-check statuses every minute
   });
 
