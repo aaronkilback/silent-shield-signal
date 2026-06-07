@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
+import { useTenant } from "@/hooks/useTenant";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { 
@@ -246,17 +247,23 @@ export function VIPDeepScanWizard() {
   // OSINT Discovery hook
   const osintDiscovery = useOSINTDiscovery();
 
-  // Fetch clients
+  // Fetch clients — tenant-scoped. clients has tenant_id; super_admin bypasses
+  // RLS, so without an explicit tenant_id filter the VIP-scan picker lists
+  // every tenant's clients when viewing a specific tenant. Mirrors AssetPicker:
+  // scope to the observed tenant + drop underscore-prefixed fixture/system clients.
+  const { currentTenant, isAllTenantsView } = useTenant();
   const { data: clients } = useQuery({
-    queryKey: ["clients-for-vip-scan"],
+    queryKey: ["clients-for-vip-scan", currentTenant?.id ?? null, isAllTenantsView],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("clients")
         .select("id, name, industry")
         .eq("status", "active")
         .order("name");
+      if (currentTenant?.id && !isAllTenantsView) query = query.eq("tenant_id", currentTenant.id);
+      const { data, error } = await query;
       if (error) throw error;
-      return data;
+      return (data ?? []).filter((c: any) => typeof c.name === "string" && !c.name.startsWith("_"));
     },
   });
 
