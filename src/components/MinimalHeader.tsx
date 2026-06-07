@@ -50,6 +50,7 @@ export const MinimalHeader = () => {
     { path: "/travel", label: "Travel" },
     { path: "/clients", label: clientNoun.plural },
     { path: "/security-advisor", label: "Security Advisor" },
+    { path: "/site-audits", label: "Site Audits" },
     { path: "/consortia", label: "Intel Sharing" },
     ...(isSuperAdmin ? [
       { path: "/vip-deep-scan", label: "Vulnerability Scan" },
