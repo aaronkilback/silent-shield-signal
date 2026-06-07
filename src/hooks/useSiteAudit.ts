@@ -17,6 +17,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 export type AssetClass =
   | "oil_gas_plant"
@@ -175,18 +176,29 @@ export function useCreateClientAsset() {
 // ─── Audit queries ─────────────────────────────────────────────────
 export function useMyOpenAudits() {
   const { user } = useAuth();
+  // Tenant scope for the active observation. site_audits has client_id but
+  // no tenant_id, and super_admin BYPASSES RLS — so without an explicit
+  // `.in('client_id', clientIds)` filter a super_admin viewing tenant A
+  // would still see audits they created in tenant B. clientIds: undefined
+  // = still loading (don't run); null = All-Tenants view (no filter); []
+  // or string[] = scope to those clients (fail-closed on empty).
+  const { clientIds } = useTenantScopedClientIds();
   return useQuery({
-    queryKey: AUDIT_LIST_KEY(user?.id ?? "_none"),
-    enabled: !!user?.id,
+    queryKey: [...AUDIT_LIST_KEY(user?.id ?? "_none"), clientIds ?? "all"],
+    enabled: !!user?.id && clientIds !== undefined,
     queryFn: async (): Promise<(SiteAudit & { asset: ClientAsset | null })[]> => {
       if (!user?.id) return [];
-      const { data, error } = await supabase
+      let query = supabase
         .from("site_audits")
         .select("*, asset:client_assets(*)")
         .eq("primary_operator", user.id)
         .in("status", ["in_progress", "completed"])
         .order("started_at", { ascending: false })
         .limit(20);
+      // Array (incl. empty) => scope to the observed tenant's clients.
+      // null (All-Tenants) => leave unfiltered.
+      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []) as never;
     },
@@ -195,9 +207,13 @@ export function useMyOpenAudits() {
 }
 
 export function useSiteAudit(auditId: string | null) {
+  // Same super_admin RLS-bypass hazard as the list: a detail lookup by id
+  // is otherwise reachable cross-tenant via direct URL. Scope to the
+  // observed tenant's clients; null (All-Tenants) leaves it unfiltered.
+  const { clientIds } = useTenantScopedClientIds();
   return useQuery({
-    queryKey: AUDIT_KEY(auditId ?? "_none"),
-    enabled: !!auditId,
+    queryKey: [...AUDIT_KEY(auditId ?? "_none"), clientIds ?? "all"],
+    enabled: !!auditId && clientIds !== undefined,
     queryFn: async (): Promise<(SiteAudit & { asset: ClientAsset | null }) | null> => {
       if (!auditId) return null;
       const { data, error } = await supabase
@@ -206,7 +222,13 @@ export function useSiteAudit(auditId: string | null) {
         .eq("id", auditId)
         .maybeSingle();
       if (error) throw error;
-      return (data as never) ?? null;
+      const row = (data as (SiteAudit & { asset: ClientAsset | null }) | null) ?? null;
+      // Fail-closed: when observing a specific tenant, an out-of-scope
+      // audit (super_admin bypass) is treated as not-found.
+      if (row && Array.isArray(clientIds) && !clientIds.includes(row.client_id)) {
+        return null;
+      }
+      return row;
     },
     staleTime: 5_000,
   });
