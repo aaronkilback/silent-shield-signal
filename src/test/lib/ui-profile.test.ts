@@ -23,6 +23,7 @@ describe("canAccessRoute — CRT tenant route restrictions", () => {
     expect(canAccessRoute(crt, "/site-audits")).toBe(true);
     expect(canAccessRoute(crt, "/travel")).toBe(true);
     expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(true);
+    expect(canAccessRoute(crt, "/security-advisor")).toBe(true);
   });
 
   it("CRT profile blocks everything not in the allowed set (default-deny)", () => {

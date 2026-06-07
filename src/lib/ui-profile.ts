@@ -32,6 +32,7 @@ const CRT_ACTIVE_PATHS = new Set<string>([
   '/vip-deep-scan',     // Vulnerability Scan — active for every tenant + every
                         // role (the page's own compliance/authorization gate
                         // governs who can actually run a scan).
+  '/security-advisor',  // Cyber Defense (WRAITH) — active for every tenant.
 ]);
 
 // Nothing is currently greyed; every CRT-reachable surface is either active
