@@ -19,10 +19,13 @@ describe("canAccessRoute — CRT tenant route restrictions", () => {
     }
   });
 
-  it("CRT profile blocks the three explicitly-restricted paths", () => {
+  it("CRT profile blocks the two explicitly-restricted paths", () => {
     expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(false);
-    expect(canAccessRoute(crt, "/site-audits")).toBe(false);
     expect(canAccessRoute(crt, "/travel")).toBe(false);
+  });
+
+  it("CRT profile allows /site-audits (now active for every tenant)", () => {
+    expect(canAccessRoute(crt, "/site-audits")).toBe(true);
   });
 
   it("CRT profile blocks everything not in the allowed set (default-deny)", () => {
@@ -42,8 +45,8 @@ describe("canAccessRoute — CRT tenant route restrictions", () => {
     expect(canAccessRoute(crt, "/clients/abc-uuid-123/arcgis")).toBe(true);
   });
 
-  it("CRT profile blocks sub-route prefixes for restricted list views", () => {
-    expect(canAccessRoute(crt, "/site-audits/abc-uuid-123")).toBe(false);
+  it("CRT profile allows the /site-audits/ detail prefix (audit wizard)", () => {
+    expect(canAccessRoute(crt, "/site-audits/abc-uuid-123")).toBe(true);
   });
 });
 
@@ -65,7 +68,7 @@ describe("canAccessRoute — state-bug regression", () => {
       "/signals": true,
       "/entities": true,
       "/incidents": true,
-      "/site-audits": false,
+      "/site-audits": true,
       "/": true,
       "/travel": false,
     };
@@ -84,7 +87,7 @@ describe("canAccessRoute — state-bug regression", () => {
     // must STILL be denied. The regression report described this exact
     // sequence breaking.
     expect(canAccessRoute(crt, "/vip-deep-scan")).toBe(false);
-    expect(canAccessRoute(crt, "/site-audits")).toBe(false);
+    expect(canAccessRoute(crt, "/site-audits")).toBe(true);
     expect(canAccessRoute(crt, "/travel")).toBe(false);
   });
 
@@ -103,11 +106,11 @@ describe("getNavVisibility delegates to canAccessRoute (single source of truth)"
     expect(getNavVisibility(crt, "/signals")).toBe("active");
     expect(getNavVisibility(crt, "/investigations")).toBe("active");
     expect(getNavVisibility(crt, "/investigation/abc")).toBe("active");
+    expect(getNavVisibility(crt, "/site-audits")).toBe("active");
   });
 
   it("returns 'greyed' for explicitly-greyed paths (visible-but-disabled affordance)", () => {
     expect(getNavVisibility(crt, "/vip-deep-scan")).toBe("greyed");
-    expect(getNavVisibility(crt, "/site-audits")).toBe("greyed");
     expect(getNavVisibility(crt, "/travel")).toBe("greyed");
   });
 

@@ -24,12 +24,15 @@ const CRT_ACTIVE_PATHS = new Set<string>([
   '/sources',
   '/reports',           // Executive Report Generator
   '/investigations',
+  '/site-audits',       // Site Assessments — active for every tenant (data is
+                        // tenant-isolated via client_assets/site_audits/
+                        // site_observations/site_features RLS, all gated by
+                        // get_user_accessible_client_ids()).
 ]);
 
 const CRT_GREYED_PATHS = new Set<string>([
   '/vip-deep-scan',     // Vulnerability Scan
   '/travel',
-  '/site-audits',
 ]);
 
 export type NavVisibility = 'active' | 'greyed' | 'hidden';
@@ -60,6 +63,7 @@ const CRT_ACTIVE_PREFIXES: string[] = [
   '/client/',         // detail for an item from /clients
   '/clients/',        // sub-config under /clients/:id/...
   '/investigation/',  // detail for an item from /investigations
+  '/site-audits/',    // audit detail / wizard for an item from /site-audits
 ];
 
 /**
