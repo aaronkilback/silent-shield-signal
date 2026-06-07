@@ -36,3 +36,6 @@ dist-ssr
 
 # Supabase CLI runtime cache (machine-local, regenerated on every CLI run)
 supabase/.temp/
+
+# A1 guard pack: generated report artifact (uploaded by CI, not committed)
+a1-report.json

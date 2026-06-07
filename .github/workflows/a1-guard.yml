@@ -1,0 +1,38 @@
+name: A1 Retrieval-Boundary Guard (warn-only)
+
+# Tier-1 guard pack: prevents the highest-frequency cross-tenant retrieval
+# regressions. WARN-ONLY for now — the job stays green and posts findings.
+# Flip to a gate later by adding `--enforce` to the run step.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  a1-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # needed only for the read-only DB checks (A1.1, A1.6); static checks run without it
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run A1 guard pack (warn-only)
+        env:
+          STAGING_DB_URL_RO: ${{ secrets.STAGING_DB_URL_RO }}
+          PROD_DB_URL_RO: ${{ secrets.PROD_DB_URL_RO }}
+        run: node scripts/security/a1/run.mjs
+        # WARN-ONLY: run.mjs exits 0 unless --enforce is passed.
+
+      - name: Upload A1 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a1-report
+          path: a1-report.json

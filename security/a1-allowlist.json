@@ -1,0 +1,15 @@
+{
+  "_doc": "Reviewed exceptions for the A1 guard pack. Every entry SHOULD carry a reason. Prefer fixing over allowlisting.",
+  "serviceRoleGate": {
+    "_doc": "Edge functions that use service-role + a request id but are trusted internal/cron callers with no user entry path.",
+    "allow": []
+  },
+  "rpcPurity": {
+    "_doc": "SECURITY DEFINER / match_* RPCs that are intentionally cross-tenant (global, content-anonymized). Justify each.",
+    "allow": []
+  },
+  "nullTenant": {
+    "_doc": "Tables temporarily permitted to hold client-owned rows with NULL tenant_id (e.g., active backfill). Remove ASAP.",
+    "grace": []
+  }
+}
