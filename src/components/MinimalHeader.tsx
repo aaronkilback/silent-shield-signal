@@ -49,7 +49,7 @@ export const MinimalHeader = () => {
     { path: "/reports", label: "Reports" },
     { path: "/travel", label: "Travel" },
     { path: "/clients", label: clientNoun.plural },
-    { path: "/security-advisor", label: "Security Advisor" },
+    { path: "/security-advisor", label: "Cyber Defense" },
     { path: "/site-audits", label: "Site Audits" },
     { path: "/consortia", label: "Intel Sharing" },
     ...(isSuperAdmin ? [

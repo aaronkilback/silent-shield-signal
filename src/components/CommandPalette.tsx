@@ -61,7 +61,7 @@ export const CommandPalette = () => {
     { path: "/site-audits", label: "Site Audits", icon: ClipboardCheck, keywords: ["site", "audit", "audits", "wellpad", "perimeter", "fence", "camera", "walk", "wizard", "field"], group: "operations" },
     { path: "/clients", label: "Clients", icon: UserCheck, keywords: ["clients", "accounts", "organizations"], group: "operations" },
     { path: "/command-center", label: "AI Agents", icon: Zap, keywords: ["agents", "command", "automation", "ai"], group: "operations" },
-    { path: "/security-advisor", label: "Security Advisor", icon: Shield, keywords: ["security", "wraith", "breach", "phishing", "wifi", "bluetooth", "password", "hack"], group: "operations" },
+    { path: "/security-advisor", label: "Cyber Defense", icon: Shield, keywords: ["cyber", "defense", "security", "advisor", "wraith", "breach", "phishing", "wifi", "bluetooth", "password", "hack"], group: "operations" },
     { path: "/integrations", label: "Integrations", icon: Settings, keywords: ["integrations", "api", "connections"], group: "operations" },
 
     // Admin (conditional)

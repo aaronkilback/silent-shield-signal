@@ -148,7 +148,7 @@ export const Header = () => {
     { path: "/site-audits", icon: ClipboardCheck, label: "Site Audits", matchPrefix: true },
     { path: "/travel", icon: Plane, label: "Travel" },
     { path: "/clients", icon: Building2, label: "Clients" },
-    { path: "/security-advisor", icon: Shield, label: "Security Advisor" },
+    { path: "/security-advisor", icon: Shield, label: "Cyber Defense" },
     { path: "/academy", icon: GraduationCap, label: "Academy" },
   ];
 

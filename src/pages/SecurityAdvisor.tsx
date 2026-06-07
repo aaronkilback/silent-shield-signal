@@ -172,7 +172,7 @@ export default function SecurityAdvisor() {
           <Shield className="h-6 w-6 text-red-500" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold">WRAITH Security Advisor</h1>
+          <h1 className="text-2xl font-bold">WRAITH Cyber Defense</h1>
           <p className="text-sm text-muted-foreground">Personal security posture analysis & threat prevention</p>
         </div>
       </div>
