@@ -14,6 +14,12 @@
 import { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { annotateTemporal, type TemporalBucket } from "./temporal-recency.ts";
 import { getThreatMetrics, isCountableObservation } from "./threat-metrics.ts";
+import { tenantRetrieve, type SeamCaller, type RetrievalTrace } from "./tenant-retrieve.ts";
+
+// A4.3 Wave 1: route the three certified-surface reads (incidents/signals/entities)
+// through the tenantRetrieve seam when COP_USE_SEAM=true. Default OFF in all envs —
+// flag-off path is byte-identical to pre-Wave-1 behavior. Instant rollback via the flag.
+const COP_USE_SEAM = (Deno.env.get('COP_USE_SEAM') ?? 'false') === 'true';
 
 export interface COPSnapshot {
   generated_at: string;
@@ -58,33 +64,17 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
   const clientIds: string[] = (_tc ?? []).map((c: { id: string }) => c.id);
   const clientScope = clientIds.length > 0 ? clientIds : ['00000000-0000-0000-0000-000000000000'];
 
+  const seamTraces: RetrievalTrace[] = [];
+  const seamCaller: SeamCaller = { kind: 'service', tenantId, clientIds };
+
+  // Non-certified COP reads — always inline (not seam-governed surfaces).
   const [
-    { data: openIncidents },
-    { data: criticalSignals },
     { data: escalations },
-    { data: topEntities },
     { data: watchedEntities },
     { data: activeAgents },
     { data: riskScans },
     { data: broadcasts },
   ] = await Promise.all([
-    supabase
-      .from('incidents')
-      .select('id, title, priority, status, opened_at')
-      .eq('tenant_id', tenantId)
-      .eq('status', 'open')
-      .is('deleted_at', null)
-      .order('opened_at', { ascending: false })
-      .limit(8),
-    supabase
-      .from('signals')
-      .select('id, title, severity, rule_category, created_at, event_date, surface_date, temporal_grounding, signal_type, quality_status, is_test, status')
-      .eq('tenant_id', tenantId)
-      .in('severity', ['critical', 'high'])
-      .eq('is_test', false)
-      .gte('created_at', cutoff24h)
-      .order('created_at', { ascending: false })
-      .limit(10),
     supabase
       .from('predictive_incident_scores')
       .select('signal_id, escalation_probability, predicted_severity, signals!inner(tenant_id)')
@@ -92,13 +82,6 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       .gte('escalation_probability', 0.70)
       .gte('scored_at', cutoff4h)
       .order('escalation_probability', { ascending: false })
-      .limit(5),
-    supabase
-      .from('entities')
-      .select('name, type, risk_level, threat_score')
-      .eq('tenant_id', tenantId)
-      .not('threat_score', 'is', null)
-      .order('threat_score', { ascending: false })
       .limit(5),
     supabase
       .from('entity_watch_list')
@@ -127,6 +110,65 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       .order('created_at', { ascending: false })
       .limit(3),
   ]);
+
+  // Certified-surface reads (incidents/signals/entities) — A4.3 Wave 1.
+  // COP_USE_SEAM ON → tenantRetrieve seam; OFF (default) → byte-identical inline path.
+  let openIncidents: any[] | null;
+  let criticalSignals: any[] | null;
+  let topEntities: any[] | null;
+  if (COP_USE_SEAM) {
+    const [incR, sigR, entR] = await Promise.all([
+      tenantRetrieve({ caller: seamCaller, surface: 'incidents', sb: supabase, spec: {
+        columns: ['id', 'title', 'priority', 'status', 'opened_at'],
+        filters: [{ column: 'status', op: 'eq', value: 'open' }, { column: 'deleted_at', op: 'isNull' }],
+        order: { column: 'opened_at', ascending: false }, limit: 8,
+      } }),
+      tenantRetrieve({ caller: seamCaller, surface: 'signals', sb: supabase, spec: {
+        columns: ['id', 'title', 'severity', 'rule_category', 'created_at', 'event_date', 'surface_date', 'temporal_grounding', 'signal_type', 'quality_status', 'is_test', 'status'],
+        filters: [{ column: 'severity', op: 'in', value: ['critical', 'high'] }, { column: 'is_test', op: 'eq', value: false }, { column: 'created_at', op: 'gte', value: cutoff24h }],
+        order: { column: 'created_at', ascending: false }, limit: 10,
+      } }),
+      tenantRetrieve({ caller: seamCaller, surface: 'entities', sb: supabase, spec: {
+        columns: ['name', 'type', 'risk_level', 'threat_score'],
+        filters: [{ column: 'threat_score', op: 'isNotNull' }],
+        order: { column: 'threat_score', ascending: false }, limit: 5,
+      } }),
+    ]);
+    openIncidents = incR.rows; criticalSignals = sigR.rows; topEntities = entR.rows;
+    seamTraces.push(incR.trace, sigR.trace, entR.trace);
+    console.log(`[COP] tenantRetrieve seam path: ${seamTraces.length} traces (in-memory, not persisted) for tenant ${tenantId}`);
+  } else {
+    const [incD, sigD, entD] = await Promise.all([
+      supabase
+        // @tenant-safe: gated legacy path behind COP_USE_SEAM; seam path (A4.3 Wave 1) is primary. tenant-scoped + fail-closed.
+        .from('incidents')
+        .select('id, title, priority, status, opened_at')
+        .eq('tenant_id', tenantId)
+        .eq('status', 'open')
+        .is('deleted_at', null)
+        .order('opened_at', { ascending: false })
+        .limit(8),
+      supabase
+        // @tenant-safe: gated legacy path behind COP_USE_SEAM; seam path (A4.3 Wave 1) is primary. tenant-scoped + fail-closed.
+        .from('signals')
+        .select('id, title, severity, rule_category, created_at, event_date, surface_date, temporal_grounding, signal_type, quality_status, is_test, status')
+        .eq('tenant_id', tenantId)
+        .in('severity', ['critical', 'high'])
+        .eq('is_test', false)
+        .gte('created_at', cutoff24h)
+        .order('created_at', { ascending: false })
+        .limit(10),
+      supabase
+        // @tenant-safe: gated legacy path behind COP_USE_SEAM; seam path (A4.3 Wave 1) is primary. tenant-scoped + fail-closed.
+        .from('entities')
+        .select('name, type, risk_level, threat_score')
+        .eq('tenant_id', tenantId)
+        .not('threat_score', 'is', null)
+        .order('threat_score', { ascending: false })
+        .limit(5),
+    ]);
+    openIncidents = incD.data; criticalSignals = sigD.data; topEntities = entD.data;
+  }
 
   // Derive risk trend
   let risk_score: number | null = null;
