@@ -50,6 +50,14 @@ function queryWords(raw: string): string[] {
   return String(raw || "").replace(/[^a-zA-Z0-9 \-]/g, " ").split(/\s+/).map((w) => w.trim()).filter((w) => w.length > 1);
 }
 
+// Resolve the authenticated caller's user id from the bearer token (for per-user memory).
+async function getCallerUserId(supabase: any, req: Request): Promise<string | null> {
+  const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (!token) return null;
+  const { data } = await supabase.auth.getUser(token);
+  return data?.user?.id ?? null;
+}
+
 const TENANT_MISSING = {
   found: false,
   error: "TENANT_CONTEXT_MISSING",
@@ -75,11 +83,51 @@ Deno.serve(async (req) => {
     const scope = await resolveScope(supabase, req, clientTenantId);
     let result: unknown;
     switch (tool_name) {
-      case "get_user_memory":
+      // ---- Persistent memory (shared with chat via conversation_memory) ----
+      case "get_user_memory": {
+        const uid = await getCallerUserId(supabase, req);
+        if (!uid) { result = { success: false, message: "Sign in to access memory." }; break; }
+        const { data: mems } = await supabase
+          .from("conversation_memory")
+          .select("memory_type, content, context_tags, importance_score, client_id, created_at")
+          .eq("user_id", uid)
+          .or("importance_score.gte.6,created_at.gte." + new Date(Date.now() - 30 * 864e5).toISOString())
+          .order("importance_score", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(30);
+        result = {
+          success: true,
+          memory_count: (mems || []).length,
+          memories: (mems || []).map((m: any) => ({ type: m.memory_type, content: m.content, tags: m.context_tags, when: m.created_at })),
+          guidance: (mems || []).length
+            ? "Persisted memory from prior conversations with THIS operator (names, locations, preferences, ongoing matters). Use what's relevant naturally; do not recite the whole list."
+            : "No saved memory for this operator yet.",
+        };
+        break;
+      }
+
       case "remember_this":
       case "update_user_preferences":
       case "manage_project_context": {
-        result = { success: false, message: "Memory tools temporarily unavailable on voice-tool-executor-v2.", tool: tool_name };
+        const uid = await getCallerUserId(supabase, req);
+        if (!uid) { result = { success: false, message: "Sign in to save memory." }; break; }
+        const content = (typeof toolArgs.content === "string" && toolArgs.content.trim())
+          || (typeof toolArgs.preference === "string" && toolArgs.preference.trim())
+          || (typeof toolArgs.note === "string" && toolArgs.note.trim()) || "";
+        if (!content) { result = { success: false, message: "Nothing to remember — what should I note?" }; break; }
+        const memType = tool_name === "update_user_preferences" ? "preference"
+          : tool_name === "manage_project_context" ? "project"
+          : (typeof toolArgs.memory_type === "string" && toolArgs.memory_type ? toolArgs.memory_type : "fact");
+        const { data, error } = await supabase.from("conversation_memory").insert({
+          user_id: uid,
+          memory_type: memType,
+          content,
+          context_tags: Array.isArray(toolArgs.context_tags) ? toolArgs.context_tags : [],
+          importance_score: typeof toolArgs.importance_score === "number" ? toolArgs.importance_score : 6,
+          client_id: (scope && scope.clientIds[0]) || (typeof toolArgs.client_id === "string" ? toolArgs.client_id : null),
+        }).select("id").single();
+        if (error) { console.error("[remember_this]", error); result = { success: false, message: "Couldn't save that to memory." }; break; }
+        result = { success: true, message: `Committed to memory: "${content.slice(0, 60)}${content.length > 60 ? "…" : ""}"`, memory_id: data?.id, memory_type: memType };
         break;
       }
       case "get_current_threats": {
