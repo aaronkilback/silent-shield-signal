@@ -359,9 +359,13 @@ Deno.serve(async (req) => {
         const action = typeof toolArgs.action === "string" ? toolArgs.action.toLowerCase().trim() : "";
         const valid = ["create", "update", "escalate", "close", "resolve", "acknowledge", "add_timeline"];
         if (!valid.includes(action)) { result = { success: false, message: "Specify an action: create, update, escalate, or close." }; break; }
-        // Confirm-before-destructive: close/resolve require an explicit confirm after the operator agrees.
-        if ((action === "close" || action === "resolve") && toolArgs.confirm !== true) {
-          result = { success: false, needs_confirmation: true, message: "Closing/resolving an incident is significant — confirm with the operator, then call again with confirm=true." };
+        // Confirm-before-destructive: ANY path that would close/resolve requires explicit
+        // confirmation — including action=update with status=closed/resolved (the bypass).
+        const reqStatus = typeof toolArgs.status === "string" ? toolArgs.status.toLowerCase().trim() : "";
+        const closesOrResolves = action === "close" || action === "resolve"
+          || reqStatus === "closed" || reqStatus === "close" || reqStatus === "resolved" || reqStatus === "resolve";
+        if (closesOrResolves && toolArgs.confirm !== true) {
+          result = { success: false, needs_confirmation: true, message: "Closing or resolving an incident needs the operator's spoken confirmation — confirm, then call again with confirm=true. This applies even via action=update with status closed/resolved." };
           break;
         }
         if (action === "create" && !(typeof toolArgs.title === "string" && toolArgs.title.trim())) {

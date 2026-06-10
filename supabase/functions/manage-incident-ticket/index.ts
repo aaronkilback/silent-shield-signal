@@ -11,6 +11,7 @@ import { createServiceClient, corsHeaders, handleCors, successResponse, errorRes
 
 interface IncidentTicketRequest {
   action: 'create' | 'update';
+  tenant_id?: string;
   ticket_system_id?: string;
   title?: string;
   description: string;
@@ -83,6 +84,7 @@ Deno.serve(async (req) => {
     const requestBody: IncidentTicketRequest = await req.json();
     const {
       action,
+      tenant_id,
       ticket_system_id,
       title,
       description,
@@ -105,6 +107,11 @@ Deno.serve(async (req) => {
     // Validate required fields
     if (!action) {
       return errorResponse('action is required (create or update)', 400);
+    }
+
+    // CROSS-TENANT SAFETY (P0): incident create/update must be tenant-scoped. Fail closed.
+    if ((action === 'create' || action === 'update') && !tenant_id) {
+      return errorResponse('tenant_id is required for incident create/update', 400);
     }
 
     if (!description) {
@@ -146,6 +153,7 @@ Deno.serve(async (req) => {
 
       // Create new incident
       const incidentData: any = {
+        tenant_id,
         title,
         summary: description,
         priority: effectivePriority,
@@ -266,6 +274,7 @@ Deno.serve(async (req) => {
         .from('incidents')
         .select('id, title, priority, status, severity_level, timeline_json, sla_targets_json, acknowledged_at, summary')
         .eq('id', incidentId)
+        .eq('tenant_id', tenant_id)
         .single();
 
       if (!exactResult.error && exactResult.data) {
@@ -275,6 +284,7 @@ Deno.serve(async (req) => {
           .from('incidents')
           .select('id, title, priority, status, severity_level, timeline_json, sla_targets_json, acknowledged_at, summary')
           .ilike('id', `${incidentId}%`)
+          .eq('tenant_id', tenant_id)
           .limit(1)
           .single();
 
@@ -351,7 +361,8 @@ Deno.serve(async (req) => {
       const { error: updateError } = await supabase
         .from('incidents')
         .update(updatePayload)
-        .eq('id', existingIncident.id);
+        .eq('id', existingIncident.id)
+        .eq('tenant_id', tenant_id);
 
       if (updateError) {
         console.error('[manage-incident-ticket] Update error:', updateError);
