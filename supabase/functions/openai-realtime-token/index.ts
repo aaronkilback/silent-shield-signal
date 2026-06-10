@@ -226,6 +226,36 @@ Ground every point strictly in the retrieved text. If get_document_content retur
       },
       {
         type: 'function',
+        name: 'create_entity',
+        description: 'Propose a new entity to track (person, vehicle, organization, location). Goes to the analyst approval queue. Use when the operator says to add or start tracking someone/something. Confirm the name back before calling.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Entity name, e.g. a person, "black Ford F-150 plate ABC123", or an org' },
+            type: { type: 'string', description: 'person | vehicle | organization | location' },
+            description: { type: 'string', description: 'Why it matters / context' }
+          },
+          required: ['name']
+        }
+      },
+      {
+        type: 'function',
+        name: 'update_entity',
+        description: 'Update an existing tracked entity: set risk level, enable/disable monitoring, adjust threat score, or update description. Use when the operator asks to flag or change an existing person/vehicle/org.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Name of the existing entity (partial match ok)' },
+            risk_level: { type: 'string', description: 'low | medium | high | critical' },
+            active_monitoring_enabled: { type: 'boolean', description: 'Turn monitoring on or off' },
+            threat_score: { type: 'number', description: 'Threat score 0-10' },
+            description: { type: 'string', description: 'Updated description' }
+          },
+          required: ['name']
+        }
+      },
+      {
+        type: 'function',
         name: 'get_client_info',
         description: 'Get information about a specific client including their signals, incidents, and monitoring status.',
         parameters: {

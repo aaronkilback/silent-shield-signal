@@ -310,8 +310,51 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // ---- Record mutations (Slice 1: entities) — tenant-scoped writes ----
+      // create_entity follows the platform's suggestions-first policy (propose → analyst
+      // approves). update_entity is a direct, tenant-scoped edit of an existing entity.
+      case "create_entity": {
+        if (!scope) { result = TENANT_MISSING; break; }
+        const name = (typeof toolArgs.name === "string" && toolArgs.name.trim()) ? toolArgs.name.trim() : "";
+        if (!name) { result = { success: false, message: "I need a name to create an entity." }; break; }
+        const { data: existing } = await supabase.from("entities").select("id, name").eq("tenant_id", scope.tenantId).ilike("name", name).limit(1).maybeSingle();
+        if (existing) { result = { success: false, message: `Entity "${existing.name}" already exists.`, entity_id: existing.id }; break; }
+        const { data: sug, error } = await supabase.from("entity_suggestions").insert({
+          tenant_id: scope.tenantId,
+          suggested_name: name,
+          suggested_type: (typeof toolArgs.type === "string" && toolArgs.type) ? toolArgs.type : "person",
+          suggested_aliases: Array.isArray(toolArgs.aliases) ? toolArgs.aliases : null,
+          suggested_attributes: toolArgs.description ? { description: String(toolArgs.description) } : null,
+          source_type: "voice_assistant",
+          source_id: crypto.randomUUID(),
+          confidence: 0.85,
+          context: `Created via voice: ${toolArgs.description || "no description provided"}`,
+          status: "pending",
+        }).select("id, suggested_name, suggested_type").single();
+        if (error) { console.error("[create_entity]", error); result = { success: false, message: "Couldn't create that entity." }; break; }
+        result = { success: true, message: `Proposed new ${sug.suggested_type} "${sug.suggested_name}" — queued for analyst approval.`, suggestion_id: sug.id, status: "pending_approval" };
+        break;
+      }
+      case "update_entity": {
+        if (!scope) { result = TENANT_MISSING; break; }
+        const name = (typeof toolArgs.name === "string" && toolArgs.name.trim()) ? toolArgs.name.trim() : "";
+        if (!name) { result = { success: false, message: "Which entity should I update?" }; break; }
+        const { data: ent } = await supabase.from("entities").select("id, name").eq("tenant_id", scope.tenantId).ilike("name", `%${name}%`).order("threat_score", { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+        if (!ent) { result = { success: false, message: `No entity matching "${name}" in your tenant.` }; break; }
+        const patch: any = { updated_at: new Date().toISOString() };
+        if (typeof toolArgs.risk_level === "string") patch.risk_level = toolArgs.risk_level;
+        if (typeof toolArgs.threat_score === "number") patch.threat_score = toolArgs.threat_score;
+        if (typeof toolArgs.description === "string") patch.description = toolArgs.description;
+        if (typeof toolArgs.active_monitoring_enabled === "boolean") patch.active_monitoring_enabled = toolArgs.active_monitoring_enabled;
+        if (Object.keys(patch).length === 1) { result = { success: false, message: "Nothing to change — specify risk level, monitoring, threat score, or description." }; break; }
+        const { error } = await supabase.from("entities").update(patch).eq("id", ent.id).eq("tenant_id", scope.tenantId);
+        if (error) { console.error("[update_entity]", error); result = { success: false, message: "Couldn't update that entity." }; break; }
+        result = { success: true, message: `Updated ${ent.name}.`, entity_id: ent.id, applied: Object.keys(patch).filter((k) => k !== "updated_at") };
+        break;
+      }
+
       default:
-        result = { error: `Unknown tool: ${tool_name}`, available_tools: ["search_web", "get_current_threats", "get_entity_info", "query_legal_database", "query_fortress_data", "get_document_content", "generate_intelligence_summary", "analyze_threat_radar", "get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"] };
+        result = { error: `Unknown tool: ${tool_name}`, available_tools: ["search_web", "get_current_threats", "get_entity_info", "query_legal_database", "query_fortress_data", "get_document_content", "generate_intelligence_summary", "analyze_threat_radar", "create_entity", "update_entity", "get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"] };
     }
     return new Response(JSON.stringify({ result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error) {
