@@ -150,8 +150,29 @@ export const ClientSelector = ({
       // dropdown, which is exactly the cross-tenant Petronas leak we
       // saw after the tenant-switch landed. Skipped in All-Tenants
       // view so super_admin's global mode still sees everything.
-      if (currentTenant?.id && !isAllTenantsView) {
-        query = query.eq("tenant_id", currentTenant.id);
+      //
+      // 2026-06-10 fail-closed fix: the original guard
+      // `currentTenant?.id && !isAllTenantsView` only SCOPED when a
+      // tenant was already selected — when currentTenant was null AND
+      // not in All-Tenants view (super_admin who hasn't picked a tenant,
+      // or TenantProvider still hydrating; debug shows tenant: null,
+      // isAllTenantsView: false) BOTH branches were skipped and the
+      // query fell through to "all active clients across all tenants".
+      // That leaked BC Place + Trent Reznor (Critical Risk Team) into
+      // the Silent Shield Operations operator's dropdown. Global
+      // enumeration must be gated STRICTLY behind the explicit
+      // All-Tenants view; any other no-tenant state fails closed (empty)
+      // rather than enumerating every tenant's clients. Aligns with the
+      // TenantProvider fail-closed doctrine ("never enumerate accessible
+      // tenants") and the ambiguous-scope-fails-closed rule below.
+      if (!isAllTenantsView) {
+        if (currentTenant?.id) {
+          query = query.eq("tenant_id", currentTenant.id);
+        } else {
+          setClients([]);
+          setLoading(false);
+          return;
+        }
       }
 
       const { data, error } = await query;
