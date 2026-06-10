@@ -70,7 +70,7 @@ export const ClientOnboarding = () => {
   const processClientData = async (data: any[]) => {
     for (const entry of data) {
       const { error } = await supabase.functions.invoke("process-client-onboarding", {
-        body: { clientData: entry },
+        body: { clientData: entry, tenant_id: currentTenant?.id },
       });
 
       if (error) {

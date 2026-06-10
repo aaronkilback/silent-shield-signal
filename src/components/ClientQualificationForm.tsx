@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, CheckCircle2, Shield } from "lucide-react";
+import { useTenant } from "@/hooks/useTenant";
 
 const contactSchema = z.object({
   fullName: z.string().min(2, "Full name is required").max(100),
@@ -84,6 +85,10 @@ export const ClientQualificationForm = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<any>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Owning tenant for the new client. Passed to process-client-onboarding so
+  // the client is created tenant-owned (not an orphan). The backend also
+  // fails closed if this is absent and the caller's tenant can't be derived.
+  const { currentTenant } = useTenant();
 
   const getCurrentSchema = () => {
     const step = steps.find(s => s.id === currentStep);
@@ -132,7 +137,7 @@ export const ClientQualificationForm = () => {
       };
 
       const { error } = await supabase.functions.invoke("process-client-onboarding", {
-        body: { clientData },
+        body: { clientData, tenant_id: currentTenant?.id },
       });
 
       if (error) throw error;
