@@ -256,6 +256,39 @@ Ground every point strictly in the retrieved text. If get_document_content retur
       },
       {
         type: 'function',
+        name: 'manage_incident_ticket',
+        description: 'Create, update, escalate, or close an incident. For CLOSE or RESOLVE you MUST first verbally confirm with the operator, then call again with confirm=true. To act on an existing incident pass its id as ticket_system_id (get it from query_fortress_data first).',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['create', 'update', 'escalate', 'close', 'resolve', 'acknowledge', 'add_timeline'], description: 'What to do' },
+            title: { type: 'string', description: 'Incident title (required for create)' },
+            description: { type: 'string' },
+            severity: { type: 'string', description: 'P1 | P2 | P3 (or critical/high/medium/low)' },
+            priority: { type: 'string', description: 'p1 | p2 | p3' },
+            status: { type: 'string' },
+            incident_type: { type: 'string' },
+            ticket_system_id: { type: 'string', description: 'Existing incident id, for update/escalate/close' },
+            confirm: { type: 'boolean', description: 'Set true ONLY after the operator verbally confirms a close/resolve' }
+          },
+          required: ['action']
+        }
+      },
+      {
+        type: 'function',
+        name: 'manage_monitoring_keywords',
+        description: 'Add or remove monitoring keywords for the active client — what the platform scans for going forward. E.g. "start monitoring for plate ABC123" or "stop watching for X".',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['add', 'remove'], description: 'add or remove' },
+            keywords: { type: 'array', items: { type: 'string' }, description: 'Terms to add or remove' }
+          },
+          required: ['keywords']
+        }
+      },
+      {
+        type: 'function',
         name: 'get_client_info',
         description: 'Get information about a specific client including their signals, incidents, and monitoring status.',
         parameters: {

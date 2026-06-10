@@ -353,8 +353,69 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // ---- Record mutations (Slice 2: incidents) — reuse manage-incident-ticket backend ----
+      case "manage_incident_ticket": {
+        if (!scope) { result = TENANT_MISSING; break; }
+        const action = typeof toolArgs.action === "string" ? toolArgs.action.toLowerCase().trim() : "";
+        const valid = ["create", "update", "escalate", "close", "resolve", "acknowledge", "add_timeline"];
+        if (!valid.includes(action)) { result = { success: false, message: "Specify an action: create, update, escalate, or close." }; break; }
+        // Confirm-before-destructive: close/resolve require an explicit confirm after the operator agrees.
+        if ((action === "close" || action === "resolve") && toolArgs.confirm !== true) {
+          result = { success: false, needs_confirmation: true, message: "Closing/resolving an incident is significant — confirm with the operator, then call again with confirm=true." };
+          break;
+        }
+        if (action === "create" && !(typeof toolArgs.title === "string" && toolArgs.title.trim())) {
+          result = { success: false, message: "I need a title to open an incident." }; break;
+        }
+        const { data: tr, error } = await supabase.functions.invoke("manage-incident-ticket", {
+          body: {
+            tenant_id: scope.tenantId,
+            action,
+            ticket_system_id: toolArgs.ticket_system_id,
+            title: toolArgs.title,
+            description: toolArgs.description,
+            severity: toolArgs.severity,
+            priority: toolArgs.priority,
+            status: toolArgs.status,
+            incident_type: toolArgs.incident_type,
+            client_id: (scope.clientIds && scope.clientIds[0]) || (typeof toolArgs.client_id === "string" ? toolArgs.client_id : null),
+            recommended_actions: Array.isArray(toolArgs.recommended_actions) ? toolArgs.recommended_actions : [],
+            source: "Fortress AI (Aegis voice)",
+          },
+        });
+        if (error) { console.error("[manage_incident_ticket]", error); result = { success: false, message: `Couldn't ${action} the incident.` }; break; }
+        result = { success: true, action, ...(tr || {}), guidance: `Incident ${action} completed — brief the operator on the result, including the incident id/priority.` };
+        break;
+      }
+
+      // ---- Record mutations (Slice 3: monitoring keywords) — clients.monitoring_keywords ----
+      case "manage_monitoring_keywords": {
+        if (!scope) { result = TENANT_MISSING; break; }
+        const op = (typeof toolArgs.action === "string" ? toolArgs.action.toLowerCase().trim() : "add") === "remove" ? "remove" : "add";
+        const kws = (Array.isArray(toolArgs.keywords) ? toolArgs.keywords : (typeof toolArgs.keywords === "string" ? [toolArgs.keywords] : []))
+          .map((k: any) => String(k).trim()).filter((k: string) => k.length > 0);
+        if (!kws.length) { result = { success: false, message: "Which keywords should I add or remove?" }; break; }
+        const clientId = (typeof toolArgs.client_id === "string" && toolArgs.client_id) || (scope.clientIds && scope.clientIds[0]);
+        if (!clientId) { result = { success: false, message: "No client in scope to update monitoring for." }; break; }
+        const { data: cli } = await supabase.from("clients").select("id, name, monitoring_keywords").eq("id", clientId).eq("tenant_id", scope.tenantId).maybeSingle();
+        if (!cli) { result = { success: false, message: "That client isn't in your tenant." }; break; }
+        const current: string[] = Array.isArray(cli.monitoring_keywords) ? cli.monitoring_keywords : [];
+        let next: string[];
+        if (op === "remove") {
+          const rm = new Set(kws.map((k: string) => k.toLowerCase()));
+          next = current.filter((k) => !rm.has(String(k).toLowerCase()));
+        } else {
+          const have = new Set(current.map((k) => String(k).toLowerCase()));
+          next = [...current, ...kws.filter((k: string) => !have.has(k.toLowerCase()))];
+        }
+        const { error } = await supabase.from("clients").update({ monitoring_keywords: next, updated_at: new Date().toISOString() }).eq("id", clientId).eq("tenant_id", scope.tenantId);
+        if (error) { console.error("[manage_monitoring_keywords]", error); result = { success: false, message: "Couldn't update monitoring keywords." }; break; }
+        result = { success: true, action: op, client: cli.name, keyword_count: next.length, changed: kws, message: `${op === "remove" ? "Removed" : "Added"} ${kws.length} keyword(s) for ${cli.name}. Now monitoring ${next.length} terms.` };
+        break;
+      }
+
       default:
-        result = { error: `Unknown tool: ${tool_name}`, available_tools: ["search_web", "get_current_threats", "get_entity_info", "query_legal_database", "query_fortress_data", "get_document_content", "generate_intelligence_summary", "analyze_threat_radar", "create_entity", "update_entity", "get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"] };
+        result = { error: `Unknown tool: ${tool_name}`, available_tools: ["search_web", "get_current_threats", "get_entity_info", "query_legal_database", "query_fortress_data", "get_document_content", "generate_intelligence_summary", "analyze_threat_radar", "create_entity", "update_entity", "manage_incident_ticket", "manage_monitoring_keywords", "get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"] };
     }
     return new Response(JSON.stringify({ result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error) {
