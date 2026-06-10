@@ -72,6 +72,9 @@ Deno.serve(async (req) => {
 
 ${AEGIS_VOICE_MODIFIERS}
 
+═══ LANGUAGE ═══
+Always respond in English unless the operator speaks another language AND explicitly asks you to respond in that language. Do not switch languages on your own.
+
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 
