@@ -289,6 +289,19 @@ Ground every point strictly in the retrieved text. If get_document_content retur
       },
       {
         type: 'function',
+        name: 'generate_report',
+        description: 'Generate a report for the active client (executive summary, risk snapshot, security briefing). Tell the operator it is ready and where to find it in the Reports area; never invent a download link.',
+        parameters: {
+          type: 'object',
+          properties: {
+            report_type: { type: 'string', description: 'executive | risk_snapshot | security_briefing | daily' },
+            period_days: { type: 'number', description: 'Lookback window in days (default 7)' }
+          },
+          required: []
+        }
+      },
+      {
+        type: 'function',
         name: 'get_client_info',
         description: 'Get information about a specific client including their signals, incidents, and monitoring status.',
         parameters: {

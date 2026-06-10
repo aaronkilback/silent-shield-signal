@@ -414,8 +414,23 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // ---- Record mutations (Slice 6: reports) — reuse generate-report backend ----
+      case "generate_report": {
+        if (!scope) { result = TENANT_MISSING; break; }
+        const rtype = (typeof toolArgs.report_type === "string" && toolArgs.report_type) ? toolArgs.report_type : "executive";
+        const clientId = (scope.clientIds && scope.clientIds[0]) || (typeof toolArgs.client_id === "string" ? toolArgs.client_id : null);
+        const periodHours = typeof toolArgs.period_hours === "number" ? toolArgs.period_hours
+          : (typeof toolArgs.period_days === "number" ? toolArgs.period_days * 24 : 168);
+        const { data: rr, error } = await supabase.functions.invoke("generate-report", {
+          body: { report_type: rtype, period_hours: periodHours, client_id: clientId },
+        });
+        if (error) { console.error("[generate_report]", error); result = { success: false, message: "Couldn't generate that report." }; break; }
+        result = { success: true, report_type: rtype, ...(rr || {}), guidance: "Report generated. Tell the operator it's ready and how to access it from the Reports area; do NOT invent a download URL." };
+        break;
+      }
+
       default:
-        result = { error: `Unknown tool: ${tool_name}`, available_tools: ["search_web", "get_current_threats", "get_entity_info", "query_legal_database", "query_fortress_data", "get_document_content", "generate_intelligence_summary", "analyze_threat_radar", "create_entity", "update_entity", "manage_incident_ticket", "manage_monitoring_keywords", "get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"] };
+        result = { error: `Unknown tool: ${tool_name}`, available_tools: ["search_web", "get_current_threats", "get_entity_info", "query_legal_database", "query_fortress_data", "get_document_content", "generate_intelligence_summary", "analyze_threat_radar", "create_entity", "update_entity", "manage_incident_ticket", "manage_monitoring_keywords", "generate_report", "get_user_memory", "remember_this", "update_user_preferences", "manage_project_context"] };
     }
     return new Response(JSON.stringify({ result }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (error) {
