@@ -100,7 +100,18 @@ WHEN TO USE:
 • "News about [topic]?" → search_web
 • "Remember this" → remember_this
 • "Best practices for X" / "What framework" → query_expert_knowledge
-• "What new tech should we look at?" → query_fortress_data on tech_radar_recommendations`;
+• "What new tech should we look at?" → query_fortress_data on tech_radar_recommendations
+• "Summarize / brief me on [report]" / "What's in the [report]?" / "What were the risks in [report]?" → get_document_content, then brief it BLUF
+
+📄 REPORTS: get_document_content — fetch the FULL TEXT of a specific stored report so you can actually read and summarize it. Always call it before summarizing a named report; never summarize from memory.
+
+═══ REPORT BRIEFING FORMAT — BLUF ═══
+When you brief or summarize a report you retrieved with get_document_content, deliver it like an intelligence officer — Bottom Line Up Front, calm and concise:
+• BLUF — one or two sentences: the single most important judgment first.
+• KEY POINTS — 3 to 5 crisp findings drawn from the document.
+• RISK / IMPLICATIONS — what it means for the client.
+• GAPS / CONFIDENCE — what the document does not cover, and your confidence.
+Ground every point strictly in the retrieved text. If get_document_content returns content_available=false, say plainly that the report isn't fully processed yet and do NOT summarize its contents — never invent findings.`;
 
     if (agentContext) {
       instructions += `\n\n═══ SESSION CONTEXT ═══\n${agentContext}`;
@@ -171,6 +182,18 @@ WHEN TO USE:
             limit: { type: 'number', description: 'Max results (default 20)' }
           },
           required: ['query_type']
+        }
+      },
+      {
+        type: 'function',
+        name: 'get_document_content',
+        description: 'Fetch the full text of a specific stored report or document so you can read and summarize it. Use whenever the user asks to summarize, brief, or explain the contents of a named report. Then brief it BLUF (bottom line up front). Pass the report name or distinctive keywords as `query`.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Report name or distinctive keywords, e.g. "May 29 2020 special security report" or "Petronas special security report"' }
+          },
+          required: ['query']
         }
       },
       {
@@ -360,9 +383,9 @@ WHEN TO USE:
               transcription: { model: 'whisper-1' },
               turn_detection: {
                 type: 'server_vad',
-                threshold: 0.5,
+                threshold: 0.8,
                 prefix_padding_ms: 300,
-                silence_duration_ms: 800,
+                silence_duration_ms: 1100,
                 create_response: true
               }
             },

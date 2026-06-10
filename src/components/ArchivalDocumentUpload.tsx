@@ -93,6 +93,14 @@ export const ArchivalDocumentUpload = () => {
       return;
     }
 
+    // Require a client. Documents are retrievable ONLY when attached to a client in
+    // the caller's tenant; uploading without one (e.g. as super-admin) orphans the
+    // doc (client_id = NULL) and makes it invisible to Aegis. Fail closed instead.
+    if (!clientId.trim()) {
+      toast.error("Select a client before uploading — documents must be attached to a client to be searchable. Uploading without one leaves them orphaned and invisible to Aegis.");
+      return;
+    }
+
     setUploading(true);
     cancelRef.current = false;
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
@@ -275,7 +283,7 @@ export const ArchivalDocumentUpload = () => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="clientId">Client ID (Optional)</Label>
+            <Label htmlFor="clientId">Client ID (required — documents must be attached to a client)</Label>
             <Input
               id="clientId"
               value={clientId}

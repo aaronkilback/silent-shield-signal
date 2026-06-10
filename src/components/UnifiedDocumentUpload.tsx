@@ -163,6 +163,14 @@ export const UnifiedDocumentUpload = () => {
       return;
     }
 
+    // Require a client — uploading without one (e.g. as super-admin) orphans the
+    // document (client_id = NULL), making it invisible to Aegis's tenant-scoped
+    // retrieval. Fail closed rather than silently orphaning.
+    if (!clientId.trim()) {
+      toast.error("Select a client before uploading — documents must be attached to a client to be searchable. Uploading without one leaves them orphaned and invisible to Aegis.");
+      return;
+    }
+
     setUploading(true);
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
     let successCount = 0;
@@ -345,7 +353,7 @@ export const UnifiedDocumentUpload = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="archive-client">Client ID (Optional)</Label>
+                <Label htmlFor="archive-client">Client ID (required — documents must be attached to a client)</Label>
                 <Input
                   id="archive-client"
                   value={clientId}

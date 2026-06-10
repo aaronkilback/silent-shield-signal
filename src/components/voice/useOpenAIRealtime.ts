@@ -165,6 +165,30 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       case 'conversation.item.input_audio_transcription.completed':
         {
           const transcriptText = (event as Record<string, unknown>).transcript as string;
+          // Whisper hallucinates stock phrases on silence/echo ("thank you for watching",
+          // "we'll see you next time", "peace", bare "you"). Drop these and cancel any
+          // auto-created response so Aegis never replies to a phantom turn. NOTE: this
+          // list is ONLY non-command filler — real short answers (yes/no/yeah/stop/ok)
+          // are intentionally NOT filtered.
+          const norm = (transcriptText || '').trim().toLowerCase().replace(/[.!?,]+/g, '').trim();
+          const HALLUCINATIONS = new Set([
+            '', 'you', 'thank you', 'thanks', 'thank you very much', 'peace', 'bye',
+            'goodbye', 'thank you for watching', 'thanks for watching', 'please subscribe',
+            "we'll see you next time", 'see you next time', 'like and subscribe',
+            'thanks for watching!', 'subscribe', 'bye bye',
+          ]);
+          const isHallucination = !norm || norm.length < 2 || HALLUCINATIONS.has(norm)
+            || norm.startsWith('thank you for watching') || norm.startsWith('thanks for watching')
+            || norm.startsWith('please subscribe') || norm.startsWith("we'll see you");
+          if (isHallucination) {
+            console.log('[Voice] Dropped likely hallucinated/empty transcript:', JSON.stringify(transcriptText));
+            if (dcRef.current?.readyState === 'open') {
+              // Abort the auto-created response triggered by the phantom turn.
+              dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
+            }
+            if (statusRef.current !== 'speaking') updateStatus('connected');
+            break;
+          }
           console.log('User transcript:', transcriptText);
           setTranscript(transcriptText);
           optionsRef.current.onTranscript?.(transcriptText, true);
@@ -224,17 +248,25 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           window.clearTimeout(responseFallbackRef.current);
           responseFallbackRef.current = null;
         }
+        // Mute the mic while Aegis is speaking so the mic can't pick up the playback
+        // or room silence (which the transcriber hallucinates into phantom turns).
+        // Trade-off: no barge-in while speaking; re-enabled on response end.
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
         setIsAgentSpeaking(true);
         updateStatus('speaking');
         break;
 
       case 'response.output_audio.done': // GA
       case 'response.audio.done': // beta (back-compat)
+        // Re-enable the mic now that Aegis has finished speaking.
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = true; });
         setIsAgentSpeaking(false);
         updateStatus('connected');
         break;
 
       case 'response.done':
+        // Safety: ensure the mic is live again at the end of every response.
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = true; });
         setIsAgentSpeaking(false);
         updateStatus('connected');
         // Reset internal agent response for next turn
