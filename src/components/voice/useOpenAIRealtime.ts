@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useTenant } from '@/hooks/useTenant';
+import { useClientSelection } from '@/hooks/useClientSelection';
 
 interface UseOpenAIRealtimeOptions {
   onTranscript?: (text: string, isFinal: boolean) => void;
@@ -36,6 +38,18 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     optionsRef.current = options;
   }, [options]);
 
+  // P0 voice containment (2026-06-11): voice-tool-executor-v2 fails closed and
+  // returns NO data unless it receives a validated tenant_id + client_id. Pass
+  // the operator's CURRENT tenant + selected client on every tool call so voice
+  // can only ever read the selected client's data. Held in a ref so the
+  // tool-call handler reads the latest selection without re-binding.
+  const { currentTenant } = useTenant();
+  const { selectedClientId } = useClientSelection();
+  const voiceScopeRef = useRef<{ tenantId: string | null; clientId: string | null }>({ tenantId: null, clientId: null });
+  useEffect(() => {
+    voiceScopeRef.current = { tenantId: currentTenant?.id ?? null, clientId: selectedClientId ?? null };
+  }, [currentTenant?.id, selectedClientId]);
+
   const updateStatus = useCallback((newStatus: typeof status) => {
     statusRef.current = newStatus;
     setStatus(newStatus);
@@ -54,7 +68,12 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     
     try {
       const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
-        body: { tool_name: toolName, arguments: toolArgs }
+        body: {
+          tool_name: toolName,
+          arguments: toolArgs,
+          tenant_id: voiceScopeRef.current.tenantId,
+          client_id: voiceScopeRef.current.clientId,
+        }
       });
       
       if (error) throw error;
