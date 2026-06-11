@@ -64,6 +64,11 @@ export const ReportScheduleManager = () => {
       let query = supabase.from("clients").select("id, name").order("name");
       if (currentTenant?.id && !isAllTenantsView) {
         query = query.eq("tenant_id", currentTenant.id);
+      } else if (!isAllTenantsView) {
+        // Fail closed: no tenant selected and not All-Tenants view. RLS does
+        // not isolate super_admin — match an impossible tenant_id so the
+        // client list is empty instead of leaking every tenant's clients.
+        query = query.eq("tenant_id", "00000000-0000-0000-0000-000000000000");
       }
       const { data, error } = await query;
       if (error) throw error;

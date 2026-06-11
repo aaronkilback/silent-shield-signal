@@ -103,6 +103,12 @@ const Signals = () => {
       // unmatched signals across every tenant via RLS bypass.
       if (currentTenant?.id && !isAllTenantsView) {
         query = query.eq('tenant_id', currentTenant.id);
+      } else if (!isAllTenantsView) {
+        // Fail closed: no tenant in scope and not All-Tenants view
+        // (super_admin not yet scoped / hydrating). RLS does not isolate
+        // super_admin — match an impossible tenant_id so 0 rows return
+        // instead of leaking every tenant's unmatched signals.
+        query = query.eq('tenant_id', '00000000-0000-0000-0000-000000000000');
       }
 
       if (cutoff) {

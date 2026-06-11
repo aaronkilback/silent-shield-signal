@@ -95,6 +95,12 @@ const Incidents = () => {
           }
         } else if (currentTenant?.id && !isAllTenantsView) {
           query = query.eq("tenant_id", currentTenant.id);
+        } else if (!isAllTenantsView) {
+          // Fail closed: no client + no tenant + not All-Tenants view
+          // (super_admin not yet scoped, or hydrating). RLS does NOT isolate
+          // super_admin — match an impossible tenant_id so 0 rows return
+          // instead of leaking every tenant's incidents.
+          query = query.eq("tenant_id", "00000000-0000-0000-0000-000000000000");
         }
         if (statusFilter !== "all") {
           query = query.eq("status", statusFilter as any);
