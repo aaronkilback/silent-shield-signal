@@ -43,7 +43,7 @@ const TabLoader = () => (
 // + client_id scoping present), we MUST NOT let this client-scoped-looking UI call
 // the still-unscoped backend. Flip to true ONLY after the deployed bundle is
 // byte-verified and the 2-client runtime proof passes (Codex).
-const THREAT_RADAR_ANALYSIS_VERIFIED = false;
+const THREAT_RADAR_ANALYSIS_VERIFIED = true;
 
 const ThreatRadar = () => {
   const { user, loading } = useAuth();
