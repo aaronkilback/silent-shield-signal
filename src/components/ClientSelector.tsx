@@ -331,7 +331,9 @@ export const ClientSelector = ({
             {displayTitle}
           </CardTitle>
           <CardDescription>
-            No clients found. Please onboard a client first.
+            {!isAllTenantsView && !currentTenant?.id
+              ? "Select a tenant to view its clients."
+              : "No clients found. Please onboard a client first."}
           </CardDescription>
         </CardHeader>
       </Card>

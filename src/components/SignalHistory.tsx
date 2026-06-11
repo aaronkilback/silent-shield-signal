@@ -290,26 +290,35 @@ export const SignalHistory = () => {
         .order('created_at', { ascending: false })
         .limit(50);
 
-      // Filter scope cascade:
-      //  1. If a specific client is selected AND a tenant is in scope:
-      //     filter by BOTH. Defense-in-depth — a stale cross-tenant
-      //     selectedClientId (e.g. Petronas value lingering after a
-      //     switch to CRT, before useClientSelection's validation
-      //     effect runs) returns 0 rows instead of leaking data.
-      //  2. Else if only client is selected (no tenant in scope, e.g.
-      //     All Tenants view): filter by client only.
-      //  3. Else if a tenant is selected (and not All Tenants view):
-      //     filter by tenant. Without this fallback, super_admin RLS
-      //     bypass would return ALL signals across ALL tenants.
-      //  4. Else (no tenant, All Tenants view): no scope filter, RLS handles it.
+      // Filter scope cascade — resolved via resolveTenantScope (the same
+      // helper the realtime subscription above uses) so the no-selection
+      // state fails CLOSED instead of leaking:
+      //  - 'tenant'  → scope to that tenant (incl. super_admin observing it).
+      //  - 'all'     → explicit All-Tenants view: intentional global, no filter.
+      //  - 'deny'    → no tenant in scope (super_admin who hasn't selected a
+      //                tenant, or TenantProvider hydrating). The OLD code
+      //                treated this as case "RLS handles it" and applied NO
+      //                filter — but RLS does NOT isolate a super_admin, so it
+      //                dumped every tenant's signals (observed 2026-06-10
+      //                under tenant:null: 45 Silent Shield + 5 Critical Risk
+      //                Team). Fail closed: render nothing until a tenant or
+      //                client is selected.
+      // A selected client still filters by client_id (defense-in-depth: a
+      // stale cross-tenant selectedClientId + tenant filter returns 0 rows).
+      const scope = resolveTenantScope(getFilterTenantIds());
       if (selectedClientId) {
         query = query.eq('client_id', selectedClientId);
-        if (currentTenant?.id && !isAllTenantsView) {
-          query = query.eq('tenant_id', currentTenant.id);
+        if (scope.kind === 'tenant') {
+          query = query.eq('tenant_id', scope.tenantId);
         }
-      } else if (currentTenant?.id && !isAllTenantsView) {
-        query = query.eq('tenant_id', currentTenant.id);
+      } else if (scope.kind === 'tenant') {
+        query = query.eq('tenant_id', scope.tenantId);
+      } else if (scope.kind === 'deny') {
+        setSignals([]);
+        setLoading(false);
+        return;
       }
+      // scope.kind === 'all' → no scope filter (intentional All-Tenants view).
 
       const { data, error } = await query;
       if (error) throw error;
