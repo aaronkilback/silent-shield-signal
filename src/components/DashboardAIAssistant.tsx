@@ -381,6 +381,8 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
     connect: connectVoice,
     disconnect: disconnectVoice,
     isConnected: isVoiceConnected,
+    isMuted: voiceMuted,
+    toggleMute: toggleVoiceMute,
   } = useOpenAIRealtime({
     agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
     conversationHistory: messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
@@ -1860,12 +1862,27 @@ How can I help you now?`,
               >
                 {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </Button>
+              {isVoiceActive && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className={voiceMuted
+                    ? "shrink-0 bg-yellow-500/20 border-yellow-500/40 text-yellow-500 hover:bg-yellow-500/30"
+                    : "shrink-0"
+                  }
+                  onClick={toggleVoiceMute}
+                  title={voiceMuted ? "Unmute mic" : "Mute mic for a side conversation (session stays live)"}
+                >
+                  {voiceMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </Button>
+              )}
               <Button
                 type="button"
                 variant={isVoiceActive ? "destructive" : "outline"}
                 size="icon"
-                className={isVoiceActive 
-                  ? "shrink-0 animate-pulse" 
+                className={isVoiceActive
+                  ? "shrink-0 animate-pulse"
                   : "shrink-0 bg-primary/10 hover:bg-primary/20 border-primary/30"
                 }
                 onClick={handleVoiceToggle}
@@ -1873,7 +1890,7 @@ How can I help you now?`,
                 title={isVoiceActive ? "End voice session" : "Talk to Aegis"}
               >
                 {isVoiceActive ? (
-                  <MicOff className="w-4 h-4" />
+                  <X className="w-4 h-4" />
                 ) : (
                   <Mic className="w-4 h-4 text-primary" />
                 )}

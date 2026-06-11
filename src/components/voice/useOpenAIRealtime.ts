@@ -20,7 +20,12 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [agentResponse, setAgentResponse] = useState('');
-  
+  // Manual mic mute — operator toggles the mic off during a side conversation
+  // without ending the session. Distinct from the auto-mute that only holds
+  // while Aegis is speaking. userMutedRef mirrors isMuted for use in handlers.
+  const [isMuted, setIsMuted] = useState(false);
+  const userMutedRef = useRef(false);
+
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -277,15 +282,17 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'response.output_audio.done': // GA
       case 'response.audio.done': // beta (back-compat)
-        // Re-enable the mic now that Aegis has finished speaking.
-        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = true; });
+        // Re-enable the mic now that Aegis has finished speaking — unless the
+        // operator has manually muted for a side conversation.
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
         setIsAgentSpeaking(false);
         updateStatus('connected');
         break;
 
       case 'response.done':
-        // Safety: ensure the mic is live again at the end of every response.
-        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = true; });
+        // Safety: ensure the mic is live again at the end of every response
+        // (unless the operator manually muted).
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
         setIsAgentSpeaking(false);
         updateStatus('connected');
         // Reset internal agent response for next turn
@@ -590,6 +597,18 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     sendTextMessage,
     setOutputMuted: (muted: boolean) => {
       if (audioElementRef.current) audioElementRef.current.muted = muted;
+    },
+    isMuted,
+    // Manual mic mute toggle — lets the operator step out for a side
+    // conversation without ending the session. The mic stays off across
+    // Aegis's turns until toggled back on. Applies immediately, except while
+    // Aegis is mid-speech (the speaking auto-mute already holds it off then;
+    // response end will then respect userMutedRef).
+    toggleMute: () => {
+      const next = !userMutedRef.current;
+      userMutedRef.current = next;
+      setIsMuted(next);
+      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !next && statusRef.current !== 'speaking'; });
     },
     isConnected: status !== 'idle' && status !== 'connecting'
   };
