@@ -6648,6 +6648,12 @@ Return a JSON object (no markdown, only valid JSON):
         };
       }
 
+      // Slice F (Codex P0): analyze_threat_radar is client-specific. Require a
+      // resolved client_id BEFORE invoking — there is NO tenant-wide path.
+      if (!resolvedClientId) {
+        return { error: "Select a client before running ThreatRadar analysis.", fail_closed: true };
+      }
+
       // Call the threat-radar-analysis edge function
       const { data: radarResult, error: radarError } = await supabaseClient.functions.invoke(
         "threat-radar-analysis",
@@ -6665,31 +6671,13 @@ Return a JSON object (no markdown, only valid JSON):
 
       if (radarError) {
         console.error("[analyze_threat_radar] Error:", radarError);
-        // Fallback: return a summary from internal signals DB so AEGIS has something useful
-        const fallbackCutoff = new Date();
-        fallbackCutoff.setDate(fallbackCutoff.getDate() - 30);
-        const { data: fallbackSignals } = await supabaseClient
-          .from("signals").eq("tenant_id", tenantId)
-          .select("id, title, severity, status, classification, created_at, normalized_text")
-          .is("deleted_at", null)
-          .or("signal_type.is.null,signal_type.not.in.(historical,test)")
-          .gte("created_at", fallbackCutoff.toISOString())
-          .order("created_at", { ascending: false })
-          .limit(20);
+        // Slice F (Codex P0): do NOT fall back to tenant-wide signals. The backend
+        // enforces client scope and fails closed; surface that response. Never
+        // summarize cross-client / tenant-wide data here.
         return {
-          data_source: "FORTRESS Signal Database (direct fallback)",
-          data_note: "Threat radar analysis engine temporarily unavailable — showing live FORTRESS signals",
-          total_signals: fallbackSignals?.length || 0,
-          signals: (fallbackSignals || []).map((s: any) => ({
-            id: s.id,
-            title: s.title,
-            severity: s.severity,
-            category: s.classification?.category,
-            status: s.status,
-            created_at: s.created_at,
-            summary: s.normalized_text?.substring(0, 200),
-          })),
-          threat_assessment: { overall_level: "see signals above", overall_score: 0 },
+          error: "ThreatRadar analysis unavailable for this client.",
+          detail: radarError.message || String(radarError),
+          fail_closed: true,
         };
       }
 
@@ -10871,22 +10859,20 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         ];
         const _isThreatLandscapeQuery = _threatLandscapePatterns.some(p => p.test(_lastUserText));
         if (_isThreatLandscapeQuery) {
-          console.log("[PRE-ROUTE] Threat landscape query detected — running analyze_threat_radar directly");
-          try {
-            const _radarResult = await executeTool("analyze_threat_radar", { timeframe_hours: 168, include_predictions: true }, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
-            const _radarSummary = JSON.stringify(_radarResult).substring(0, 4000);
-            processedMessages = [
-              ...processedMessages.slice(0, -1),
-              {
-                role: "system" as const,
-                content: `[FORTRESS LIVE DATA — analyze_threat_radar result]\n${_radarSummary}\n\nPresent the above data as a concise threat landscape briefing. Do NOT say you cannot retrieve data.`,
-              },
-              processedMessages[processedMessages.length - 1],
-            ];
-            console.log("[PRE-ROUTE] Threat radar data injected into context");
-          } catch (preRouteErr) {
-            console.error("[PRE-ROUTE] analyze_threat_radar failed:", preRouteErr);
-          }
+          // Slice F (Codex P0): the chat request carries NO selected client, and
+          // analyze_threat_radar is client-specific + fail-closed. Do NOT force-call
+          // it without a client_id (the old forced call masked tenant-wide data via
+          // the now-removed fallback). Instruct the model to obtain a client and
+          // tool-call normally; never present tenant-wide / cross-client threat data.
+          console.log("[PRE-ROUTE] Threat landscape query — client-scoped; not force-calling analyze_threat_radar without client_id");
+          processedMessages = [
+            ...processedMessages.slice(0, -1),
+            {
+              role: "system" as const,
+              content: `[FORTRESS] ThreatRadar analysis is client-specific. If the user has identified a client, call analyze_threat_radar with that client_id. If no client is identified, ask the user which client to analyze before running ThreatRadar. Do NOT present tenant-wide or cross-client threat data.`,
+            },
+            processedMessages[processedMessages.length - 1],
+          ];
         }
         // ─────────────────────────────────────────────────────────────────────
 

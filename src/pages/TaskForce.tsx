@@ -203,7 +203,12 @@ export default function TaskForce() {
     if (contribError) throw contribError;
     const { error: queriesError } = await supabase.from("briefing_queries").delete().eq("mission_id", missionId);
     if (queriesError) throw queriesError;
-    const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId);
+    // Slice F (Codex P1): constrain the parent delete by client_id too (not id
+    // alone). selectedClientId is guaranteed non-null by the inScope check above.
+    // NOTE: child deletes above are still per-mission_id and not transactional —
+    // the proper fix is a SECURITY DEFINER RPC for atomic scoped cascade (tracked
+    // as separate hardening debt, NOT this slice).
+    const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId).eq("client_id", selectedClientId);
     if (error) throw error;
     refetchMissions();
   };
