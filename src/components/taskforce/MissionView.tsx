@@ -147,12 +147,16 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
 
   const deleteMission = useMutation({
     mutationFn: async () => {
+      // Ownership guard: only operate on the loaded (in-scope) mission, and scope
+      // the parent delete by its own client_id so a crafted id can't delete another
+      // client's mission.
+      if (!mission?.client_id) throw new Error("Mission not loaded.");
       // Delete related data first
       await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
       await supabase.from("task_force_contributions").delete().eq("mission_id", missionId);
       await supabase.from("briefing_queries").delete().eq("mission_id", missionId);
       // Finally delete the mission
-      const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId);
+      const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId).eq("client_id", mission.client_id);
       if (error) throw error;
     },
     onSuccess: () => {

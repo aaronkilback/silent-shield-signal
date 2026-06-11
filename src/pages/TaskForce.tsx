@@ -15,6 +15,8 @@ import { MissionView } from "@/components/taskforce/MissionView";
 import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
+import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 interface Mission {
@@ -75,6 +77,11 @@ const PHASE_ICONS: Record<string, React.ReactNode> = {
 
 export default function TaskForce() {
   const { user, loading: authLoading } = useAuth();
+  // Tenant + client scope. task_force_missions/incidents carry client_id; without
+  // this a super_admin sees every tenant's missions/incidents, and a client-scoped
+  // view leaks other clients. clientIds: undefined=loading, null=All-Tenants, []/[ids]=scope.
+  const { selectedClientId } = useClientSelection();
+  const { clientIds } = useTenantScopedClientIds();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   
@@ -107,12 +114,15 @@ export default function TaskForce() {
 
   // Fetch missions
   const { data: missions, isLoading: missionsLoading, refetch: refetchMissions } = useQuery({
-    queryKey: ["task-force-missions", missionFilter],
+    queryKey: ["task-force-missions", missionFilter, selectedClientId ?? null, clientIds ?? "all"],
     queryFn: async () => {
       let query = supabase
         .from("task_force_missions")
         .select("*, clients(name)")
         .order("created_at", { ascending: false });
+
+      if (selectedClientId) query = query.eq("client_id", selectedClientId);
+      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
 
       if (missionFilter === "active") {
         query = query.not("phase", "in", '("completed","cancelled")');
@@ -126,18 +136,18 @@ export default function TaskForce() {
       if (error) throw error;
       return data as Mission[];
     },
-    enabled: !!user,
+    enabled: !!user && clientIds !== undefined,
   });
 
   // Fetch task force incidents (multi-agent investigations)
   const { data: taskForces, isLoading: taskForcesLoading } = useQuery({
-    queryKey: ["task-force-incidents", incidentFilter, searchTerm],
+    queryKey: ["task-force-incidents", incidentFilter, searchTerm, selectedClientId ?? null, clientIds ?? "all"],
     queryFn: async () => {
       // Load agents for display
       const { data: agentData } = await supabase
         .from("ai_agents")
         .select("id, codename, call_sign, avatar_color");
-      
+
       if (agentData) {
         const agentMap: Record<string, AIAgent> = {};
         agentData.forEach(agent => { agentMap[agent.id] = agent; });
@@ -148,6 +158,9 @@ export default function TaskForce() {
         .from("incidents")
         .select("*, clients(name)")
         .order("opened_at", { ascending: false });
+
+      if (selectedClientId) query = query.eq("client_id", selectedClientId);
+      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
 
       if (incidentFilter === "active") {
         query = query.not("status", "in", '("resolved","closed")');
@@ -177,10 +190,18 @@ export default function TaskForce() {
 
       return filtered as TaskForceIncident[];
     },
-    enabled: !!user,
+    enabled: !!user && clientIds !== undefined,
   });
 
   const deleteMission = async (missionId: string) => {
+    // Ownership guard: never delete a mission outside the operator's tenant/client
+    // scope (the cascade below deletes children by mission_id, so gate the whole op).
+    const { data: m } = await supabase.from("task_force_missions").select("client_id").eq("id", missionId).maybeSingle();
+    if (!m) throw new Error("Mission not found.");
+    const inScope = selectedClientId
+      ? m.client_id === selectedClientId
+      : (Array.isArray(clientIds) ? clientIds.includes(m.client_id) : true);
+    if (!inScope) throw new Error("Not authorized to delete this mission.");
     const { error: agentsError } = await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
     if (agentsError) throw agentsError;
     const { error: contribError } = await supabase.from("task_force_contributions").delete().eq("mission_id", missionId);

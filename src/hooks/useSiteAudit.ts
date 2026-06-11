@@ -18,6 +18,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export type AssetClass =
   | "oil_gas_plant"
@@ -183,8 +184,9 @@ export function useMyOpenAudits() {
   // = still loading (don't run); null = All-Tenants view (no filter); []
   // or string[] = scope to those clients (fail-closed on empty).
   const { clientIds } = useTenantScopedClientIds();
+  const { selectedClientId } = useClientSelection();
   return useQuery({
-    queryKey: [...AUDIT_LIST_KEY(user?.id ?? "_none"), clientIds ?? "all"],
+    queryKey: [...AUDIT_LIST_KEY(user?.id ?? "_none"), selectedClientId ?? null, clientIds ?? "all"],
     enabled: !!user?.id && clientIds !== undefined,
     queryFn: async (): Promise<(SiteAudit & { asset: ClientAsset | null })[]> => {
       if (!user?.id) return [];
@@ -195,9 +197,10 @@ export function useMyOpenAudits() {
         .in("status", ["in_progress", "completed"])
         .order("started_at", { ascending: false })
         .limit(20);
-      // Array (incl. empty) => scope to the observed tenant's clients.
-      // null (All-Tenants) => leave unfiltered.
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      // Client scope when a client is selected (the in-progress list must not show
+      // audits the operator started for OTHER clients); else tenant scope.
+      if (selectedClientId) query = query.eq("client_id", selectedClientId);
+      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
       const { data, error } = await query;
       if (error) throw error;
       return (data ?? []) as never;

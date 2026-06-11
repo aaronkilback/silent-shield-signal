@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, Flame, Clock, Plus, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { CreateIncidentFromSignalDialog } from "@/components/signals/CreateIncidentFromSignalDialog";
+import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 interface EscalationSignal {
   id: string;
@@ -23,11 +25,15 @@ export function EscalationPipeline() {
   const queryClient = useQueryClient();
   const [selectedSignal, setSelectedSignal] = useState<EscalationSignal | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  // signal_correlation_groups has client_id; scope by selected client (else tenant)
+  // so the escalation queue isn't pooled across clients/tenants.
+  const { selectedClientId } = useClientSelection();
+  const { clientIds } = useTenantScopedClientIds();
 
   const { data: signals = [], isLoading } = useQuery({
-    queryKey: ["escalation-pipeline"],
+    queryKey: ["escalation-pipeline", selectedClientId ?? null, clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("signal_correlation_groups")
         .select("*")
         .in("severity", ["critical", "high", "p1", "p2"])
@@ -35,9 +41,13 @@ export function EscalationPipeline() {
         .order("severity", { ascending: true })
         .order("created_at", { ascending: false })
         .limit(50);
+      if (selectedClientId) query = query.eq("client_id", selectedClientId);
+      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      const { data, error } = await query;
       if (error) throw error;
       return (data || []) as EscalationSignal[];
     },
+    enabled: clientIds !== undefined,
     refetchInterval: 60000,
   });
 
