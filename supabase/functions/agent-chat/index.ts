@@ -1903,13 +1903,30 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           toolResults.push({ tool: 'trigger_osint_scan', result: { success: true, ...scanResult } });
           
         } else if (funcName === 'analyze_threat_radar') {
-          // Invoke threat radar analysis
-          const { data: radarResult, error } = await supabase.functions.invoke('threat-radar-analysis', {
-            body: { client_id: args.client_id, include_predictions: args.include_predictions !== false }
-          });
+          // AGENT_CHAT_ANALYZE_THREAT_RADAR_CLIENT_BINDING_V1
+          // Slice F (Codex P0): agent-chat invokes threat-radar-analysis via a
+          // service-role caller path, and the backend trusts service-role callers
+          // (skips userCanAccessClient). So we MUST bind the requested client to
+          // the AUTHORITATIVE request/selected client (top-level `client_id` from
+          // the request body, line ~379) — never to model-supplied args.client_id.
+          //  - require an authoritative client_id (fail closed if missing)
+          //  - reject if args.client_id is present and disagrees
+          //  - invoke ONLY with the authoritative client_id
+          // No tenant-wide fallback exists on this path.
+          const authoritativeClientId = client_id; // body.client_id ?? body.clientId
+          if (!authoritativeClientId) {
+            toolResults.push({ tool: 'analyze_threat_radar', result: { success: false, fail_closed: true, error: 'Select a client before running ThreatRadar analysis.' } });
+          } else if (args.client_id && args.client_id !== authoritativeClientId) {
+            toolResults.push({ tool: 'analyze_threat_radar', result: { success: false, fail_closed: true, error: 'CLIENT_BINDING: requested client_id does not match the selected client; refused.' } });
+          } else {
+            // Invoke threat radar analysis with the AUTHORITATIVE client only.
+            const { data: radarResult, error } = await supabase.functions.invoke('threat-radar-analysis', {
+              body: { client_id: authoritativeClientId, include_predictions: args.include_predictions !== false }
+            });
 
-          if (error) throw error;
-          toolResults.push({ tool: 'analyze_threat_radar', result: { success: true, ...radarResult } });
+            if (error) throw error;
+            toolResults.push({ tool: 'analyze_threat_radar', result: { success: true, ...radarResult } });
+          }
 
         } else if (funcName === 'get_wildfire_intelligence') {
           const { data: wildfireResult, error } = await supabase.functions.invoke('monitor-wildfires', {
