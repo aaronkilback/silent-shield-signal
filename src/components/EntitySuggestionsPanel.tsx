@@ -14,11 +14,13 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useTenant } from "@/hooks/useTenant";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export const EntitySuggestionsPanel = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { currentTenant, isAllTenantsView } = useTenant();
+  const { selectedClientId } = useClientSelection();
   const queryClient = useQueryClient();
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
@@ -49,7 +51,7 @@ export const EntitySuggestionsPanel = () => {
   };
 
   const { data: suggestions, isLoading } = useQuery({
-    queryKey: ['entity-suggestions', currentTenant?.id ?? null, isAllTenantsView],
+    queryKey: ['entity-suggestions', currentTenant?.id ?? null, selectedClientId ?? null, isAllTenantsView],
     queryFn: async () => {
       let query = supabase
         .from('entity_suggestions')
@@ -57,8 +59,13 @@ export const EntitySuggestionsPanel = () => {
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
 
+      // Tenant scope + (when a client is selected) client scope. entity_suggestions
+      // now carries client_id (derived via trigger from the source signal/doc/entity).
+      // With a client selected we MUST narrow to it — otherwise the panel pools every
+      // client's suggestions in the tenant (cross-client contamination).
       if (currentTenant?.id && !isAllTenantsView) {
         query = query.eq('tenant_id', currentTenant.id);
+        if (selectedClientId) query = query.eq('client_id', selectedClientId);
       }
 
       const { data, error } = await query;
@@ -71,15 +78,21 @@ export const EntitySuggestionsPanel = () => {
 
   const deleteAllMutation = useMutation({
     mutationFn: async () => {
+      // HARD-SCOPED: never a global/cross-tenant delete. Only the selected
+      // client's pending suggestions in the current tenant. Refuse otherwise.
+      if (!currentTenant?.id) throw new Error('No tenant in scope.');
+      if (!selectedClientId) throw new Error('Select a client before deleting its suggestions.');
       const { error } = await supabase
         .from('entity_suggestions')
         .delete()
-        .eq('status', 'pending');
+        .eq('status', 'pending')
+        .eq('tenant_id', currentTenant.id)
+        .eq('client_id', selectedClientId);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['entity-suggestions'] });
-      toast.success('All pending suggestions deleted');
+      toast.success("Deleted this client's pending suggestions");
       setSelectedSuggestions(new Set());
     },
     onError: () => {

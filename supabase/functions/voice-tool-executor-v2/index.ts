@@ -323,6 +323,7 @@ Deno.serve(async (req) => {
         if (existing) { result = { success: false, message: `Entity "${existing.name}" already exists.`, entity_id: existing.id }; break; }
         const { data: sug, error } = await supabase.from("entity_suggestions").insert({
           tenant_id: scope.tenantId,
+          client_id: scope.clientId,
           suggested_name: name,
           suggested_type: (typeof toolArgs.type === "string" && toolArgs.type) ? toolArgs.type : "person",
           suggested_aliases: Array.isArray(toolArgs.aliases) ? toolArgs.aliases : null,
