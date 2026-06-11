@@ -177,31 +177,24 @@ export function useCreateClientAsset() {
 // ─── Audit queries ─────────────────────────────────────────────────
 export function useMyOpenAudits() {
   const { user } = useAuth();
-  // Tenant scope for the active observation. site_audits has client_id but
-  // no tenant_id, and super_admin BYPASSES RLS — so without an explicit
-  // `.in('client_id', clientIds)` filter a super_admin viewing tenant A
-  // would still see audits they created in tenant B. clientIds: undefined
-  // = still loading (don't run); null = All-Tenants view (no filter); []
-  // or string[] = scope to those clients (fail-closed on empty).
-  const { clientIds } = useTenantScopedClientIds();
+  // Slice F (Req E): the in-progress list is a SELECTED-CLIENT surface. It is
+  // scoped to selectedClientId (plus the operator's own primary_operator) and
+  // FAILS CLOSED when no client is selected — no tenant-wide fallback (that
+  // previously showed audits the operator started for OTHER clients).
   const { selectedClientId } = useClientSelection();
   return useQuery({
-    queryKey: [...AUDIT_LIST_KEY(user?.id ?? "_none"), selectedClientId ?? null, clientIds ?? "all"],
-    enabled: !!user?.id && clientIds !== undefined,
+    queryKey: [...AUDIT_LIST_KEY(user?.id ?? "_none"), selectedClientId ?? null],
+    enabled: !!user?.id && !!selectedClientId,
     queryFn: async (): Promise<(SiteAudit & { asset: ClientAsset | null })[]> => {
-      if (!user?.id) return [];
-      let query = supabase
+      if (!user?.id || !selectedClientId) return [];
+      const { data, error } = await supabase
         .from("site_audits")
         .select("*, asset:client_assets(*)")
         .eq("primary_operator", user.id)
+        .eq("client_id", selectedClientId)
         .in("status", ["in_progress", "completed"])
         .order("started_at", { ascending: false })
         .limit(20);
-      // Client scope when a client is selected (the in-progress list must not show
-      // audits the operator started for OTHER clients); else tenant scope.
-      if (selectedClientId) query = query.eq("client_id", selectedClientId);
-      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []) as never;
     },

@@ -16,7 +16,6 @@ import { IncidentActionDialog } from "@/components/IncidentActionDialog";
 import { formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 interface Mission {
@@ -77,11 +76,10 @@ const PHASE_ICONS: Record<string, React.ReactNode> = {
 
 export default function TaskForce() {
   const { user, loading: authLoading } = useAuth();
-  // Tenant + client scope. task_force_missions/incidents carry client_id; without
-  // this a super_admin sees every tenant's missions/incidents, and a client-scoped
-  // view leaks other clients. clientIds: undefined=loading, null=All-Tenants, []/[ids]=scope.
+  // Slice F (Req E): TaskForce is a SELECTED-CLIENT surface. Missions/incidents
+  // are scoped to selectedClientId and FAIL CLOSED when no client is selected —
+  // no tenant-wide fallback (that would require an explicit, labelled mode).
   const { selectedClientId } = useClientSelection();
-  const { clientIds } = useTenantScopedClientIds();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   
@@ -114,15 +112,14 @@ export default function TaskForce() {
 
   // Fetch missions
   const { data: missions, isLoading: missionsLoading, refetch: refetchMissions } = useQuery({
-    queryKey: ["task-force-missions", missionFilter, selectedClientId ?? null, clientIds ?? "all"],
+    queryKey: ["task-force-missions", missionFilter, selectedClientId ?? null],
     queryFn: async () => {
       let query = supabase
         .from("task_force_missions")
         .select("*, clients(name)")
         .order("created_at", { ascending: false });
 
-      if (selectedClientId) query = query.eq("client_id", selectedClientId);
-      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      query = query.eq("client_id", selectedClientId);
 
       if (missionFilter === "active") {
         query = query.not("phase", "in", '("completed","cancelled")');
@@ -136,12 +133,12 @@ export default function TaskForce() {
       if (error) throw error;
       return data as Mission[];
     },
-    enabled: !!user && clientIds !== undefined,
+    enabled: !!user && !!selectedClientId,
   });
 
   // Fetch task force incidents (multi-agent investigations)
   const { data: taskForces, isLoading: taskForcesLoading } = useQuery({
-    queryKey: ["task-force-incidents", incidentFilter, searchTerm, selectedClientId ?? null, clientIds ?? "all"],
+    queryKey: ["task-force-incidents", incidentFilter, searchTerm, selectedClientId ?? null],
     queryFn: async () => {
       // Load agents for display
       const { data: agentData } = await supabase
@@ -159,8 +156,7 @@ export default function TaskForce() {
         .select("*, clients(name)")
         .order("opened_at", { ascending: false });
 
-      if (selectedClientId) query = query.eq("client_id", selectedClientId);
-      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
+      query = query.eq("client_id", selectedClientId);
 
       if (incidentFilter === "active") {
         query = query.not("status", "in", '("resolved","closed")');
@@ -190,7 +186,7 @@ export default function TaskForce() {
 
       return filtered as TaskForceIncident[];
     },
-    enabled: !!user && clientIds !== undefined,
+    enabled: !!user && !!selectedClientId,
   });
 
   const deleteMission = async (missionId: string) => {
@@ -198,9 +194,8 @@ export default function TaskForce() {
     // scope (the cascade below deletes children by mission_id, so gate the whole op).
     const { data: m } = await supabase.from("task_force_missions").select("client_id").eq("id", missionId).maybeSingle();
     if (!m) throw new Error("Mission not found.");
-    const inScope = selectedClientId
-      ? m.client_id === selectedClientId
-      : (Array.isArray(clientIds) ? clientIds.includes(m.client_id) : true);
+    // Fail closed: require a selected client, and the mission must belong to it.
+    const inScope = !!selectedClientId && m.client_id === selectedClientId;
     if (!inScope) throw new Error("Not authorized to delete this mission.");
     const { error: agentsError } = await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
     if (agentsError) throw agentsError;

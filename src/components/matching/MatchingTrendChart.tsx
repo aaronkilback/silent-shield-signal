@@ -6,9 +6,12 @@ import { format, subDays, eachDayOfInterval } from "date-fns";
 
 interface MatchingTrendChartProps {
   dateRange: string;
+  // Slice F (Req C): selected client. Required to scope the correlation-group
+  // read; the chart never queries unscoped and fails closed when absent.
+  clientId: string | null;
 }
 
-export function MatchingTrendChart({ dateRange }: MatchingTrendChartProps) {
+export function MatchingTrendChart({ dateRange, clientId }: MatchingTrendChartProps) {
   const getDays = () => {
     switch (dateRange) {
       case "7d": return 7;
@@ -19,14 +22,15 @@ export function MatchingTrendChart({ dateRange }: MatchingTrendChartProps) {
   };
 
   const { data: trendData, isLoading } = useQuery({
-    queryKey: ["matching-trends", dateRange],
+    queryKey: ["matching-trends", dateRange, clientId],
     queryFn: async () => {
       const days = getDays();
       const startDate = subDays(new Date(), days);
-      
+
       const { data, error } = await supabase
         .from("signal_correlation_groups")
         .select("*")
+        .eq("client_id", clientId)
         .gte("created_at", startDate.toISOString());
 
       if (error) throw error;
@@ -67,6 +71,7 @@ export function MatchingTrendChart({ dateRange }: MatchingTrendChartProps) {
         ...values,
       }));
     },
+    enabled: !!clientId,
   });
 
   if (isLoading) {

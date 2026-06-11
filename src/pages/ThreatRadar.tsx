@@ -50,6 +50,9 @@ const ThreatRadar = () => {
     }
   }, [user, loading, navigate]);
 
+  // Slice F (Req B): threat-radar analysis is client-specific. Fail closed when
+  // no client is selected — do not run the (now client-scoped) backend analysis
+  // or read snapshots tenant-wide. The page renders a "select a client" state.
   const { data: radarData, isLoading: isLoadingRadar, refetch: refetchRadar } = useQuery({
     queryKey: ['threat-radar', selectedClientId],
     queryFn: async () => {
@@ -64,26 +67,24 @@ const ThreatRadar = () => {
       if (error) throw error;
       return data;
     },
-    enabled: !!user,
+    enabled: !!user && !!selectedClientId,
     refetchInterval: 300000,
   });
 
   const { data: snapshots } = useQuery({
     queryKey: ['threat-radar-snapshots', selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return [];
+      const { data, error } = await supabase
         .from('threat_radar_snapshots')
         .select('*')
+        .eq('client_id', selectedClientId)
         .order('created_at', { ascending: false })
         .limit(10);
-      if (selectedClientId) {
-        query = query.eq('client_id', selectedClientId);
-      }
-      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
-    enabled: !!user,
+    enabled: !!user && !!selectedClientId,
   });
 
   const { data: aegisAgent } = useQuery({
@@ -115,6 +116,34 @@ const ThreatRadar = () => {
   };
 
   if (!user && !loading) return null;
+
+  // Slice F (Req B): fail closed — no selected client, no client-specific
+  // analysis. Show an explicit prompt instead of a misleading LOW/0 readout.
+  if (!selectedClientId) {
+    return (
+      <PageLayout loading={loading}>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
+              <Radar className="w-8 h-8 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">Threat Radar</h1>
+              <p className="text-muted-foreground">Proactive threat intelligence &amp; predictive analytics</p>
+            </div>
+          </div>
+          <DashboardClientSelector />
+        </div>
+        <Card className="border-border/50">
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <Radar className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p className="font-medium">Select a client to view threat radar</p>
+            <p className="text-sm">Threat analysis is client-specific and is not shown tenant-wide.</p>
+          </CardContent>
+        </Card>
+      </PageLayout>
+    );
+  }
 
   const threatLevel = radarData?.threat_assessment?.threat_level || 'low';
   const threatScore = radarData?.threat_assessment?.overall_score || 0;

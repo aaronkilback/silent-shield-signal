@@ -34,6 +34,8 @@ import ReactMarkdown from "react-markdown";
 import { ValidationStatusPill } from "./ValidationStatusPill";
 import { LintResultsPanel } from "./LintResultsPanel";
 import { BriefingQueryPanel } from "./BriefingQueryPanel";
+import { useClientSelection } from "@/hooks/useClientSelection";
+import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 interface MissionViewProps {
   missionId: string;
@@ -59,18 +61,45 @@ const ROLE_LABELS: Record<string, string> = {
 export function MissionView({ missionId, onBack }: MissionViewProps) {
   const queryClient = useQueryClient();
   const [isRunning, setIsRunning] = useState(false);
+  // Slice F (Req D): the caller's authorized client scope. The mission detail
+  // load and every mutation are validated against this scope (not against the
+  // loaded mission.client_id, which is untrusted data). selectedClientId scopes
+  // to one client; clientIds is the tenant set (operator); clientIds === null is
+  // super_admin All-Tenants; undefined = still loading (fail closed).
+  const { selectedClientId } = useClientSelection();
+  const { clientIds } = useTenantScopedClientIds();
+
+  // Apply the caller's client scope to a task_force_missions query builder.
+  const scopeMissionQuery = (q: any) => {
+    if (selectedClientId) return q.eq("client_id", selectedClientId);
+    if (Array.isArray(clientIds)) return q.in("client_id", clientIds);
+    return q; // clientIds === null → super_admin All-Tenants (no client filter)
+  };
+
+  // Re-verify ownership against the DB inside the caller's scope before any
+  // mutation. Returns the verified client_id, or throws (refuse). Never trusts
+  // the loaded mission row as proof.
+  const assertMissionInScope = async (): Promise<string> => {
+    const { data, error } = await scopeMissionQuery(
+      supabase.from("task_force_missions").select("client_id").eq("id", missionId),
+    ).maybeSingle();
+    if (error) throw error;
+    if (!data?.client_id) {
+      throw new Error("Not authorized: this mission is outside your current client scope.");
+    }
+    return data.client_id as string;
+  };
 
   const { data: mission, isLoading: missionLoading } = useQuery({
-    queryKey: ["mission", missionId],
+    queryKey: ["mission", missionId, selectedClientId ?? null, clientIds ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("task_force_missions")
-        .select("*, clients(name)")
-        .eq("id", missionId)
-        .single();
+      const { data, error } = await scopeMissionQuery(
+        supabase.from("task_force_missions").select("*, clients(name)").eq("id", missionId),
+      ).maybeSingle();
       if (error) throw error;
-      return data;
+      return data; // null when the mission is not in the caller's client scope
     },
+    enabled: clientIds !== undefined,
   });
 
   const { data: agents } = useQuery({
@@ -121,14 +150,16 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
 
   const abortMission = useMutation({
     mutationFn: async () => {
-      // Update mission phase to cancelled
+      // Verify ownership within the caller's scope, then constrain the update.
+      const scopeClientId = await assertMissionInScope();
       const { error: missionError } = await supabase
         .from("task_force_missions")
         .update({ phase: "cancelled" })
-        .eq("id", missionId);
+        .eq("id", missionId)
+        .eq("client_id", scopeClientId);
       if (missionError) throw missionError;
 
-      // Update all agent statuses to cancelled
+      // Update all agent statuses to cancelled (children of the verified mission)
       const { error: agentsError } = await supabase
         .from("task_force_agents")
         .update({ status: "cancelled" })
@@ -147,16 +178,23 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
 
   const deleteMission = useMutation({
     mutationFn: async () => {
-      // Ownership guard: only operate on the loaded (in-scope) mission, and scope
-      // the parent delete by its own client_id so a crafted id can't delete another
-      // client's mission.
-      if (!mission?.client_id) throw new Error("Mission not loaded.");
-      // Delete related data first
+      // Verify ownership against the DB within the caller's scope FIRST (before
+      // any child delete), so a crafted id can't trigger a partial cascade on
+      // another client's mission. Does NOT trust the loaded mission row.
+      const scopeClientId = await assertMissionInScope();
+      // Delete child rows, then the mission (constrained to the verified client).
+      // NOTE: these four deletes are not a single transaction — a fully atomic
+      // delete would require a SECURITY DEFINER RPC (see caveats). The ownership
+      // pre-check + client-constrained parent delete bound the blast radius to
+      // the verified mission.
       await supabase.from("task_force_agents").delete().eq("mission_id", missionId);
       await supabase.from("task_force_contributions").delete().eq("mission_id", missionId);
       await supabase.from("briefing_queries").delete().eq("mission_id", missionId);
-      // Finally delete the mission
-      const { error } = await supabase.from("task_force_missions").delete().eq("id", missionId).eq("client_id", mission.client_id);
+      const { error } = await supabase
+        .from("task_force_missions")
+        .delete()
+        .eq("id", missionId)
+        .eq("client_id", scopeClientId);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -191,10 +229,34 @@ export function MissionView({ missionId, onBack }: MissionViewProps) {
 
   const currentPhaseIndex = PHASE_STEPS.findIndex((p) => p.key === mission?.phase);
 
-  if (missionLoading) {
+  // Treat "scope not resolved yet" (clientIds === undefined) as loading so the
+  // refuse-state below doesn't flash before the query is enabled.
+  if (missionLoading || clientIds === undefined) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Slice F (Req D): loaded-but-null means the mission is not in the caller's
+  // client scope (or does not exist). Refuse — indistinguishable from not-found.
+  if (!mission) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="container mx-auto px-4 py-6">
+          <Button variant="ghost" size="sm" onClick={onBack} className="mb-4">
+            <ArrowLeft className="h-4 w-4 mr-2" /> Back
+          </Button>
+          <Card>
+            <CardContent className="py-12 text-center text-muted-foreground">
+              <ShieldAlert className="h-10 w-10 mx-auto mb-3 opacity-40" />
+              <p className="font-medium">Mission not found</p>
+              <p className="text-sm">It may not exist, or it is outside your current client scope.</p>
+            </CardContent>
+          </Card>
+        </main>
       </div>
     );
   }

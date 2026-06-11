@@ -3,7 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Activity } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 const getThreatColor = (level: string) => {
   switch (level?.toLowerCase()) {
@@ -16,61 +15,57 @@ const getThreatColor = (level: string) => {
 };
 
 export function ThreatStatusBar() {
+  // Slice F (Req A): this is a SELECTED-CLIENT status bar. Every count/status is
+  // scoped to selectedClientId and fails closed when no client is selected — we
+  // never show tenant-wide numbers as a client's status. (super_admin RLS bypass
+  // makes an explicit client filter mandatory; a missing client = no fetch.)
   const { selectedClientId } = useClientSelection();
-  // threat_radar_snapshots and signal_correlation_groups have client_id;
-  // super_admin BYPASSES RLS, so an explicit .in('client_id', clientIds) filter
-  // is required to avoid leaking another tenant's rows when viewing a specific
-  // tenant. clientIds: undefined = loading (don't run); null = All-Tenants (no
-  // filter); [] or string[] = scope to those clients (fail-closed on empty).
-  const { clientIds } = useTenantScopedClientIds();
 
   const { data: snapshot } = useQuery({
-    queryKey: ["status-bar-threat", clientIds ?? "all"],
+    queryKey: ["status-bar-threat", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return null;
+      const { data } = await supabase
         .from("threat_radar_snapshots")
         .select("threat_level, overall_score")
+        .eq("client_id", selectedClientId)
         .order("created_at", { ascending: false })
-        .limit(1);
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data } = await query.maybeSingle();
+        .limit(1)
+        .maybeSingle();
       return data;
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
     refetchInterval: 60000,
   });
 
   const { data: openIncidents } = useQuery({
     queryKey: ["status-bar-incidents", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return 0;
+      const { count } = await supabase
         .from("incidents")
         .select("*", { count: "exact", head: true })
         .eq("status", "open")
-        .is("deleted_at", null);
-
-      if (selectedClientId) {
-        query = query.eq("client_id", selectedClientId);
-      }
-
-      const { count } = await query;
+        .is("deleted_at", null)
+        .eq("client_id", selectedClientId);
       return count ?? 0;
     },
+    enabled: !!selectedClientId,
     refetchInterval: 60000,
   });
 
   const { data: unmatchedCount } = useQuery({
-    queryKey: ["status-bar-unmatched", clientIds ?? "all"],
+    queryKey: ["status-bar-unmatched", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return 0;
+      const { count } = await supabase
         .from("signal_correlation_groups")
         .select("*", { count: "exact", head: true })
-        .or("match_confidence.eq.none,match_confidence.is.null");
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { count } = await query;
+        .or("match_confidence.eq.none,match_confidence.is.null")
+        .eq("client_id", selectedClientId);
       return count ?? 0;
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
     refetchInterval: 60000,
   });
 

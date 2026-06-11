@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, categorizeIncidentsByAge } from "../_shared/anti-hallucination.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
@@ -26,8 +26,8 @@ Deno.serve(async (req) => {
       });
     }
     
-    const { 
-      client_id, 
+    const {
+      client_id,
       timeframe_hours = 168, // Default 7 days
       focus_areas = ['radical_activity', 'sentiment', 'precursors', 'infrastructure'],
       include_predictions = true,
@@ -38,89 +38,117 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    // GEMINI_API_KEY handled by callAiGateway
+    // ── CLIENT-SCOPE CONTAINMENT (slice F) ──────────────────────────────────
+    // This analysis is client-specific. Every source query below is constrained
+    // to ONE authorized client_id (+ its tenant_id where the column exists).
+    // No global reads, no tenant-wide fallback, no NULL-client fallback; fail
+    // closed when client context is absent or the caller is not authorized.
+    if (!client_id || typeof client_id !== 'string') {
+      return errorResponse('CLIENT_CONTEXT_MISSING: client_id is required for threat-radar analysis', 400);
+    }
+
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === 'unauthorized') {
+      return errorResponse(caller.error, caller.status);
+    }
+    if (caller.kind === 'user') {
+      const allowed = await userCanAccessClient(supabase, caller.userId, client_id);
+      if (!allowed) {
+        return errorResponse('CLIENT_NOT_AUTHORIZED: caller cannot access this client', 403);
+      }
+    }
+    // caller.kind === 'service_role' → trusted internal caller (cron / inter-fn);
+    // still bound to the explicit client_id on every query below.
+
+    // Resolve the client row first — also yields tenant_id for defense-in-depth
+    // scoping on tenant-bearing tables. Fail closed if the client doesn't exist.
+    const { data: client, error: clientError } = await supabase
+      .from('clients')
+      .select('id, name, industry, high_value_assets, locations, threat_profile, monitoring_keywords, tenant_id')
+      .eq('id', client_id)
+      .maybeSingle();
+    if (clientError || !client) {
+      return errorResponse('CLIENT_NOT_FOUND: client_id does not resolve to a client', 404);
+    }
+    const tenantId = (client as any).tenant_id ?? null;
 
     const timeframeCutoff = new Date(Date.now() - timeframe_hours * 60 * 60 * 1000).toISOString();
 
-    // Gather comprehensive intelligence data
+    // Build client/tenant-scoped source queries. client_id alone isolates to one
+    // client; tenant_id is added where the column exists (belt-and-suspenders).
+    let signalsQuery = supabase
+      .from('signals')
+      .select('id, normalized_text, rule_category, rule_tags, signal_type, rule_priority, severity, confidence, received_at, location')
+      .eq('client_id', client_id)
+      .gte('received_at', timeframeCutoff)
+      .order('received_at', { ascending: false })
+      .limit(500);
+    if (tenantId) signalsQuery = signalsQuery.eq('tenant_id', tenantId);
+
+    let incidentsQuery = supabase
+      .from('incidents')
+      .select('id, title, summary, priority, status, incident_type, severity_level, created_at')
+      .eq('client_id', client_id)
+      .gte('created_at', timeframeCutoff)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (tenantId) incidentsQuery = incidentsQuery.eq('tenant_id', tenantId);
+
+    let entitiesQuery = supabase
+      .from('entities')
+      .select('id, name, type, threat_score, risk_level, threat_indicators, active_monitoring_enabled, current_location')
+      .eq('client_id', client_id)
+      .or('threat_score.gte.50,risk_level.eq.high,risk_level.eq.critical')
+      .eq('is_active', true)
+      .limit(100);
+    if (tenantId) entitiesQuery = entitiesQuery.eq('tenant_id', tenantId);
+
+    // Gather comprehensive intelligence data (client-scoped)
     const [
       signalsResult,
       incidentsResult,
       entitiesResult,
-      entityMentionsResult,
       assetsResult,
-      clientResult,
       existingPrecursorsResult,
       existingSentimentResult,
       existingRadicalResult
     ] = await Promise.all([
-      // Recent signals with emphasis on threat-related
-      supabase
-        .from('signals')
-        .select('id, normalized_text, rule_category, rule_tags, signal_type, rule_priority, severity, confidence, received_at, location')
-        .gte('received_at', timeframeCutoff)
-        .order('received_at', { ascending: false })
-        .limit(500),
-      
-      // Recent incidents
-      supabase
-        .from('incidents')
-        .select('id, title, summary, priority, status, incident_type, severity_level, created_at')
-        .gte('created_at', timeframeCutoff)
-        .order('created_at', { ascending: false })
-        .limit(100),
-      
-      // High-threat entities
-      supabase
-        .from('entities')
-        .select('id, name, type, threat_score, risk_level, threat_indicators, active_monitoring_enabled, current_location')
-        .or('threat_score.gte.50,risk_level.eq.high,risk_level.eq.critical')
-        .eq('is_active', true)
-        .limit(100),
-      
-      // Recent entity mentions
-      supabase
-        .from('entity_mentions')
-        .select('id, entity_id, confidence, context, detected_at, signal_id')
-        .gte('detected_at', timeframeCutoff)
-        .order('detected_at', { ascending: false })
-        .limit(200),
-      
-      // Critical infrastructure assets
+      signalsQuery,
+      incidentsQuery,
+      entitiesQuery,
+
+      // Critical infrastructure assets (client_id only)
       supabase
         .from('internal_assets')
         .select('id, asset_name, asset_type, business_criticality, location, is_internet_facing, owner_team')
+        .eq('client_id', client_id)
         .or('business_criticality.eq.mission_critical,business_criticality.eq.high')
         .eq('is_active', true)
         .limit(100),
-      
-      // Client context if provided
-      client_id ? supabase
-        .from('clients')
-        .select('id, name, industry, high_value_assets, locations, threat_profile, monitoring_keywords')
-        .eq('id', client_id)
-        .single() : Promise.resolve({ data: null }),
-      
-      // Existing precursor indicators
+
+      // Existing precursor indicators (client_id only)
       supabase
         .from('threat_precursor_indicators')
         .select('*')
+        .eq('client_id', client_id)
         .eq('status', 'active')
         .gte('last_activity_at', timeframeCutoff)
         .limit(50),
-      
-      // Existing sentiment tracking
+
+      // Existing sentiment tracking (client_id only)
       supabase
         .from('sentiment_tracking')
         .select('*')
+        .eq('client_id', client_id)
         .gte('measurement_period_end', timeframeCutoff)
         .order('created_at', { ascending: false })
         .limit(50),
-      
-      // Existing radical activity
+
+      // Existing radical activity (client_id only)
       supabase
         .from('radical_activity_tracking')
         .select('*')
+        .eq('client_id', client_id)
         .in('status', ['new', 'monitoring', 'escalated'])
         .gte('last_updated_at', timeframeCutoff)
         .limit(50)
@@ -129,12 +157,27 @@ Deno.serve(async (req) => {
     const signals = signalsResult.data || [];
     const incidents = incidentsResult.data || [];
     const highThreatEntities = entitiesResult.data || [];
-    const entityMentions = entityMentionsResult.data || [];
     const criticalAssets = assetsResult.data || [];
-    const client = clientResult.data;
     const existingPrecursors = existingPrecursorsResult.data || [];
     const existingSentiment = existingSentimentResult.data || [];
     const existingRadical = existingRadicalResult.data || [];
+
+    // entity_mentions has no client_id/tenant_id column — scope it via THIS
+    // client's own signals (already client-scoped above). A mention not tied to
+    // one of this client's recent signals is excluded (fail-closed). This is the
+    // documented indirect scope; there is no global entity_mentions read.
+    const signalIds = signals.map((s: any) => s.id).filter(Boolean);
+    let entityMentions: any[] = [];
+    if (signalIds.length > 0) {
+      const { data: mentionsData } = await supabase
+        .from('entity_mentions')
+        .select('id, entity_id, confidence, context, detected_at, signal_id')
+        .in('signal_id', signalIds)
+        .gte('detected_at', timeframeCutoff)
+        .order('detected_at', { ascending: false })
+        .limit(200);
+      entityMentions = mentionsData || [];
+    }
 
     // Categorize signals by source and type
     const signalsBySource: Record<string, any[]> = {};
@@ -402,7 +445,11 @@ Provide concise, actionable intelligence assessments focused on proactive threat
       const { data: snapshot, error: snapshotError } = await supabase
         .from('client_risk_snapshots')
         .insert({
-          client_id: client_id || null,
+          // client_id is guaranteed non-null by the containment gate above — no
+          // NULL fallback (Provenance Doctrine). NOTE: client_risk_snapshots does
+          // not currently exist on prod, so this insert silently no-ops; tracked
+          // as a separate pre-existing defect, out of scope for slice F.
+          client_id: client_id,
           risk_score: overallThreatScore,
           snapshot_data: {
             threat_level: overallThreatLevel,

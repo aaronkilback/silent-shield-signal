@@ -8,7 +8,6 @@ import { AlertTriangle, Flame, Clock, Plus, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { CreateIncidentFromSignalDialog } from "@/components/signals/CreateIncidentFromSignalDialog";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 interface EscalationSignal {
   id: string;
@@ -25,29 +24,28 @@ export function EscalationPipeline() {
   const queryClient = useQueryClient();
   const [selectedSignal, setSelectedSignal] = useState<EscalationSignal | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  // signal_correlation_groups has client_id; scope by selected client (else tenant)
-  // so the escalation queue isn't pooled across clients/tenants.
+  // Slice F (Req E): the escalation queue is a SELECTED-CLIENT surface.
+  // signal_correlation_groups is scoped to selectedClientId and FAILS CLOSED
+  // when no client is selected — no tenant-wide fallback.
   const { selectedClientId } = useClientSelection();
-  const { clientIds } = useTenantScopedClientIds();
 
   const { data: signals = [], isLoading } = useQuery({
-    queryKey: ["escalation-pipeline", selectedClientId ?? null, clientIds ?? "all"],
+    queryKey: ["escalation-pipeline", selectedClientId ?? null],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return [] as EscalationSignal[];
+      const { data, error } = await supabase
         .from("signal_correlation_groups")
         .select("*")
+        .eq("client_id", selectedClientId)
         .in("severity", ["critical", "high", "p1", "p2"])
         .or("match_confidence.eq.none,match_confidence.is.null")
         .order("severity", { ascending: true })
         .order("created_at", { ascending: false })
         .limit(50);
-      if (selectedClientId) query = query.eq("client_id", selectedClientId);
-      else if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
       if (error) throw error;
       return (data || []) as EscalationSignal[];
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
     refetchInterval: 60000,
   });
 
