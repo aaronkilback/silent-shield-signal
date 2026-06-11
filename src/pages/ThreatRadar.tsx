@@ -37,6 +37,14 @@ const TabLoader = () => (
   </div>
 );
 
+// Slice F — Step 3 (containment kill-switch). The threat-radar-analysis backend
+// builds its analysis from CLIENT-scoped source data ONLY once the v88+ gate is
+// live on prod. Until that deploy is verified (version > 87, CLIENT_CONTEXT_MISSING
+// + client_id scoping present), we MUST NOT let this client-scoped-looking UI call
+// the still-unscoped backend. Flip to true ONLY after the deployed bundle is
+// byte-verified and the 2-client runtime proof passes (Codex).
+const THREAT_RADAR_ANALYSIS_VERIFIED = false;
+
 const ThreatRadar = () => {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
@@ -67,7 +75,8 @@ const ThreatRadar = () => {
       if (error) throw error;
       return data;
     },
-    enabled: !!user && !!selectedClientId,
+    // Gated off until the backend tenant-scope is verified on prod (Step 3).
+    enabled: !!user && !!selectedClientId && THREAT_RADAR_ANALYSIS_VERIFIED,
     refetchInterval: 300000,
   });
 
@@ -116,6 +125,36 @@ const ThreatRadar = () => {
   };
 
   if (!user && !loading) return null;
+
+  // Slice F — Step 3: backend tenant-scope not yet verified on prod. Do NOT
+  // render an analysis UI that would imply client-scoped intelligence while the
+  // backend is still global. Show an explicit unavailable state (the invocation
+  // is already disabled above).
+  if (!THREAT_RADAR_ANALYSIS_VERIFIED) {
+    return (
+      <PageLayout loading={loading}>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
+              <Radar className="w-8 h-8 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">Threat Radar</h1>
+              <p className="text-muted-foreground">Proactive threat intelligence &amp; predictive analytics</p>
+            </div>
+          </div>
+          <DashboardClientSelector />
+        </div>
+        <Card className="border-yellow-500/40">
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <AlertTriangle className="w-10 h-10 mx-auto mb-3 text-yellow-400" />
+            <p className="font-medium">ThreatRadar analysis unavailable pending tenant-scope verification</p>
+            <p className="text-sm">The analysis engine is being verified for client isolation and will return once confirmed.</p>
+          </CardContent>
+        </Card>
+      </PageLayout>
+    );
+  }
 
   // Slice F (Req B): fail closed — no selected client, no client-specific
   // analysis. Show an explicit prompt instead of a misleading LOW/0 readout.
