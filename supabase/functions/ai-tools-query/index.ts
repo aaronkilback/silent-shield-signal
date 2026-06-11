@@ -6,6 +6,11 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req) => {
+  // EMERGENCY CONTAINMENT KILL-SWITCH — set AI_TOOLS_QUERY_DISABLED=true
+  // (Supabase secret) to disable instantly with NO code deploy. Absent/false = unchanged.
+  if (req.method !== "OPTIONS" && Deno.env.get("AI_TOOLS_QUERY_DISABLED") === "true") {
+    return new Response(JSON.stringify({ disabled: true, message: "This function is temporarily disabled for containment." }), { status: 503, headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" } });
+  }
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }

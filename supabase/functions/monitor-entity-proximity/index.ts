@@ -9,6 +9,11 @@ const THREAT_KEYWORDS = [
 ];
 
 Deno.serve(async (req) => {
+  // EMERGENCY CONTAINMENT KILL-SWITCH — set MONITOR_ENTITY_PROXIMITY_DISABLED=true
+  // (Supabase secret) to disable instantly with NO code deploy. Absent/false = unchanged.
+  if (req.method !== "OPTIONS" && Deno.env.get("MONITOR_ENTITY_PROXIMITY_DISABLED") === "true") {
+    return new Response(JSON.stringify({ disabled: true, message: "This function is temporarily disabled for containment." }), { status: 503, headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" } });
+  }
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
