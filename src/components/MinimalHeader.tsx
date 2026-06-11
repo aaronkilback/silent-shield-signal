@@ -142,8 +142,21 @@ export const MinimalHeader = () => {
                   <Menu className="w-5 h-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="right" className="w-[260px]">
+              <SheetContent side="right" className="w-[260px] overflow-y-auto">
                 <div className="flex flex-col gap-1 mt-6">
+                  {/* Account actions at the TOP so Sign Out is always reachable on
+                      mobile without scrolling past the full page list. */}
+                  <div className="pb-4 border-b border-border mb-2 flex flex-col gap-2">
+                    <SettingsSheet />
+                    <Button
+                      variant="outline"
+                      onClick={() => { signOut(); setMobileMenuOpen(false); }}
+                      className="justify-start gap-2 w-full"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Sign Out
+                    </Button>
+                  </div>
                   <p className="text-xs text-muted-foreground font-medium px-3 mb-2">Navigate to</p>
                   {quickNavItems.map((item) => (
                     <Button
@@ -169,17 +182,6 @@ export const MinimalHeader = () => {
                       )}
                     </Button>
                   ))}
-                  <div className="pt-4 border-t border-border mt-2">
-                    <SettingsSheet />
-                    <Button
-                      variant="outline"
-                      onClick={() => { signOut(); setMobileMenuOpen(false); }}
-                      className="justify-start gap-2 w-full mt-2"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      Sign Out
-                    </Button>
-                  </div>
                 </div>
               </SheetContent>
             </Sheet>
