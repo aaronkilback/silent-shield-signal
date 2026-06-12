@@ -4991,8 +4991,12 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       if (!client_id) return { error: "client_id is required" };
 
+      // WAVE-2B P3 — tenant-pin the client metadata read so a foreign client_id
+      // cannot leak name/industry/monitoring_keywords. (Signals below are already
+      // tenant-pinned; with P2 client binding client_id is authoritative anyway —
+      // this is defense-in-depth at the read itself.)
       const { data: client } = await supabaseClient.from("clients")
-        .select("id, name, industry, monitoring_keywords").eq("id", client_id).maybeSingle();
+        .select("id, name, industry, monitoring_keywords").eq("id", client_id).eq("tenant_id", tenantId).maybeSingle();
       // Proceed even if client record is not found — still analyze signals by client_id
 
       const since = new Date(Date.now() - lookback_days * 86400000).toISOString();
@@ -10238,6 +10242,10 @@ Deno.serve(async (req) => {
     let authenticatedUserId: string | undefined;
     let userTenantId: string | undefined;
     let userTenantName: string | undefined;
+    // WAVE-2B P1/P2 — deterministic tenant + authoritative client, resolved during auth.
+    // tenantSelection set => fail closed (ambiguous multi-tenant or forbidden tenant/client).
+    let tenantSelection: { status: 'ambiguous' | 'forbidden'; reason: string; options: Array<{ id: string; name: string }> } | undefined;
+    let authoritativeClientId: string | undefined;
     let tenantKnowledgeContext = "";
     const authHeader = req.headers.get("Authorization");
     
@@ -10254,39 +10262,57 @@ Deno.serve(async (req) => {
         authenticatedUserId = user.id;
         console.log("Authenticated user for memory tools:", authenticatedUserId);
         
-        // PROD-AA (2026-05-24) — if the frontend supplied an explicit
-        // tenant_id, filter the membership query by it. The user MUST be a
-        // member of that tenant for the row to be returned (RLS + the .eq
-        // filter together enforce this). If the explicit tenant_id is not in
-        // the user's membership set, the query returns null and we fall back
-        // to the legacy lottery. This means a hostile/spoofed tenant_id in
-        // the request body cannot grant access — it merely fails closed.
-        let tenantUserQuery = supabaseClient
+        // ── WAVE-2B P1 — deterministic tenant selection (no lottery) ──────────
+        // Fetch ALL of the caller's tenant memberships, then resolve authoritatively:
+        //   • requestedTenantId provided  → must be a membership, else FAIL CLOSED;
+        //   • omitted + exactly 1 membership → use it;
+        //   • omitted + multiple memberships → FAIL CLOSED, ask the caller to pick
+        //     (never an arbitrary `.limit(1)` lottery pick);
+        //   • 0 memberships → no tenant (tenant tools fail closed via the gate).
+        // The client is SERVICE_ROLE so `.eq("user_id", user.id)` is the only scope —
+        // a hostile/spoofed tenant_id cannot grant access; it merely fails closed.
+        const { data: memberships } = await supabaseClient
           .from("tenant_users")
           .select("tenant_id, tenants(name)")
           .eq("user_id", user.id);
+        const memberRows = (memberships ?? []) as Array<{ tenant_id: string; tenants: any }>;
+        const tenantNameOf = (r: { tenants: any }) => (r?.tenants as any)?.name || "Unknown Tenant";
+
+        let chosen: { tenant_id: string; tenants: any } | undefined;
         if (typeof requestedTenantId === 'string' && requestedTenantId.length > 0) {
-          tenantUserQuery = tenantUserQuery.eq("tenant_id", requestedTenantId);
+          chosen = memberRows.find(r => r.tenant_id === requestedTenantId);
+          if (!chosen) {
+            tenantSelection = {
+              status: 'forbidden',
+              reason: 'requested tenant is not in your membership set',
+              options: memberRows.map(r => ({ id: r.tenant_id, name: tenantNameOf(r) })),
+            };
+          }
+        } else if (memberRows.length === 1) {
+          chosen = memberRows[0];
+        } else if (memberRows.length > 1) {
+          tenantSelection = {
+            status: 'ambiguous',
+            reason: 'multiple tenants available; select one',
+            options: memberRows.map(r => ({ id: r.tenant_id, name: tenantNameOf(r) })),
+          };
         }
-        const { data: tenantUserData } = await tenantUserQuery
-          .limit(1)
-          .maybeSingle();
-        // PROD-BB instrumentation — log the tenant resolution outcome with the
-        // request's debug_trace_id so failed vs successful requests can be diffed.
+
         console.log('[PROD-AA-DEBUG/tenant]', JSON.stringify({
           debug_trace_id: debugTraceId ?? null,
           requestedTenantId: requestedTenantId ?? null,
-          resolvedUserTenantId: tenantUserData?.tenant_id ?? null,
-          resolvedTenantName: (tenantUserData?.tenants as any)?.name ?? null,
+          membershipCount: memberRows.length,
+          resolvedUserTenantId: chosen?.tenant_id ?? null,
+          tenantSelection: tenantSelection?.status ?? null,
           user_id: user.id,
         }));
-        
-        if (tenantUserData?.tenant_id) {
-          userTenantId = tenantUserData.tenant_id;
-          const tenantName = (tenantUserData.tenants as any)?.name || "Unknown Tenant";
+
+        if (chosen?.tenant_id) {
+          userTenantId = chosen.tenant_id;
+          const tenantName = tenantNameOf(chosen);
           userTenantName = tenantName;
           console.log("User tenant:", userTenantId, tenantName);
-          
+
           const { data: tenantKnowledge } = await supabaseClient
             .from("tenant_knowledge")
             .select("*")
@@ -10295,11 +10321,35 @@ Deno.serve(async (req) => {
             .or("expires_at.is.null,expires_at.gt.now()")
             .order("importance_score", { ascending: false })
             .limit(50);
-          
+
           if (tenantKnowledge && tenantKnowledge.length > 0) {
             console.log(`Found ${tenantKnowledge.length} tenant knowledge entries for ${tenantName}`);
             tenantKnowledgeContext = `\n═══ TENANT KNOWLEDGE: ${tenantName} ═══\n${tenantKnowledge.map(k => `[${k.knowledge_type?.toUpperCase() || 'CONTEXT'}]${k.subject ? ` (${k.subject})` : ''}: ${k.content}`).join('\n\n')}\n`;
           }
+
+          // ── WAVE-2B P2 — authoritative client binding (validate ONCE) ───────
+          // requestedClientId must belong to the authoritative tenant's client set.
+          // The validated value is the ONLY client scope the tools may use; a
+          // model/tool-supplied client_id can never widen or override it.
+          if (typeof requestedClientId === 'string' && requestedClientId.length > 0) {
+            const scopedClientIds = await getScopedClientIds(supabaseClient, userTenantId);
+            if (scopedClientIds.includes(requestedClientId)) {
+              authoritativeClientId = requestedClientId;
+            } else {
+              tenantSelection = {
+                status: 'forbidden',
+                reason: 'requested client is not in the authoritative tenant',
+                options: [],
+              };
+            }
+          }
+        } else if (typeof requestedClientId === 'string' && requestedClientId.length > 0 && !tenantSelection) {
+          // A client was requested without a resolvable authoritative tenant → fail closed.
+          tenantSelection = {
+            status: 'forbidden',
+            reason: 'a client was requested without an authoritative tenant',
+            options: [],
+          };
         }
         return user;
       })(),
@@ -10340,6 +10390,25 @@ Deno.serve(async (req) => {
 
     const learningContext = learningResult.status === 'fulfilled' ? (learningResult.value as string) : "";
     if (learningContext) console.log(`[AEGIS] Loaded adaptive learning context (${learningContext.length} chars)`);
+
+    // ── WAVE-2B P1/P2 — fail closed on ambiguous/forbidden tenant or client ───
+    // Never proceed to the LLM/tools with a guessed tenant or an unvalidated client.
+    // Returns an SSE message (same contract as the normal stream) so the frontend
+    // renders it; no operational tool runs.
+    if (tenantSelection) {
+      const optionNames = (tenantSelection.options ?? []).map(o => o.name).filter(Boolean);
+      const msg = tenantSelection.status === 'ambiguous'
+        ? `You have access to more than one organization. Please select which one you want me to use${optionNames.length ? `: ${optionNames.join(', ')}` : ''}, then resend your request.`
+        : `That organization or client is outside your authorized scope, so I can't retrieve it. Select an authorized organization${optionNames.length ? ` (${optionNames.join(', ')})` : ''} and client, then try again.`;
+      console.warn('[WAVE-2B] fail-closed tenant/client selection:', tenantSelection.status, tenantSelection.reason);
+      const sseBody =
+        `data: ${JSON.stringify({ choices: [{ delta: { content: msg } }], tenant_selection_required: true, selection_status: tenantSelection.status, tenant_options: tenantSelection.options ?? [] })}\n\n` +
+        `data: [DONE]\n\n`;
+      return new Response(sseBody, {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      });
+    }
 
     // ── Scoped agent beliefs — fetched after auth so we have userTenantId ──────
     // INC-LEARN-CONTAM (2026-05-27) — P0 containment: load ONLY this tenant's
@@ -11378,11 +11447,14 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               argsPreview: JSON.stringify(args).slice(0, 300),
               userTenantId: userTenantId ?? null,
             }));
-            // L1C: the travel tool's scope is the AUTHORITATIVE selected client
-            // (request body client_id), never model-supplied args.
-            if (toolCall.function.name === 'get_travel_status') {
-              (args as Record<string, unknown>).client_id = requestedClientId ?? null;
-            }
+            // WAVE-2B P2 — authoritative client binding for ALL client-reading tools.
+            // authoritativeClientId is requestedClientId validated once (during auth)
+            // against the caller's tenant-scoped client set. It is forced into
+            // args.client_id so a model/tool-supplied client_id can never widen or
+            // override scope. When no client is selected it is nulled, so
+            // client-operational tools fail closed (tenant-pinned tools run
+            // tenant-wide). Generalizes the prior get_travel_status-only binding.
+            (args as Record<string, unknown>).client_id = authoritativeClientId ?? null;
             const result = await executeTool(toolCall.function.name, args, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
             const _resultStr = typeof result === 'string' ? result : JSON.stringify(result);
             console.log('[PROD-AA-DEBUG/tool_result]', JSON.stringify({
