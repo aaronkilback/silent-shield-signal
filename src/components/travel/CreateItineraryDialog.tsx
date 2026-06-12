@@ -16,7 +16,6 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Upload } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 interface CreateItineraryDialogProps {
   open: boolean;
@@ -29,28 +28,30 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
   const [monitoringEnabled, setMonitoringEnabled] = useState(true);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
+  // Travel Containment P0-B/C: traveler dropdown + itinerary insert scoped to
+  // the SELECTED client; fail closed.
   const { selectedClientId } = useClientSelection();
-  const { clientIds } = useTenantScopedClientIds();
 
   const { data: travelers } = useQuery({
-    queryKey: ["travelers", clientIds ?? "all"],
+    queryKey: ["travelers", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return [];
+      const { data, error } = await supabase
         .from("travelers")
         .select("id, name")
+        .eq("client_id", selectedClientId)
         .order("name");
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
   });
 
   const createMutation = useMutation({
     mutationFn: async (formData: FormData) => {
+      if (!selectedClientId) throw new Error("Select a client before creating an itinerary.");
       const { data: { user } } = await supabase.auth.getUser();
-      
+
       let filePath = null;
       if (uploadedFile) {
         const fileExt = uploadedFile.name.split('.').pop();
@@ -85,7 +86,7 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
         file_path: filePath,
         monitoring_enabled: monitoringEnabled,
         created_by: user?.id,
-        client_id: selectedClientId || null,
+        client_id: selectedClientId,
       });
 
       if (error) throw error;

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { AlertTriangle, CheckCircle, MapPin, Plane, Scan, TrendingUp, TrendingDown, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 export function TravelAlertsPanel() {
   const queryClient = useQueryClient();
@@ -16,7 +16,9 @@ export function TravelAlertsPanel() {
   // bypasses RLS, so without this an operator viewing tenant A sees tenant B's
   // travel alerts. When scoped, an inner join on travelers + client_id filter
   // returns only in-tenant alerts (fail-closed: alerts with no traveler drop).
-  const { clientIds } = useTenantScopedClientIds();
+  // Travel Containment P0-B: alerts/risk-changes scoped to the SELECTED client
+  // (via the owning traveler/itinerary client_id) and FAIL CLOSED.
+  const { selectedClientId } = useClientSelection();
 
   const scanMutation = useMutation({
     mutationFn: async () => {
@@ -36,21 +38,18 @@ export function TravelAlertsPanel() {
   });
 
   const { data: alerts, isLoading } = useQuery({
-    queryKey: ["travel-alerts", showAcknowledged, clientIds ?? "all"],
+    queryKey: ["travel-alerts", showAcknowledged, selectedClientId],
     queryFn: async () => {
-      const scoped = Array.isArray(clientIds);
+      if (!selectedClientId) return [];
       let query = supabase
         .from("travel_alerts")
         .select(`
           *,
-          travelers:traveler_id${scoped ? "!inner" : ""} (name, client_id),
+          travelers:traveler_id!inner (name, client_id),
           itineraries:itinerary_id (trip_name)
         `)
+        .eq("travelers.client_id", selectedClientId)
         .order("created_at", { ascending: false });
-
-      // Tenant scope via the alert's traveler.client_id (no client_id on the
-      // alert row itself). null = All-Tenants view → unfiltered.
-      if (scoped) query = query.in("travelers.client_id", clientIds);
 
       if (!showAcknowledged) {
         query = query.eq("is_active", true);
@@ -60,16 +59,18 @@ export function TravelAlertsPanel() {
       if (error) throw error;
       return data;
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
   });
 
   const { data: riskChanges } = useQuery({
-    queryKey: ["travel-risk-changes"],
+    queryKey: ["travel-risk-changes", selectedClientId],
     queryFn: async () => {
+      if (!selectedClientId) return [];
       const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
       const { data, error } = await supabase
         .from("itinerary_scan_history")
-        .select("id, itinerary_id, scanned_at, risk_level, previous_risk_level, risk_changed")
+        .select("id, itinerary_id, scanned_at, risk_level, previous_risk_level, risk_changed, itineraries:itinerary_id!inner (client_id)")
+        .eq("itineraries.client_id", selectedClientId)
         .eq("risk_changed", true)
         .gte("scanned_at", threeDaysAgo)
         .order("scanned_at", { ascending: false })
@@ -77,10 +78,21 @@ export function TravelAlertsPanel() {
       if (error) throw error;
       return data;
     },
+    enabled: !!selectedClientId,
   });
 
   const acknowledgeMutation = useMutation({
     mutationFn: async (alertId: string) => {
+      // P0-C: bind to in-scope — verify the alert's traveler belongs to the
+      // selected client before mutating (defends against a crafted id).
+      if (!selectedClientId) throw new Error("Select a client first.");
+      const { data: inScope } = await supabase
+        .from("travel_alerts")
+        .select("id, travelers:traveler_id!inner(client_id)")
+        .eq("id", alertId)
+        .eq("travelers.client_id", selectedClientId)
+        .maybeSingle();
+      if (!inScope) throw new Error("Not authorized: alert is outside the selected client.");
       const { data: { user } } = await supabase.auth.getUser();
       const { error } = await supabase
         .from("travel_alerts")

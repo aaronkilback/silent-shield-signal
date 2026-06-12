@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { useCallback, useState, useEffect } from "react";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 /**
  * Compact travel alert bell for the global header.
@@ -17,6 +18,12 @@ import { useCallback, useState, useEffect } from "react";
 export function TravelNotificationBell() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Travel Containment P0-A: this bell renders app-wide (Header + MinimalHeader).
+  // travel_alerts has no client_id and itinerary_scan_history has neither client
+  // nor tenant — so both are scoped through the owning traveler/itinerary's
+  // client_id = selectedClientId, and FAIL CLOSED (empty, no badge) when no
+  // client is selected. No global/tenant-wide travel-alert query remains.
+  const { selectedClientId } = useClientSelection();
 
   // Persist dismissed risk change IDs in localStorage
   const STORAGE_KEY = "dismissed-risk-change-ids";
@@ -30,15 +37,17 @@ export function TravelNotificationBell() {
   });
 
   const { data: alerts = [] } = useQuery({
-    queryKey: ["travel-alerts-global"],
+    queryKey: ["travel-alerts", selectedClientId],
     queryFn: async () => {
+      if (!selectedClientId) return [];
       const { data, error } = await supabase
         .from("travel_alerts")
         .select(`
           id, title, severity, alert_type, location, created_at, acknowledged,
           itineraries:itinerary_id (trip_name),
-          travelers:traveler_id (name)
+          travelers:traveler_id!inner (name, client_id)
         `)
+        .eq("travelers.client_id", selectedClientId)
         .eq("is_active", true)
         .eq("acknowledged", false)
         .order("created_at", { ascending: false })
@@ -46,16 +55,19 @@ export function TravelNotificationBell() {
       if (error) throw error;
       return data || [];
     },
+    enabled: !!selectedClientId,
     refetchInterval: 30000,
   });
 
   const { data: riskChanges = [] } = useQuery({
-    queryKey: ["travel-risk-changes-global"],
+    queryKey: ["travel-risk-changes", selectedClientId],
     queryFn: async () => {
+      if (!selectedClientId) return [];
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const { data, error } = await supabase
         .from("itinerary_scan_history")
-        .select("id, itinerary_id, scanned_at, risk_level, previous_risk_level, risk_changed")
+        .select("id, itinerary_id, scanned_at, risk_level, previous_risk_level, risk_changed, itineraries:itinerary_id!inner (client_id)")
+        .eq("itineraries.client_id", selectedClientId)
         .eq("risk_changed", true)
         .gte("scanned_at", oneDayAgo)
         .order("scanned_at", { ascending: false })
@@ -63,27 +75,39 @@ export function TravelNotificationBell() {
       if (error) throw error;
       return data || [];
     },
+    enabled: !!selectedClientId,
     refetchInterval: 60000,
   });
 
   const acknowledgeAlert = useCallback(async (alertId: string) => {
+    if (!selectedClientId) return;
+    // Bind to in-scope: verify the alert's traveler belongs to the selected
+    // client before mutating (defends against a crafted id).
+    const { data: inScope } = await supabase
+      .from("travel_alerts")
+      .select("id, travelers:traveler_id!inner(client_id)")
+      .eq("id", alertId)
+      .eq("travelers.client_id", selectedClientId)
+      .maybeSingle();
+    if (!inScope) return;
     await supabase
       .from("travel_alerts")
       .update({ acknowledged: true, is_active: false })
       .eq("id", alertId);
-    queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
-  }, [queryClient]);
+    queryClient.invalidateQueries({ queryKey: ["travel-alerts", selectedClientId] });
+  }, [queryClient, selectedClientId]);
 
   const acknowledgeAllAlerts = useCallback(async () => {
+    if (!selectedClientId) return;
     if (alerts.length === 0 && visibleRiskChanges.length === 0) return;
-    // Acknowledge actual alerts
+    // `alerts` is already client-scoped above, so these ids are in-scope.
     if (alerts.length > 0) {
       const ids = alerts.map((a: any) => a.id);
       await supabase
         .from("travel_alerts")
         .update({ acknowledged: true, is_active: false })
         .in("id", ids);
-      queryClient.invalidateQueries({ queryKey: ["travel-alerts-global"] });
+      queryClient.invalidateQueries({ queryKey: ["travel-alerts", selectedClientId] });
     }
     // Dismiss risk changes locally
     setDismissedRiskChangeIds(prev => {
@@ -92,7 +116,7 @@ export function TravelNotificationBell() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify([...next]));
       return next;
     });
-  }, [alerts, riskChanges, queryClient]);
+  }, [alerts, riskChanges, queryClient, selectedClientId]);
 
   const dismissRiskChange = useCallback((changeId: string) => {
     setDismissedRiskChangeIds(prev => {

@@ -9,41 +9,41 @@ import { CreateTravelerDialog } from "./CreateTravelerDialog";
 import { EditTravelerDialog } from "./EditTravelerDialog";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 export function TravelersList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingTraveler, setEditingTraveler] = useState<any>(null);
   const queryClient = useQueryClient();
+  // Travel Containment P0-B/C: travelers carry PII (passports). Scope to the
+  // SELECTED client and FAIL CLOSED — no tenant-wide fallback. (travelers has
+  // client_id but no tenant_id, and super_admin bypasses RLS, so an explicit
+  // client filter is mandatory.)
   const { selectedClientId, isContextReady } = useClientSelection();
-  // travelers has client_id but no tenant_id, and super_admin BYPASSES RLS —
-  // so without an explicit .in('client_id', clientIds) filter a super_admin
-  // viewing tenant A sees tenant B's travelers (PII incl. passports).
-  // clientIds: undefined = loading (don't run); null = All-Tenants (no filter);
-  // [] or string[] = scope to those clients (fail-closed on empty).
-  const { clientIds } = useTenantScopedClientIds();
 
   const { data: travelers, isLoading } = useQuery({
-    queryKey: ["travelers", clientIds ?? "all"],
+    queryKey: ["travelers", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return [];
+      const { data, error } = await supabase
         .from("travelers")
         .select("*")
+        .eq("client_id", selectedClientId)
         .order("name");
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
       if (error) {
         console.error('[Travelers] Error fetching:', error);
         throw error;
       }
       return data;
     },
-    enabled: isContextReady && clientIds !== undefined,
+    enabled: isContextReady && !!selectedClientId,
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("travelers").delete().eq("id", id);
+      // P0-C: bind delete to the selected client — a row not owned by it
+      // matches 0 rows.
+      if (!selectedClientId) throw new Error("Select a client before deleting.");
+      const { error } = await supabase.from("travelers").delete().eq("id", id).eq("client_id", selectedClientId);
       if (error) throw error;
     },
     onSuccess: () => {

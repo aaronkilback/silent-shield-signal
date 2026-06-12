@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface EditTravelerDialogProps {
   open: boolean;
@@ -33,6 +34,7 @@ export function EditTravelerDialog({
 }: EditTravelerDialogProps) {
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { selectedClientId } = useClientSelection();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -54,10 +56,18 @@ export function EditTravelerDialog({
       notes: formData.get("notes") as string || null,
     };
 
+    // P0-C: bind update to the selected client — a traveler not owned by the
+    // selected client matches 0 rows.
+    if (!selectedClientId) {
+      setIsSubmitting(false);
+      toast.error("Select a client before editing.");
+      return;
+    }
     const { error } = await supabase
       .from("travelers")
       .update(updates)
-      .eq("id", traveler.id);
+      .eq("id", traveler.id)
+      .eq("client_id", selectedClientId);
 
     setIsSubmitting(false);
 

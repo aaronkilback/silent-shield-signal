@@ -14,7 +14,6 @@ import { EditItineraryDialog } from "./EditItineraryDialog";
 import { format, formatDistanceToNow, isPast, isFuture, isWithinInterval } from "date-fns";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -59,15 +58,14 @@ export function ItinerariesList() {
   const [editingItinerary, setEditingItinerary] = useState<any>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
+  // Travel Containment P0-B/C: itineraries scoped to the SELECTED client and
+  // fail closed — no tenant-wide fallback.
   const { selectedClientId, isContextReady } = useClientSelection();
-  // Tenant scope — itineraries has client_id; super_admin bypasses RLS, so an
-  // explicit .in('client_id', clientIds) filter is required to avoid showing
-  // another tenant's itineraries when viewing a specific tenant.
-  const { clientIds } = useTenantScopedClientIds();
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("itineraries").delete().eq("id", id);
+      if (!selectedClientId) throw new Error("Select a client before deleting.");
+      const { error } = await supabase.from("itineraries").delete().eq("id", id).eq("client_id", selectedClientId);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -77,21 +75,21 @@ export function ItinerariesList() {
   });
 
   const { data: itineraries, isLoading, refetch } = useQuery({
-    queryKey: ["itineraries", clientIds ?? "all"],
+    queryKey: ["itineraries", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return [];
+      const { data, error } = await supabase
         .from("itineraries")
         .select(`
           *,
           travelers:traveler_id (name, map_color)
         `)
+        .eq("client_id", selectedClientId)
         .order("departure_date", { ascending: true });
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
-    enabled: isContextReady && clientIds !== undefined,
+    enabled: isContextReady && !!selectedClientId,
     refetchInterval: 60000, // re-check statuses every minute
   });
 

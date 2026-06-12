@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
+import { useClientSelection } from "@/hooks/useClientSelection";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { Card } from "@/components/ui/card";
@@ -147,36 +147,39 @@ export function TravelersMap() {
   const [tokenInput, setTokenInput] = useState("");
   const [mapReady, setMapReady] = useState(false);
 
-  // Tenant scope — travelers/itineraries have client_id; super_admin bypasses
-  // RLS, so map data must be filtered to the observed tenant's clients.
-  const { clientIds } = useTenantScopedClientIds();
+  // Travel Containment P0-B: map data (travelers + itineraries, both carry
+  // client_id) is scoped to the SELECTED client and FAILS CLOSED — no tenant-wide
+  // fallback. (super_admin bypasses RLS, so an explicit client filter is required.)
+  const { selectedClientId } = useClientSelection();
 
   const { data: travelers, refetch: refetchTravelers } = useQuery({
-    queryKey: ["travelers-with-location", clientIds ?? "all"],
+    queryKey: ["travelers-with-location", selectedClientId],
     queryFn: async () => {
-      let query = supabase.from("travelers").select("*");
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
+      if (!selectedClientId) return [];
+      const { data, error } = await supabase
+        .from("travelers")
+        .select("*")
+        .eq("client_id", selectedClientId);
       if (error) throw error;
       return data;
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
     refetchInterval: 30000,
   });
 
   const { data: allItineraries, refetch: refetchItineraries } = useQuery({
-    queryKey: ["itineraries-map", clientIds ?? "all"],
+    queryKey: ["itineraries-map", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return [];
+      const { data, error } = await supabase
         .from("itineraries")
         .select(`*, travelers:traveler_id (*)`)
+        .eq("client_id", selectedClientId)
         .order("departure_date", { ascending: false });
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
     refetchInterval: 30000,
   });
 

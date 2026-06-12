@@ -28,8 +28,11 @@ export function CreateTravelerDialog({ open, onOpenChange }: CreateTravelerDialo
 
   const createMutation = useMutation({
     mutationFn: async (formData: FormData) => {
+      // P0-C: require a selected client — never create a NULL-client traveler
+      // (it would be ownerless and surface tenant-wide).
+      if (!selectedClientId) throw new Error("Select a client before creating a traveler.");
       const { data: { user } } = await supabase.auth.getUser();
-      
+
       const { error } = await supabase.from("travelers").insert({
         name: formData.get("name") as string,
         email: formData.get("email") as string,
@@ -41,7 +44,7 @@ export function CreateTravelerDialog({ open, onOpenChange }: CreateTravelerDialo
         notes: formData.get("notes") as string,
         map_color: selectedColor,
         created_by: user?.id,
-        client_id: selectedClientId || null,
+        client_id: selectedClientId,
       });
 
       if (error) throw error;

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
+import { useClientSelection } from "@/hooks/useClientSelection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,21 +35,23 @@ export function EditItineraryDialog({
 }: EditItineraryDialogProps) {
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { clientIds } = useTenantScopedClientIds();
+  // Travel Containment P0-B/C: traveler dropdown + itinerary update scoped to
+  // the SELECTED client; fail closed.
+  const { selectedClientId } = useClientSelection();
 
   const { data: travelers } = useQuery({
-    queryKey: ["travelers", clientIds ?? "all"],
+    queryKey: ["travelers", selectedClientId],
     queryFn: async () => {
-      let query = supabase
+      if (!selectedClientId) return [];
+      const { data, error } = await supabase
         .from("travelers")
         .select("id, name")
+        .eq("client_id", selectedClientId)
         .order("name");
-      if (Array.isArray(clientIds)) query = query.in("client_id", clientIds);
-      const { data, error } = await query;
       if (error) throw error;
       return data;
     },
-    enabled: clientIds !== undefined,
+    enabled: !!selectedClientId,
   });
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -78,10 +80,16 @@ export function EditItineraryDialog({
       notes: formData.get("notes") as string || null,
     };
 
+    if (!selectedClientId) {
+      setIsSubmitting(false);
+      toast.error("Select a client before editing.");
+      return;
+    }
     const { error } = await supabase
       .from("itineraries")
       .update(updates)
-      .eq("id", itinerary.id);
+      .eq("id", itinerary.id)
+      .eq("client_id", selectedClientId);
 
     setIsSubmitting(false);
 
