@@ -19,7 +19,6 @@ export function CreateJourneyDialog({ open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const { selectedClientId } = useClientSelection();
   const [riskLevel, setRiskLevel] = useState("low");
-  const [approved, setApproved] = useState(false);
   const [selectedPassengers, setSelectedPassengers] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -51,7 +50,6 @@ export function CreateJourneyDialog({ open, onOpenChange }: Props) {
         journey_manager: (form.get("journey_manager") as string) || null,
         route: (form.get("route") as string) || null,
         no_go: (form.get("no_go") as string) || null,
-        approved,
       };
       const next_due = interval && departure
         ? new Date(new Date(departure).getTime() + interval * 60 * 1000).toISOString()
@@ -90,7 +88,7 @@ export function CreateJourneyDialog({ open, onOpenChange }: Props) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ground-journeys", selectedClientId] });
       toast.success("Journey created");
-      setSelectedPassengers([]); setApproved(false); setRiskLevel("low");
+      setSelectedPassengers([]); setRiskLevel("low");
       onOpenChange(false);
     },
     onError: (e: any) => toast.error(e.message || "Failed to create journey"),
@@ -159,9 +157,6 @@ export function CreateJourneyDialog({ open, onOpenChange }: Props) {
               </div>
             </div>
 
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={approved} onCheckedChange={(v) => setApproved(!!v)} /> Journey approved
-            </label>
 
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
