@@ -20,6 +20,12 @@ export function TravelersList() {
   // client filter is mandatory.)
   const { selectedClientId, isContextReady } = useClientSelection();
 
+  // Self-tracking link: highlight the traveller record that IS the logged-in user.
+  const { data: currentUserId } = useQuery({
+    queryKey: ["current-user-id"],
+    queryFn: async () => (await supabase.auth.getUser()).data.user?.id ?? null,
+  });
+
   const { data: travelers, isLoading } = useQuery({
     queryKey: ["travelers", selectedClientId],
     queryFn: async () => {
@@ -73,6 +79,9 @@ export function TravelersList() {
             }`}
           />
           <h3 className="font-semibold">{traveler.name}</h3>
+          {traveler.user_id && traveler.user_id === currentUserId && (
+            <Badge variant="secondary" className="text-xs">You</Badge>
+          )}
         </div>
         <Badge variant="outline">{traveler.status}</Badge>
       </div>
