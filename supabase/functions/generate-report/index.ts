@@ -1040,3 +1040,5 @@ RULES — enforced (a violation auto-flags the report for review):
     );
   }
 });
+
+// Wave 2.1 redeploy trigger (CI concurrency cancelled the first run).
