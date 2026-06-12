@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,6 +41,24 @@ Deno.serve(async (req) => {
     periodStart.setHours(periodStart.getHours() - (period_hours || 72));
     const periodEnd = new Date();
 
+    // ── GENERIC TOOL PATH CLEARANCE — Wave 2 caller→scope gate ──────────────────
+    // generate-report reads operational data (signals/incidents/…) via a SERVICE-ROLE
+    // client (bypasses RLS) under verify_jwt=false. Establish the caller and bind scope:
+    //   unauthorized → reject; user → may only target a client in getAccessibleClientIds
+    //   (super_admin = unrestricted admin mode); service_role → trusted (scheduled/admin).
+    // callerAccessibleClientIds === null means UNRESTRICTED (service_role or super_admin) —
+    // the ONLY path allowed to produce a cross-client (all-clients) report.
+    const _caller = await getCallerIdentity(req);
+    if (_caller.kind === 'unauthorized') {
+      return new Response(JSON.stringify({ error: _caller.error }), { status: _caller.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    let callerAccessibleClientIds: string[] | null = null;
+    if (_caller.kind === 'user') {
+      callerAccessibleClientIds = await getAccessibleClientIds(supabase, _caller.userId);
+      const { data: _sa } = await supabase.from('user_roles').select('role').eq('user_id', _caller.userId).eq('role', 'super_admin').maybeSingle();
+      if (_sa) callerAccessibleClientIds = null; // super_admin → unrestricted (explicit admin mode)
+    }
+
     // Resolve the allowed client_id set up-front. The snapshot MUST
     // never include:
     //   • sandbox / QA fixture clients (name starts with `_` —
@@ -73,9 +92,20 @@ Deno.serve(async (req) => {
       if (!realClientIds.includes(requestedClientId)) {
         throw new Error('Requested client is not an active real client');
       }
+      // Wave 2: a user caller may only target a client it can access (super_admin/service
+      // bypass via callerAccessibleClientIds === null). Reject a body-supplied mismatch.
+      if (callerAccessibleClientIds !== null && !callerAccessibleClientIds.includes(requestedClientId)) {
+        return new Response(JSON.stringify({ error: 'CLIENT_NOT_AUTHORIZED: caller cannot access the requested client_id' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       allowedClientIds = [requestedClientId];
       scopedClientName = (realClients ?? []).find((c: any) => c.id === requestedClientId)?.name ?? null;
     } else {
+      // Wave 2: NO all-clients fallback for normal (user) callers — fail closed. Only an
+      // UNRESTRICTED caller (service_role / super_admin) may produce a cross-client report
+      // (explicit, labelled admin/scheduled mode).
+      if (callerAccessibleClientIds !== null) {
+        return new Response(JSON.stringify({ error: 'CLIENT_CONTEXT_MISSING: client_id is required for report generation' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       allowedClientIds = realClientIds;
     }
 
@@ -422,13 +452,17 @@ RULES — enforced (a violation auto-flags the report for review):
         type: report_type,
         period_start: periodStart.toISOString(),
         period_end: periodEnd.toISOString(),
+        // Wave 2: record the authoritative client scope of this report's source set.
+        client_id: requestedClientId ?? null,
         meta_json: {
           total_signals: signals?.length || 0,
           critical_signals: criticalSignals,
           high_signals: highSignals,
           open_incidents: openIncidents,
           resolved_incidents: resolvedIncidents,
-          executive_summary: executiveSummary
+          executive_summary: executiveSummary,
+          scoped_client_ids: allowedClientIds,
+          scope_mode: requestedClientId ? 'single_client' : 'all_clients_admin'
         }
       })
       .select()
