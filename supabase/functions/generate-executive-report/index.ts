@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
 import { runEvidenceGate, getReliabilityFirstPrompt, DEFAULT_RELIABILITY_SETTINGS } from "../_shared/reliability-first.ts";
+import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -85,6 +86,31 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const client_id = body.clientId || body.client_id || null;
     const period_days = body.period_days || body.periodDays || 7;
+
+    // ── GENERIC TOOL PATH CLEARANCE — Wave 2 caller→scope gate ──────────────────
+    // Reads operational data (signals/incidents/…) via a SERVICE-ROLE client (bypasses RLS)
+    // under verify_jwt=false. Require a valid caller and an authoritative client the caller
+    // can access; reject missing/mismatched client. service_role → trusted internal caller.
+    {
+      const _caller = await getCallerIdentity(req);
+      if (_caller.kind === 'unauthorized') {
+        return new Response(JSON.stringify({ error: _caller.error }), { status: _caller.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (!client_id) {
+        return new Response(JSON.stringify({ error: 'CLIENT_CONTEXT_MISSING: client_id is required for executive report generation' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (_caller.kind === 'user') {
+        const _accessible = await getAccessibleClientIds(supabase, _caller.userId);
+        let _allowed = _accessible.includes(client_id);
+        if (!_allowed) {
+          const { data: _sa } = await supabase.from('user_roles').select('role').eq('user_id', _caller.userId).eq('role', 'super_admin').maybeSingle();
+          _allowed = !!_sa;
+        }
+        if (!_allowed) {
+          return new Response(JSON.stringify({ error: 'CLIENT_NOT_AUTHORIZED: caller cannot access the requested client_id' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      }
+    }
 
     console.log(`[generate-executive-report] body keys: ${Object.keys(body).join(',')}, client_id resolved: ${client_id}`);
     
