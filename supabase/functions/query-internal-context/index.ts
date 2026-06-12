@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 
 interface QueryRequest {
   query_type: 'assets' | 'vulnerabilities' | 'business_criticality' | 'comprehensive';
@@ -70,6 +70,27 @@ Deno.serve(async (req) => {
     } = request;
 
     console.log('[query-internal-context] Processing request:', JSON.stringify(request));
+
+    // ── GENERIC TOOL PATH CLEARANCE — Wave 2 caller→scope gate ──────────────────
+    // internal_assets / asset_vulnerabilities are SENSITIVE infrastructure records
+    // (SCADA/firewall/VPN/ERP), read via a SERVICE-ROLE client (bypasses RLS) under
+    // verify_jwt=false. Require a valid caller AND an authoritative client the caller can
+    // access — NO all-assets fallback when client_id is missing. (NULL-client assets never
+    // match an explicit client_id, so they stay fail-closed to super_admin / direct SQL.)
+    {
+      const _caller = await getCallerIdentity(req);
+      if (_caller.kind === 'unauthorized') return errorResponse(_caller.error, _caller.status);
+      if (!client_id) return errorResponse('CLIENT_CONTEXT_MISSING: client_id is required for internal context queries', 400);
+      if (_caller.kind === 'user') {
+        const _accessible = await getAccessibleClientIds(supabase, _caller.userId);
+        let _allowed = _accessible.includes(client_id);
+        if (!_allowed) {
+          const { data: _sa } = await supabase.from('user_roles').select('role').eq('user_id', _caller.userId).eq('role', 'super_admin').maybeSingle();
+          _allowed = !!_sa;
+        }
+        if (!_allowed) return errorResponse('CLIENT_NOT_AUTHORIZED: caller cannot access the requested client_id', 403);
+      }
+    }
 
     const filtersApplied: Record<string, unknown> = { query_type };
     let results: AssetResult[] = [];
