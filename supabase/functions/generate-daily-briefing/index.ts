@@ -7,7 +7,7 @@
  * without triggering a full AI generation cycle.
  */
 
-import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
@@ -24,6 +24,29 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createServiceClient();
+
+    // ── GENERIC TOOL PATH CLEARANCE — Wave 2 caller→scope gate ──────────────────
+    // Reads operational data (signals/incidents/…) via service-role under verify_jwt=false.
+    // Every read is already clientId-scoped and clientId is required above; here we validate
+    // the CALLER may access it. service_role (scheduled briefings) trusted; a user must have
+    // clientId in getAccessibleClientIds (or be super_admin) — else reject (fail closed).
+    {
+      const _caller = await getCallerIdentity(req);
+      if (_caller.kind === 'unauthorized') {
+        return errorResponse(_caller.error, _caller.status);
+      }
+      if (_caller.kind === 'user') {
+        const _accessible = await getAccessibleClientIds(supabase, _caller.userId);
+        let _allowed = _accessible.includes(clientId);
+        if (!_allowed) {
+          const { data: _sa } = await supabase.from('user_roles').select('role').eq('user_id', _caller.userId).eq('role', 'super_admin').maybeSingle();
+          _allowed = !!_sa;
+        }
+        if (!_allowed) {
+          return errorResponse('CLIENT_NOT_AUTHORIZED: caller cannot access the requested client_id', 403);
+        }
+      }
+    }
 
     // Lightweight test / health-check path — no AI call needed
     if (isTest) {
