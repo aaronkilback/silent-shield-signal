@@ -1187,6 +1187,19 @@ COMMUNICATION GUIDELINES:
       {
         type: "function",
         function: {
+          name: "get_travel_status",
+          description: "Get travel status for the CURRENT client: travellers (with status/location), air itineraries, ground journeys (with check-in status), active travel alerts, and any overdue journey check-ins. Use whenever the user asks who is travelling, the status/location of a traveller, journeys, overdue check-ins, or travel risk for the client. Any user in the client may ask about any traveller in that client.",
+          parameters: {
+            type: "object",
+            properties: {
+              traveler_name: { type: "string", description: "Optional: filter to a specific traveller by name (partial match)." },
+            },
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
           name: "cross_reference_entities",
           description: "Cross-reference entities mentioned in intel with existing database records.",
           parameters: {
@@ -1932,6 +1945,44 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
 
             if (error) throw error;
             toolResults.push({ tool: 'analyze_threat_radar', result: { success: true, ...radarResult } });
+          }
+
+        } else if (funcName === 'get_travel_status') {
+          // L1C: travel data is scoped to the AUTHORITATIVE request client only
+          // (top-level client_id); model/tool args cannot widen it. Any user in
+          // the client may ask about any traveller in that client. Fail closed.
+          const authoritativeClientId = client_id; // body.client_id ?? body.clientId
+          if (!authoritativeClientId) {
+            toolResults.push({ tool: 'get_travel_status', result: { success: false, fail_closed: true, error: 'Select a client before asking about travel.' } });
+          } else {
+            const nameFilter = ((args?.traveler_name as string) || '').trim();
+            let tq = supabase.from('travelers')
+              .select('id, name, status, current_location, current_country')
+              .eq('client_id', authoritativeClientId).order('name');
+            if (nameFilter) tq = tq.ilike('name', `%${nameFilter}%`);
+            const { data: trav } = await tq;
+
+            const { data: itins } = await supabase.from('itineraries')
+              .select('id, trip_name, trip_type, status, risk_level, origin_city, destination_city, departure_date, return_date, journey_overdue, next_check_in_due_at, travelers:traveler_id(name)')
+              .eq('client_id', authoritativeClientId)
+              .order('departure_date', { ascending: false }).limit(50);
+
+            const { data: alerts } = await supabase.from('travel_alerts')
+              .select('title, severity, alert_type, location, created_at, travelers:traveler_id!inner(name, client_id)')
+              .eq('travelers.client_id', authoritativeClientId)
+              .eq('is_active', true).order('created_at', { ascending: false }).limit(20);
+
+            const now = Date.now();
+            const overdue = (itins || []).filter((i: any) =>
+              i.trip_type === 'ground' && (i.journey_overdue || (i.next_check_in_due_at && new Date(i.next_check_in_due_at).getTime() < now)));
+
+            toolResults.push({ tool: 'get_travel_status', result: { success: true,
+              travelers: (trav || []).map((t: any) => ({ name: t.name, status: t.status, location: t.current_location, country: t.current_country })),
+              journeys: (itins || []).map((i: any) => ({ name: i.trip_name, type: i.trip_type, lead: i.travelers?.name, status: i.status, risk: i.risk_level, from: i.origin_city, to: i.destination_city, depart: i.departure_date, overdue: !!i.journey_overdue })),
+              active_alerts: (alerts || []).map((a: any) => ({ title: a.title, severity: a.severity, type: a.alert_type, location: a.location, traveler: a.travelers?.name })),
+              overdue_checkins: overdue.map((i: any) => ({ journey: i.trip_name, lead: i.travelers?.name, due: i.next_check_in_due_at })),
+              counts: { travelers: trav?.length || 0, journeys: itins?.length || 0, active_alerts: alerts?.length || 0, overdue: overdue.length },
+            } });
           }
 
         } else if (funcName === 'get_wildfire_intelligence') {
