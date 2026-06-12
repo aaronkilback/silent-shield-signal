@@ -85,6 +85,7 @@ export function ItinerariesList() {
           travelers:traveler_id (name, map_color)
         `)
         .eq("client_id", selectedClientId)
+        .neq("trip_type", "ground")
         .order("departure_date", { ascending: true });
       if (error) throw error;
       return data;

@@ -481,6 +481,9 @@ verify_jwt = true
 [functions.threat-radar-analysis]
 verify_jwt = false
 
+[functions.monitor-journey-checkins]
+verify_jwt = false
+
 [functions.track-mitigation-effectiveness]
 verify_jwt = true
 

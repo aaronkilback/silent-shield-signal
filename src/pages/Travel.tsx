@@ -8,7 +8,8 @@ import { TravelersMap } from "@/components/travel/TravelersMap";
 import { SecurityReportUpload } from "@/components/travel/SecurityReportUpload";
 import { GenerateSecurityBriefing } from "@/components/travel/GenerateSecurityBriefing";
 import { TripTimeline } from "@/components/travel/TripTimeline";
-import { Plane, Users, AlertTriangle, MapPin, Loader2, FileText, Activity } from "lucide-react";
+import { GroundTravelTab } from "@/components/travel/GroundTravelTab";
+import { Plane, Users, AlertTriangle, MapPin, Loader2, FileText, Activity, Car } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
@@ -35,8 +36,11 @@ export default function Travel() {
         console.error("Error archiving itineraries:", error);
       }
     };
-    
+
     archiveCompletedItineraries();
+    // Ground-travel journey management: surface overdue check-ins on load
+    // (the 5-min cron handles unattended escalation).
+    supabase.functions.invoke("monitor-journey-checkins").catch(() => {});
   }, []);
 
   if (loading) {
@@ -61,7 +65,7 @@ export default function Travel() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="travelers" className="gap-2">
             <Users className="h-4 w-4" />
             Travelers
@@ -69,6 +73,10 @@ export default function Travel() {
           <TabsTrigger value="itineraries" className="gap-2">
             <Plane className="h-4 w-4" />
             Itineraries
+          </TabsTrigger>
+          <TabsTrigger value="ground" className="gap-2">
+            <Car className="h-4 w-4" />
+            Ground Travel
           </TabsTrigger>
           <TabsTrigger value="timeline" className="gap-2">
             <Activity className="h-4 w-4" />
@@ -94,6 +102,10 @@ export default function Travel() {
 
         <TabsContent value="itineraries" className="space-y-4">
           <ItinerariesList />
+        </TabsContent>
+
+        <TabsContent value="ground" className="space-y-4">
+          <GroundTravelTab />
         </TabsContent>
 
         <TabsContent value="timeline" className="space-y-4">
