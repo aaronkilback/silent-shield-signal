@@ -575,7 +575,7 @@ export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: bool
             "Content-Type": "application/json",
             Authorization: `Bearer ${authToken}`,
           },
-          body: JSON.stringify({ messages: contextMessages, tenant_id: explicitTenantId, debug_trace_id }),
+          body: JSON.stringify({ messages: contextMessages, tenant_id: explicitTenantId, client_id: selectedClientId, debug_trace_id }),
         }
       );
 

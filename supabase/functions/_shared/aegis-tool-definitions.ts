@@ -6,6 +6,20 @@
 // Each tool definition maps to a case in executeTool().
 
 export const aegisToolDefinitions = [
+  // ── Travel ────────────────────────────────────────────────────────────────
+  {
+    type: "function",
+    function: {
+      name: "get_travel_status",
+      description: `Get travel status for the CURRENT client: travellers (with status/location), air itineraries, ground journeys (with check-in status), active travel alerts, and any overdue journey check-ins. Use whenever the user asks who is travelling, the status/location of a traveller, journeys, overdue check-ins, or travel risk for the client. Any user in the client may ask about any traveller in that client. Scope is the current client only.`,
+      parameters: {
+        type: "object",
+        properties: {
+          traveler_name: { type: "string", description: "Optional: filter to a specific traveller by name (partial match)." },
+        },
+      },
+    },
+  },
   // ── Codebase audit tools ──────────────────────────────────────────────────
   {
     type: "function",

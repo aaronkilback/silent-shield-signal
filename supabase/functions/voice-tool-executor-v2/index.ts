@@ -177,6 +177,37 @@ Deno.serve(async (req) => {
         result = { overall_threat_level: lvl, threat_score: score, signal_breakdown: sev, top_categories: Object.entries(cb).sort(([, a], [, b]) => b - a).slice(0, 5).map(([category, count]) => ({ category, count })), analysis_period: `${lookbackDays} days`, generated_at: new Date().toISOString() };
         break;
       }
+      case "get_travel_status": {
+        // L1C: travel scoped to the validated client (scope.clientId); any user in
+        // the client may ask about any traveller in that client. Fail closed.
+        if (!scope) { result = SCOPE_MISSING; break; }
+        const nameFilter = String(toolArgs.traveler_name ?? "").trim();
+        let tq = supabase.from("travelers")
+          .select("id, name, status, current_location, current_country")
+          .eq("client_id", scope.clientId).order("name");
+        if (nameFilter) tq = tq.ilike("name", `%${nameFilter}%`);
+        const { data: trav, error: te } = await tq;
+        assertOk("get_travel_status.travelers", te);
+        const { data: itins, error: ie } = await supabase.from("itineraries")
+          .select("id, trip_name, trip_type, status, risk_level, origin_city, destination_city, departure_date, journey_overdue, next_check_in_due_at, travelers:traveler_id(name)")
+          .eq("client_id", scope.clientId).order("departure_date", { ascending: false }).limit(50);
+        assertOk("get_travel_status.itineraries", ie);
+        const { data: tAlerts, error: ae } = await supabase.from("travel_alerts")
+          .select("title, severity, alert_type, location, created_at, travelers:traveler_id!inner(name, client_id)")
+          .eq("travelers.client_id", scope.clientId).eq("is_active", true)
+          .order("created_at", { ascending: false }).limit(20);
+        assertOk("get_travel_status.alerts", ae);
+        const tnow = Date.now();
+        const tOverdue = (itins || []).filter((i: any) => i.trip_type === "ground" && (i.journey_overdue || (i.next_check_in_due_at && new Date(i.next_check_in_due_at).getTime() < tnow)));
+        result = {
+          travelers: (trav || []).map((t: any) => ({ name: t.name, status: t.status, location: t.current_location, country: t.current_country })),
+          journeys: (itins || []).map((i: any) => ({ name: i.trip_name, type: i.trip_type, lead: i.travelers?.name, status: i.status, risk: i.risk_level, from: i.origin_city, to: i.destination_city, overdue: !!i.journey_overdue })),
+          active_alerts: (tAlerts || []).map((a: any) => ({ title: a.title, severity: a.severity, type: a.alert_type, location: a.location, traveler: a.travelers?.name })),
+          overdue_checkins: tOverdue.map((i: any) => ({ journey: i.trip_name, lead: i.travelers?.name, due: i.next_check_in_due_at })),
+          summary: `${trav?.length || 0} travellers, ${itins?.length || 0} journeys, ${tAlerts?.length || 0} active alerts, ${tOverdue.length} overdue check-ins`,
+        };
+        break;
+      }
       case "query_fortress_data": {
         if (!scope) { result = SCOPE_MISSING; break; }
         const limit = Number(toolArgs.limit ?? 20);

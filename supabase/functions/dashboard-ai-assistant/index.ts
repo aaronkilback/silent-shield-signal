@@ -258,6 +258,7 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   // Already individually hardened with inline tenant filters
   "query_fortress_data",
   "analyze_threat_radar",
+  "get_travel_status",
   "generate_fortress_report",
   "generate_poi_report",
   // Phase-C swept tools — fail-closed at executeTool entry; tool body queries
@@ -504,6 +505,42 @@ async function executeTool(
   // 2. Legacy switch for remaining handlers (will be migrated incrementally)
   try {
     switch (toolName) {
+
+    // ── Travel (L1C: scope = authoritative selected client, forced by the
+    //    dispatch into args.client_id; model args cannot widen it) ────────────
+    case "get_travel_status": {
+      assertTenantContext("get_travel_status", tenantId);
+      const gtsClientId = (args as Record<string, unknown>)?.client_id as string | undefined;
+      if (!gtsClientId) {
+        return { error: "Select a client before asking about travel." };
+      }
+      const gtsScoped = await getScopedClientIds(supabaseClient, tenantId);
+      if (!gtsScoped.includes(gtsClientId)) {
+        return { error: `TENANT_BOUNDARY: client is not in tenant ${tenantName}.` };
+      }
+      const gtsName = String((args as Record<string, unknown>)?.traveler_name ?? "").trim();
+      let gtsTq = supabaseClient.from("travelers")
+        .select("id, name, status, current_location, current_country")
+        .eq("client_id", gtsClientId).order("name");
+      if (gtsName) gtsTq = gtsTq.ilike("name", `%${gtsName}%`);
+      const { data: gtsTrav } = await gtsTq;
+      const { data: gtsItins } = await supabaseClient.from("itineraries")
+        .select("id, trip_name, trip_type, status, risk_level, origin_city, destination_city, departure_date, journey_overdue, next_check_in_due_at, travelers:traveler_id(name)")
+        .eq("client_id", gtsClientId).order("departure_date", { ascending: false }).limit(50);
+      const { data: gtsAlerts } = await supabaseClient.from("travel_alerts")
+        .select("title, severity, alert_type, location, created_at, travelers:traveler_id!inner(name, client_id)")
+        .eq("travelers.client_id", gtsClientId).eq("is_active", true)
+        .order("created_at", { ascending: false }).limit(20);
+      const gtsNow = Date.now();
+      const gtsOverdue = (gtsItins || []).filter((i: any) => i.trip_type === "ground" && (i.journey_overdue || (i.next_check_in_due_at && new Date(i.next_check_in_due_at).getTime() < gtsNow)));
+      return {
+        travelers: (gtsTrav || []).map((t: any) => ({ name: t.name, status: t.status, location: t.current_location, country: t.current_country })),
+        journeys: (gtsItins || []).map((i: any) => ({ name: i.trip_name, type: i.trip_type, lead: i.travelers?.name, status: i.status, risk: i.risk_level, from: i.origin_city, to: i.destination_city, overdue: !!i.journey_overdue })),
+        active_alerts: (gtsAlerts || []).map((a: any) => ({ title: a.title, severity: a.severity, type: a.alert_type, location: a.location, traveler: a.travelers?.name })),
+        overdue_checkins: gtsOverdue.map((i: any) => ({ journey: i.trip_name, lead: i.travelers?.name, due: i.next_check_in_due_at })),
+        counts: { travelers: gtsTrav?.length || 0, journeys: gtsItins?.length || 0, active_alerts: gtsAlerts?.length || 0, overdue: gtsOverdue.length },
+      };
+    }
 
     // ── Codebase audit ──────────────────────────────────────────────────────
 
@@ -10155,7 +10192,7 @@ Deno.serve(async (req) => {
     // or invalid, preserving behavior for unchanged callers.
     // PROD-BB (2026-05-24) — debug_trace_id threaded for instrumentation-first
     // diagnosis. Slated for removal once diagnosis closes.
-    const { messages, tenant_id: requestedTenantId, debug_trace_id: debugTraceId } = body;
+    const { messages, tenant_id: requestedTenantId, client_id: requestedClientId, debug_trace_id: debugTraceId } = body;
     console.log('[PROD-AA-DEBUG/req]', JSON.stringify({
       debug_trace_id: debugTraceId ?? null,
       requestedTenantId: requestedTenantId ?? null,
@@ -11341,6 +11378,11 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               argsPreview: JSON.stringify(args).slice(0, 300),
               userTenantId: userTenantId ?? null,
             }));
+            // L1C: the travel tool's scope is the AUTHORITATIVE selected client
+            // (request body client_id), never model-supplied args.
+            if (toolCall.function.name === 'get_travel_status') {
+              (args as Record<string, unknown>).client_id = requestedClientId ?? null;
+            }
             const result = await executeTool(toolCall.function.name, args, supabaseClient, authenticatedUserId, userTenantId, userTenantName);
             const _resultStr = typeof result === 'string' ? result : JSON.stringify(result);
             console.log('[PROD-AA-DEBUG/tool_result]', JSON.stringify({
