@@ -6,6 +6,7 @@ import { FORTRESS_DATA_INFRASTRUCTURE, FORTRESS_AGENT_CAPABILITIES } from "../_s
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
 import { startTrace, type Recorder } from "../_shared/flight-recorder.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
+import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 import {
   getReliabilityFirstPrompt,
   getReliabilitySettings,
@@ -413,6 +414,56 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // ── GENERIC TOOL PATH CLEARANCE — Wave 1 caller→scope gate ──────────────────
+    // agent-chat reads operational data via a SERVICE-ROLE client (bypasses RLS) and
+    // runs under verify_jwt=false, so the gateway does NOT authenticate the caller —
+    // this function must establish the caller and bind scope itself. Mirrors
+    // threat-radar-analysis:
+    //   unauthorized → reject (no operational data)
+    //   user         → requested client_id MUST be in getAccessibleClientIds (or the
+    //                  caller is super_admin); a mismatch is rejected (403)
+    //   service_role → trusted internal caller (cron / inter-fn), still bound to the
+    //                  explicit client_id passed in the body.
+    // `authoritativeClientId` is the ONLY scope key for operational reads; when null,
+    // operational reads FAIL CLOSED (no global / tenant-wide read). Model/tool args
+    // are never consulted for scope here and cannot widen it.
+    const _caller = await getCallerIdentity(req);
+    if (_caller.kind === 'unauthorized') {
+      return new Response(
+        JSON.stringify({ error: _caller.error }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: _caller.status }
+      );
+    }
+    let authoritativeClientId: string | null = null;
+    if (_caller.kind === 'user') {
+      if (client_id) {
+        const _accessible = await getAccessibleClientIds(supabase, _caller.userId);
+        let _allowed = _accessible.includes(client_id);
+        if (!_allowed) {
+          const { data: _sa } = await supabase
+            .from('user_roles').select('role')
+            .eq('user_id', _caller.userId).eq('role', 'super_admin').maybeSingle();
+          _allowed = !!_sa;
+        }
+        if (!_allowed) {
+          return new Response(
+            JSON.stringify({ error: 'CLIENT_NOT_AUTHORIZED: caller cannot access the requested client_id' }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
+          );
+        }
+        authoritativeClientId = client_id;
+      }
+      // No client_id supplied → authoritativeClientId stays null → operational reads fail closed.
+    } else {
+      // _caller.kind === 'service_role' → trusted internal caller; bind to the explicit client_id.
+      authoritativeClientId = client_id ?? null;
+    }
+    // Wave 1 fail-closed sentinel: any operational read scoped to SCOPE_OR_EMPTY
+    // returns ZERO rows when there is no authoritative client (impossible UUID) —
+    // no global/tenant-wide read, no client_id.is.null fallback. Used by the inline
+    // tool reads below that the model can invoke.
+    const SCOPE_OR_EMPTY = authoritativeClientId || '00000000-0000-0000-0000-000000000000';
+
     // Flight recorder (Slice 3b) — chain-of-custody for this agent chat.
     rec = startTrace(supabase, {
       debugTraceId: body.debug_trace_id ?? undefined,
@@ -508,13 +559,14 @@ Respond naturally and briefly.`
 
     // COP is fetched in the parallel block below — placeholder added after results resolve
     
-    if (agent.input_sources.includes('signals')) {
+    if (authoritativeClientId && agent.input_sources.includes('signals')) {
       const { data: signals } = await supabase
         .from('signals')
         .select('id, title, source_id, severity, created_at, rule_category, raw_json, source_url')
         // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
         // agent reasoning context. See src/lib/signal-query-filters.ts.
         .eq('quality_status', 'active')
+        .eq('client_id', authoritativeClientId) // Wave 1: scope to authoritative client; fail closed
         .order('created_at', { ascending: false })
         .limit(10);
       
@@ -529,11 +581,12 @@ Respond naturally and briefly.`
       }
     }
 
-    if (agent.input_sources.includes('incidents')) {
+    if (authoritativeClientId && agent.input_sources.includes('incidents')) {
       const { data: incidents } = await supabase
         .from('incidents')
         .select('title, priority, status, opened_at, incident_type')
         .is('deleted_at', null) // Exclude soft-deleted incidents
+        .eq('client_id', authoritativeClientId) // Wave 1: scope to authoritative client; fail closed
         .order('opened_at', { ascending: false })
         .limit(10);
       
@@ -545,18 +598,20 @@ Respond naturally and briefly.`
       }
     }
 
-    if (agent.input_sources.includes('entities')) {
+    if (authoritativeClientId && agent.input_sources.includes('entities')) {
       const [{ data: entities }, { data: watchedEntities }] = await Promise.all([
         supabase
           .from('entities')
           .select('name, type, risk_level, threat_score, quality_score, description, ai_assessment')
           .eq('is_active', true)
+          .eq('client_id', authoritativeClientId) // Wave 1: scope to authoritative client; fail closed
           .order('threat_score', { ascending: false, nullsFirst: false })
           .limit(20),
         supabase
           .from('entity_watch_list')
           .select('entity_name, watch_level, reason')
           .eq('is_active', true)
+          .eq('client_id', authoritativeClientId) // Wave 1: scope to authoritative client; fail closed
           .order('watch_level', { ascending: false })
           .limit(10),
       ]);
@@ -579,10 +634,11 @@ Respond naturally and briefly.`
       }
     }
 
-    if (agent.input_sources.includes('clients')) {
+    if (authoritativeClientId && agent.input_sources.includes('clients')) {
       const { data: clients } = await supabase
         .from('clients')
         .select('name, industry, status')
+        .eq('id', authoritativeClientId) // Wave 1: only the authoritative client, never the roster
         .limit(10);
       
       if (clients?.length) {
@@ -593,14 +649,15 @@ Respond naturally and briefly.`
       }
     }
 
-    // Include recent archival documents
-    const { data: archivalDocs } = await supabase
+    // Include recent archival documents (Wave 1: scoped to authoritative client; fail closed)
+    const { data: archivalDocs } = authoritativeClientId ? await supabase
       .from('archival_documents')
       .select('filename, summary, keywords')
       .not('content_text', 'is', null)
+      .eq('client_id', authoritativeClientId)
       .order('created_at', { ascending: false })
-      .limit(10);
-    
+      .limit(10) : { data: null };
+
     if (archivalDocs?.length) {
       contextData += `\n\nRecent Documents (${archivalDocs.length}):\n`;
       archivalDocs.forEach(doc => {
@@ -1796,7 +1853,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               severity: args.severity || 'medium',
               rule_category: args.rule_category || 'Uncategorized',
               status: 'new',
-              client_id: client_id || null,
+              client_id: authoritativeClientId, // Wave 1: bind writes to the authoritative client
             })
             .select('id, title')
             .single();
@@ -1838,7 +1895,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               description: args.description || null,
               aliases: args.aliases || [],
               risk_level: args.risk_level || 'medium',
-              client_id: client_id || null,
+              client_id: authoritativeClientId, // Wave 1: bind writes to the authoritative client
             })
             .select('id, name')
             .single();
@@ -1855,7 +1912,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               priority: args.priority || 'p3',
               incident_type: args.incident_type || 'general',
               status: 'open',
-              client_id: client_id || null,
+              client_id: authoritativeClientId, // Wave 1: bind writes to the authoritative client
               opened_at: new Date().toISOString(),
             })
             .select('id, title')
@@ -1865,52 +1922,66 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           toolResults.push({ tool: 'create_incident', result: { success: true, incident_id: incident?.id, title: incident?.title } });
           
         } else if (funcName === 'query_fortress_data') {
-          // Delegate to existing query functionality
+          // Wave 1 (Generic Tool Path Clearance): bind to the AUTHORITATIVE client
+          // (validated at entry); model/tool args cannot widen scope. Fail closed
+          // when no authoritative client is in context.
           let results: any[] = [];
-          const limit = args.limit || 20;
-          const daysBack = args.time_range_days || 30;
-          const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
-          
-          if (args.query_type === 'signals' || args.query_type === 'comprehensive') {
-            let query = supabase
-              .from('signals')
-              .select('id, title, severity, source_id, created_at, rule_category')
-              .gte('created_at', cutoffDate)
-              // PROD-S Track H1 (2026-05-23) — exclude quarantined signals
-              // from agent-chat reasoning. See src/lib/signal-query-filters.ts.
-              .eq('quality_status', 'active')
-              .order('created_at', { ascending: false })
-              .limit(limit);
-            if (args.severity_filter && args.severity_filter !== 'all') {
-              query = query.eq('severity', args.severity_filter);
+          if (!authoritativeClientId) {
+            toolResults.push({ tool: 'query_fortress_data', result: { success: false, fail_closed: true, error: 'Select a client before querying fortress data.' } });
+          } else {
+            const limit = args.limit || 20;
+            const daysBack = args.time_range_days || 30;
+            const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+
+            if (args.query_type === 'signals' || args.query_type === 'comprehensive') {
+              let query = supabase
+                .from('signals')
+                .select('id, title, severity, source_id, created_at, rule_category')
+                .gte('created_at', cutoffDate)
+                // PROD-S Track H1 (2026-05-23) — exclude quarantined signals
+                // from agent-chat reasoning. See src/lib/signal-query-filters.ts.
+                .eq('quality_status', 'active')
+                .eq('client_id', authoritativeClientId) // Wave 1: authoritative scope
+                .order('created_at', { ascending: false })
+                .limit(limit);
+              if (args.severity_filter && args.severity_filter !== 'all') {
+                query = query.eq('severity', args.severity_filter);
+              }
+              const { data, error } = await query;
+              if (error) {
+                console.warn('[query_fortress_data] signals query error:', error.message);
+                results = [];
+              } else {
+                results = data || [];
+              }
             }
-            const { data, error } = await query;
-            if (error) {
-              console.warn('[query_fortress_data] signals query error:', error.message);
-              results = [];
-            } else {
-              results = data || [];
-            }
+
+            toolResults.push({ tool: 'query_fortress_data', result: { success: true, count: results.length, data: results } });
           }
-          
-          toolResults.push({ tool: 'query_fortress_data', result: { success: true, count: results.length, data: results } });
           
         } else if (funcName === 'cross_reference_entities') {
+          // Wave 1 (Generic Tool Path Clearance): entity lookups are scoped to the
+          // AUTHORITATIVE client; fail closed without one. Model args cannot widen.
           const entityNames = args.entity_names || [];
           const matches: any[] = [];
-          
-          for (const name of entityNames) {
-            const { data: entities } = await supabase
-              .from('entities')
-              .select('id, name, type, risk_level, aliases')
-              .or(`name.ilike.%${name}%,aliases.cs.{${name}}`);
-            
-            if (entities?.length) {
-              matches.push({ searched: name, found: entities });
+
+          if (!authoritativeClientId) {
+            toolResults.push({ tool: 'cross_reference_entities', result: { success: false, fail_closed: true, error: 'Select a client before cross-referencing entities.' } });
+          } else {
+            for (const name of entityNames) {
+              const { data: entities } = await supabase
+                .from('entities')
+                .select('id, name, type, risk_level, aliases')
+                .eq('client_id', authoritativeClientId) // Wave 1: authoritative scope
+                .or(`name.ilike.%${name}%,aliases.cs.{${name}}`);
+
+              if (entities?.length) {
+                matches.push({ searched: name, found: entities });
+              }
             }
+
+            toolResults.push({ tool: 'cross_reference_entities', result: { success: true, matches } });
           }
-          
-          toolResults.push({ tool: 'cross_reference_entities', result: { success: true, matches } });
           
         } else if (funcName === 'trigger_osint_scan') {
           // Invoke the OSINT scan function
@@ -2057,11 +2128,9 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             .order('created_at', { ascending: false })
             .limit(50);
           
-          // If client_id is provided, filter signals for that client OR unassigned signals
-          if (client_id) {
-            // Use proper filter syntax: multiple eq/is filters combined with or
-            signalsQuery = signalsQuery.or(`client_id.eq.${client_id},client_id.is.null`);
-          }
+          // Wave 1: scope to the authoritative client ONLY; no client_id.is.null fallback.
+          // Fail closed (impossible-UUID sentinel) when no authoritative client is in context.
+          signalsQuery = signalsQuery.eq('client_id', SCOPE_OR_EMPTY);
           
           // Build incidents query with client_id filter (exclude soft-deleted)
           let incidentsQuery = supabase.from('incidents')
@@ -2071,16 +2140,15 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             .order('opened_at', { ascending: false })
             .limit(20);
           
-          if (client_id) {
-            incidentsQuery = incidentsQuery.or(`client_id.eq.${client_id},client_id.is.null`);
-          }
-          
+          incidentsQuery = incidentsQuery.eq('client_id', SCOPE_OR_EMPTY); // Wave 1: authoritative scope, fail closed
+
           // Fetch detailed data for the briefing
           const [signalsResult, incidentsResult, entitiesResult] = await Promise.all([
             signalsQuery,
             incidentsQuery,
             supabase.from('entities')
               .select('id, name, type, risk_level, threat_score, description, last_checked')
+              .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: authoritative scope, fail closed
               .order('threat_score', { ascending: false })
               .limit(15),
           ]);
@@ -2102,10 +2170,8 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             .order('opened_at', { ascending: false })
             .limit(10);
           
-          if (client_id) {
-            highPriorityQuery = highPriorityQuery.or(`client_id.eq.${client_id},client_id.is.null`);
-          }
-          
+          highPriorityQuery = highPriorityQuery.eq('client_id', SCOPE_OR_EMPTY); // Wave 1: authoritative scope, fail closed
+
           const { data: highPriorityIncidents } = await highPriorityQuery;
           
           // Build detailed briefing data
@@ -2342,36 +2408,23 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               .from('archival_documents')
               .select('id, filename, content_text, file_type, storage_path, updated_at')
               .eq('id', args.document_id)
+              .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: doc must belong to authoritative client; fail closed
               .maybeSingle();
             if (docA) rows = [docA];
-
-            if (!rows.length) {
-              const { data: docB } = await supabase
-                .from('ingested_documents')
-                .select('id, filename, content_text, file_type, storage_path, updated_at')
-                .eq('id', args.document_id)
-                .maybeSingle();
-              if (docB) rows = [docB];
-            }
+            // Wave 1: ingested_documents has NO client_id/tenant_id ownership column →
+            // cannot be client-scoped → fail closed (the cross-client fallback is removed).
+            // ingested_documents ownership classification is tracked as debt.
           } else if (args.filename) {
             const { data: docsA } = await supabase
               .from('archival_documents')
               .select('id, filename, content_text, file_type, storage_path, updated_at')
               .ilike('filename', `%${args.filename}%`)
+              .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: authoritative scope, fail closed
               .order('updated_at', { ascending: false })
               .limit(5);
 
             rows = docsA || [];
-
-            if (!rows.length) {
-              const { data: docsB } = await supabase
-                .from('ingested_documents')
-                .select('id, filename, content_text, file_type, storage_path, updated_at')
-                .ilike('filename', `%${args.filename}%`)
-                .order('updated_at', { ascending: false })
-                .limit(5);
-              rows = docsB || [];
-            }
+            // Wave 1: ingested_documents fallback removed (no ownership column → fail closed).
           } else {
             throw new Error('Either document_id or filename is required');
           }
@@ -2387,6 +2440,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
                 .from('archival_documents')
                 .select('id, filename, content_text, file_type, storage_path, updated_at')
                 .ilike('filename', `%${resolvedBest.filename}%`)
+                .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: authoritative scope, fail closed
                 .order('updated_at', { ascending: false })
                 .limit(5);
 
@@ -2811,6 +2865,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               .select('*')
               .eq('id', args.entity_id)
               .eq('type', 'person')
+              .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: entity must belong to authoritative client; fail closed
               .single();
             entity = data;
           } else if (args.entity_name) {
@@ -2818,6 +2873,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               .from('entities')
               .select('*')
               .eq('type', 'person')
+              .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: authoritative scope, fail closed
               .or(`name.ilike.%${args.entity_name}%,aliases.cs.{${args.entity_name}}`)
               .single();
             entity = data;
@@ -2848,6 +2904,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           const { data: travelerData } = await supabase
             .from('travelers')
             .select('*, itineraries(*)')
+            .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: authoritative scope, fail closed
             .or(`name.ilike.%${entity.name}%,email.ilike.%${entity.name}%`)
             .limit(1)
             .maybeSingle();
@@ -3019,30 +3076,15 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
         // ═══════════════════════════════════════════════════════════════════════════
         
         } else if (funcName === 'read_client_monitoring_config') {
-          // Read client monitoring configuration
+          // Read client monitoring configuration.
+          // Wave 1: ONLY the AUTHORITATIVE client is readable; model-supplied
+          // args.client_id / args.client_name cannot widen scope. Fail closed.
           let clientData = null;
-          
-          if (args.client_id) {
+          if (authoritativeClientId) {
             const { data } = await supabase
               .from('clients')
               .select('id, name, monitoring_keywords, competitor_names, supply_chain_entities, monitoring_config')
-              .eq('id', args.client_id)
-              .single();
-            clientData = data;
-          } else if (args.client_name) {
-            const { data } = await supabase
-              .from('clients')
-              .select('id, name, monitoring_keywords, competitor_names, supply_chain_entities, monitoring_config')
-              .ilike('name', `%${args.client_name}%`)
-              .limit(1)
-              .maybeSingle();
-            clientData = data;
-          } else if (client_id) {
-            // Use current session client
-            const { data } = await supabase
-              .from('clients')
-              .select('id, name, monitoring_keywords, competitor_names, supply_chain_entities, monitoring_config')
-              .eq('id', client_id)
+              .eq('id', authoritativeClientId)
               .single();
             clientData = data;
           }
@@ -3085,9 +3127,11 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           });
           
         } else if (funcName === 'update_client_monitoring_config') {
-          // Update client monitoring configuration
-          const targetClientId = args.client_id || client_id;
-          
+          // Update client monitoring configuration.
+          // Wave 1: bind to the AUTHORITATIVE client only; model-supplied args.client_id
+          // cannot redirect the write to another client. Fail closed when absent.
+          const targetClientId = authoritativeClientId;
+
           if (!targetClientId) {
             toolResults.push({ 
               tool: 'update_client_monitoring_config', 
@@ -3251,7 +3295,16 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           }
 
           try {
-            let resolvedIncidentId: string | null = dIncidentId || null;
+            // Wave 1: a model-supplied incident_id must belong to the AUTHORITATIVE
+            // client; otherwise drop it (fail closed) so the debate cannot run on
+            // another client's incident.
+            let resolvedIncidentId: string | null = null;
+            if (dIncidentId) {
+              const { data: _ownIncident } = await supabase
+                .from('incidents').select('id')
+                .eq('id', dIncidentId).eq('client_id', SCOPE_OR_EMPTY).maybeSingle();
+              resolvedIncidentId = _ownIncident?.id ?? null;
+            }
 
             // Three possible signal_id formats from operator chat:
             //   1. SIG-YYYY-NNNNNN — post-migration human-readable
@@ -3282,7 +3335,8 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               const sigQuery = supabase
                 .from('signals')
                 .select('id, title, severity, client_id, normalized_text, signal_number')
-                .eq('quality_status', 'active');
+                .eq('quality_status', 'active')
+                .eq('client_id', SCOPE_OR_EMPTY); // Wave 1: only the authoritative client's signals; fail closed
               let sig: any = null;
               if (isFullSignalNumber) {
                 const { data } = await sigQuery.eq('signal_number', trimmed.toUpperCase()).maybeSingle();
