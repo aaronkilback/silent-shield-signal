@@ -775,8 +775,12 @@ Respond naturally and briefly.`
           .gte('confidence', 0.60)
           .order('confidence', { ascending: false })
           .limit(15);
-        // Show global beliefs (client_id IS NULL) plus beliefs specific to this client
-        if (client_id) q = q.or(`client_id.is.null,client_id.eq.${client_id}`);
+        // Wave 1: scope agent beliefs to the AUTHORITATIVE client only. The prior
+        // `client_id.is.null` "global beliefs" fallback is removed — NULL-client beliefs
+        // have a documented tenant-contamination history (INC-LEARN-CONTAM) and are not an
+        // approved global path; with no client_id this previously returned ALL clients'
+        // beliefs. Fail closed via the SCOPE_OR_EMPTY sentinel.
+        q = q.eq('client_id', SCOPE_OR_EMPTY);
         return q;
       })(),
       supabase
@@ -808,6 +812,7 @@ Respond naturally and briefly.`
         .select('id, title, objective, deadline, reporting_cadence, progress_log, created_at')
         .eq('assigned_agent', agentCallSign)
         .eq('status', 'active')
+        .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: only the authoritative client's missions; fail closed
         .order('created_at', { ascending: false })
         .limit(5),
     ]);
