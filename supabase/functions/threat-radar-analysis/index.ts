@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 import { getAntiHallucinationPrompt, getCriticalDateContext, categorizeIncidentsByAge } from "../_shared/anti-hallucination.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
@@ -52,7 +52,23 @@ Deno.serve(async (req) => {
       return errorResponse(caller.error, caller.status);
     }
     if (caller.kind === 'user') {
-      const allowed = await userCanAccessClient(supabase, caller.userId, client_id);
+      // Authorize via the canonical accessible-client RPC (tenant_users membership
+      // is the authority), plus platform super_admin as an operator authorization
+      // source. NOTE: the prior userCanAccessClient helper authorized via a
+      // clients->tenant_users!inner PostgREST embed with NO backing FK, so it
+      // errored and failed closed to false for EVERY user-JWT caller (valid
+      // members included). This RPC path is the same join RLS uses on `clients`.
+      const accessibleClientIds = await getAccessibleClientIds(supabase, caller.userId);
+      let allowed = accessibleClientIds.includes(client_id);
+      if (!allowed) {
+        const { data: superAdminRow } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', caller.userId)
+          .eq('role', 'super_admin')
+          .maybeSingle();
+        allowed = !!superAdminRow;
+      }
       if (!allowed) {
         return errorResponse('CLIENT_NOT_AUTHORIZED: caller cannot access this client', 403);
       }
