@@ -405,6 +405,14 @@ Deno.serve(async (req) => {
 
     console.log('Agent chat request:', { agent_id, message_length: message?.length, client_id });
 
+    // Slice F P0-B: create the Supabase client BEFORE its first use (the flight
+    // recorder below). This declaration previously lived ~75 lines lower, so
+    // startTrace(supabase, …) referenced it in the temporal dead zone → runtime
+    // "Cannot access 'supabase' before initialization" (HTTP 500 on every call).
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
     // Flight recorder (Slice 3b) — chain-of-custody for this agent chat.
     rec = startTrace(supabase, {
       debugTraceId: body.debug_trace_id ?? undefined,
@@ -479,9 +487,7 @@ Respond naturally and briefly.`
       console.log("Fast acknowledgment response failed, falling back to normal processing");
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    // (supabase client is created earlier, before the flight recorder — see P0-B note)
 
     // Fetch the agent configuration
     const { data: agent, error: agentError } = await supabase
