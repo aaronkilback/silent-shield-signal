@@ -1,23 +1,22 @@
-// travel-record-mutate — Travel Editing slice, Phases 3 + 4.
+// travel-record-mutate — Travel Editing slice, Phases 3 + 4 + 5.
 //
 // Single scoped server-side mutation path for travel records. verify_jwt=false →
 // self-authenticates via getCallerIdentity. Service-role writes happen ONLY after
 // caller→scope→role→ownership checks pass; fail closed before any write.
 //
-// Phase 3 (manual): update/archive traveler+itinerary, update/remove itinerary_traveler,
-//   acknowledge travel_alert — committed immediately, source='manual'.
-// Phase 4 (Aegis propose→approve→commit):
-//   - propose_edit  : stage a PENDING travel_record_edits row (source='aegis_proposed').
-//                     NO operational change. May be invoked by an operator user JWT OR by
-//                     a service-role Aegis backend (which must supply actor_user_id whose
-//                     scope is validated). Proposing requires analyst/admin/super_admin.
-//   - approve_edit  : operator (user JWT, analyst/admin/super_admin) commits a pending
-//                     proposal — re-validates scope+ownership, CONFLICT-checks before_values
-//                     against the live record, applies the change, flips row to 'approved'.
-//   - reject_edit   : operator marks a pending proposal 'rejected' (+ rejection_reason).
-// Aegis can NEVER commit: service-role callers may ONLY propose; approve/reject are
-// operator-user-only. Model/body client_id cannot widen scope; archive = status (no hard
-// delete of travelers/itineraries); itinerary_scan_history is never touched.
+// Manual (operator user JWT, analyst/admin/super_admin; source='manual', committed):
+//   create_traveler, create_itinerary, create_itinerary_traveler,
+//   update_traveler, update_itinerary (incl. ground + validated traveler_id change),
+//   archive_traveler, archive_itinerary, update_itinerary_traveler,
+//   remove_itinerary_traveler, check_in, acknowledge_travel_alert.
+// Aegis (Phase 4): propose_edit (PENDING, no commit) / approve_edit / reject_edit.
+//   Service-role callers may ONLY propose (must supply scope-validated actor_user_id);
+//   approve/reject/manual are operator-user only → Aegis can never commit.
+//
+// Invariants: client_id is ALWAYS assigned server-side from selectedClientId (never
+// trusted from the model/body). Any traveler_id supplied (itinerary create/update,
+// journey assignment) is validated to belong to selectedClientId. Archive = status
+// (no hard delete of travelers/itineraries). itinerary_scan_history is never touched.
 
 import {
   createServiceClient,
@@ -41,17 +40,20 @@ const ITINERARY_FIELDS = new Set([
   "accommodation_details", "transportation_details", "meeting_schedule",
   "journey_plan", "notes", "risk_level", "monitoring_enabled",
   "status", "check_in_interval_minutes",
+  "traveler_id", // validated against selectedClientId before any write
 ]);
 const ITINERARY_TRAVELER_FIELDS = new Set(["role"]);
 
+// Ownership / system columns that may NEVER be set via `fields`. traveler_id is NOT here:
+// it is allowed for itineraries (validated) and via explicit journey-assignment params,
+// and remains blocked for travelers/itinerary_travelers (absent from their allow-lists).
 const FORBIDDEN_FIELDS = new Set([
   "id", "client_id", "tenant_id", "created_by", "created_at", "updated_at",
-  "user_id", "traveler_id", "itinerary_id",
+  "user_id", "itinerary_id",
 ]);
 
 const ARCHIVE_STATUS = "archived";
 
-// Action → table + mode + allow-list. Shared by manual commit, propose, and approve.
 const SPECS: Record<string, { table: string; mode: "update" | "archive" | "remove" | "ack"; allowed?: Set<string> }> = {
   update_traveler: { table: "travelers", mode: "update", allowed: TRAVELER_FIELDS },
   archive_traveler: { table: "travelers", mode: "archive" },
@@ -61,7 +63,7 @@ const SPECS: Record<string, { table: string; mode: "update" | "archive" | "remov
   remove_itinerary_traveler: { table: "itinerary_travelers", mode: "remove" },
   acknowledge_travel_alert: { table: "travel_alerts", mode: "ack" },
 };
-// Which actions Aegis may PROPOSE (no remove; no scan_history).
+const CREATE_ACTIONS = new Set(["create_traveler", "create_itinerary", "create_itinerary_traveler"]);
 const PROPOSABLE = new Set(["update_traveler", "update_itinerary", "archive_traveler", "archive_itinerary", "acknowledge_travel_alert"]);
 
 type Svc = ReturnType<typeof createServiceClient>;
@@ -96,7 +98,13 @@ async function rolesFor(svc: Svc, userId: string): Promise<Actor> {
 }
 function isOperator(a: Actor): boolean { return a.isSuperAdmin || a.roles.includes("admin") || a.roles.includes("analyst"); }
 
-// Load the target row and assert it is owned by selectedClientId.
+// A supplied traveler_id must belong to selectedClientId (blocks cross-client linkage).
+async function travelerInClient(svc: Svc, travelerId: unknown, selectedClientId: string): Promise<boolean> {
+  if (typeof travelerId !== "string" || !travelerId) return false;
+  const { data } = await svc.from("travelers").select("client_id").eq("id", travelerId).maybeSingle();
+  return !!data && data.client_id === selectedClientId;
+}
+
 async function loadOwned(svc: Svc, table: string, id: string, selectedClientId: string):
   Promise<{ ok: true; row: Record<string, unknown>; traveler_id: string | null; itinerary_id: string | null }
         | { ok: false; error: string; status: number }> {
@@ -125,7 +133,6 @@ async function loadOwned(svc: Svc, table: string, id: string, selectedClientId: 
   return { ok: true, row, traveler_id, itinerary_id };
 }
 
-// Compute before/after for a change (does not write).
 function computeChange(spec: { mode: string; allowed?: Set<string> }, row: Record<string, unknown>, fields: unknown):
   { ok: true; before: Record<string, unknown>; after: Record<string, unknown> } | { ok: false; error: string } {
   if (spec.mode === "update") {
@@ -140,10 +147,15 @@ function computeChange(spec: { mode: string; allowed?: Set<string> }, row: Recor
   return { ok: false, error: "unsupported mode" };
 }
 
-// Apply the change to the operational record (service-role; ownership re-enforced in WHERE).
 async function applyChange(svc: Svc, spec: { table: string; mode: string }, id: string, selectedClientId: string, after: Record<string, unknown>, approverId: string | null):
   Promise<{ ok: true } | { ok: false; error: string; status: number }> {
   const t = spec.table;
+  // Validate any traveler_id change against selectedClientId before writing.
+  if (t === "itineraries" && Object.prototype.hasOwnProperty.call(after, "traveler_id")) {
+    if (!(await travelerInClient(svc, after.traveler_id, selectedClientId))) {
+      return { ok: false, error: "CROSS_CLIENT_TRAVELER: traveler_id is not in selectedClientId", status: 403 };
+    }
+  }
   if (spec.mode === "remove") {
     const { data } = await svc.from(t).delete().eq("id", id).eq("client_id", selectedClientId).select().maybeSingle();
     return data ? { ok: true } : { ok: false, error: "OWNERSHIP_MISMATCH: 0 rows changed", status: 403 };
@@ -152,12 +164,30 @@ async function applyChange(svc: Svc, spec: { table: string; mode: string }, id: 
   if (spec.mode === "ack") {
     updateObj = { acknowledged: true, is_active: false, acknowledged_at: new Date().toISOString(), acknowledged_by: approverId };
   } else {
-    updateObj = after; // update (allow-listed) or archive ({status})
+    updateObj = after;
   }
   let q = svc.from(t).update(updateObj).eq("id", id);
   if (t !== "travel_alerts") q = q.eq("client_id", selectedClientId);
   const { data } = await q.select().maybeSingle();
   return data ? { ok: true } : { ok: false, error: "OWNERSHIP_MISMATCH: 0 rows changed", status: 403 };
+}
+
+async function writeAudit(svc: Svc, row: {
+  table_name: string; record_id: string; client_id: string;
+  traveler_id: string | null; itinerary_id: string | null;
+  actor_user_id: string | null; actor_role: string;
+  before: Record<string, unknown>; after: Record<string, unknown>;
+  summary: string; request_id: string | null;
+}): Promise<string | null> {
+  const { data } = await svc.from("travel_record_edits").insert({
+    table_name: row.table_name, record_id: row.record_id, client_id: row.client_id,
+    traveler_id: row.traveler_id, itinerary_id: row.itinerary_id,
+    actor_user_id: row.actor_user_id, actor_role: row.actor_role,
+    source: "manual", approval_status: "committed",
+    before_values: row.before, after_values: row.after,
+    change_summary: row.summary, request_id: row.request_id,
+  }).select("id").single();
+  return data?.id ?? null;
 }
 
 Deno.serve(async (req) => {
@@ -175,13 +205,11 @@ Deno.serve(async (req) => {
   const selectedClientId = typeof body.selectedClientId === "string" ? body.selectedClientId.trim() : "";
   const requestId = typeof body.request_id === "string" ? body.request_id : (req.headers.get("x-request-id") ?? null);
 
-  const MANUAL = new Set(Object.keys(SPECS));
-  const PHASE4 = new Set(["propose_edit", "approve_edit", "reject_edit"]);
-  if (!MANUAL.has(action) && !PHASE4.has(action)) return errorResponse(`unknown action '${action}'`, 400);
+  const KNOWN = new Set([...Object.keys(SPECS), ...CREATE_ACTIONS, "check_in", "propose_edit", "approve_edit", "reject_edit"]);
+  if (!KNOWN.has(action)) return errorResponse(`unknown action '${action}'`, 400);
   if (!selectedClientId) return errorResponse("CLIENT_CONTEXT_MISSING: selectedClientId is required", 400);
 
-  // ── Resolve the acting principal + role. Service-role may ONLY propose, and must
-  //    name the operator (actor_user_id) on whose behalf it proposes (scope validated). ──
+  // Acting principal. Service-role may ONLY propose (names a scope-validated operator).
   let actor: Actor;
   if (caller.kind === "service_role") {
     if (action !== "propose_edit") {
@@ -193,18 +221,68 @@ Deno.serve(async (req) => {
   } else {
     actor = await rolesFor(svc, caller.userId);
   }
-
-  // Operator role required for any travel mutation/proposal.
   if (!isOperator(actor)) return errorResponse("INSUFFICIENT_ROLE: operational travel edits require analyst/admin", 403);
-
-  // Scope: selectedClientId must be accessible to the acting principal (unless super_admin).
   if (!actor.isSuperAdmin) {
     const accessible = await getAccessibleClientIds(svc, actor.userId!);
     if (!accessible.includes(selectedClientId)) return errorResponse("CLIENT_NOT_AUTHORIZED: principal cannot access selectedClientId", 403);
   }
 
   try {
-    // ── Phase 4: approve / reject operate on a proposal_id ──
+    // ── Phase 5: CREATE actions (client_id assigned server-side) ──
+    if (action === "create_traveler") {
+      const san = sanitizeFields(body.fields, TRAVELER_FIELDS);
+      if (!san.ok) return errorResponse(san.error, 400);
+      const { data: created, error } = await svc.from("travelers")
+        .insert({ ...san.obj, client_id: selectedClientId, created_by: actor.userId }).select().single();
+      if (error || !created) return errorResponse("create_traveler failed: " + (error?.message ?? "unknown"), 400);
+      const auditId = await writeAudit(svc, { table_name: "travelers", record_id: created.id, client_id: selectedClientId, traveler_id: created.id, itinerary_id: null, actor_user_id: actor.userId, actor_role: actor.actorRole, before: {}, after: san.obj, summary: "create_traveler", request_id: requestId });
+      return successResponse({ success: true, action, table_name: "travelers", record_id: created.id, audit_id: auditId, changed_fields: Object.keys(san.obj) });
+    }
+    if (action === "create_itinerary") {
+      const san = sanitizeFields(body.fields, ITINERARY_FIELDS);
+      if (!san.ok) return errorResponse(san.error, 400);
+      if (Object.prototype.hasOwnProperty.call(san.obj, "traveler_id") && !(await travelerInClient(svc, san.obj.traveler_id, selectedClientId))) {
+        return errorResponse("CROSS_CLIENT_TRAVELER: traveler_id is not in selectedClientId", 403);
+      }
+      const { data: created, error } = await svc.from("itineraries")
+        .insert({ ...san.obj, client_id: selectedClientId, created_by: actor.userId }).select().single();
+      if (error || !created) return errorResponse("create_itinerary failed: " + (error?.message ?? "unknown"), 400);
+      const auditId = await writeAudit(svc, { table_name: "itineraries", record_id: created.id, client_id: selectedClientId, traveler_id: (san.obj.traveler_id as string) ?? null, itinerary_id: created.id, actor_user_id: actor.userId, actor_role: actor.actorRole, before: {}, after: san.obj, summary: "create_itinerary", request_id: requestId });
+      return successResponse({ success: true, action, table_name: "itineraries", record_id: created.id, audit_id: auditId, changed_fields: Object.keys(san.obj) });
+    }
+    if (action === "create_itinerary_traveler") {
+      const itineraryId = typeof body.itinerary_id === "string" ? body.itinerary_id.trim() : "";
+      const travelerId = typeof body.traveler_id === "string" ? body.traveler_id.trim() : "";
+      const role = typeof body.role === "string" && body.role ? body.role : "passenger";
+      if (!itineraryId || !travelerId) return errorResponse("itinerary_id and traveler_id are required", 400);
+      const itin = await loadOwned(svc, "itineraries", itineraryId, selectedClientId);
+      if (!itin.ok) return errorResponse(itin.error, itin.status);
+      if (!(await travelerInClient(svc, travelerId, selectedClientId))) return errorResponse("CROSS_CLIENT_TRAVELER: traveler_id is not in selectedClientId", 403);
+      const { data: created, error } = await svc.from("itinerary_travelers")
+        .insert({ itinerary_id: itineraryId, traveler_id: travelerId, role, client_id: selectedClientId }).select().single();
+      if (error || !created) return errorResponse("create_itinerary_traveler failed: " + (error?.message ?? "unknown"), 400);
+      const auditId = await writeAudit(svc, { table_name: "itinerary_travelers", record_id: created.id, client_id: selectedClientId, traveler_id: travelerId, itinerary_id: itineraryId, actor_user_id: actor.userId, actor_role: actor.actorRole, before: {}, after: { itinerary_id: itineraryId, traveler_id: travelerId, role }, summary: "create_itinerary_traveler", request_id: requestId });
+      return successResponse({ success: true, action, table_name: "itinerary_travelers", record_id: created.id, audit_id: auditId, changed_fields: ["itinerary_id", "traveler_id", "role"] });
+    }
+
+    // ── Phase 5: check_in (server-computed; no arbitrary system-field writes) ──
+    if (action === "check_in") {
+      const id = typeof body.id === "string" ? body.id.trim() : "";
+      if (!id) return errorResponse("RECORD_ID_MISSING: id is required", 400);
+      const owned = await loadOwned(svc, "itineraries", id, selectedClientId);
+      if (!owned.ok) return errorResponse(owned.error, owned.status);
+      const interval = Number((owned.row as Record<string, unknown>).check_in_interval_minutes) || 60;
+      const now = new Date();
+      const next = new Date(now.getTime() + interval * 60000).toISOString();
+      const before = pick(owned.row as Record<string, unknown>, ["last_check_in_at", "next_check_in_due_at", "journey_overdue"]);
+      const after = { last_check_in_at: now.toISOString(), next_check_in_due_at: next, journey_overdue: false };
+      const { data: updated } = await svc.from("itineraries").update(after).eq("id", id).eq("client_id", selectedClientId).select().maybeSingle();
+      if (!updated) return errorResponse("OWNERSHIP_MISMATCH: 0 rows changed", 403);
+      const auditId = await writeAudit(svc, { table_name: "itineraries", record_id: id, client_id: selectedClientId, traveler_id: (owned.row as Record<string, unknown>).traveler_id as string ?? null, itinerary_id: id, actor_user_id: actor.userId, actor_role: actor.actorRole, before, after, summary: "check_in", request_id: requestId });
+      return successResponse({ success: true, action, table_name: "itineraries", record_id: id, audit_id: auditId, changed_fields: Object.keys(after) });
+    }
+
+    // ── Phase 4: approve / reject ──
     if (action === "approve_edit" || action === "reject_edit") {
       const proposalId = typeof body.proposal_id === "string" ? body.proposal_id.trim() : "";
       if (!proposalId) return errorResponse("PROPOSAL_ID_MISSING: proposal_id is required", 400);
@@ -221,12 +299,7 @@ Deno.serve(async (req) => {
         await svc.from("travel_record_edits").update({ approval_status: "rejected", rejection_reason: reason, approved_by: actor.userId, approved_at: new Date().toISOString() }).eq("id", proposalId);
         return successResponse({ success: true, action: "reject_edit", proposal_id: proposalId, approval_status: "rejected", record_id: prop.record_id });
       }
-
-      // approve_edit — re-validate ownership of the live record, conflict-check, commit.
-      const targetAction = typeof prop.change_summary === "string" ? "" : ""; // (proposal stores table_name + record_id)
-      void targetAction;
       const spec = Object.values(SPECS).find((s) => s.table === prop.table_name && (
-        // pick the mode that matches the proposal's after_values shape
         (s.mode === "archive" && (prop.after_values?.status === ARCHIVE_STATUS)) ||
         (s.mode === "ack" && (prop.after_values?.acknowledged === true)) ||
         (s.mode === "update" && !(prop.after_values?.status === ARCHIVE_STATUS) && !(prop.after_values?.acknowledged === true))
@@ -234,7 +307,6 @@ Deno.serve(async (req) => {
       if (!spec) return errorResponse("proposal shape not recognized", 422);
       const owned = await loadOwned(svc, prop.table_name, prop.record_id, selectedClientId);
       if (!owned.ok) return errorResponse(owned.error, owned.status);
-      // CONFLICT: live record's current values must still match the proposal's before_values.
       const beforeKeys = Object.keys(prop.before_values ?? {});
       const conflict = beforeKeys.some((k) => !eq((owned.row as Record<string, unknown>)[k], (prop.before_values as Record<string, unknown>)[k]));
       if (conflict) {
@@ -245,8 +317,7 @@ Deno.serve(async (req) => {
       const applied = await applyChange(svc, spec, prop.record_id, selectedClientId, prop.after_values as Record<string, unknown>, actor.userId);
       if (!applied.ok) return errorResponse(applied.error, applied.status);
       await svc.from("travel_record_edits").update({ approval_status: "approved", approved_by: actor.userId, approved_at: new Date().toISOString() }).eq("id", proposalId);
-      return successResponse({ success: true, action: "approve_edit", proposal_id: proposalId, approval_status: "approved",
-        table_name: prop.table_name, record_id: prop.record_id });
+      return successResponse({ success: true, action: "approve_edit", proposal_id: proposalId, approval_status: "approved", table_name: prop.table_name, record_id: prop.record_id });
     }
 
     // ── Phase 4: propose_edit (stage pending; NO operational change) ──
@@ -260,6 +331,9 @@ Deno.serve(async (req) => {
       if (!owned.ok) return errorResponse(owned.error, owned.status);
       const change = computeChange(spec, owned.row, body.fields);
       if (!change.ok) return errorResponse(change.error, 400);
+      if (spec.table === "itineraries" && Object.prototype.hasOwnProperty.call(change.after, "traveler_id") && !(await travelerInClient(svc, change.after.traveler_id, selectedClientId))) {
+        return errorResponse("CROSS_CLIENT_TRAVELER: traveler_id is not in selectedClientId", 403);
+      }
       const { data: inserted, error: insErr } = await svc.from("travel_record_edits").insert({
         table_name: spec.table, record_id: id, client_id: selectedClientId,
         traveler_id: owned.traveler_id, itinerary_id: owned.itinerary_id,
@@ -271,13 +345,11 @@ Deno.serve(async (req) => {
       }).select("id").single();
       if (insErr) { console.error("[travel-record-mutate] propose insert failed:", insErr); return errorResponse("failed to stage proposal", 500); }
       return successResponse({ success: true, action: "propose_edit", proposal_id: inserted?.id,
-        target_action: targetAction, table_name: spec.table, record_id: id,
-        before: change.before, after: change.after, approval_status: "pending",
-        approve: { action: "approve_edit", proposal_id: inserted?.id },
-        reject: { action: "reject_edit", proposal_id: inserted?.id } });
+        target_action: targetAction, table_name: spec.table, record_id: id, before: change.before, after: change.after,
+        approval_status: "pending", approve: { action: "approve_edit", proposal_id: inserted?.id }, reject: { action: "reject_edit", proposal_id: inserted?.id } });
     }
 
-    // ── Phase 3: manual immediate commit ──
+    // ── Phase 3: manual immediate commit (update/archive/ack/remove) ──
     const spec = SPECS[action];
     const id = typeof body.id === "string" ? body.id.trim() : "";
     if (!id) return errorResponse("RECORD_ID_MISSING: id is required", 400);
@@ -287,16 +359,8 @@ Deno.serve(async (req) => {
     if (!change.ok) return errorResponse(change.error, 400);
     const applied = await applyChange(svc, spec, id, selectedClientId, change.after, actor.userId);
     if (!applied.ok) return errorResponse(applied.error, applied.status);
-    const { data: auditRow } = await svc.from("travel_record_edits").insert({
-      table_name: spec.table, record_id: id, client_id: selectedClientId,
-      traveler_id: owned.traveler_id, itinerary_id: owned.itinerary_id,
-      actor_user_id: actor.userId, actor_role: actor.actorRole,
-      source: "manual", approval_status: "committed",
-      before_values: change.before, after_values: change.after,
-      change_summary: `${action}: ${Object.keys(change.after).join(", ")}`, request_id: requestId,
-    }).select("id").single();
-    return successResponse({ success: true, action, table_name: spec.table, record_id: id,
-      audit_id: auditRow?.id ?? null, changed_fields: Object.keys(change.after) });
+    const auditId = await writeAudit(svc, { table_name: spec.table, record_id: id, client_id: selectedClientId, traveler_id: owned.traveler_id, itinerary_id: owned.itinerary_id, actor_user_id: actor.userId, actor_role: actor.actorRole, before: change.before, after: change.after, summary: `${action}: ${Object.keys(change.after).join(", ")}`, request_id: requestId });
+    return successResponse({ success: true, action, table_name: spec.table, record_id: id, audit_id: auditId, changed_fields: Object.keys(change.after) });
   } catch (err) {
     console.error("[travel-record-mutate] error:", err);
     return errorResponse("internal error processing mutation", 500);
