@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 interface Props { open: boolean; onOpenChange: (o: boolean) => void; }
 
@@ -55,35 +56,41 @@ export function CreateJourneyDialog({ open, onOpenChange }: Props) {
         ? new Date(new Date(departure).getTime() + interval * 60 * 1000).toISOString()
         : null;
 
-      const { data: itin, error } = await supabase.from("itineraries").insert({
-        client_id: selectedClientId,
-        traveler_id: lead,
-        trip_name: form.get("trip_name") as string,
-        trip_type: "ground",
-        departure_date: departure,
-        return_date: (form.get("return_date") as string) || departure,
-        origin_city: form.get("origin_city") as string,
-        origin_country: form.get("origin_country") as string,
-        destination_city: form.get("destination_city") as string,
-        destination_country: form.get("destination_country") as string,
-        status: "active",
-        monitoring_enabled: true,
-        risk_level: riskLevel,
-        journey_plan,
-        check_in_interval_minutes: interval,
-        next_check_in_due_at: next_due,
-      }).select("id").single();
-      if (error) throw error;
+      // Phase 5: create via the scoped, audited mutation function — client_id assigned
+      // server-side; lead traveler + each passenger validated to the selected client.
+      const itinRes = await travelMutate({
+        action: "create_itinerary",
+        selectedClientId,
+        fields: {
+          traveler_id: lead,
+          trip_name: form.get("trip_name") as string,
+          trip_type: "ground",
+          departure_date: departure,
+          return_date: (form.get("return_date") as string) || departure,
+          origin_city: form.get("origin_city") as string,
+          origin_country: form.get("origin_country") as string,
+          destination_city: form.get("destination_city") as string,
+          destination_country: form.get("destination_country") as string,
+          status: "active",
+          monitoring_enabled: true,
+          risk_level: riskLevel,
+          journey_plan,
+          check_in_interval_minutes: interval,
+          next_check_in_due_at: next_due,
+        },
+      });
+      const itineraryId = itinRes.record_id as string;
 
-      // Passenger party (L1C: stamp client_id). Lead first, rest as passengers.
-      const rows = selectedPassengers.map((tid, i) => ({
-        itinerary_id: itin.id,
-        traveler_id: tid,
-        role: i === 0 ? "lead" : "passenger",
-        client_id: selectedClientId,
-      }));
-      const { error: pErr } = await supabase.from("itinerary_travelers").insert(rows);
-      if (pErr) throw pErr;
+      // Passenger party. Lead first, rest as passengers — each created scoped + audited.
+      for (let i = 0; i < selectedPassengers.length; i++) {
+        await travelMutate({
+          action: "create_itinerary_traveler",
+          selectedClientId,
+          itinerary_id: itineraryId,
+          traveler_id: selectedPassengers[i],
+          role: i === 0 ? "lead" : "passenger",
+        });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ground-journeys", selectedClientId] });

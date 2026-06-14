@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 interface CreateTravelerDialogProps {
   open: boolean;
@@ -31,23 +32,23 @@ export function CreateTravelerDialog({ open, onOpenChange }: CreateTravelerDialo
       // P0-C: require a selected client — never create a NULL-client traveler
       // (it would be ownerless and surface tenant-wide).
       if (!selectedClientId) throw new Error("Select a client before creating a traveler.");
-      const { data: { user } } = await supabase.auth.getUser();
-
-      const { error } = await supabase.from("travelers").insert({
-        name: formData.get("name") as string,
-        email: formData.get("email") as string,
-        phone: formData.get("phone") as string,
-        passport_number: formData.get("passport_number") as string,
-        passport_expiry: formData.get("passport_expiry") as string || null,
-        emergency_contact_name: formData.get("emergency_contact_name") as string,
-        emergency_contact_phone: formData.get("emergency_contact_phone") as string,
-        notes: formData.get("notes") as string,
-        map_color: selectedColor,
-        created_by: user?.id,
-        client_id: selectedClientId,
+      // Phase 5: create via the scoped, audited mutation function — client_id assigned
+      // server-side from selectedClientId; created record is audited.
+      await travelMutate({
+        action: "create_traveler",
+        selectedClientId,
+        fields: {
+          name: formData.get("name") as string,
+          email: formData.get("email") as string,
+          phone: formData.get("phone") as string,
+          passport_number: formData.get("passport_number") as string,
+          passport_expiry: (formData.get("passport_expiry") as string) || null,
+          emergency_contact_name: formData.get("emergency_contact_name") as string,
+          emergency_contact_phone: formData.get("emergency_contact_phone") as string,
+          notes: formData.get("notes") as string,
+          map_color: selectedColor,
+        },
       });
-
-      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["travelers"] });

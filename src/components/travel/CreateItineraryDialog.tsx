@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Upload } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 interface CreateItineraryDialogProps {
   open: boolean;
@@ -50,7 +51,6 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
   const createMutation = useMutation({
     mutationFn: async (formData: FormData) => {
       if (!selectedClientId) throw new Error("Select a client before creating an itinerary.");
-      const { data: { user } } = await supabase.auth.getUser();
 
       let filePath = null;
       if (uploadedFile) {
@@ -69,27 +69,29 @@ export function CreateItineraryDialog({ open, onOpenChange }: CreateItineraryDia
         .map(f => f.trim())
         .filter(Boolean);
 
-      const { error } = await supabase.from("itineraries").insert({
-        traveler_id: selectedTraveler,
-        trip_name: formData.get("trip_name") as string,
-        trip_type: formData.get("trip_type") as string,
-        departure_date: formData.get("departure_date") as string,
-        return_date: formData.get("return_date") as string,
-        origin_city: formData.get("origin_city") as string,
-        origin_country: formData.get("origin_country") as string,
-        destination_city: formData.get("destination_city") as string,
-        destination_country: formData.get("destination_country") as string,
-        flight_numbers: flightNumbers,
-        hotel_name: formData.get("hotel_name") as string,
-        hotel_address: formData.get("hotel_address") as string,
-        notes: formData.get("notes") as string,
-        file_path: filePath,
-        monitoring_enabled: monitoringEnabled,
-        created_by: user?.id,
-        client_id: selectedClientId,
+      // Phase 5: create via the scoped, audited mutation function — client_id assigned
+      // server-side; traveler_id validated to the selected client; created record audited.
+      await travelMutate({
+        action: "create_itinerary",
+        selectedClientId,
+        fields: {
+          traveler_id: selectedTraveler,
+          trip_name: formData.get("trip_name") as string,
+          trip_type: formData.get("trip_type") as string,
+          departure_date: formData.get("departure_date") as string,
+          return_date: formData.get("return_date") as string,
+          origin_city: formData.get("origin_city") as string,
+          origin_country: formData.get("origin_country") as string,
+          destination_city: formData.get("destination_city") as string,
+          destination_country: formData.get("destination_country") as string,
+          flight_numbers: flightNumbers,
+          hotel_name: formData.get("hotel_name") as string,
+          hotel_address: formData.get("hotel_address") as string,
+          notes: formData.get("notes") as string,
+          file_path: filePath,
+          monitoring_enabled: monitoringEnabled,
+        },
       });
-
-      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["itineraries"] });

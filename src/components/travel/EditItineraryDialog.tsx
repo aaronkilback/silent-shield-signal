@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -85,18 +86,15 @@ export function EditItineraryDialog({
       toast.error("Select a client before editing.");
       return;
     }
-    const { error } = await supabase
-      .from("itineraries")
-      .update(updates)
-      .eq("id", itinerary.id)
-      .eq("client_id", selectedClientId);
-
-    setIsSubmitting(false);
-
-    if (error) {
-      toast.error("Failed to update itinerary: " + error.message);
+    try {
+      await travelMutate({ action: "update_itinerary", selectedClientId, id: itinerary.id, fields: updates });
+    } catch (e) {
+      setIsSubmitting(false);
+      toast.error("Failed to update itinerary: " + (e as Error).message);
       return;
     }
+
+    setIsSubmitting(false);
 
     toast.success("Itinerary updated successfully");
     queryClient.invalidateQueries({ queryKey: ["itineraries"] });

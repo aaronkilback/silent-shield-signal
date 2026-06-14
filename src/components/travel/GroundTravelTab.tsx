@@ -8,6 +8,7 @@ import { Car, MapPin, User, Users, ShieldAlert, Clock, CheckCircle2, Plus, Alert
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 import { CreateJourneyDialog } from "./CreateJourneyDialog";
 
 // Ground Travel / Journey Management. L1C: ground journeys (itineraries with
@@ -53,14 +54,9 @@ export function GroundTravelTab() {
   const checkInMutation = useMutation({
     mutationFn: async (j: any) => {
       if (!selectedClientId) throw new Error("Select a client first.");
-      const interval = j.check_in_interval_minutes ?? 60;
-      const next = new Date(Date.now() + interval * 60 * 1000).toISOString();
-      const { error } = await supabase
-        .from("itineraries")
-        .update({ last_check_in_at: new Date().toISOString(), next_check_in_due_at: next, journey_overdue: false })
-        .eq("id", j.id)
-        .eq("client_id", selectedClientId);
-      if (error) throw error;
+      // Phase 5: check-in via the scoped, audited mutation function (server computes
+      // next-due from the itinerary's interval; no arbitrary system-field writes).
+      await travelMutate({ action: "check_in", selectedClientId, id: j.id });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ground-journeys", selectedClientId] });
