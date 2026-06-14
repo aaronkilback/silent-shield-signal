@@ -448,6 +448,9 @@ verify_jwt = true
 [functions.query-internal-context]
 verify_jwt = false
 
+[functions.travel-record-mutate]
+verify_jwt = false
+
 [functions.query-legal-database]
 verify_jwt = false
 
