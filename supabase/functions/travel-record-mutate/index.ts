@@ -39,7 +39,7 @@ const ITINERARY_FIELDS = new Set([
   "flight_numbers", "hotel_name", "hotel_address",
   "accommodation_details", "transportation_details", "meeting_schedule",
   "journey_plan", "notes", "risk_level", "monitoring_enabled",
-  "status", "check_in_interval_minutes",
+  "status", "check_in_interval_minutes", "next_check_in_due_at", "file_path",
   "traveler_id", // validated against selectedClientId before any write
 ]);
 const ITINERARY_TRAVELER_FIELDS = new Set(["role"]);
