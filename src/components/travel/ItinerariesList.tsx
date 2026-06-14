@@ -14,6 +14,7 @@ import { EditItineraryDialog } from "./EditItineraryDialog";
 import { format, formatDistanceToNow, isPast, isFuture, isWithinInterval } from "date-fns";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -64,14 +65,16 @@ export function ItinerariesList() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      if (!selectedClientId) throw new Error("Select a client before deleting.");
-      const { error } = await supabase.from("itineraries").delete().eq("id", id).eq("client_id", selectedClientId);
-      if (error) throw error;
+      // Phase 5: archive (status change) via the scoped, audited mutation function —
+      // no direct hard delete. Ownership + audit enforced server-side.
+      if (!selectedClientId) throw new Error("Select a client before archiving.");
+      await travelMutate({ action: "archive_itinerary", selectedClientId, id });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["itineraries"] });
-      toast.success("Itinerary deleted");
+      toast.success("Itinerary archived");
     },
+    onError: (e: any) => toast.error(e?.message || "Failed to archive itinerary"),
   });
 
   const { data: itineraries, isLoading, refetch } = useQuery({
@@ -86,6 +89,7 @@ export function ItinerariesList() {
         `)
         .eq("client_id", selectedClientId)
         .neq("trip_type", "ground")
+        .neq("status", "archived")
         .order("departure_date", { ascending: true });
       if (error) throw error;
       return data;

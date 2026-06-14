@@ -8,6 +8,7 @@ import { AlertTriangle, CheckCircle, MapPin, Plane, Scan, TrendingUp, TrendingDo
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 export function TravelAlertsPanel() {
   const queryClient = useQueryClient();
@@ -86,24 +87,9 @@ export function TravelAlertsPanel() {
       // P0-C: bind to in-scope — verify the alert's traveler belongs to the
       // selected client before mutating (defends against a crafted id).
       if (!selectedClientId) throw new Error("Select a client first.");
-      const { data: inScope } = await supabase
-        .from("travel_alerts")
-        .select("id, travelers:traveler_id!inner(client_id)")
-        .eq("id", alertId)
-        .eq("travelers.client_id", selectedClientId)
-        .maybeSingle();
-      if (!inScope) throw new Error("Not authorized: alert is outside the selected client.");
-      const { data: { user } } = await supabase.auth.getUser();
-      const { error } = await supabase
-        .from("travel_alerts")
-        .update({
-          acknowledged: true,
-          is_active: false,
-          acknowledged_at: new Date().toISOString(),
-          acknowledged_by: user?.id,
-        })
-        .eq("id", alertId);
-      if (error) throw error;
+      // Phase 5: acknowledge via the scoped, audited mutation function. Ownership is
+      // derived (traveler/itinerary → client) and enforced server-side; audited.
+      await travelMutate({ action: "acknowledge_travel_alert", selectedClientId, id: alertId });
     },
     onMutate: async (alertId) => {
       // Optimistic update — immediately mark as acknowledged in cache

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 interface EditTravelerDialogProps {
   open: boolean;
@@ -63,18 +64,15 @@ export function EditTravelerDialog({
       toast.error("Select a client before editing.");
       return;
     }
-    const { error } = await supabase
-      .from("travelers")
-      .update(updates)
-      .eq("id", traveler.id)
-      .eq("client_id", selectedClientId);
-
-    setIsSubmitting(false);
-
-    if (error) {
-      toast.error("Failed to update traveler: " + error.message);
+    try {
+      await travelMutate({ action: "update_traveler", selectedClientId, id: traveler.id, fields: updates });
+    } catch (e) {
+      setIsSubmitting(false);
+      toast.error("Failed to update traveler: " + (e as Error).message);
       return;
     }
+
+    setIsSubmitting(false);
 
     toast.success("Traveler updated successfully");
     queryClient.invalidateQueries({ queryKey: ["travelers"] });

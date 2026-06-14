@@ -9,6 +9,7 @@ import { CreateTravelerDialog } from "./CreateTravelerDialog";
 import { EditTravelerDialog } from "./EditTravelerDialog";
 import { toast } from "sonner";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 export function TravelersList() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -34,6 +35,7 @@ export function TravelersList() {
         .from("travelers")
         .select("*")
         .eq("client_id", selectedClientId)
+        .neq("status", "archived")
         .order("name");
       if (error) {
         console.error('[Travelers] Error fetching:', error);
@@ -46,16 +48,16 @@ export function TravelersList() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      // P0-C: bind delete to the selected client — a row not owned by it
-      // matches 0 rows.
-      if (!selectedClientId) throw new Error("Select a client before deleting.");
-      const { error } = await supabase.from("travelers").delete().eq("id", id).eq("client_id", selectedClientId);
-      if (error) throw error;
+      // Phase 5: archive (status change) via the scoped, audited mutation function —
+      // no direct hard delete. Ownership + audit enforced server-side.
+      if (!selectedClientId) throw new Error("Select a client before archiving.");
+      await travelMutate({ action: "archive_traveler", selectedClientId, id });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["travelers"] });
-      toast.success("Traveler deleted");
+      toast.success("Traveler archived");
     },
+    onError: (e: any) => toast.error(e?.message || "Failed to archive traveler"),
   });
 
   const isActive = (status: string) => {

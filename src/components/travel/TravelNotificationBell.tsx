@@ -9,6 +9,7 @@ import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import { useCallback, useState, useEffect } from "react";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { travelMutate } from "@/lib/travel-mutate";
 
 /**
  * Compact travel alert bell for the global header.
@@ -81,19 +82,9 @@ export function TravelNotificationBell() {
 
   const acknowledgeAlert = useCallback(async (alertId: string) => {
     if (!selectedClientId) return;
-    // Bind to in-scope: verify the alert's traveler belongs to the selected
-    // client before mutating (defends against a crafted id).
-    const { data: inScope } = await supabase
-      .from("travel_alerts")
-      .select("id, travelers:traveler_id!inner(client_id)")
-      .eq("id", alertId)
-      .eq("travelers.client_id", selectedClientId)
-      .maybeSingle();
-    if (!inScope) return;
-    await supabase
-      .from("travel_alerts")
-      .update({ acknowledged: true, is_active: false })
-      .eq("id", alertId);
+    // Phase 5: acknowledge via the scoped, audited mutation function (ownership
+    // derived + enforced server-side). Fail-soft for the header bell.
+    try { await travelMutate({ action: "acknowledge_travel_alert", selectedClientId, id: alertId }); } catch { return; }
     queryClient.invalidateQueries({ queryKey: ["travel-alerts", selectedClientId] });
   }, [queryClient, selectedClientId]);
 
@@ -103,10 +94,10 @@ export function TravelNotificationBell() {
     // `alerts` is already client-scoped above, so these ids are in-scope.
     if (alerts.length > 0) {
       const ids = alerts.map((a: any) => a.id);
-      await supabase
-        .from("travel_alerts")
-        .update({ acknowledged: true, is_active: false })
-        .in("id", ids);
+      // Phase 5: acknowledge each via the scoped, audited mutation function.
+      await Promise.allSettled(
+        ids.map((id: string) => travelMutate({ action: "acknowledge_travel_alert", selectedClientId, id }))
+      );
       queryClient.invalidateQueries({ queryKey: ["travel-alerts", selectedClientId] });
     }
     // Dismiss risk changes locally
