@@ -1,3 +1,4 @@
+// CI restoration smoke marker 2026-06-15 — no functional change (changed-only deploy verify).
 /**
  * academy-build-training
  *
