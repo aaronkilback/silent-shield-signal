@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { ClientSelectionProvider } from "@/hooks/useClientSelection";
 import { TravellerRoute } from "@/components/traveller/TravellerRoute";
 import { useAuth } from "@/hooks/useAuth";
@@ -111,6 +111,31 @@ const PageLoader = () => (
   </div>
 );
 
+/**
+ * Operator surface layout. Carries the full tenant/client context plus every
+ * operator/agent widget. Mounted as a PATHLESS layout route so these providers
+ * and widgets attach ONLY to operator/public routes — never to the traveller
+ * surface (/my-travel), which is a sibling outside this layout. This is what
+ * keeps get-user-tenants, set_current_client, profiles/user_roles selects,
+ * agent_pending_messages, user_agent_preferences, and the support/Aegis chat
+ * bubble from initializing on the traveller-only portal.
+ */
+const OperatorLayout = () => (
+  <TenantProvider>
+    <ClientSelectionProvider>
+      <RealtimeNotifications />
+      <ProactiveAgentMessages />
+      <ContextualKnowledgeWidget />
+      <EnsureDefaultRole />
+      <CommandPalette />
+      <PasswordExpiryGuard />
+      <Outlet />
+      <SupportChatWidget />
+      <SuperAdminDebugPanel />
+    </ClientSelectionProvider>
+  </TenantProvider>
+);
+
 const App = () => {
   // QueryClient inside component tree — prevents cross-context state sharing
   const [queryClient] = useState(() => new QueryClient({
@@ -142,19 +167,22 @@ const App = () => {
           <Sonner />
           <BrowserRouter>
             <AuthProvider>
-              <TenantProvider>
-                <ClientSelectionProvider>
-                  <RealtimeNotifications />
-                  <ProactiveAgentMessages />
-                  <ContextualKnowledgeWidget />
-                  <EnsureDefaultRole />
-                  <CommandPalette />
-                  <PasswordExpiryGuard />
                   <Suspense fallback={<PageLoader />}>
                     <Routes>
-                      <Route path="/" element={<RootLanding />} />
+                      {/* Traveller-only surface — mounts under AuthProvider ONLY (session).
+                          Sibling of (NOT nested in) the operator layout, so no
+                          TenantProvider/ClientSelectionProvider or operator/agent widgets
+                          initialize here: no get-user-tenants, set_current_client,
+                          profiles/user_roles selects, agent_pending_messages,
+                          user_agent_preferences, or support/Aegis chat bubble. The only
+                          data call on this surface is the scoped get-my-travel function. */}
                       <Route path="/my-travel" element={<TravellerRoute><MyTravelPortal /></TravellerRoute>} />
                       <Route path="/my-travel/itinerary/:itineraryId" element={<TravellerRoute><MyItineraryDetail /></TravellerRoute>} />
+
+                      {/* Operator + public surface — full tenant/client context + widgets
+                          via the pathless OperatorLayout route. */}
+                      <Route element={<OperatorLayout />}>
+                      <Route path="/" element={<RootLanding />} />
                       <Route path="/auth" element={<Auth />} />
                       <Route path="/reset-password" element={<ResetPassword />} />
                       <Route path="/authorize/:token" element={<ClientAuthorization />} />
@@ -208,12 +236,9 @@ const App = () => {
                       <Route path="/credential/:id" element={<AcademyCredential />} />
                       {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                       <Route path="*" element={<NotFound />} />
+                      </Route>
                     </Routes>
                   </Suspense>
-                  <SupportChatWidget />
-                  <SuperAdminDebugPanel />
-                </ClientSelectionProvider>
-              </TenantProvider>
             </AuthProvider>
           </BrowserRouter>
         </TooltipProvider>
