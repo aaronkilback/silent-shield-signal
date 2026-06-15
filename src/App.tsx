@@ -4,8 +4,11 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ClientSelectionProvider } from "@/hooks/useClientSelection";
+import { TravellerRoute } from "@/components/traveller/TravellerRoute";
+import { useAuth } from "@/hooks/useAuth";
+import { useTenant } from "@/hooks/useTenant";
 import SupportChatWidget from "@/components/SupportChatWidget";
 import { RealtimeNotifications } from "@/components/RealtimeNotifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -36,6 +39,23 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
 
 // Lazy-loaded pages
 const Index = lazyWithRetry(() => import("./pages/Index"));
+const MyTravelPortal = lazyWithRetry(() => import("./pages/traveller/MyTravelPortal"));
+const MyItineraryDetail = lazyWithRetry(() => import("./pages/traveller/MyItineraryDetail"));
+
+// Root landing: route a no-tenant authenticated user (traveller/family — viewer role,
+// 0 tenant memberships, not super_admin) to the read-only traveller portal BEFORE the
+// operator onboarding/MFA/profile gates in ProtectedRoute. Operators (super_admin or
+// any tenant membership) get the normal operator home unchanged.
+function RootLanding() {
+  const { user, loading } = useAuth();
+  const { isLoading, isSuperAdmin, tenants } = useTenant();
+  if (loading || isLoading) {
+    return <div className="flex h-screen items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  }
+  if (!user) return <Navigate to="/auth" replace />;
+  if (!isSuperAdmin && (tenants?.length ?? 0) === 0) return <Navigate to="/my-travel" replace />;
+  return <ProtectedRoute><Index /></ProtectedRoute>;
+}
 const Auth = lazyWithRetry(() => import("./pages/Auth"));
 const Clients = lazyWithRetry(() => import("./pages/Clients"));
 const ClientDetail = lazyWithRetry(() => import("./pages/ClientDetail"));
@@ -132,7 +152,9 @@ const App = () => {
                   <PasswordExpiryGuard />
                   <Suspense fallback={<PageLoader />}>
                     <Routes>
-                      <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+                      <Route path="/" element={<RootLanding />} />
+                      <Route path="/my-travel" element={<TravellerRoute><MyTravelPortal /></TravellerRoute>} />
+                      <Route path="/my-travel/itinerary/:itineraryId" element={<TravellerRoute><MyItineraryDetail /></TravellerRoute>} />
                       <Route path="/auth" element={<Auth />} />
                       <Route path="/reset-password" element={<ResetPassword />} />
                       <Route path="/authorize/:token" element={<ClientAuthorization />} />
