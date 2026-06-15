@@ -223,8 +223,33 @@ OPERATIONAL HONESTY (CRITICAL — ZERO TOLERANCE):
 • FORTRESS monitors and analyzes — it does not dispatch responders or contact authorities.`;
 }
 
-// Tool definitions — single source of truth in _shared/aegis-tool-definitions.ts
-const tools = aegisToolDefinitions;
+// Tool definitions — base set in _shared/aegis-tool-definitions.ts. The Phase-5 Aegis
+// travel PROPOSAL tool is appended here (index.ts-only change; _shared untouched). Aegis
+// may only PROPOSE travel edits — mutation/approval is enforced server-side by the
+// travel-record-mutate edge function (service-role => propose_edit only; approve/reject/
+// commit/create/archive/update are operator-only there). No mutation logic lives here.
+const PROPOSE_TRAVEL_EDIT_TOOL = {
+  type: "function",
+  function: {
+    name: "propose_travel_edit",
+    description: `Propose a change to a travel record for the CURRENTLY SELECTED client — this does NOT apply the change. It creates a PENDING proposal that an operator must approve in the UI before anything changes. Use when the user asks you to correct/update/enrich a traveller or itinerary, recommend archiving one, or recommend acknowledging a travel alert. You can ONLY propose; you cannot approve, reject, commit, create, or directly edit travel records. If the target record or client is ambiguous, ask the user to clarify rather than guessing. Scope is the selected client only.`,
+    parameters: {
+      type: "object",
+      properties: {
+        target_action: {
+          type: "string",
+          enum: ["update_traveler", "update_itinerary", "archive_traveler", "archive_itinerary", "acknowledge_travel_alert"],
+          description: "Which kind of change to propose.",
+        },
+        record_id: { type: "string", description: "id of the traveler / itinerary / travel_alert to change. Must belong to the selected client." },
+        fields: { type: "object", description: "For update_* proposals: the proposed field changes (e.g. {notes, phone} for a traveller; {transportation_details, notes} for an itinerary). Omit for archive_* and acknowledge_travel_alert." },
+        change_summary: { type: "string", description: "Short human-readable summary of the proposed change, for the operator." },
+      },
+      required: ["target_action", "record_id"],
+    },
+  },
+};
+const tools = [...aegisToolDefinitions, PROPOSE_TRAVEL_EDIT_TOOL];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // P0 TENANT-BOUNDARY ENFORCEMENT (Bug 4/5b P0 — application-layer trust boundary)
@@ -259,6 +284,7 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   "query_fortress_data",
   "analyze_threat_radar",
   "get_travel_status",
+  "propose_travel_edit",
   "generate_fortress_report",
   "generate_poi_report",
   // Phase-C swept tools — fail-closed at executeTool entry; tool body queries
@@ -539,6 +565,56 @@ async function executeTool(
         active_alerts: (gtsAlerts || []).map((a: any) => ({ title: a.title, severity: a.severity, type: a.alert_type, location: a.location, traveler: a.travelers?.name })),
         overdue_checkins: gtsOverdue.map((i: any) => ({ journey: i.trip_name, lead: i.travelers?.name, due: i.next_check_in_due_at })),
         counts: { travelers: gtsTrav?.length || 0, journeys: gtsItins?.length || 0, active_alerts: gtsAlerts?.length || 0, overdue: gtsOverdue.length },
+      };
+    }
+
+    // ── Phase 5: Aegis travel-edit PROPOSAL (propose-only). Reuses the scoped
+    //    travel-record-mutate fn — NO mutation logic here. As a service-role caller
+    //    that fn restricts us to propose_edit (approve/reject/commit are operator-only),
+    //    validates the actor is an operator with access to the client, validates the
+    //    target row belongs to the client, and creates a PENDING travel_record_edits
+    //    row WITHOUT changing the operational record. Scope = authoritative selected
+    //    client (args.client_id, forced by the dispatch); model args cannot widen it. ──
+    case "propose_travel_edit": {
+      assertTenantContext("propose_travel_edit", tenantId);
+      const pteClientId = (args as Record<string, unknown>)?.client_id as string | undefined; // authoritative (dispatch-forced)
+      if (!pteClientId) return { error: "Select a client before proposing a travel edit." };
+      if (!userId) return { error: "An authenticated operator session is required to propose travel edits." };
+      const pteScoped = await getScopedClientIds(supabaseClient, tenantId);
+      if (!pteScoped.includes(pteClientId)) return { error: `TENANT_BOUNDARY: client is not in tenant ${tenantName}.` };
+      const pteTarget = String((args as Record<string, unknown>)?.target_action ?? "");
+      const pteRecordId = String((args as Record<string, unknown>)?.record_id ?? "").trim();
+      if (!pteRecordId) return { error: "record_id is required to propose a travel edit." };
+      const pteFields = (args as Record<string, unknown>)?.fields ?? undefined;
+      const { data: pteRes, error: pteErr } = await supabaseClient.functions.invoke("travel-record-mutate", {
+        body: {
+          action: "propose_edit",
+          target_action: pteTarget,
+          selectedClientId: pteClientId,   // authoritative; never model-supplied
+          actor_user_id: userId,           // operator on whose behalf Aegis proposes (scope re-validated server-side)
+          id: pteRecordId,
+          fields: pteFields,
+        },
+      });
+      if (pteErr) {
+        let msg = pteErr.message ?? "proposal refused";
+        try { const b = await (pteErr as any).context?.json?.(); if (b?.error) msg = b.error; } catch { /* keep msg */ }
+        return { error: `Proposal refused: ${msg}` };
+      }
+      if (pteRes && (pteRes as Record<string, unknown>).success === false) {
+        return { error: (pteRes as Record<string, unknown>).error || (pteRes as Record<string, unknown>).message || "Proposal refused." };
+      }
+      const pr = (pteRes ?? {}) as Record<string, unknown>;
+      return {
+        proposed: true,
+        proposal_id: pr.proposal_id,
+        target: pr.target_action,
+        table: pr.table_name,
+        record_id: pr.record_id,
+        before: pr.before,
+        after: pr.after,
+        approval_status: "pending",
+        note: "Created a PENDING proposal. An operator must approve it in the UI before any change is applied. I cannot approve, reject, or commit it.",
       };
     }
 
