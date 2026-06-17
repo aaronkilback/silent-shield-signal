@@ -5,6 +5,7 @@ import { Loader2, ArrowLeft, Clock } from "lucide-react";
 import { format } from "date-fns";
 import { useMyTravel } from "@/hooks/useMyTravel";
 import { MyAlerts } from "@/components/traveller/MyAlerts";
+import { TravellerJourneyStatus } from "@/components/traveller/TravellerJourneyStatus";
 
 /**
  * Traveller Portal v1 — My Itinerary Detail (screen 2). Read-only.
@@ -48,6 +49,7 @@ export default function MyItineraryDetail() {
                 </div>
               )}
             </Card>
+            <TravellerJourneyStatus itinerary={itin} />
             <section className="space-y-3">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Alerts for this trip</h2>
               <MyAlerts alerts={(data!.alerts ?? []).filter((a) => a.itinerary_id === itineraryId)} />

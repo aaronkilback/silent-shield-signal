@@ -83,10 +83,26 @@ Deno.serve(async (req) => {
   }
   const alerts = uniqById([...(alertsByTraveler ?? []), ...alertsByItin] as { id: string }[]);
 
+  // 6. v1.1 ADDITIVE: latest traveller-reported journey status per owned itinerary.
+  //    Safe fields only (event_type, timestamp, traveller-authored note). No operator data.
+  const journeyByItin: Record<string, { event_type: string; at: string; note: string | null }> = {};
+  if (ownedItinIds.length > 0) {
+    const { data: events } = await svc.from("traveller_journey_events")
+      .select("itinerary_id, event_type, note, created_at")
+      .in("itinerary_id", ownedItinIds)
+      .order("created_at", { ascending: false });
+    for (const e of (events ?? []) as { itinerary_id: string; event_type: string; note: string | null; created_at: string }[]) {
+      if (!journeyByItin[e.itinerary_id]) {
+        journeyByItin[e.itinerary_id] = { event_type: e.event_type, at: e.created_at, note: e.note ?? null };
+      }
+    }
+  }
+  const itinerariesOut = itineraries.map((i) => ({ ...i, journey_status: journeyByItin[(i as { id: string }).id] ?? null }));
+
   return successResponse({
     linked: true,
-    travelers,      // safe subset only
-    itineraries,    // safe subset only
-    alerts,         // safe subset only
+    travelers,                    // safe subset only
+    itineraries: itinerariesOut,  // safe subset only + derived journey_status
+    alerts,                       // safe subset only
   });
 });

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 // Traveller Portal v1 — the ONLY data call the portal makes. Invokes the scoped,
@@ -31,6 +31,8 @@ export interface MyItinerary {
   last_check_in_at: string | null;
   journey_overdue: boolean | null;
   hotel_name: string | null;
+  // v1.1 — latest traveller-reported Fortress journey status (safe derived fields only).
+  journey_status: { event_type: string; at: string; note: string | null } | null;
 }
 export interface MyAlert {
   id: string;
@@ -49,6 +51,39 @@ export interface MyTravel {
   travelers: MyTraveler[];
   itineraries: MyItinerary[];
   alerts: MyAlert[];
+}
+
+// v1.1 — Fortress safety/journey status (NOT airline check-in). Self-scoped write via the
+// traveller-journey-status edge function (boundary = travelers.user_id = auth.uid()).
+export type JourneyEventType = "safe" | "arrived" | "at_pickup" | "in_vehicle" | "need_assistance";
+
+export interface JourneyStatusResult {
+  success: boolean;
+  event_type: string;
+  current_journey_status: string;
+  checked_in: boolean;
+  last_check_in_at: string | null;
+  next_check_in_due_at: string | null;
+  journey_overdue: boolean | null;
+}
+
+export function useTravellerJourneyStatus() {
+  const qc = useQueryClient();
+  return useMutation<JourneyStatusResult, Error, {
+    itinerary_id: string;
+    event_type: JourneyEventType;
+    note?: string;
+    current_location?: string;
+    current_country?: string;
+  }>({
+    mutationFn: async (vars) => {
+      const { data, error } = await supabase.functions.invoke("traveller-journey-status", { body: vars });
+      if (error) throw error;
+      return data as JourneyStatusResult;
+    },
+    // Refresh the read model so the new journey_status / check-in times appear.
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["my-travel"] }); },
+  });
 }
 
 export function useMyTravel(itineraryId?: string) {

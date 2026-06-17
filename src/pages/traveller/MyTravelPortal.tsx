@@ -50,6 +50,11 @@ export default function MyTravelPortal() {
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     {i.status && <Badge variant="secondary">{i.status}</Badge>}
+                    {i.journey_status && (
+                      <span className="text-xs text-muted-foreground">
+                        {({ safe: "Safe", arrived: "Arrived", at_pickup: "At pickup", in_vehicle: "In the vehicle", need_assistance: "Assistance requested" } as Record<string, string>)[i.journey_status.event_type] ?? i.journey_status.event_type}
+                      </span>
+                    )}
                     {i.trip_type === "ground" && (
                       <span className={`text-xs flex items-center gap-1 ${overdue ? "text-destructive" : "text-muted-foreground"}`}>
                         <Clock className="h-3 w-3" />{overdue ? "Check-in overdue" : "Check-in ok"}
