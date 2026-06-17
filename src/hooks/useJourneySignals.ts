@@ -26,7 +26,10 @@ export function useJourneySignals() {
   return useQuery<JourneyEvent[]>({
     queryKey: ["journey-signals", selectedClientId],
     enabled: !!selectedClientId,
-    refetchInterval: 30000,
+    refetchInterval: 15000,           // poll ~15s so operator banner/signals self-update
+    refetchOnWindowFocus: true,       // override the global false: refresh when operator returns to the tab
+    refetchOnReconnect: true,
+    staleTime: 0,                     // override global 60s staleTime so focus/reconnect refetch actually fires
     queryFn: async () => {
       if (!selectedClientId) return [];
       const { data, error } = await supabase
