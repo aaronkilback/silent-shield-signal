@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
-import { useJourneySignals } from "@/hooks/useJourneySignals";
+import { useJourneySignals, latestPerItinerary } from "@/hooks/useJourneySignals";
 
 /**
  * Top-of-Travel-page banner (READ-ONLY) surfacing traveller need_assistance signals for the
@@ -12,7 +12,10 @@ const fmt = (d: string) => { try { return format(new Date(d), "MMM d, h:mm a"); 
 
 export function AssistanceRequestedBanner() {
   const { data: events } = useJourneySignals();
-  const assistance = (events ?? []).filter((e) => e.event_type === "need_assistance");
+  // Active assistance = the LATEST event for that itinerary is need_assistance. A later
+  // positive status (safe/arrived/at_pickup/in_vehicle) clears the active banner. History is
+  // preserved in the Signals timeline; events are never mutated.
+  const assistance = latestPerItinerary(events ?? []).filter((e) => e.event_type === "need_assistance");
   if (assistance.length === 0) return null;
 
   return (

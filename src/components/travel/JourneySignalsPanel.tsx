@@ -32,8 +32,16 @@ export function JourneySignalsPanel() {
     return <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
   const all = events ?? [];
-  const assistance = all.filter((e) => e.event_type === "need_assistance");
   const latest = latestPerItinerary(all);
+  // Active assistance = the LATEST event for that itinerary is need_assistance. A later
+  // positive status (safe/arrived/at_pickup/in_vehicle) clears the active state. History is
+  // preserved in the timeline below; events are never mutated.
+  const assistance = latest.filter((e) => e.event_type === "need_assistance");
+  // Itineraries that had a need_assistance but whose latest status is now positive.
+  const hadAssistance = new Set(all.filter((e) => e.event_type === "need_assistance").map((e) => e.itinerary_id));
+  const resolvedByTraveller = new Set(
+    latest.filter((e) => e.event_type !== "need_assistance" && e.itinerary_id && hadAssistance.has(e.itinerary_id)).map((e) => e.itinerary_id),
+  );
 
   return (
     <div className="space-y-6">
@@ -63,6 +71,9 @@ export function JourneySignalsPanel() {
                   <span><Clock className="inline h-3 w-3 mr-1" />Last check-in: {fmt(e.last_check_in_at)}</span>
                   <span>Next due: {e.next_check_in_due_at ? rel(e.next_check_in_due_at) : "—"}</span>
                 </div>
+                {e.itinerary_id && resolvedByTraveller.has(e.itinerary_id) && (
+                  <div className="text-xs text-muted-foreground italic">Assistance resolved by traveller status update.</div>
+                )}
               </div>
               <div className="flex flex-col items-end gap-1">
                 <Badge variant={STATUS_VARIANT[e.event_type] ?? "secondary"}>{STATUS_LABEL[e.event_type] ?? e.event_type}</Badge>
