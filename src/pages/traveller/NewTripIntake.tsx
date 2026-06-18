@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Loader2, Send, CheckCircle2, ClipboardPaste, Sparkles, Check, X, HelpCircle, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Loader2, Send, CheckCircle2, ClipboardPaste, Sparkles, Check, X, HelpCircle, AlertTriangle, Mic } from "lucide-react";
 import { AegisCore } from "@/components/traveller/AegisCore";
+import { TravellerVoiceCapture, isSpeechRecognitionSupported } from "@/components/traveller/TravellerVoiceCapture";
 import {
   useTravellerTripIntake,
   useTravellerParseItinerary,
@@ -61,6 +62,7 @@ export default function NewTripIntake() {
 
   // ── D3 paste-to-suggestions state (local until accepted) ──
   const [pasteText, setPasteText] = useState("");
+  const [autoListen, setAutoListen] = useState(false); // start mic immediately when entering via "Speak"
   const [sugSummary, setSugSummary] = useState({ trip_name: "", start_date: "", end_date: "", destination_summary: "" });
   const [sugCards, setSugCards] = useState<SugCard[]>([]);
   const [sugQ, setSugQ] = useState<string[]>([]);
@@ -131,11 +133,21 @@ export default function NewTripIntake() {
     else { say("aegis", "I couldn't submit that just now. Please try again."); setPhase("review"); }
   };
 
-  // ── D3: paste → Aegis reads it → local suggestion cards (nothing saved yet) ──
+  // ── D3: paste/speak → Aegis reads it → local suggestion cards (nothing saved yet) ──
   const startPaste = () => {
+    setAutoListen(false);
     say("aegis", "Paste whatever you have — an email, a rough plan, a list of cities. I'll read it and suggest the pieces. Nothing is saved until you confirm.");
     setPhase("paste");
   };
+  // D3b voice: enter the compose step with the mic already listening.
+  const startVoice = () => {
+    setAutoListen(true);
+    say("aegis", "Tell me about your trip. I'll write down what I hear so you can check it — nothing is saved until you confirm.");
+    setPhase("paste");
+  };
+  // Finalized speech chunks append to the SAME editable transcript the traveller can edit.
+  const appendVoiceChunk = (chunk: string) =>
+    setPasteText((prev) => ((prev ? prev + " " : "") + chunk).slice(0, 12 * 1024));
   const runParse = async () => {
     const text = pasteText.trim();
     if (text.length < 3) return;
@@ -246,7 +258,12 @@ export default function NewTripIntake() {
         <div className="max-w-2xl mx-auto px-4 py-3 space-y-2">
           {phase === "intro" && (
             <div className="space-y-2">
-              <button onClick={start} className="w-full h-12 rounded-[32px] bg-[#1b3a8a] text-white font-medium hover:bg-[#27499e] transition-colors">
+              {isSpeechRecognitionSupported() && (
+                <button onClick={startVoice} className="w-full h-12 rounded-[32px] bg-[#1b3a8a] text-white font-medium hover:bg-[#27499e] transition-colors flex items-center justify-center gap-2">
+                  <Mic className="h-4 w-4" />Speak your itinerary
+                </button>
+              )}
+              <button onClick={start} className="w-full h-12 rounded-[32px] bg-[#11203a] border border-[#28406f] text-[#cfe0ff] font-medium hover:border-[#5e9bff] transition-colors">
                 Tell Aegis about a trip
               </button>
               <button onClick={startPaste} className="w-full h-11 rounded-[32px] bg-[#11203a] border border-[#28406f] text-[#cfe0ff] text-sm hover:border-[#5e9bff] flex items-center justify-center gap-2">
@@ -257,21 +274,24 @@ export default function NewTripIntake() {
 
           {phase === "paste" && (
             <div className="space-y-2">
-              <textarea autoFocus value={pasteText} onChange={(e) => setPasteText(e.target.value.slice(0, 12 * 1024))}
-                placeholder={"Paste anything — e.g.\n“Going to Europe in September. Fly into London, then Paris, then Rome, drive through Tuscany, then Barcelona. Some hotels booked, some not.”"}
+              {/* D3b: browser-native voice → appends to the editable transcript below. Interface only. */}
+              <TravellerVoiceCapture onFinalChunk={appendVoiceChunk} autoStart={autoListen} disabled={parse.isPending} />
+              <p className="text-[11px] text-[#8fb0ff]">Here's what I heard. You can edit this before Aegis organizes it.</p>
+              <textarea autoFocus={!autoListen} value={pasteText} onChange={(e) => setPasteText(e.target.value.slice(0, 12 * 1024))}
+                placeholder={"Speak, type, or paste — e.g.\n“Going to Europe in September. Fly into London, then Paris, then Rome, drive through Tuscany, then Barcelona. Some hotels booked, some not.”"}
                 rows={5}
                 className="w-full rounded-xl bg-[#0b1424] border border-[#28406f] px-4 py-3 text-sm text-[#e8eef2] placeholder:text-[#5e6c86] focus:outline-none focus:border-[#5e9bff] resize-none" />
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] text-[#5e6c86] font-mono">{pasteText.length}/{12 * 1024}</span>
                 <div className="flex gap-2">
-                  <button onClick={() => { setPhase("intro"); setPasteText(""); }} className={chipCls}>Back</button>
+                  <button onClick={() => { setPhase("intro"); setPasteText(""); setAutoListen(false); }} className={chipCls}>Back</button>
                   <button onClick={runParse} disabled={pasteText.trim().length < 3 || parse.isPending}
                     className="h-10 px-4 rounded-[32px] bg-[#1b3a8a] text-white text-sm hover:bg-[#27499e] disabled:opacity-50 flex items-center gap-2">
-                    <Sparkles className="h-4 w-4" />Ask Aegis to read it
+                    <Sparkles className="h-4 w-4" />Ask Aegis to organize this
                   </button>
                 </div>
               </div>
-              <p className="text-[11px] text-[#5e6c86]">Aegis only suggests — nothing is saved or monitored until you confirm and submit.</p>
+              <p className="text-[11px] text-[#5e6c86]">Aegis will turn this into suggestions. Nothing is saved until you confirm — your security team reviews trip requests before monitoring begins.</p>
             </div>
           )}
 
