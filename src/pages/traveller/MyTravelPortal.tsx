@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, Plane, Clock, ShieldCheck, Plus, ArrowRight, LifeBuoy, ListChecks, Volume2 } from "lucide-react";
+import { Loader2, Plane, Clock, ShieldCheck, Plus, ArrowRight, LifeBuoy, ListChecks, Volume2, Mic, Square } from "lucide-react";
 import { format } from "date-fns";
 import { useMyTravel } from "@/hooks/useMyTravel";
 import { MyAlerts } from "@/components/traveller/MyAlerts";
 import { TravellerEmptyState } from "@/components/traveller/TravellerEmptyState";
 import { AegisCore, type AegisCoreState } from "@/components/traveller/AegisCore";
-import { TravellerVoiceCapture, isSpeechRecognitionSupported } from "@/components/traveller/TravellerVoiceCapture";
+import { isSpeechRecognitionSupported } from "@/components/traveller/TravellerVoiceCapture";
+import { useTravellerSpeech } from "@/hooks/useTravellerSpeech";
 import { useTravellerTTS } from "@/hooks/useTravellerTTS";
 
 /**
@@ -36,17 +37,42 @@ export default function MyTravelPortal() {
   const [focused, setFocused] = useState(false);
   const [cmd, setCmd] = useState("");
   const [aegisLine, setAegisLine] = useState<string | null>(null);
-  const [voiceListening, setVoiceListening] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [voiceSession, setVoiceSession] = useState(false);
   // Per-turn guards: one spoken reply per utterance; ignore re-entrant/echoed utterances.
   const handlingRef = useRef(false);
   const turnRef = useRef(0);
   const spokenRef = useRef<{ turn: number; text: string } | null>(null);
+  // Voice-session state machine refs (read inside async callbacks without stale closures).
+  const voiceSessionRef = useRef(false);
+  const speakingRef = useRef(false);
+  const listeningRef = useRef(false);
+
+  // Home Voice Mode session: tap once to start; listen → (final) mic stops → process → speak →
+  // when Aegis finishes speaking, automatically listen again; tap once to stop. Aegis NEVER
+  // listens while speaking (the mic ends on each final and only restarts after playback).
+  const speech = useTravellerSpeech({
+    onFinal: (t) => { void handleUtterance(t, true); },
+    onEnd: (hadFinal) => { if (!hadFinal) scheduleRelisten(); }, // silence/no-speech: keep the ear open
+  });
+  useEffect(() => { speakingRef.current = tts.isSpeaking; }, [tts.isSpeaking]);
+  useEffect(() => { listeningRef.current = speech.isListening; }, [speech.isListening]);
+
   const [now, setNow] = useState<Date>(() => new Date()); // local device clock — header chrome only
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
-  // Stop any spoken reply when leaving the page (unmount only — tts.stop is stable).
+  // End the session cleanly when leaving the page (unmount only).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => () => tts.stop(), []);
+  useEffect(() => () => { voiceSessionRef.current = false; speech.stop(); tts.stop(); }, []);
+
+  function relistenIfActive() {
+    if (voiceSessionRef.current && !speakingRef.current && !handlingRef.current && !listeningRef.current) speech.start();
+  }
+  function scheduleRelisten() {
+    // brief delay avoids a hot-loop when recognition ends immediately on silence
+    window.setTimeout(relistenIfActive, 400);
+  }
+  const startSession = () => { tts.unlock(); voiceSessionRef.current = true; setVoiceSession(true); speech.start(); };
+  const endSession = () => { voiceSessionRef.current = false; setVoiceSession(false); speech.stop(); tts.stop(); };
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: BG }}><Loader2 className="h-6 w-6 animate-spin text-[#5e9bff]" /></div>;
@@ -60,7 +86,7 @@ export default function MyTravelPortal() {
   const voiceSupported = isSpeechRecognitionSupported();
 
   // Aegis Core reacts to the conversation: speaking > listening > processing > idle.
-  const coreState: AegisCoreState = tts.isSpeaking ? "speaking" : voiceListening ? "listening" : processing ? "processing" : focused ? "listening" : "idle";
+  const coreState: AegisCoreState = tts.isSpeaking ? "speaking" : speech.isListening ? "listening" : processing ? "processing" : focused ? "listening" : "idle";
 
   // Calm status summary (computed from get-my-travel only).
   const overdue = itineraries.filter((i) => i.journey_overdue === true).length;
@@ -142,16 +168,20 @@ export default function MyTravelPortal() {
       const { line, run } = resolveIntent(text);
       setAegisLine(line);
       setProcessing(false);
+      let outcome: "played" | "blocked" | "unavailable" | "silent" = "silent";
       if (spoken) {
         // Duplicate suppression: never auto-speak the same line twice for the same turn.
         const already = spokenRef.current?.turn === turn && spokenRef.current?.text === line;
         if (!already) {
           spokenRef.current = { turn, text: line };
-          await tts.speak(line); // Onyx reply; resolves when playback ends (or unavailable)
+          outcome = await tts.speak(line); // Onyx reply; resolves (with outcome) when playback ends
         }
       }
-      if (run) run();
-      else setCmd("");
+      if (run) { run(); return; } // navigation ends/pauses the session cleanly (no relisten)
+      setCmd("");
+      // True voice session: after Aegis finishes speaking, automatically listen again. If autoplay
+      // was blocked, wait for the manual "Hear Aegis" tap (which then resumes listening).
+      if (spoken && voiceSessionRef.current && outcome !== "blocked") speech.start();
     } finally {
       handlingRef.current = false;
     }
@@ -189,7 +219,10 @@ export default function MyTravelPortal() {
             <div className="flex flex-col items-center gap-1.5 mt-1">
               <p className="text-[12px] text-[#ff8a52] max-w-sm">{tts.error}</p>
               {tts.hasAudio() && (
-                <button onClick={() => tts.replayLast()} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full border border-[#28406f] bg-[#0b1424] text-xs text-[#cfe0ff] hover:border-[#5e9bff]">
+                <button
+                  onClick={async () => { const o = await tts.replayLast(); if (o === "played" && voiceSessionRef.current) speech.start(); }}
+                  className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full border border-[#28406f] bg-[#0b1424] text-xs text-[#cfe0ff] hover:border-[#5e9bff]"
+                >
                   <Volume2 className="h-3.5 w-3.5" />Hear Aegis
                 </button>
               )}
@@ -199,18 +232,26 @@ export default function MyTravelPortal() {
 
         {linked ? (
           <>
-            {/* voice + command bar (deterministic; voice = interface only) */}
+            {/* voice session + command bar (deterministic; voice = interface only) */}
             <div className="space-y-2">
               {voiceSupported ? (
                 <div className="flex flex-col items-center gap-1.5">
-                  <TravellerVoiceCapture
-                    startLabel="Talk to Aegis"
-                    stopOnFinal
-                    onUserGesture={tts.unlock}
-                    onListeningChange={setVoiceListening}
-                    onFinalChunk={(t) => handleUtterance(t, true)}
-                  />
-                  <span className="text-[11px] text-[#5e6c86]">Speak naturally, or type below. Nothing is saved until you confirm.</span>
+                  <button
+                    onClick={() => (voiceSession ? endSession() : startSession())}
+                    className={`inline-flex items-center gap-2 h-11 px-5 rounded-[32px] text-sm font-medium transition-colors ${
+                      voiceSession
+                        ? "bg-[#3a1530] border border-[#ff6b9d]/50 text-[#ffb3d0]"
+                        : "bg-[#1b3a8a] text-white hover:bg-[#27499e]"
+                    }`}
+                  >
+                    {voiceSession ? <><Square className="h-4 w-4" />End voice mode</> : <><Mic className="h-4 w-4" />Talk to Aegis</>}
+                  </button>
+                  <span className="text-[11px] text-[#5e6c86] min-h-[14px]">
+                    {!voiceSession ? "Tap once to start a voice conversation. Nothing is saved until you confirm."
+                      : tts.isSpeaking ? "Aegis is speaking…"
+                      : speech.isListening ? "Listening — speak naturally."
+                      : "One moment…"}
+                  </span>
                 </div>
               ) : (
                 <p className="text-center text-[11px] text-[#5e6c86]">Voice isn't available in this browser — type below instead.</p>

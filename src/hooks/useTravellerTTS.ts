@@ -7,12 +7,15 @@ import { supabase } from "@/integrations/supabase/client";
  * retrieves nothing, and chooses no scope.
  *
  * Browser autoplay policy: programmatic audio.play() is blocked unless the audio element has been
- * "unlocked" by a user gesture. The Aegis reply is played from a SpeechRecognition callback after
- * an awaited fetch — NOT a gesture stack — so we (a) keep ONE reusable <audio> element and unlock
- * it on the mic tap (unlock()), and (b) if a play() still rejects, surface it via `error` and let
- * the traveller replay with a real gesture (replayLast()). isSpeaking reflects REAL playback only.
+ * "unlocked" by a user gesture. We keep ONE reusable <audio> element and unlock it on a gesture
+ * (the Start Voice / mic tap). speak()/replayLast() report an OUTCOME so the caller's voice-session
+ * state machine knows whether to resume listening:
+ *   'played'      — audio finished playing
+ *   'blocked'     — browser blocked autoplay (show "Hear Aegis" for a manual gesture replay)
+ *   'unavailable' — TTS could not produce audio (text was still shown)
  */
-// Valid empty WAV — used only to "bless" the audio element during a user gesture.
+export type SpeakOutcome = "played" | "blocked" | "unavailable";
+
 const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
 
 function base64ToBlob(b64: string, type: string): Blob {
@@ -33,9 +36,6 @@ export function useTravellerTTS() {
     if (!audioRef.current) {
       const el = new Audio();
       el.preload = "auto";
-      el.onplaying = () => setIsSpeaking(true);
-      el.onended = () => setIsSpeaking(false);
-      el.onpause = () => setIsSpeaking(false);
       audioRef.current = el;
     }
     return audioRef.current;
@@ -45,8 +45,8 @@ export function useTravellerTTS() {
     if (urlRef.current) { URL.revokeObjectURL(urlRef.current); urlRef.current = null; }
   }, []);
 
-  // Call from a USER GESTURE (e.g. the mic tap) to bless the reusable audio element so later
-  // programmatic play() is permitted by the browser. Idempotent; safe to call repeatedly.
+  // Call from a USER GESTURE (Start Voice / mic tap) to bless the reusable element so later
+  // programmatic play() is permitted. Idempotent.
   const unlock = useCallback(() => {
     if (unlockedRef.current) return;
     const el = getEl();
@@ -54,7 +54,7 @@ export function useTravellerTTS() {
       el.src = SILENT_WAV;
       const p = el.play();
       if (p && typeof p.then === "function") {
-        p.then(() => { try { el.pause(); el.currentTime = 0; } catch { /* noop */ } }).catch(() => { /* will retry via replayLast */ });
+        p.then(() => { try { el.pause(); el.currentTime = 0; } catch { /* noop */ } }).catch(() => { /* retry via replayLast */ });
       }
       unlockedRef.current = true;
     } catch { /* noop */ }
@@ -66,11 +66,10 @@ export function useTravellerTTS() {
     setIsSpeaking(false);
   }, [revoke]);
 
-  // Fetch Onyx audio for `text` and play it on the (unlocked) reusable element. Resolves when
-  // playback ends or fails. Never throws; sets `error` instead of swallowing rejections.
-  const speak = useCallback(async (text: string): Promise<void> => {
+  // Play `text` on the (unlocked) reusable element. Resolves with the outcome. Never throws.
+  const speak = useCallback(async (text: string): Promise<SpeakOutcome> => {
     const clean = (text ?? "").trim();
-    if (!clean) return;
+    if (!clean) return "unavailable";
     setError(null);
     const el = getEl();
     try { el.pause(); } catch { /* noop */ }
@@ -79,45 +78,53 @@ export function useTravellerTTS() {
     let audioB64: string | undefined;
     try {
       const { data, error: invErr } = await supabase.functions.invoke("traveller-aegis-tts", { body: { text: clean } });
-      if (invErr) { setError("Aegis voice is unavailable right now."); return; }
+      if (invErr) { setError("Aegis voice is unavailable right now."); return "unavailable"; }
       audioB64 = (data as { audio?: string } | null)?.audio;
     } catch {
       setError("Aegis voice is unavailable right now.");
-      return;
+      return "unavailable";
     }
-    if (!audioB64) { setError("Aegis voice is unavailable right now."); return; }
+    if (!audioB64) { setError("Aegis voice is unavailable right now."); return "unavailable"; }
 
     const url = URL.createObjectURL(base64ToBlob(audioB64, "audio/mpeg"));
     urlRef.current = url;
     el.src = url;
-    await new Promise<void>((resolve) => {
+    return await new Promise<SpeakOutcome>((resolve) => {
       let settled = false;
-      const finish = () => { if (settled) return; settled = true; resolve(); };
-      el.onended = () => { setIsSpeaking(false); finish(); };
-      el.onerror = () => { setError("Aegis voice playback failed."); setIsSpeaking(false); finish(); };
+      const done = (o: SpeakOutcome) => { if (settled) return; settled = true; setIsSpeaking(false); resolve(o); };
+      el.onplaying = () => setIsSpeaking(true);
+      el.onended = () => done("played");
+      el.onerror = () => { setError("Aegis voice playback failed."); done("unavailable"); };
       const p = el.play();
       if (p && typeof p.then === "function") {
-        p.then(() => { setIsSpeaking(true); }).catch((err: unknown) => {
-          // Autoplay/gesture rejection — surface it; keep the audio so the traveller can replay.
+        p.then(() => setIsSpeaking(true)).catch((err: unknown) => {
           console.warn("[traveller-tts] play() blocked:", (err as { name?: string })?.name ?? err);
           setError("Aegis voice was blocked by the browser. Tap “Hear Aegis”.");
-          setIsSpeaking(false);
-          finish();
+          done("blocked");
         });
       }
     });
   }, [getEl, revoke]);
 
-  // Replay the last fetched audio from a REAL user gesture (the retry button). Also blesses the
-  // element so subsequent automatic playback works for the rest of the session.
-  const replayLast = useCallback(async () => {
+  // Replay the last audio from a REAL user gesture (the retry button). Resolves with the outcome.
+  const replayLast = useCallback(async (): Promise<SpeakOutcome> => {
     const el = audioRef.current;
-    if (!el || !el.src) return;
+    if (!el || !el.src) return "unavailable";
     unlockedRef.current = true;
     setError(null);
-    try { el.currentTime = 0; await el.play(); setIsSpeaking(true); }
-    catch { setError("Aegis voice was blocked by the browser."); }
+    return await new Promise<SpeakOutcome>((resolve) => {
+      let settled = false;
+      const done = (o: SpeakOutcome) => { if (settled) return; settled = true; setIsSpeaking(false); resolve(o); };
+      el.onplaying = () => setIsSpeaking(true);
+      el.onended = () => done("played");
+      el.onerror = () => done("unavailable");
+      try { el.currentTime = 0; } catch { /* noop */ }
+      const p = el.play();
+      if (p && typeof p.then === "function") {
+        p.then(() => setIsSpeaking(true)).catch(() => { setError("Aegis voice was blocked by the browser."); done("blocked"); });
+      }
+    });
   }, []);
 
-  return { speak, stop, unlock, replayLast, isSpeaking, error, hasAudio: () => !!audioRef.current?.src };
+  return { speak, replayLast, stop, unlock, isSpeaking, error, hasAudio: () => !!audioRef.current?.src };
 }
