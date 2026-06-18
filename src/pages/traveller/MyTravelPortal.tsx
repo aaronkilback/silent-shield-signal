@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2, Plane, Clock, ShieldCheck, Plus, ArrowRight, LifeBuoy, ListChecks, Volume2 } from "lucide-react";
 import { format } from "date-fns";
@@ -38,6 +38,10 @@ export default function MyTravelPortal() {
   const [aegisLine, setAegisLine] = useState<string | null>(null);
   const [voiceListening, setVoiceListening] = useState(false);
   const [processing, setProcessing] = useState(false);
+  // Per-turn guards: one spoken reply per utterance; ignore re-entrant/echoed utterances.
+  const handlingRef = useRef(false);
+  const turnRef = useRef(0);
+  const spokenRef = useRef<{ turn: number; text: string } | null>(null);
   const [now, setNow] = useState<Date>(() => new Date()); // local device clock — header chrome only
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
   // Stop any spoken reply when leaving the page (unmount only — tts.stop is stable).
@@ -123,18 +127,34 @@ export default function MyTravelPortal() {
     return { line: "I can help with trips, check-ins, assistance, what's next, and what's missing. What would you like to do?" };
   }
 
-  // Handle an utterance (voice or typed). Speaks the reply (voice only), then runs any routing.
+  // Handle an utterance (voice or typed). Speaks the reply (voice only) EXACTLY ONCE per turn,
+  // then runs any routing. Re-entrant/echoed utterances (mic hearing Aegis, duplicate finals)
+  // are ignored while a turn is in flight.
   async function handleUtterance(raw: string, spoken: boolean) {
     const text = raw.trim();
     if (!text) return;
-    setCmd(text); // transcript / command shown in the command area
-    setProcessing(true);
-    const { line, run } = resolveIntent(text);
-    setAegisLine(line);
-    setProcessing(false);
-    if (spoken) await tts.speak(line); // Onyx reply; resolves when playback ends (or unavailable)
-    if (run) run();
-    if (!run) setCmd("");
+    if (handlingRef.current) return; // a turn is already being handled — ignore echoes/duplicates
+    handlingRef.current = true;
+    const turn = ++turnRef.current;
+    try {
+      setCmd(text); // transcript / command shown in the command area
+      setProcessing(true);
+      const { line, run } = resolveIntent(text);
+      setAegisLine(line);
+      setProcessing(false);
+      if (spoken) {
+        // Duplicate suppression: never auto-speak the same line twice for the same turn.
+        const already = spokenRef.current?.turn === turn && spokenRef.current?.text === line;
+        if (!already) {
+          spokenRef.current = { turn, text: line };
+          await tts.speak(line); // Onyx reply; resolves when playback ends (or unavailable)
+        }
+      }
+      if (run) run();
+      else setCmd("");
+    } finally {
+      handlingRef.current = false;
+    }
   }
 
   const runTyped = () => { const q = cmd.trim(); if (q) handleUtterance(q, false); };
@@ -185,6 +205,7 @@ export default function MyTravelPortal() {
                 <div className="flex flex-col items-center gap-1.5">
                   <TravellerVoiceCapture
                     startLabel="Talk to Aegis"
+                    stopOnFinal
                     onUserGesture={tts.unlock}
                     onListeningChange={setVoiceListening}
                     onFinalChunk={(t) => handleUtterance(t, true)}

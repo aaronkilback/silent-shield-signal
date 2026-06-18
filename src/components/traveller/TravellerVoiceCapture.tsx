@@ -29,9 +29,12 @@ interface Props {
   startLabel?: string;
   /** Fires synchronously inside the mic-tap click (a real user gesture) — e.g. to unlock audio. */
   onUserGesture?: () => void;
+  /** One-shot turn: emit a single finalized transcript, then stop listening (prevents the mic
+   *  from hearing Aegis's spoken reply and re-submitting). Used by Home Voice Mode. */
+  stopOnFinal?: boolean;
 }
 
-export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disabled = false, onListeningChange, startLabel = "Tell Aegis about your trip", onUserGesture }: Props) {
+export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disabled = false, onListeningChange, startLabel = "Tell Aegis about your trip", onUserGesture, stopOnFinal = false }: Props) {
   const [isListening, setIsListening] = useState(false);
   const [interim, setInterim] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -41,6 +44,9 @@ export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disable
   const onListeningRef = useRef(onListeningChange);
   useEffect(() => { onListeningRef.current = onListeningChange; }, [onListeningChange]);
   const setListening = useCallback((v: boolean) => { setIsListening(v); onListeningRef.current?.(v); }, []);
+  const stopOnFinalRef = useRef(stopOnFinal);
+  useEffect(() => { stopOnFinalRef.current = stopOnFinal; }, [stopOnFinal]);
+  const emittedFinalRef = useRef(false); // one-shot guard: emit a single final per listen session
 
   const supported = isSpeechRecognitionSupported();
 
@@ -59,17 +65,32 @@ export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disable
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
-    recognition.onstart = () => { setErr(null); setListening(true); setInterim(""); };
+    recognition.onstart = () => { setErr(null); emittedFinalRef.current = false; setListening(true); setInterim(""); };
     recognition.onresult = (event: any) => {
+      if (stopOnFinalRef.current && emittedFinalRef.current) return; // already emitted this turn
       let interimText = "";
+      let finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        if (result.isFinal) {
-          const chunk = String(result[0]?.transcript ?? "").trim();
-          if (chunk) onFinalRef.current(chunk);
-        } else {
-          interimText += result[0]?.transcript ?? "";
+        if (result.isFinal) finalText += String(result[0]?.transcript ?? "");
+        else interimText += result[0]?.transcript ?? "";
+      }
+      if (stopOnFinalRef.current) {
+        // One-shot turn: emit a single finalized transcript, then stop listening.
+        if (finalText.trim()) {
+          emittedFinalRef.current = true;
+          onFinalRef.current(finalText.trim());
+          setInterim("");
+          try { recognitionRef.current?.stop(); } catch { /* noop */ }
+          return;
         }
+        setInterim(interimText);
+        return;
+      }
+      // Continuous (dictation) mode: emit each finalized chunk as it arrives.
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) { const chunk = String(result[0]?.transcript ?? "").trim(); if (chunk) onFinalRef.current(chunk); }
       }
       setInterim(interimText);
     };
