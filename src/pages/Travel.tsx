@@ -11,7 +11,8 @@ import { TripTimeline } from "@/components/travel/TripTimeline";
 import { GroundTravelTab } from "@/components/travel/GroundTravelTab";
 import { JourneySignalsPanel } from "@/components/travel/JourneySignalsPanel";
 import { AssistanceRequestedBanner } from "@/components/travel/AssistanceRequestedBanner";
-import { Plane, Users, AlertTriangle, MapPin, Loader2, FileText, Activity, Car, ShieldAlert } from "lucide-react";
+import { TripRequestsPanel } from "@/components/travel/TripRequestsPanel";
+import { Plane, Users, AlertTriangle, MapPin, Loader2, FileText, Activity, Car, ShieldAlert, ClipboardList } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/hooks/useAuth";
@@ -69,7 +70,7 @@ export default function Travel() {
       <AssistanceRequestedBanner />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-8">
+        <TabsList className="grid w-full grid-cols-9">
           <TabsTrigger value="travelers" className="gap-2">
             <Users className="h-4 w-4" />
             Travelers
@@ -89,6 +90,10 @@ export default function Travel() {
           <TabsTrigger value="signals" className="gap-2">
             <ShieldAlert className="h-4 w-4" />
             Signals
+          </TabsTrigger>
+          <TabsTrigger value="trip-requests" className="gap-2">
+            <ClipboardList className="h-4 w-4" />
+            Trip Requests
           </TabsTrigger>
           <TabsTrigger value="alerts" className="gap-2">
             <AlertTriangle className="h-4 w-4" />
@@ -122,6 +127,10 @@ export default function Travel() {
 
         <TabsContent value="signals" className="space-y-4">
           <JourneySignalsPanel />
+        </TabsContent>
+
+        <TabsContent value="trip-requests" className="space-y-4">
+          <TripRequestsPanel />
         </TabsContent>
 
         <TabsContent value="alerts" className="space-y-4">
