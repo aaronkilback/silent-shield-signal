@@ -27,9 +27,11 @@ interface Props {
   onListeningChange?: (listening: boolean) => void;
   /** Optional label override for the start button. */
   startLabel?: string;
+  /** Fires synchronously inside the mic-tap click (a real user gesture) — e.g. to unlock audio. */
+  onUserGesture?: () => void;
 }
 
-export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disabled = false, onListeningChange, startLabel = "Tell Aegis about your trip" }: Props) {
+export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disabled = false, onListeningChange, startLabel = "Tell Aegis about your trip", onUserGesture }: Props) {
   const [isListening, setIsListening] = useState(false);
   const [interim, setInterim] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -105,7 +107,7 @@ export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disable
     <div className="space-y-1.5">
       <button
         type="button"
-        onClick={isListening ? stop : start}
+        onClick={() => { onUserGesture?.(); if (isListening) stop(); else start(); }}
         disabled={disabled}
         className={`inline-flex items-center gap-2 h-11 px-4 rounded-[32px] text-sm font-medium transition-colors disabled:opacity-50 ${
           isListening

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, Plane, Clock, ShieldCheck, Plus, ArrowRight, LifeBuoy, ListChecks } from "lucide-react";
+import { Loader2, Plane, Clock, ShieldCheck, Plus, ArrowRight, LifeBuoy, ListChecks, Volume2 } from "lucide-react";
 import { format } from "date-fns";
 import { useMyTravel } from "@/hooks/useMyTravel";
 import { MyAlerts } from "@/components/traveller/MyAlerts";
@@ -40,8 +40,9 @@ export default function MyTravelPortal() {
   const [processing, setProcessing] = useState(false);
   const [now, setNow] = useState<Date>(() => new Date()); // local device clock — header chrome only
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
-  // Stop any spoken reply when leaving the page.
-  useEffect(() => () => tts.stop(), [tts]);
+  // Stop any spoken reply when leaving the page (unmount only — tts.stop is stable).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => tts.stop(), []);
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: BG }}><Loader2 className="h-6 w-6 animate-spin text-[#5e9bff]" /></div>;
@@ -164,6 +165,16 @@ export default function MyTravelPortal() {
           <p className="font-serif text-2xl text-[#f4f1ea] mt-1">{greeting()}.</p>
           <p className="text-sm text-[#8fb0ff] max-w-sm">{status}</p>
           {aegisLine && <p className="font-serif text-[15px] text-[#cfe0ff] max-w-sm mt-1">{aegisLine}</p>}
+          {tts.error && (
+            <div className="flex flex-col items-center gap-1.5 mt-1">
+              <p className="text-[12px] text-[#ff8a52] max-w-sm">{tts.error}</p>
+              {tts.hasAudio() && (
+                <button onClick={() => tts.replayLast()} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full border border-[#28406f] bg-[#0b1424] text-xs text-[#cfe0ff] hover:border-[#5e9bff]">
+                  <Volume2 className="h-3.5 w-3.5" />Hear Aegis
+                </button>
+              )}
+            </div>
+          )}
         </section>
 
         {linked ? (
@@ -174,6 +185,7 @@ export default function MyTravelPortal() {
                 <div className="flex flex-col items-center gap-1.5">
                   <TravellerVoiceCapture
                     startLabel="Talk to Aegis"
+                    onUserGesture={tts.unlock}
                     onListeningChange={setVoiceListening}
                     onFinalChunk={(t) => handleUtterance(t, true)}
                   />
