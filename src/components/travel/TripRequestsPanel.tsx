@@ -3,18 +3,23 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, ClipboardList, AlertCircle, MessageCircleQuestion, XCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Loader2, ClipboardList, AlertCircle, MessageCircleQuestion, XCircle, CheckCircle2, PlaneTakeoff } from "lucide-react";
 import { format } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTripRequests, type TripRequest, type TripRequestSegment } from "@/hooks/useTripRequests";
 import { useTripRequestReview } from "@/hooks/useTripRequestReview";
+import { useTripRequestApprove } from "@/hooks/useTripRequestApprove";
 
 /**
- * Operator Trip Request Review (Slice E1 read + E2 triage). Shows traveller-submitted pending
- * requests for the selected client and lets an operator triage them as needs_clarification or
- * rejected (via the operator-only operator-trip-request-review function). NON-OPERATIONAL — no
- * approve / create-itinerary / edit-segment / convert controls here; no Aegis/LLM/upload. Only
- * an itinerary-creating approval slice (E3) can make a request operational.
+ * Operator Trip Request Review (Slice E1 read + E2 triage + E3b approve). Shows traveller-
+ * submitted pending requests for the selected client. Operators can triage (needs_clarification /
+ * reject) via operator-trip-request-review, and APPROVE a pending_review request into ONE
+ * operational itinerary via the proven operator-trip-request-approve function (confirmation form,
+ * never instant; operator supplies the required operational fields). No segment editing, no
+ * per-leg conversion, no Aegis/LLM/upload. Approval is the only path that makes a request
+ * operational, and it runs entirely through the audited, operator-only backend boundary.
  */
 const SEG_LABEL: Record<string, string> = {
   air: "Flight", hotel: "Hotel", ground: "Ground transfer", driving: "Driving",
@@ -96,8 +101,83 @@ function RequestCard({ r }: { r: TripRequest }) {
       )}
 
       <TriageControls r={r} />
+      {r.status === "pending_review" && <ApproveSection r={r} />}
     </Card>
   );
+}
+
+// Operator approval (E3b): Approve button (pending_review only) → confirmation form with the
+// required operational fields (prefilled from the request) → calls the proven
+// operator-trip-request-approve function. No instant approval; no segment editing.
+function ApproveSection({ r }: { r: TripRequest }) {
+  const [open, setOpen] = useState(false);
+  const approve = useTripRequestApprove();
+  const [f, setF] = useState({
+    trip_name: r.trip_name ?? "",
+    departure_date: r.start_date ?? "",
+    return_date: r.end_date ?? "",
+    origin_city: "",
+    origin_country: "",
+    destination_city: "",
+    destination_country: "",
+    trip_type: "international",
+  });
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+  // Client-side guard (#5): every required operational field must be present before submit.
+  const complete = ["trip_name", "departure_date", "return_date", "origin_city", "origin_country", "destination_city", "destination_country"]
+    .every((k) => String((f as Record<string, string>)[k]).trim());
+
+  if (approve.isSuccess) {
+    return (
+      <div className="border-t pt-3 text-sm flex items-center gap-2 text-green-600 dark:text-green-500">
+        <CheckCircle2 className="h-4 w-4" />
+        Approved — operational itinerary created{approve.data?.itinerary_id ? ` (${String(approve.data.itinerary_id).slice(0, 8)}…)` : ""}. It will appear under Itineraries after refresh.
+      </div>
+    );
+  }
+
+  if (!open) {
+    return (
+      <div className="border-t pt-3">
+        <Button size="sm" onClick={() => setOpen(true)}>
+          <PlaneTakeoff className="h-3.5 w-3.5 mr-1" />Approve &amp; create itinerary
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t pt-3 space-y-3">
+      <div className="text-xs text-muted-foreground space-y-0.5">
+        <div>This will create an <span className="font-medium text-foreground">operational itinerary</span>.</div>
+        <div>Traveller request segments will remain as intake context.</div>
+        <div>This request will no longer appear in pending trip requests after approval.</div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Trip name"><Input value={f.trip_name} onChange={set("trip_name")} /></Field>
+        <Field label="Trip type"><Input value={f.trip_type} onChange={set("trip_type")} /></Field>
+        <Field label="Departure date"><Input type="date" value={f.departure_date?.slice(0, 10)} onChange={set("departure_date")} /></Field>
+        <Field label="Return date"><Input type="date" value={f.return_date?.slice(0, 10)} onChange={set("return_date")} /></Field>
+        <Field label="Origin city"><Input value={f.origin_city} onChange={set("origin_city")} placeholder="required" /></Field>
+        <Field label="Origin country"><Input value={f.origin_country} onChange={set("origin_country")} placeholder="required" /></Field>
+        <Field label="Destination city"><Input value={f.destination_city} onChange={set("destination_city")} placeholder="required" /></Field>
+        <Field label="Destination country"><Input value={f.destination_country} onChange={set("destination_country")} placeholder="required" /></Field>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={!complete || approve.isPending}
+          onClick={() => approve.mutate({ request_id: r.id, ...f })}>
+          {approve.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Confirm approval"}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={approve.isPending} onClick={() => setOpen(false)}>Cancel</Button>
+        {!complete && <span className="text-[11px] text-muted-foreground">Fill all required fields to enable.</span>}
+      </div>
+      {approve.isError && <p className="text-xs text-destructive">{approve.error?.message ?? "Approval failed."}</p>}
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="space-y-1"><Label className="text-xs">{label}</Label>{children}</div>;
 }
 
 // Operator triage (E2): needs_clarification / reject only. No approve/create-itinerary control.
