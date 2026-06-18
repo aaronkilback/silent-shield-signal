@@ -63,3 +63,47 @@ export function useTravellerTripIntake() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["my-trip-requests"] }); },
   });
 }
+
+// ── Slice D3: non-writing LLM parse of pasted itinerary text into SUGGESTIONS ──
+// Calls traveller-parse-itinerary-text, which writes nothing and chooses no scope. The returned
+// suggestions are local-only until the traveller accepts them; acceptance persists exclusively
+// through useTravellerTripIntake (add_segment / create_draft / update_draft). LLM suggests →
+// traveller confirms → traveller-trip-intake writes.
+export interface ParsedSegment {
+  segment_type: SegmentType;
+  start_time: string | null;
+  end_time: string | null;
+  origin: string | null;
+  destination: string | null;
+  location_name: string | null;
+  address: string | null;
+  carrier_or_provider: string | null;
+  flight_or_train_number: string | null;
+  confirmation_reference: string | null;
+  notes: string | null;
+  missing_fields: string[];
+  confidence: number;
+}
+export interface ParsedItinerary {
+  trip_summary: {
+    suggested_trip_name: string | null;
+    start_date: string | null;
+    end_date: string | null;
+    destination_summary: string | null;
+  };
+  segments: ParsedSegment[];
+  questions: string[];
+  warnings: string[];
+}
+
+export function useTravellerParseItinerary() {
+  return useMutation<ParsedItinerary, Error, string>({
+    mutationFn: async (raw_text) => {
+      const { data, error } = await supabase.functions.invoke("traveller-parse-itinerary-text", { body: { raw_text } });
+      if (error) throw error;
+      const d = data as { suggestions?: ParsedItinerary };
+      if (!d?.suggestions) throw new Error("Aegis couldn't read that. Try rephrasing or add the details yourself.");
+      return d.suggestions;
+    },
+  });
+}

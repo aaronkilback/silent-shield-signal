@@ -1,8 +1,14 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Loader2, Send, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Loader2, Send, CheckCircle2, ClipboardPaste, Sparkles, Check, X, HelpCircle, AlertTriangle } from "lucide-react";
 import { AegisCore } from "@/components/traveller/AegisCore";
-import { useTravellerTripIntake, type SegmentType, type TripSegment } from "@/hooks/useTripIntake";
+import {
+  useTravellerTripIntake,
+  useTravellerParseItinerary,
+  type SegmentType,
+  type TripSegment,
+  type ParsedSegment,
+} from "@/hooks/useTripIntake";
 
 /**
  * Traveller Trip Intake — Aegis-guided (Slice D2). A DETERMINISTIC, scripted "Aegis" conversation
@@ -14,8 +20,10 @@ import { useTravellerTripIntake, type SegmentType, type TripSegment } from "@/ho
  *
  * Aegis collects → traveller confirms → operator approves → Fortress monitors.
  */
-type Phase = "intro" | "trip_name" | "dates" | "destination" | "creating" | "menu" | "segment" | "review" | "submitting" | "done";
+type Phase = "intro" | "trip_name" | "dates" | "destination" | "creating" | "menu" | "segment" | "review" | "submitting" | "done" | "paste" | "parsing" | "suggestions";
 type Msg = { who: "aegis" | "you"; text: string };
+// A parsed suggestion the traveller can accept / edit / reject (local-only until accepted).
+type SugCard = ParsedSegment & { _id: number; accepted: boolean };
 
 const SEG_OPTIONS: { type: SegmentType; label: string }[] = [
   { type: "air", label: "Flight" }, { type: "hotel", label: "Hotel" }, { type: "ground", label: "Ground transfer" },
@@ -38,6 +46,7 @@ const chipCls = "rounded-full border border-[#28406f] bg-[#0b1424] px-3 py-1.5 t
 
 export default function NewTripIntake() {
   const intake = useTravellerTripIntake();
+  const parse = useTravellerParseItinerary();
   const [phase, setPhase] = useState<Phase>("intro");
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -49,6 +58,13 @@ export default function NewTripIntake() {
   const blankSeg = { origin: "", destination: "", location_name: "", carrier_or_provider: "", flight_or_train_number: "" };
   const [seg, setSeg] = useState(blankSeg);
   const [draftInput, setDraftInput] = useState("");
+
+  // ── D3 paste-to-suggestions state (local until accepted) ──
+  const [pasteText, setPasteText] = useState("");
+  const [sugSummary, setSugSummary] = useState({ trip_name: "", start_date: "", end_date: "", destination_summary: "" });
+  const [sugCards, setSugCards] = useState<SugCard[]>([]);
+  const [sugQ, setSugQ] = useState<string[]>([]);
+  const [sugW, setSugW] = useState<string[]>([]);
 
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, phase]);
@@ -115,6 +131,83 @@ export default function NewTripIntake() {
     else { say("aegis", "I couldn't submit that just now. Please try again."); setPhase("review"); }
   };
 
+  // ── D3: paste → Aegis reads it → local suggestion cards (nothing saved yet) ──
+  const startPaste = () => {
+    say("aegis", "Paste whatever you have — an email, a rough plan, a list of cities. I'll read it and suggest the pieces. Nothing is saved until you confirm.");
+    setPhase("paste");
+  };
+  const runParse = async () => {
+    const text = pasteText.trim();
+    if (text.length < 3) return;
+    setErr(null);
+    say("you", text.length > 220 ? text.slice(0, 220) + "…" : text);
+    setPhase("parsing");
+    try {
+      const r = await parse.mutateAsync(text);
+      setSugSummary({
+        trip_name: r.trip_summary.suggested_trip_name ?? "",
+        start_date: r.trip_summary.start_date ?? "",
+        end_date: r.trip_summary.end_date ?? "",
+        destination_summary: r.trip_summary.destination_summary ?? "",
+      });
+      setSugCards(r.segments.map((s, i) => ({ ...s, _id: i, accepted: true })));
+      setSugQ(r.questions ?? []);
+      setSugW(r.warnings ?? []);
+      say("aegis", r.segments.length
+        ? `Here's what I think I found — ${r.segments.length} item${r.segments.length > 1 ? "s" : ""}. Check each one, edit anything that's off, and remove what doesn't belong. I've left blanks where I wasn't sure.`
+        : "I couldn't pull out clear travel pieces from that. You can add them yourself, or paste more detail.");
+      setPhase("suggestions");
+    } catch (e) {
+      setErr((e as Error)?.message ?? "Aegis couldn't read that just now.");
+      setPhase("paste");
+    }
+  };
+  const setCard = (id: number, patch: Partial<SugCard>) => setSugCards((cs) => cs.map((c) => (c._id === id ? { ...c, ...patch } : c)));
+
+  // Confirm the (edited) suggestions: create the draft, then add each accepted segment via the
+  // proven traveller-trip-intake write path. The LLM never wrote anything — this does.
+  const confirmSuggestions = async () => {
+    setErr(null);
+    setPhase("creating");
+    const accepted = sugCards.filter((c) => c.accepted);
+    const fields: Record<string, unknown> = {
+      action: "create_draft",
+      trip_name: sugSummary.trip_name.trim() || "My trip",
+      destination_summary: sugSummary.destination_summary.trim() || undefined,
+    };
+    if (sugSummary.start_date) fields.start_date = sugSummary.start_date;
+    if (sugSummary.end_date) fields.end_date = sugSummary.end_date;
+    const draftRes = await run(fields);
+    const id = (draftRes?.request as { id?: string })?.id;
+    if (!id) { say("aegis", "I couldn't start that draft. Want to try again?"); setPhase("suggestions"); return; }
+    setRequestId(id);
+
+    const saved: TripSegment[] = [];
+    for (const c of accepted) {
+      const body: Record<string, unknown> = {
+        action: "add_segment", trip_request_id: id,
+        segment_type: c.segment_type,
+        missing_fields: c.missing_fields ?? [],
+        confidence: c.confidence,
+      };
+      for (const k of ["start_time", "end_time", "origin", "destination", "location_name", "address", "carrier_or_provider", "flight_or_train_number", "confirmation_reference", "notes"] as const) {
+        const v = c[k]; if (typeof v === "string" && v.trim()) body[k] = v.trim();
+      }
+      const res = await run(body);
+      const s = res?.segment as TripSegment | undefined;
+      if (s) saved.push(s);
+    }
+    setTrip({
+      trip_name: sugSummary.trip_name.trim() || "My trip",
+      start_date: sugSummary.start_date,
+      end_date: sugSummary.end_date,
+      destination_summary: sugSummary.destination_summary,
+    });
+    setSegments(saved);
+    say("aegis", "Saved as a draft. Review it below, then submit it to your security team when it looks right.");
+    setPhase("review");
+  };
+
   return (
     <div className="min-h-screen" style={{ background: BG, color: "#e8eef2" }}>
       <header className="px-4 py-3 flex items-center gap-2 border-b border-[#1a2740]">
@@ -140,8 +233,8 @@ export default function NewTripIntake() {
               </div>
             </div>
           ))}
-          {(intake.isPending || phase === "creating" || phase === "submitting") && (
-            <div className="flex items-center gap-2 text-xs text-[#5e6c86] font-mono"><Loader2 className="h-3 w-3 animate-spin" />AEGIS IS WORKING…</div>
+          {(intake.isPending || parse.isPending || phase === "creating" || phase === "submitting" || phase === "parsing") && (
+            <div className="flex items-center gap-2 text-xs text-[#5e6c86] font-mono"><Loader2 className="h-3 w-3 animate-spin" />{phase === "parsing" ? "AEGIS IS READING…" : "AEGIS IS WORKING…"}</div>
           )}
           {err && <p className="text-sm text-[#ff8a52]">{err}</p>}
           <div ref={endRef} />
@@ -152,9 +245,76 @@ export default function NewTripIntake() {
       <div className="fixed bottom-0 inset-x-0 border-t border-[#1a2740] bg-[#070b14]/95 backdrop-blur">
         <div className="max-w-2xl mx-auto px-4 py-3 space-y-2">
           {phase === "intro" && (
-            <button onClick={start} className="w-full h-12 rounded-[32px] bg-[#1b3a8a] text-white font-medium hover:bg-[#27499e] transition-colors">
-              Tell Aegis about a trip
-            </button>
+            <div className="space-y-2">
+              <button onClick={start} className="w-full h-12 rounded-[32px] bg-[#1b3a8a] text-white font-medium hover:bg-[#27499e] transition-colors">
+                Tell Aegis about a trip
+              </button>
+              <button onClick={startPaste} className="w-full h-11 rounded-[32px] bg-[#11203a] border border-[#28406f] text-[#cfe0ff] text-sm hover:border-[#5e9bff] flex items-center justify-center gap-2">
+                <ClipboardPaste className="h-4 w-4" />Paste itinerary details instead
+              </button>
+            </div>
+          )}
+
+          {phase === "paste" && (
+            <div className="space-y-2">
+              <textarea autoFocus value={pasteText} onChange={(e) => setPasteText(e.target.value.slice(0, 12 * 1024))}
+                placeholder={"Paste anything — e.g.\n“Going to Europe in September. Fly into London, then Paris, then Rome, drive through Tuscany, then Barcelona. Some hotels booked, some not.”"}
+                rows={5}
+                className="w-full rounded-xl bg-[#0b1424] border border-[#28406f] px-4 py-3 text-sm text-[#e8eef2] placeholder:text-[#5e6c86] focus:outline-none focus:border-[#5e9bff] resize-none" />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-[#5e6c86] font-mono">{pasteText.length}/{12 * 1024}</span>
+                <div className="flex gap-2">
+                  <button onClick={() => { setPhase("intro"); setPasteText(""); }} className={chipCls}>Back</button>
+                  <button onClick={runParse} disabled={pasteText.trim().length < 3 || parse.isPending}
+                    className="h-10 px-4 rounded-[32px] bg-[#1b3a8a] text-white text-sm hover:bg-[#27499e] disabled:opacity-50 flex items-center gap-2">
+                    <Sparkles className="h-4 w-4" />Ask Aegis to read it
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-[#5e6c86]">Aegis only suggests — nothing is saved or monitored until you confirm and submit.</p>
+            </div>
+          )}
+
+          {phase === "suggestions" && (
+            <div className="space-y-3 max-h-[58vh] overflow-auto">
+              {/* trip summary (editable suggestion) */}
+              <div className="rounded-xl p-3 space-y-2" style={aegisBubble}>
+                <div className="font-mono text-[10px] tracking-[0.28em] text-[#8fb0ff]">SUGGESTED TRIP</div>
+                <input value={sugSummary.trip_name} onChange={(e) => setSugSummary({ ...sugSummary, trip_name: e.target.value })} placeholder="Trip name" className={fieldCls} />
+                <div className="grid grid-cols-2 gap-2">
+                  <input type="date" value={sugSummary.start_date?.slice(0, 10)} onChange={(e) => setSugSummary({ ...sugSummary, start_date: e.target.value })} className={fieldCls} />
+                  <input type="date" value={sugSummary.end_date?.slice(0, 10)} onChange={(e) => setSugSummary({ ...sugSummary, end_date: e.target.value })} className={fieldCls} />
+                </div>
+                <input value={sugSummary.destination_summary} onChange={(e) => setSugSummary({ ...sugSummary, destination_summary: e.target.value })} placeholder="Destinations" className={fieldCls} />
+              </div>
+
+              {sugW.length > 0 && (
+                <div className="rounded-lg px-3 py-2 text-xs text-[#ffcf9e] border border-[#5a3a1e] bg-[#211405]/60 space-y-1">
+                  {sugW.map((w, i) => <div key={i} className="flex items-start gap-1.5"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />{w}</div>)}
+                </div>
+              )}
+
+              {/* segment suggestion cards */}
+              {sugCards.length === 0 ? (
+                <p className="text-xs text-[#5e6c86]">No clear travel pieces found. You can still continue and add them yourself.</p>
+              ) : sugCards.map((c) => <SuggestionCard key={c._id} c={c} onChange={(p) => setCard(c._id, p)} />)}
+
+              {sugQ.length > 0 && (
+                <div className="rounded-lg px-3 py-2 text-xs text-[#cfe0ff] border border-[#28406f] bg-[#0b1424]/60 space-y-1">
+                  <div className="font-mono text-[10px] tracking-[0.24em] text-[#8fb0ff]">AEGIS WOULD ASK</div>
+                  {sugQ.map((q, i) => <div key={i} className="flex items-start gap-1.5"><HelpCircle className="h-3 w-3 mt-0.5 shrink-0 text-[#8fb0ff]" />{q}</div>)}
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => { setPhase("paste"); }} className={chipCls}>Back</button>
+                <button onClick={confirmSuggestions} disabled={intake.isPending}
+                  className="flex-1 h-11 rounded-[32px] bg-[#1b3a8a] text-white text-sm font-medium hover:bg-[#27499e] disabled:opacity-50">
+                  Use these &amp; continue{sugCards.filter((c) => c.accepted).length ? ` (${sugCards.filter((c) => c.accepted).length})` : ""}
+                </button>
+              </div>
+              <p className="text-center text-[11px] text-[#5e6c86]">Accepted items are saved as a draft you review before submitting.</p>
+            </div>
           )}
 
           {(phase === "trip_name" || phase === "destination") && (
@@ -239,6 +399,12 @@ export default function NewTripIntake() {
             </div>
           )}
 
+          {phase === "parsing" && (
+            <div className="flex items-center justify-center gap-2 py-3 text-sm text-[#8fb0ff] font-mono">
+              <Loader2 className="h-4 w-4 animate-spin" />AEGIS IS READING YOUR ITINERARY…
+            </div>
+          )}
+
           {phase === "done" && (
             <div className="text-center space-y-2 py-2">
               <CheckCircle2 className="h-8 w-8 text-[#3ddc84] mx-auto" />
@@ -249,6 +415,55 @@ export default function NewTripIntake() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// One parsed-segment suggestion: editable inline, Accept/Reject toggle, missing-fields visible,
+// confidence shown only as a soft hint. Local-only — never written here.
+const ALL_SEG: { type: SegmentType; label: string }[] = [
+  { type: "air", label: "Flight" }, { type: "hotel", label: "Hotel" }, { type: "ground", label: "Ground transfer" },
+  { type: "driving", label: "Driving" }, { type: "train", label: "Train" }, { type: "ferry", label: "Ferry" },
+  { type: "activity", label: "Activity" }, { type: "other", label: "Other" }, { type: "unknown", label: "Not sure" },
+];
+const ALL_SEG_LABEL: Record<string, string> = Object.fromEntries(ALL_SEG.map((o) => [o.type, o.label]));
+const FRIENDLY_MISSING: Record<string, string> = {
+  start_time: "start time", end_time: "end time", address: "address",
+  confirmation_reference: "confirmation #", flight_or_train_number: "flight/train #",
+  carrier_or_provider: "carrier", origin: "where from", destination: "where to", location_name: "place name",
+};
+
+function SuggestionCard({ c, onChange }: { c: SugCard; onChange: (patch: Partial<SugCard>) => void }) {
+  const conf = Math.round((c.confidence ?? 0) * 100);
+  const missing = (c.missing_fields ?? []).map((m) => FRIENDLY_MISSING[m] ?? m);
+  const fieldSm = "h-9 w-full rounded-lg bg-[#0b1424] border border-[#28406f] px-2.5 text-sm text-[#e8eef2] placeholder:text-[#5e6c86] focus:outline-none focus:border-[#5e9bff]";
+  return (
+    <div className={`rounded-xl p-3 border transition-opacity ${c.accepted ? "border-[#28406f] bg-[#0b1424]/70" : "border-[#1a2740] bg-[#0b1424]/30 opacity-50"}`}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <select value={c.segment_type} onChange={(e) => onChange({ segment_type: e.target.value as SegmentType })}
+          className="h-8 rounded-lg bg-[#11203a] border border-[#28406f] px-2 text-xs text-[#cfe0ff] focus:outline-none focus:border-[#5e9bff]">
+          {ALL_SEG.map((o) => <option key={o.type} value={o.type}>{o.label}</option>)}
+        </select>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-[#5e6c86] font-mono" title="Aegis's confidence — a hint, not a guarantee">~{conf}% sure</span>
+          <button onClick={() => onChange({ accepted: !c.accepted })}
+            className={`h-7 px-2 rounded-full text-[11px] flex items-center gap-1 border ${c.accepted ? "border-[#3ddc84]/50 text-[#3ddc84]" : "border-[#28406f] text-[#8fb0ff]"}`}>
+            {c.accepted ? <><Check className="h-3 w-3" />Included</> : <><X className="h-3 w-3" />Excluded</>}
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <input value={c.origin ?? ""} onChange={(e) => onChange({ origin: e.target.value })} placeholder="From" className={fieldSm} />
+        <input value={c.destination ?? ""} onChange={(e) => onChange({ destination: e.target.value })} placeholder="To" className={fieldSm} />
+        <input value={c.location_name ?? ""} onChange={(e) => onChange({ location_name: e.target.value })} placeholder="Place / name" className={`${fieldSm} col-span-2`} />
+        <input value={c.carrier_or_provider ?? ""} onChange={(e) => onChange({ carrier_or_provider: e.target.value })} placeholder="Carrier / provider" className={fieldSm} />
+        <input value={c.flight_or_train_number ?? ""} onChange={(e) => onChange({ flight_or_train_number: e.target.value })} placeholder="Flight / train #" className={fieldSm} />
+        <input value={c.notes ?? ""} onChange={(e) => onChange({ notes: e.target.value })} placeholder="Notes" className={`${fieldSm} col-span-2`} />
+      </div>
+      {missing.length > 0 && (
+        <p className="mt-2 text-[11px] text-[#8fb0ff]">Aegis isn't sure about: <span className="text-[#cfe0ff]">{missing.join(", ")}</span> — add it if you know it.</p>
+      )}
+      <p className="mt-1 text-[10px] text-[#5e6c86]">{ALL_SEG_LABEL[c.segment_type] ?? c.segment_type} · suggestion only, not yet saved</p>
     </div>
   );
 }
