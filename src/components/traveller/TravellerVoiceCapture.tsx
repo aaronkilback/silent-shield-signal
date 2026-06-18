@@ -23,23 +23,30 @@ interface Props {
   /** Begin listening as soon as the component mounts (e.g. from a "Speak your itinerary" tap). */
   autoStart?: boolean;
   disabled?: boolean;
+  /** Notifies the parent when listening starts/stops (e.g. to drive the Aegis Core state). */
+  onListeningChange?: (listening: boolean) => void;
+  /** Optional label override for the start button. */
+  startLabel?: string;
 }
 
-export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disabled = false }: Props) {
+export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disabled = false, onListeningChange, startLabel = "Tell Aegis about your trip" }: Props) {
   const [isListening, setIsListening] = useState(false);
   const [interim, setInterim] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const onFinalRef = useRef(onFinalChunk);
   useEffect(() => { onFinalRef.current = onFinalChunk; }, [onFinalChunk]);
+  const onListeningRef = useRef(onListeningChange);
+  useEffect(() => { onListeningRef.current = onListeningChange; }, [onListeningChange]);
+  const setListening = useCallback((v: boolean) => { setIsListening(v); onListeningRef.current?.(v); }, []);
 
   const supported = isSpeechRecognitionSupported();
 
   const stop = useCallback(() => {
     try { recognitionRef.current?.stop(); } catch { /* noop */ }
-    setIsListening(false);
+    setListening(false);
     setInterim("");
-  }, []);
+  }, [setListening]);
 
   const start = useCallback(() => {
     if (!supported) return;
@@ -50,7 +57,7 @@ export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disable
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
-    recognition.onstart = () => { setErr(null); setIsListening(true); setInterim(""); };
+    recognition.onstart = () => { setErr(null); setListening(true); setInterim(""); };
     recognition.onresult = (event: any) => {
       let interimText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -70,13 +77,13 @@ export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disable
           ? "Microphone access is blocked. You can type or paste instead."
           : "Voice had trouble. You can type or paste instead.");
       }
-      setIsListening(false);
+      setListening(false);
       setInterim("");
     };
-    recognition.onend = () => { setIsListening(false); setInterim(""); };
+    recognition.onend = () => { setListening(false); setInterim(""); };
 
     try { recognition.start(); } catch { /* already started */ }
-  }, [supported]);
+  }, [supported, setListening]);
 
   // Auto-start once on mount if requested; always abort on unmount.
   useEffect(() => {
@@ -106,7 +113,7 @@ export function TravellerVoiceCapture({ onFinalChunk, autoStart = false, disable
             : "bg-[#1b3a8a] text-white hover:bg-[#27499e]"
         }`}
       >
-        {isListening ? <><Square className="h-4 w-4" />Stop listening</> : <><Mic className="h-4 w-4" />Tell Aegis about your trip</>}
+        {isListening ? <><Square className="h-4 w-4" />Stop listening</> : <><Mic className="h-4 w-4" />{startLabel}</>}
       </button>
       {isListening && (
         <p className="text-[12px] text-[#8fb0ff]">

@@ -15,11 +15,11 @@ import * as THREE from "three";
  * to a local `state` prop (idle/listening/processing/submitted) for spin/glow/tint. Honors
  * prefers-reduced-motion (no motion).
  */
-export type AegisCoreState = "idle" | "listening" | "processing" | "submitted";
+export type AegisCoreState = "idle" | "listening" | "processing" | "submitted" | "speaking";
 
 const IDLE = new THREE.Color("#5e9bff");
 const DONE = new THREE.Color("#3ddc84");
-const speedFor = (s: AegisCoreState, reduce: boolean) => (reduce ? 0 : s === "processing" ? 0.55 : s === "listening" ? 0.26 : 0.13);
+const speedFor = (s: AegisCoreState, reduce: boolean) => (reduce ? 0 : s === "processing" ? 0.55 : s === "speaking" ? 0.4 : s === "listening" ? 0.26 : 0.13);
 
 function NeuralSphere({ stateRef, reduce }: { stateRef: React.MutableRefObject<AegisCoreState>; reduce: boolean }) {
   const group = useRef<THREE.Group>(null);
@@ -49,7 +49,7 @@ function NeuralSphere({ stateRef, reduce }: { stateRef: React.MutableRefObject<A
     const st = stateRef.current;
     if (group.current) { group.current.rotation.y += dt * speedFor(st, reduce); group.current.rotation.x = 0.32; }
     t.current += dt;
-    const breathe = reduce ? 1 : 0.78 + 0.22 * Math.sin(t.current * (st === "processing" ? 4 : st === "listening" ? 2.4 : 1.4));
+    const breathe = reduce ? 1 : 0.78 + 0.22 * Math.sin(t.current * (st === "processing" ? 4 : st === "speaking" ? 3.2 : st === "listening" ? 2.4 : 1.4));
     const tint = st === "submitted" ? DONE : IDLE;
     if (ptsMat.current) { ptsMat.current.opacity = 0.55 + 0.35 * breathe; ptsMat.current.color.lerp(tint, 0.08); }
     if (lineMat.current) { lineMat.current.opacity = 0.10 + 0.06 * breathe; lineMat.current.color.lerp(tint, 0.08); }
@@ -137,7 +137,7 @@ export function AegisCore({ state = "idle", height = 320 }: { state?: AegisCoreS
       </div>
       <div className="font-mono text-xs tracking-[0.32em] text-[#8fb0ff]">AEGIS CORE</div>
       <div className="font-mono text-[10px] tracking-[0.34em] text-[#5e6c86]">
-        {state === "listening" ? "LISTENING" : state === "processing" ? "WORKING" : state === "submitted" ? "RECEIVED" : "PERSONAL TRAVEL SUPPORT"}
+        {state === "listening" ? "LISTENING" : state === "processing" ? "WORKING" : state === "speaking" ? "SPEAKING" : state === "submitted" ? "RECEIVED" : "PERSONAL TRAVEL SUPPORT"}
       </div>
     </div>
   );

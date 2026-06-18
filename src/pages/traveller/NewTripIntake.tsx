@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ArrowLeft, Loader2, Send, CheckCircle2, ClipboardPaste, Sparkles, Check, X, HelpCircle, AlertTriangle, Mic } from "lucide-react";
 import { AegisCore } from "@/components/traveller/AegisCore";
 import { TravellerVoiceCapture, isSpeechRecognitionSupported } from "@/components/traveller/TravellerVoiceCapture";
@@ -63,6 +63,17 @@ export default function NewTripIntake() {
   // ── D3 paste-to-suggestions state (local until accepted) ──
   const [pasteText, setPasteText] = useState("");
   const [autoListen, setAutoListen] = useState(false); // start mic immediately when entering via "Speak"
+  const location = useLocation();
+  // If the traveller arrived from Aegis Home voice with something already spoken, seed the
+  // editable transcript and drop them into the compose step (they still tap to parse).
+  useEffect(() => {
+    const seed = (location.state as { seedText?: string } | null)?.seedText;
+    if (seed && typeof seed === "string" && seed.trim()) {
+      setPasteText(seed.trim().slice(0, 12 * 1024));
+      setPhase("paste");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [sugSummary, setSugSummary] = useState({ trip_name: "", start_date: "", end_date: "", destination_summary: "" });
   const [sugCards, setSugCards] = useState<SugCard[]>([]);
   const [sugQ, setSugQ] = useState<string[]>([]);

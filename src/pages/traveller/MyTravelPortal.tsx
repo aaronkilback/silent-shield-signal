@@ -6,17 +6,20 @@ import { useMyTravel } from "@/hooks/useMyTravel";
 import { MyAlerts } from "@/components/traveller/MyAlerts";
 import { TravellerEmptyState } from "@/components/traveller/TravellerEmptyState";
 import { AegisCore, type AegisCoreState } from "@/components/traveller/AegisCore";
+import { TravellerVoiceCapture, isSpeechRecognitionSupported } from "@/components/traveller/TravellerVoiceCapture";
+import { useTravellerTTS } from "@/hooks/useTravellerTTS";
 
 /**
- * Traveller Aegis Home (Slice D2.1) — Aegis-first primary interface at /my-travel.
+ * Traveller Aegis Home (Slice D2.1 + Home Voice Mode v1, Option A) — Aegis-first interface at
+ * /my-travel with a turn-based VOICE conversation.
  *
- * Aegis (animated, presence-led) is the front door; the trip card + alerts are secondary.
- * Everything here is DETERMINISTIC and frontend-only: data comes from get-my-travel (read);
- * the command input does local keyword→intent routing (NO LLM, NO network AI, NO retrieval);
- * quick actions route into the already-proven safe flows — trip intake (/my-travel/new-trip →
- * traveller-trip-intake) and check-in/assistance (trip detail → traveller-journey-status). No
- * operator chrome, no tenant/client selector, no other travellers, no operator data, no
- * operational writes, and no "monitored" claim before operator approval.
+ * Voice is an INTERFACE layer only: browser-native SpeechRecognition produces a transcript, a
+ * DETERMINISTIC intent router picks one of a fixed set of intents, Aegis replies with safe
+ * deterministic template copy (shown as text AND spoken via the authenticated traveller-aegis-tts
+ * Onyx voice), and then ROUTES into already-proven flows. No LLM conversation, no realtime stack,
+ * no tools, no retrieval, no operator data. Voice NEVER writes: every save/submit/check-in/
+ * assistance still happens on the destination surface behind its own explicit confirmation, and
+ * all persistence flows through traveller-trip-intake / traveller-journey-status.
  */
 const BG = "radial-gradient(95% 70% at 50% 8%, #0e1626, #0a0e18 46%, #050609)";
 const chip = "inline-flex items-center gap-1.5 rounded-full border border-[#28406f] bg-[#0b1424] px-3 py-2 text-xs text-[#cfe0ff] hover:border-[#5e9bff] hover:bg-[#11203a] transition-colors disabled:opacity-40";
@@ -29,11 +32,16 @@ function greeting() {
 export default function MyTravelPortal() {
   const { data, isLoading, isError } = useMyTravel();
   const navigate = useNavigate();
+  const tts = useTravellerTTS();
   const [focused, setFocused] = useState(false);
   const [cmd, setCmd] = useState("");
   const [aegisLine, setAegisLine] = useState<string | null>(null);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [now, setNow] = useState<Date>(() => new Date()); // local device clock — header chrome only
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
+  // Stop any spoken reply when leaving the page.
+  useEffect(() => () => tts.stop(), [tts]);
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: BG }}><Loader2 className="h-6 w-6 animate-spin text-[#5e9bff]" /></div>;
@@ -44,8 +52,10 @@ export default function MyTravelPortal() {
   const alerts = data?.alerts ?? [];
   const nextTrip = itineraries[0];
   const fmt = (d: string | null) => { try { return d ? format(new Date(d), "MMM d, yyyy") : "—"; } catch { return "—"; } };
+  const voiceSupported = isSpeechRecognitionSupported();
 
-  const coreState: AegisCoreState = focused ? "listening" : "idle";
+  // Aegis Core reacts to the conversation: speaking > listening > processing > idle.
+  const coreState: AegisCoreState = tts.isSpeaking ? "speaking" : voiceListening ? "listening" : processing ? "processing" : focused ? "listening" : "idle";
 
   // Calm status summary (computed from get-my-travel only).
   const overdue = itineraries.filter((i) => i.journey_overdue === true).length;
@@ -57,28 +67,76 @@ export default function MyTravelPortal() {
     : itineraries.length > 0 ? `${itineraries.length} upcoming trip${itineraries.length > 1 ? "s" : ""}. All clear.`
     : "No upcoming trips. All clear.";
 
-  const goCheckIn = () => { if (nextTrip) navigate(`/my-travel/itinerary/${nextTrip.id}`); else setAegisLine("You don't have a trip yet — tell me about one first."); };
-  const whatsMissing = () => {
+  const missingSummary = () => {
     const bits: string[] = [];
     if (overdue > 0) bits.push(`${overdue} trip${overdue > 1 ? "s" : ""} overdue for check-in`);
     const noStatus = itineraries.filter((i) => !i.journey_status).length;
     if (noStatus > 0) bits.push(`${noStatus} trip${noStatus > 1 ? "s" : ""} with no check-in yet`);
     if (!itineraries.length) bits.push("no trips on file yet");
-    setAegisLine(bits.length ? `Here's what needs attention: ${bits.join("; ")}.` : "Nothing's missing right now — you're all set.");
+    return bits.length ? `Here's what needs attention: ${bits.join("; ")}.` : "Nothing's missing right now — you're all set.";
   };
 
-  // Deterministic command routing — local keyword match, NO LLM / NO network.
-  const runCommand = () => {
-    const q = cmd.trim().toLowerCase();
-    if (!q) return;
-    setCmd("");
-    if (/(trip|travel|europe|plan|going)/.test(q)) navigate("/my-travel/new-trip");
-    else if (/(help|assist|sos|emergency|danger)/.test(q)) { if (nextTrip) navigate(`/my-travel/itinerary/${nextTrip.id}`); else setAegisLine("Tell me about a trip first, then I can help with assistance."); }
-    else if (/(check|safe|arriv|pickup|vehicle|status)/.test(q)) goCheckIn();
-    else if (/(missing|incomplete|need)/.test(q)) whatsMissing();
-    else if (/(next|upcoming)/.test(q)) setAegisLine(nextTrip ? `Your next trip: ${nextTrip.trip_name ?? "Trip"}.` : "No upcoming trips yet.");
-    else setAegisLine("I can help you add a trip, check in, request assistance, or tell you what's missing. Try one of those.");
-  };
+  // ── Deterministic intent router (NO LLM). Returns a safe spoken/text line + an optional action. ──
+  // Voice never writes: actions only navigate to surfaces that carry their own confirmations.
+  function resolveIntent(raw: string): { line: string; run?: () => void } {
+    const q = raw.trim().toLowerCase();
+    const nextName = nextTrip?.trip_name ?? "your next trip";
+    const openNext = () => { if (nextTrip) navigate(`/my-travel/itinerary/${nextTrip.id}`); };
+
+    if (/(assistance|emergency|\bsos\b|urgent|in danger|need help)/.test(q)) {
+      return nextTrip
+        ? { line: `I can help you log an assistance status for a trip. Which trip is this related to? I'll open ${nextName} so you can request assistance there.`, run: openNext }
+        : { line: "I can help you log an assistance status once you have a trip on file. Want to tell me about a trip first?" };
+    }
+    if (/(check ?in|checking in|i'?m safe|i am safe|arrived|landed|at the airport)/.test(q)) {
+      return nextTrip
+        ? { line: `I can help with that. I found ${nextName}. I'll open it so you can check in.`, run: openNext }
+        : { line: "I can help you check in once you have a trip. Want to tell me about one?" };
+    }
+    if (/(what'?s next|what is next|next trip|upcoming)/.test(q)) {
+      return itineraries.length
+        ? { line: `You have ${itineraries.length} upcoming trip${itineraries.length > 1 ? "s" : ""}. Your next one is ${nextName}. I can help you open that trip — just say "open my trip".` }
+        : { line: "You don't have any upcoming trips yet. Want to tell me about one?" };
+    }
+    if (/(what'?s missing|what is missing|missing|incomplete|what do you need)/.test(q)) {
+      return { line: missingSummary() };
+    }
+    if (/(new trip|add a trip|plan a trip|start a trip|create a trip|tell aegis about a trip|tell fortress about a trip)/.test(q)) {
+      return { line: "I can help organize that. Let's set up a new trip request — nothing is saved until you confirm.", run: () => navigate("/my-travel/new-trip") };
+    }
+    if (/(open|show).*(trip|itinerary)|open my trip|open it/.test(q)) {
+      return nextTrip
+        ? { line: `I can help you open that trip. Opening ${nextName}.`, run: openNext }
+        : { line: "You don't have a trip to open yet. Want to tell me about one?" };
+    }
+    // Itinerary-ish content → route into the proven intake/parse flow, seeding what was said.
+    if (/(going to|i'?m going|we'?re going|we are going|fly|flying|drive|driving|train|ferry|hotel|trip to|travel(l)?ing to|january|february|march|april|may|june|july|august|september|october|november|december)/.test(q)) {
+      return {
+        line: "I can help organize that into a trip request. I'll turn what you tell me into suggestions first — nothing is saved until you confirm.",
+        run: () => navigate("/my-travel/new-trip", { state: { seedText: raw } }),
+      };
+    }
+    if (/(help|what can you do|how does this work|what do you do)/.test(q)) {
+      return { line: "I can help you tell Fortress about a trip, check in, log an assistance status, or tell you what's next or what's missing. Just say what you need." };
+    }
+    return { line: "I can help with trips, check-ins, assistance, what's next, and what's missing. What would you like to do?" };
+  }
+
+  // Handle an utterance (voice or typed). Speaks the reply (voice only), then runs any routing.
+  async function handleUtterance(raw: string, spoken: boolean) {
+    const text = raw.trim();
+    if (!text) return;
+    setCmd(text); // transcript / command shown in the command area
+    setProcessing(true);
+    const { line, run } = resolveIntent(text);
+    setAegisLine(line);
+    setProcessing(false);
+    if (spoken) await tts.speak(line); // Onyx reply; resolves when playback ends (or unavailable)
+    if (run) run();
+    if (!run) setCmd("");
+  }
+
+  const runTyped = () => { const q = cmd.trim(); if (q) handleUtterance(q, false); };
 
   return (
     <div className="min-h-screen" style={{ background: BG, color: "#e8eef2" }}>
@@ -103,31 +161,43 @@ export default function MyTravelPortal() {
         {/* Aegis presence */}
         <section className="flex flex-col items-center text-center gap-2">
           <AegisCore state={coreState} />
-          <p className="font-serif text-2xl text-[#f4f1ea] mt-1">{greeting()}{linked && nextTrip ? "" : "."}{linked && nextTrip ? "." : ""}</p>
+          <p className="font-serif text-2xl text-[#f4f1ea] mt-1">{greeting()}.</p>
           <p className="text-sm text-[#8fb0ff] max-w-sm">{status}</p>
           {aegisLine && <p className="font-serif text-[15px] text-[#cfe0ff] max-w-sm mt-1">{aegisLine}</p>}
         </section>
 
         {linked ? (
           <>
-            {/* command bar (deterministic) */}
-            <div className="flex items-center gap-2">
+            {/* voice + command bar (deterministic; voice = interface only) */}
+            <div className="space-y-2">
+              {voiceSupported ? (
+                <div className="flex flex-col items-center gap-1.5">
+                  <TravellerVoiceCapture
+                    startLabel="Talk to Aegis"
+                    onListeningChange={setVoiceListening}
+                    onFinalChunk={(t) => handleUtterance(t, true)}
+                  />
+                  <span className="text-[11px] text-[#5e6c86]">Speak naturally, or type below. Nothing is saved until you confirm.</span>
+                </div>
+              ) : (
+                <p className="text-center text-[11px] text-[#5e6c86]">Voice isn't available in this browser — type below instead.</p>
+              )}
               <input
                 value={cmd} onChange={(e) => setCmd(e.target.value)}
                 onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-                onKeyDown={(e) => { if (e.key === "Enter") runCommand(); }}
+                onKeyDown={(e) => { if (e.key === "Enter") runTyped(); }}
                 placeholder="Ask Aegis… (e.g. “I'm going to Europe in September”)"
-                className="flex-1 h-12 rounded-[32px] bg-[#0b1424] border border-[#28406f] px-5 text-sm text-[#e8eef2] placeholder:text-[#5e6c86] focus:outline-none focus:border-[#5e9bff]"
+                className="w-full h-12 rounded-[32px] bg-[#0b1424] border border-[#28406f] px-5 text-sm text-[#e8eef2] placeholder:text-[#5e6c86] focus:outline-none focus:border-[#5e9bff]"
               />
             </div>
 
             {/* quick actions */}
             <div className="flex flex-wrap gap-2 justify-center">
               <Link to="/my-travel/new-trip" className={chip}><Plus className="h-3.5 w-3.5" />Tell Fortress about a trip</Link>
-              <button className={chip} onClick={() => setAegisLine(nextTrip ? `Your next trip: ${nextTrip.trip_name ?? "Trip"} (${fmt(nextTrip.departure_date)}).` : "No upcoming trips yet.")}><ArrowRight className="h-3.5 w-3.5" />What's next?</button>
-              <button className={chip} onClick={goCheckIn} disabled={!nextTrip}><ShieldCheck className="h-3.5 w-3.5" />Check in</button>
-              <button className={chip} onClick={goCheckIn} disabled={!nextTrip}><LifeBuoy className="h-3.5 w-3.5" />I need assistance</button>
-              <button className={chip} onClick={whatsMissing}><ListChecks className="h-3.5 w-3.5" />What's missing?</button>
+              <button className={chip} onClick={() => handleUtterance("what's next", false)}><ArrowRight className="h-3.5 w-3.5" />What's next?</button>
+              <button className={chip} onClick={() => handleUtterance("check in", false)} disabled={!nextTrip}><ShieldCheck className="h-3.5 w-3.5" />Check in</button>
+              <button className={chip} onClick={() => handleUtterance("I need assistance", false)} disabled={!nextTrip}><LifeBuoy className="h-3.5 w-3.5" />I need assistance</button>
+              <button className={chip} onClick={() => handleUtterance("what's missing", false)}><ListChecks className="h-3.5 w-3.5" />What's missing?</button>
             </div>
 
             <p className="text-center text-[11px] text-[#5e6c86]">Your security team reviews trip requests before monitoring begins.</p>
