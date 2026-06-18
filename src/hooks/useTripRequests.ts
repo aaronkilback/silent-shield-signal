@@ -32,6 +32,8 @@ export interface TripRequest {
   destination_summary: string | null;
   raw_notes: string | null;
   status: string;
+  review_note: string | null;
+  reviewed_at: string | null;
   created_at: string;
   updated_at: string;
   traveler_id: string | null;
@@ -50,7 +52,7 @@ export function useTripRequests() {
       const { data, error } = await supabase
         .from("traveller_trip_requests")
         .select(`
-          id, trip_name, start_date, end_date, destination_summary, raw_notes, status, created_at, updated_at, traveler_id,
+          id, trip_name, start_date, end_date, destination_summary, raw_notes, status, review_note, reviewed_at, created_at, updated_at, traveler_id,
           travelers:traveler_id ( name ),
           traveller_trip_request_segments ( id, segment_type, start_time, end_time, origin, destination, location_name, address, carrier_or_provider, flight_or_train_number, confirmation_reference, notes, missing_fields, confidence )
         `)
@@ -66,6 +68,8 @@ export function useTripRequests() {
         destination_summary: r.destination_summary ?? null,
         raw_notes: r.raw_notes ?? null,
         status: r.status,
+        review_note: r.review_note ?? null,
+        reviewed_at: r.reviewed_at ?? null,
         created_at: r.created_at,
         updated_at: r.updated_at,
         traveler_id: r.traveler_id ?? null,

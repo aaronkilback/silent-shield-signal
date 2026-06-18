@@ -1,15 +1,20 @@
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ClipboardList, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Loader2, ClipboardList, AlertCircle, MessageCircleQuestion, XCircle } from "lucide-react";
 import { format } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTripRequests, type TripRequest, type TripRequestSegment } from "@/hooks/useTripRequests";
+import { useTripRequestReview } from "@/hooks/useTripRequestReview";
 
 /**
- * Operator Trip Request Review (Slice E1) — READ-ONLY. Shows traveller-submitted pending trip
- * requests for the selected client. These are NOT operational/monitored trips — only a later
- * operator-approval slice (E3) can create an operational itinerary. No approve/reject/edit/
- * create controls here; no Aegis/LLM/upload. Read-only view, scoped by selectedClientId.
+ * Operator Trip Request Review (Slice E1 read + E2 triage). Shows traveller-submitted pending
+ * requests for the selected client and lets an operator triage them as needs_clarification or
+ * rejected (via the operator-only operator-trip-request-review function). NON-OPERATIONAL — no
+ * approve / create-itinerary / edit-segment / convert controls here; no Aegis/LLM/upload. Only
+ * an itinerary-creating approval slice (E3) can make a request operational.
  */
 const SEG_LABEL: Record<string, string> = {
   air: "Flight", hotel: "Hotel", ground: "Ground transfer", driving: "Driving",
@@ -86,8 +91,54 @@ function RequestCard({ r }: { r: TripRequest }) {
         )}
       </div>
 
-      <div className="text-[11px] text-muted-foreground border-t pt-2">Requires operator review.</div>
+      {r.review_note && (
+        <div className="text-xs border-t pt-2"><span className="text-muted-foreground">Clarification note:</span> {r.review_note}</div>
+      )}
+
+      <TriageControls r={r} />
     </Card>
+  );
+}
+
+// Operator triage (E2): needs_clarification / reject only. No approve/create-itinerary control.
+function TriageControls({ r }: { r: TripRequest }) {
+  const [note, setNote] = useState("");
+  const review = useTripRequestReview();
+  // Once triaged out of pending_review, show only the status (no re-triage in v1).
+  if (r.status !== "pending_review") {
+    return (
+      <div className="text-[11px] text-muted-foreground border-t pt-2">
+        Reviewed{r.reviewed_at ? ` ${fmtTs(r.reviewed_at)}` : ""}. This request is not yet monitored. No operational itinerary has been created.
+      </div>
+    );
+  }
+  return (
+    <div className="border-t pt-3 space-y-2">
+      <Textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value.slice(0, 2000))}
+        placeholder="Optional note to the traveller (reason / what's needed)"
+        rows={2}
+        className="text-sm"
+        disabled={review.isPending}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" disabled={review.isPending}
+          onClick={() => review.mutate({ request_id: r.id, action: "needs_clarification", ...(note.trim() ? { review_note: note.trim() } : {}) })}>
+          {review.isPending && review.variables?.action === "needs_clarification"
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircleQuestion className="h-3.5 w-3.5" />}
+          <span className="ml-1">Request clarification</span>
+        </Button>
+        <Button size="sm" variant="destructive" disabled={review.isPending}
+          onClick={() => review.mutate({ request_id: r.id, action: "reject", ...(note.trim() ? { review_note: note.trim() } : {}) })}>
+          {review.isPending && review.variables?.action === "reject"
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+          <span className="ml-1">Reject request</span>
+        </Button>
+      </div>
+      <div className="text-[11px] text-muted-foreground">This request is not yet monitored. No operational itinerary has been created.</div>
+      {review.isError && <p className="text-xs text-destructive">Couldn't update that request. Please try again.</p>}
+    </div>
   );
 }
 
