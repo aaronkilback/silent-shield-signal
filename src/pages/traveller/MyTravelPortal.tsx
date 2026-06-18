@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2, Plane, Clock, ShieldCheck, Plus, ArrowRight, LifeBuoy, ListChecks } from "lucide-react";
 import { format } from "date-fns";
@@ -32,6 +32,8 @@ export default function MyTravelPortal() {
   const [focused, setFocused] = useState(false);
   const [cmd, setCmd] = useState("");
   const [aegisLine, setAegisLine] = useState<string | null>(null);
+  const [now, setNow] = useState<Date>(() => new Date()); // local device clock — header chrome only
+  useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: BG }}><Loader2 className="h-6 w-6 animate-spin text-[#5e9bff]" /></div>;
@@ -80,8 +82,21 @@ export default function MyTravelPortal() {
 
   return (
     <div className="min-h-screen" style={{ background: BG, color: "#e8eef2" }}>
-      <header className="px-4 py-3 border-b border-[#1a2740]">
-        <span className="font-mono text-xs tracking-[0.3em] text-[#8fb0ff]">AEGIS · FORTRESS</span>
+      <header className="px-4 py-3 border-b border-[#1a2740] grid grid-cols-3 items-center">
+        <div className="flex items-center">
+          <svg width="26" height="26" viewBox="0 0 100 100" aria-hidden="true" style={{ filter: "drop-shadow(0 0 6px rgba(94,155,255,.5))" }}>
+            <rect x="22" y="22" width="56" height="56" rx="14" transform="rotate(45 50 50)" fill="rgba(20,40,80,.4)" stroke="#7ea8ff" strokeWidth="3" />
+            <path d="M40 58 L50 42 L60 58" fill="none" stroke="#dcebff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div className="text-center leading-tight">
+          <div className="font-mono text-[11px] tracking-[0.34em] text-[#8fb0ff]">AEGIS CORE</div>
+          <div className="font-mono text-[9px] tracking-[0.3em] text-[#5e6c86] hidden sm:block">TRAVEL INTAKE</div>
+        </div>
+        <div className="text-right font-mono leading-tight">
+          <div className="text-[12px] text-[#cfe0ff] tracking-wider">{format(now, "HH:mm")}</div>
+          <div className="text-[9px] text-[#5e6c86] tracking-widest uppercase">{format(now, "MMM d")}</div>
+        </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-4 pb-16 pt-6 space-y-6">
@@ -114,6 +129,8 @@ export default function MyTravelPortal() {
               <button className={chip} onClick={goCheckIn} disabled={!nextTrip}><LifeBuoy className="h-3.5 w-3.5" />I need assistance</button>
               <button className={chip} onClick={whatsMissing}><ListChecks className="h-3.5 w-3.5" />What's missing?</button>
             </div>
+
+            <p className="text-center text-[11px] text-[#5e6c86]">Your security team reviews trip requests before monitoring begins.</p>
 
             {/* secondary: trips */}
             <section className="space-y-2">
