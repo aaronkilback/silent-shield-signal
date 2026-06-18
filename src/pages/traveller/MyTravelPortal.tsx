@@ -9,6 +9,7 @@ import { AegisCore, type AegisCoreState } from "@/components/traveller/AegisCore
 import { isSpeechRecognitionSupported } from "@/components/traveller/TravellerVoiceCapture";
 import { useTravellerSpeech } from "@/hooks/useTravellerSpeech";
 import { useTravellerTTS } from "@/hooks/useTravellerTTS";
+import { useTravellerAegisChat, type ChatTurn } from "@/hooks/useTravellerAegisChat";
 
 /**
  * Traveller Aegis Home (Slice D2.1 + Home Voice Mode v1, Option A) — Aegis-first interface at
@@ -34,6 +35,8 @@ export default function MyTravelPortal() {
   const { data, isLoading, isError } = useMyTravel();
   const navigate = useNavigate();
   const tts = useTravellerTTS();
+  const aegisChat = useTravellerAegisChat();
+  const historyRef = useRef<ChatTurn[]>([]); // multi-turn context (server re-scopes every turn)
   const [focused, setFocused] = useState(false);
   const [cmd, setCmd] = useState("");
   const [aegisLine, setAegisLine] = useState<string | null>(null);
@@ -153,9 +156,9 @@ export default function MyTravelPortal() {
     return { line: "I can help with trips, check-ins, assistance, what's next, and what's missing. What would you like to do?" };
   }
 
-  // Handle an utterance (voice or typed). Speaks the reply (voice only) EXACTLY ONCE per turn,
-  // then runs any routing. Re-entrant/echoed utterances (mic hearing Aegis, duplicate finals)
-  // are ignored while a turn is in flight.
+  // Handle a conversational utterance (voice or typed). V1: real Aegis via traveller-aegis-chat
+  // (server-scoped, read-only); deterministic router is the FALLBACK when the LLM is unavailable.
+  // Speaks the reply (voice only) EXACTLY ONCE per turn; after speaking, the session auto-relistens.
   async function handleUtterance(raw: string, spoken: boolean) {
     const text = raw.trim();
     if (!text) return;
@@ -163,24 +166,24 @@ export default function MyTravelPortal() {
     handlingRef.current = true;
     const turn = ++turnRef.current;
     try {
-      setCmd(text); // transcript / command shown in the command area
+      setCmd(text);
       setProcessing(true);
-      const { line, run } = resolveIntent(text);
-      setAegisLine(line);
+      let reply: string;
+      try {
+        reply = await aegisChat(text, historyRef.current); // real Aegis (scoped, read-only)
+      } catch {
+        reply = resolveIntent(text).line; // fallback: deterministic line (no navigation in voice path)
+      }
       setProcessing(false);
+      setAegisLine(reply);
+      historyRef.current = [...historyRef.current, { role: "user", content: text }, { role: "assistant", content: reply }].slice(-12);
       let outcome: "played" | "blocked" | "unavailable" | "silent" = "silent";
       if (spoken) {
-        // Duplicate suppression: never auto-speak the same line twice for the same turn.
-        const already = spokenRef.current?.turn === turn && spokenRef.current?.text === line;
-        if (!already) {
-          spokenRef.current = { turn, text: line };
-          outcome = await tts.speak(line); // Onyx reply; resolves (with outcome) when playback ends
-        }
+        const already = spokenRef.current?.turn === turn && spokenRef.current?.text === reply;
+        if (!already) { spokenRef.current = { turn, text: reply }; outcome = await tts.speak(reply); }
       }
-      if (run) { run(); return; } // navigation ends/pauses the session cleanly (no relisten)
       setCmd("");
-      // True voice session: after Aegis finishes speaking, automatically listen again. If autoplay
-      // was blocked, wait for the manual "Hear Aegis" tap (which then resumes listening).
+      // V1 is read-only — no navigation from the conversation. After Aegis speaks, listen again.
       if (spoken && voiceSessionRef.current && outcome !== "blocked") speech.start();
     } finally {
       handlingRef.current = false;
@@ -188,6 +191,8 @@ export default function MyTravelPortal() {
   }
 
   const runTyped = () => { const q = cmd.trim(); if (q) handleUtterance(q, false); };
+  // Quick-action chips stay DETERMINISTIC (snappy navigation into the proven flows) — not the LLM.
+  const runQuickAction = (text: string) => { const { line, run } = resolveIntent(text); setAegisLine(line); if (run) run(); };
 
   return (
     <div className="min-h-screen" style={{ background: BG, color: "#e8eef2" }}>
@@ -268,10 +273,10 @@ export default function MyTravelPortal() {
             {/* quick actions */}
             <div className="flex flex-wrap gap-2 justify-center">
               <Link to="/my-travel/new-trip" className={chip}><Plus className="h-3.5 w-3.5" />Tell Fortress about a trip</Link>
-              <button className={chip} onClick={() => handleUtterance("what's next", false)}><ArrowRight className="h-3.5 w-3.5" />What's next?</button>
-              <button className={chip} onClick={() => handleUtterance("check in", false)} disabled={!nextTrip}><ShieldCheck className="h-3.5 w-3.5" />Check in</button>
-              <button className={chip} onClick={() => handleUtterance("I need assistance", false)} disabled={!nextTrip}><LifeBuoy className="h-3.5 w-3.5" />I need assistance</button>
-              <button className={chip} onClick={() => handleUtterance("what's missing", false)}><ListChecks className="h-3.5 w-3.5" />What's missing?</button>
+              <button className={chip} onClick={() => runQuickAction("what's next")}><ArrowRight className="h-3.5 w-3.5" />What's next?</button>
+              <button className={chip} onClick={() => runQuickAction("check in")} disabled={!nextTrip}><ShieldCheck className="h-3.5 w-3.5" />Check in</button>
+              <button className={chip} onClick={() => runQuickAction("I need assistance")} disabled={!nextTrip}><LifeBuoy className="h-3.5 w-3.5" />I need assistance</button>
+              <button className={chip} onClick={() => runQuickAction("what's missing")}><ListChecks className="h-3.5 w-3.5" />What's missing?</button>
             </div>
 
             <p className="text-center text-[11px] text-[#5e6c86]">Your security team reviews trip requests before monitoring begins.</p>
