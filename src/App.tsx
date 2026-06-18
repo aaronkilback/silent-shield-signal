@@ -41,6 +41,7 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
 const Index = lazyWithRetry(() => import("./pages/Index"));
 const MyTravelPortal = lazyWithRetry(() => import("./pages/traveller/MyTravelPortal"));
 const MyItineraryDetail = lazyWithRetry(() => import("./pages/traveller/MyItineraryDetail"));
+const NewTripIntake = lazyWithRetry(() => import("./pages/traveller/NewTripIntake"));
 
 // Root landing: route a no-tenant authenticated user (traveller/family — viewer role,
 // 0 tenant memberships, not super_admin) to the read-only traveller portal BEFORE the
@@ -178,6 +179,7 @@ const App = () => {
                           data call on this surface is the scoped get-my-travel function. */}
                       <Route path="/my-travel" element={<TravellerRoute><MyTravelPortal /></TravellerRoute>} />
                       <Route path="/my-travel/itinerary/:itineraryId" element={<TravellerRoute><MyItineraryDetail /></TravellerRoute>} />
+                      <Route path="/my-travel/new-trip" element={<TravellerRoute><NewTripIntake /></TravellerRoute>} />
 
                       {/* Operator + public surface — full tenant/client context + widgets
                           via the pathless OperatorLayout route. */}

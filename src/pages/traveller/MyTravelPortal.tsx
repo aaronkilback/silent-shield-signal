@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Plane, Clock, MapPin } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Loader2, Plane, Clock, MapPin, Plus } from "lucide-react";
 import { format } from "date-fns";
 import { useMyTravel } from "@/hooks/useMyTravel";
 import { MyAlerts } from "@/components/traveller/MyAlerts";
@@ -31,6 +32,14 @@ export default function MyTravelPortal() {
 
   return (
     <Shell>
+      <Card className="p-4 flex items-center justify-between gap-3">
+        <div className="text-sm">
+          <div className="font-medium">Planning a trip?</div>
+          <div className="text-muted-foreground">Tell Fortress about it — your security team will review it first.</div>
+        </div>
+        <Link to="/my-travel/new-trip"><Button size="sm"><Plus className="h-4 w-4 mr-1" />Tell Fortress about a trip</Button></Link>
+      </Card>
+
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Upcoming trips</h2>
         {itineraries.length === 0 ? (
