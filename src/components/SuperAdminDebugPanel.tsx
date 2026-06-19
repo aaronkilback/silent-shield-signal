@@ -23,6 +23,15 @@ import { supabase } from "@/integrations/supabase/client";
  * the Day-0 onboarding validation is complete.
  */
 export const SuperAdminDebugPanel = () => {
+  // Production gate: this debug overlay must NOT appear during normal production use.
+  // Shown only in dev (vite dev), or when a super_admin explicitly opts in via ?debug=1
+  // or localStorage 'fortress_debug'='1'. Still super_admin-gated below.
+  const debugEnabled =
+    import.meta.env.DEV ||
+    (typeof window !== "undefined" &&
+      (window.localStorage.getItem("fortress_debug") === "1" ||
+        new URLSearchParams(window.location.search).has("debug")));
+
   const { isSuperAdmin, isLoading } = useIsSuperAdmin();
   const { currentTenant, isAllTenantsView } = useTenant();
   const { selectedClientId } = useClientSelection();
@@ -31,7 +40,7 @@ export const SuperAdminDebugPanel = () => {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
-    if (!selectedClientId) {
+    if (!debugEnabled || !selectedClientId) {
       setSelectedClientTenantId(null);
       return;
     }
@@ -48,8 +57,9 @@ export const SuperAdminDebugPanel = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedClientId]);
+  }, [selectedClientId, debugEnabled]);
 
+  if (!debugEnabled) return null; // hidden in normal production use
   if (isLoading) return null;
   if (!isSuperAdmin) return null;
 
