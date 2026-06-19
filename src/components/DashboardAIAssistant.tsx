@@ -33,7 +33,7 @@ type Message = {
 
 const debug = (...args: unknown[]) => { if (import.meta.env.DEV) console.log(...args); };
 
-export const DashboardAIAssistant = ({ fullScreen = false }: { fullScreen?: boolean }) => {
+export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false }: { fullScreen?: boolean; canvasMode?: boolean }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
@@ -1510,11 +1510,11 @@ How can I help you now?`,
   };
 
   return (
-    <Card className={cn("w-full", fullScreen && "flex-1 flex flex-col border-0 rounded-none shadow-none")}>
-      <CardHeader className="pb-3">
+    <Card className={cn("w-full", fullScreen && "flex-1 flex flex-col border-0 rounded-none shadow-none", canvasMode && "bg-transparent")}>
+      <CardHeader className={canvasMode ? "pb-2 pt-3" : "pb-3"}>
         <div className="flex flex-col gap-3">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-            <div className="flex items-center gap-3">
+            <div className={cn("flex items-center gap-3", canvasMode && "hidden")}>
               {/* Shield icon */}
               <div className="w-10 h-10 flex items-center justify-center">
                 <svg width="32" height="36" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1652,9 +1652,12 @@ How can I help you now?`,
             {/* Fixed height container prevents layout shifts */}
             <div 
               className={cn(
-                "overflow-y-auto border rounded-md scroll-smooth",
-                fullScreen 
-                  ? "flex-1 min-h-0" 
+                "overflow-y-auto scroll-smooth",
+                // canvasMode: frosted "console" seated in the canvas (scrim + blur keeps text
+                // legible over the backdrop core) instead of the opaque boxed border.
+                canvasMode ? "rounded-xl border border-border/30 bg-background/40 backdrop-blur-sm" : "border rounded-md",
+                fullScreen
+                  ? "flex-1 min-h-0"
                   : "h-[400px] sm:h-[500px] lg:h-[600px]"
               )}
               ref={scrollRef}
@@ -1829,7 +1832,7 @@ How can I help you now?`,
               </div>
             )}
 
-            <form ref={formRef} onSubmit={handleSubmit} className="flex gap-2">
+            <form ref={formRef} onSubmit={handleSubmit} className={cn("flex gap-2", canvasMode && "items-center rounded-full border border-primary/30 bg-background/50 backdrop-blur-md px-2.5 py-2 shadow-lg shadow-primary/10")}>
               <input
                 type="file"
                 ref={fileInputRef}
@@ -1853,7 +1856,7 @@ How can I help you now?`,
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={fullScreen ? "Ask AEGIS anything... (⌘K for quick nav)" : "Ask about threats, signals..."}
                 disabled={isLoading || isUploading}
-                className="flex-1 min-w-0"
+                className={cn("flex-1 min-w-0", canvasMode && "border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0")}
               />
               <Button 
                 type="submit" 

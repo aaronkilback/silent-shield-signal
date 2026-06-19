@@ -66,9 +66,15 @@ const Index = () => {
     // Slice 1b: paint-only premium polish. Subtle vertical gradient on the EXISTING wrapper
     // (theme palette, not a deep-space radial); structure unchanged (min-h-screen flex flex-col).
     <div
-      className="min-h-screen flex flex-col"
+      className="relative isolate overflow-hidden min-h-screen flex flex-col"
       style={{ background: "linear-gradient(180deg, hsl(222 47% 7%) 0%, hsl(222 47% 5%) 60%, hsl(222 47% 4%) 100%)" }}
     >
+      {/* Slice 2A-R1: single-canvas backdrop. The Aegis Core is an absolute, behind-content
+          (-z-10), pointer-events-none decorative layer spanning the upper canvas, so the core
+          reads as the spatial anchor the whole page sits inside — not a stacked section below
+          the greeting. Out of flow -> cannot collapse layout; pointer-events-none -> cannot
+          block chat / voice / command palette. */}
+      <AegisCore className="absolute inset-x-0 top-0 h-[56vh] sm:h-[68vh] -z-10 pointer-events-none" />
       <MinimalHeader aegisHome />
       <ThreatStatusBar />
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
@@ -77,7 +83,7 @@ const Index = () => {
       {/* Slice 1c: mobile/responsive polish — tighten the band's base (mobile) padding and
           greeting size so it doesn't dominate small screens or push chat below the fold.
           All sm: values unchanged → desktop renders identically. No new classes/fonts. */}
-      <section className="shrink-0 px-4 sm:px-6 pt-4 sm:pt-8 pb-3 sm:pb-4 text-center border-b border-border/40">
+      <section className="relative z-10 shrink-0 px-4 sm:px-6 pt-4 sm:pt-8 pb-3 sm:pb-4 text-center">
         <h1 className="font-serif text-2xl sm:text-4xl text-foreground leading-tight tracking-tight">
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
@@ -86,15 +92,14 @@ const Index = () => {
           {presenceLine}
         </p>
       </section>
-      {/* Slice 2A (alive-core pass): contained, decorative Aegis Core. Bounded height
-          (shrink-0) so it never overlaps the chat; larger presence on desktop, modest on
-          mobile to keep the chat reachable (1c discipline). Slight negative top margin tucks
-          it under the greeting so greeting→core→chat read as one composition. pointer-events
-          -none + aria-hidden so it can't intercept chat/voice/⌘K. No data, no labels, no
-          operational claims, no overlay, no full-page wrapper. */}
-      <AegisCore className="shrink-0 -mt-2 sm:-mt-4 h-40 sm:h-64 md:h-80" />
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <DashboardAIAssistant fullScreen />
+      {/* Slice 2A-R2: chat seated INSIDE the canvas. Centered command-surface width; canvasMode
+          de-chromes the assistant (transparent card, slimmed internal header, command-bar input)
+          so the backdrop core shows through and the page reads as one interface, not stacked
+          sections. relative z-10 keeps content above the -z-10 backdrop. */}
+      <main className="relative z-10 flex-1 flex flex-col overflow-hidden">
+        <div className="w-full max-w-3xl mx-auto flex-1 flex flex-col min-h-0 px-2 sm:px-4 pb-3">
+          <DashboardAIAssistant fullScreen canvasMode />
+        </div>
       </main>
     </div>
   );

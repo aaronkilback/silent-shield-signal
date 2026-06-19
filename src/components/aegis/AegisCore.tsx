@@ -25,7 +25,7 @@ export const AegisCore = ({ className = "" }: { className?: string }) => {
   return (
     <div
       aria-hidden="true"
-      className={`relative pointer-events-none select-none overflow-hidden flex items-center justify-center text-primary ${className}`}
+      className={`pointer-events-none select-none overflow-hidden flex items-center justify-center text-primary ${className}`}
     >
       {/* Wide ambient energy field — fills the section so the room feels occupied,
           fades to transparent at the edges so it blends with greeting + chat. */}
