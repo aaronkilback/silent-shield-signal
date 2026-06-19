@@ -1,21 +1,28 @@
 /**
- * AegisGhostFrames — Slice 2A-Reframe v2.
+ * AegisGhostFrames — Slice 2A "Aegis Magical Core" (redesigned).
  *
- * PURELY DECORATIVE spatial atmosphere: faint abstract frames arranged around the
- * Aegis core to give the canvas depth/architecture. They are SILHOUETTES ONLY —
- * no text, no titles, no counts, no statuses, no icons that imply data. They make
- * no claim and must never be mistaken for real cards/documents/reports.
+ * PURELY DECORATIVE holographic HUD reticles (corner brackets only — NOT filled
+ * cards/panels) that add spatial/command-interface depth around the core. No full
+ * borders, no fill, no text, no titles, no counts, no statuses — they cannot be
+ * mistaken for real document/report/agent cards.
  *
- * Safety: aria-hidden + pointer-events-none + select-none; the caller places this
- * as a behind-content (-z-10) backdrop layer. Hidden on small screens to avoid
- * mobile clutter. No motion (nothing to gate for reduced-motion).
+ * aria-hidden + pointer-events-none + select-none; caller mounts behind content
+ * (-z-10). md+ only (kept off small screens to avoid clutter). No motion.
  */
+const Reticle = ({ className = "" }: { className?: string }) => (
+  <div className={`absolute hidden md:block w-24 h-16 opacity-[0.18] ${className}`}>
+    <span className="absolute left-0 top-0 h-3.5 w-3.5 border-l border-t border-primary rounded-tl-sm" />
+    <span className="absolute right-0 top-0 h-3.5 w-3.5 border-r border-t border-primary rounded-tr-sm" />
+    <span className="absolute left-0 bottom-0 h-3.5 w-3.5 border-l border-b border-primary rounded-bl-sm" />
+    <span className="absolute right-0 bottom-0 h-3.5 w-3.5 border-r border-b border-primary rounded-br-sm" />
+  </div>
+);
+
 export const AegisGhostFrames = ({ className = "" }: { className?: string }) => {
   return (
     <div aria-hidden="true" className={`pointer-events-none select-none ${className}`}>
-      <div className="absolute left-[7%] top-[44%] hidden md:block w-44 h-28 rounded-xl border border-primary/15 bg-primary/[0.03] backdrop-blur-[1px]" />
-      <div className="absolute right-[8%] top-[39%] hidden lg:block w-40 h-32 rounded-xl border border-primary/15 bg-primary/[0.03] backdrop-blur-[1px]" />
-      <div className="absolute left-1/2 top-[58%] -translate-x-1/2 hidden sm:block w-48 h-24 rounded-xl border border-primary/10 bg-primary/[0.02]" />
+      <Reticle className="left-[9%] top-[40%]" />
+      <Reticle className="right-[10%] top-[36%]" />
     </div>
   );
 };

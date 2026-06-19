@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { ThreatStatusBar } from "@/components/ThreatStatusBar";
 import { AegisCore } from "@/components/aegis/AegisCore";
+import { AegisAtmosphere } from "@/components/aegis/AegisAtmosphere";
 import { AegisGhostFrames } from "@/components/aegis/AegisGhostFrames";
 import { Loader2 } from "lucide-react";
 
@@ -70,13 +71,14 @@ const Index = () => {
       className="relative isolate overflow-hidden min-h-screen flex flex-col"
       style={{ background: "linear-gradient(180deg, hsl(222 47% 7%) 0%, hsl(222 47% 5%) 60%, hsl(222 47% 4%) 100%)" }}
     >
-      {/* Slice 2A-Reframe v2: the Aegis Core is the HERO, an absolute behind-content (-z-10)
-          decorative layer that owns the upper viewport (chat docks low inside canvasMode, so
-          this is the dominant element of the first screen — not a thin band). Out of flow ->
-          cannot collapse layout; pointer-events-none -> cannot block chat / voice / palette.
-          AegisGhostFrames add decorative spatial depth (silhouettes only, no text/data). */}
-      <AegisCore className="absolute inset-x-0 top-0 h-[78vh] -z-10 pointer-events-none" />
+      {/* Slice 2A "Aegis Magical Core": decorative canvas layers, all behind content (-z-10),
+          pointer-events-none (cannot collapse layout or block chat/voice/palette).
+          Stack (back -> front): AegisAtmosphere (environment lighting + core->command-bar
+          attention pulse) -> AegisGhostFrames (HUD reticles, depth) -> AegisCore (volumetric
+          hero owning the upper viewport). No data/labels/operational claims. */}
+      <AegisAtmosphere className="absolute inset-0 -z-10" />
       <AegisGhostFrames className="absolute inset-0 -z-10" />
+      <AegisCore className="absolute inset-x-0 top-0 h-[78vh] -z-10 pointer-events-none" />
       <MinimalHeader aegisHome />
       <ThreatStatusBar />
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
