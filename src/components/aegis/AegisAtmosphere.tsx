@@ -15,23 +15,14 @@
 export const AegisAtmosphere = ({ className = "" }: { className?: string }) => {
   return (
     <div aria-hidden="true" className={`pointer-events-none select-none ${className}`}>
-      {/* Background blooms (additive light) */}
-      <div
-        className="absolute inset-0"
-        style={{
-          mixBlendMode: "screen",
-          background:
-            "radial-gradient(58% 48% at 50% 33%, hsl(var(--primary) / 0.15), transparent 70%), radial-gradient(40% 30% at 20% 60%, hsl(var(--primary) / 0.06), transparent 70%), radial-gradient(40% 30% at 82% 64%, hsl(var(--primary) / 0.05), transparent 70%)",
-        }}
-      />
-      {/* Depth vignette (darkens edges, focuses the core) */}
+      {/* Depth vignette (darkens edges, focuses the core; canvas provides the upper atmosphere) */}
       <div
         className="absolute inset-0"
         style={{ background: "radial-gradient(120% 92% at 50% 30%, transparent 55%, hsl(222 47% 3% / 0.6) 100%)" }}
       />
       {/* Attention beam: descends core -> command bar (pulses ~11s; hidden when static) */}
       <div
-        className="ac-beam absolute left-1/2 -translate-x-1/2 top-[36%] bottom-[9%] w-40 sm:w-56 opacity-0"
+        className="ac-beam absolute left-1/2 -translate-x-1/2 top-[62%] bottom-[8%] w-40 sm:w-56 opacity-0"
         style={{
           mixBlendMode: "screen",
           background: "linear-gradient(180deg, hsl(var(--primary) / 0), hsl(var(--primary) / 0.18) 32%, hsl(var(--primary) / 0))",

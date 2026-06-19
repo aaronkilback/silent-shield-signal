@@ -7,9 +7,8 @@ import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { ThreatStatusBar } from "@/components/ThreatStatusBar";
-import { AegisCore } from "@/components/aegis/AegisCore";
+import { AegisCoreCanvas } from "@/components/aegis/AegisCoreCanvas";
 import { AegisAtmosphere } from "@/components/aegis/AegisAtmosphere";
-import { AegisGhostFrames } from "@/components/aegis/AegisGhostFrames";
 import { Loader2 } from "lucide-react";
 
 // Slice 1a — local-only helpers; no data queries, no external fonts, no layout restructure.
@@ -71,14 +70,13 @@ const Index = () => {
       className="relative isolate overflow-hidden min-h-screen flex flex-col"
       style={{ background: "linear-gradient(180deg, hsl(222 47% 7%) 0%, hsl(222 47% 5%) 60%, hsl(222 47% 4%) 100%)" }}
     >
-      {/* Slice 2A "Aegis Magical Core": decorative canvas layers, all behind content (-z-10),
-          pointer-events-none (cannot collapse layout or block chat/voice/palette).
-          Stack (back -> front): AegisAtmosphere (environment lighting + core->command-bar
-          attention pulse) -> AegisGhostFrames (HUD reticles, depth) -> AegisCore (volumetric
-          hero owning the upper viewport). No data/labels/operational claims. */}
+      {/* Slice 2A "Aegis Magical Core": decorative Canvas 2D core + CSS environment lighting,
+          both behind content (-z-10) and pointer-events-none (cannot collapse layout or block
+          chat/voice/palette). AegisCoreCanvas = the living particle-sphere hero (ported from
+          the v9 handoff, abstract only — no agents/labels/data). AegisAtmosphere = the
+          command-bar light coupling + attention pulse. No data/labels/operational claims. */}
+      <AegisCoreCanvas className="absolute inset-x-0 top-0 h-[82vh] -z-10" />
       <AegisAtmosphere className="absolute inset-0 -z-10" />
-      <AegisGhostFrames className="absolute inset-0 -z-10" />
-      <AegisCore className="absolute inset-x-0 top-0 h-[78vh] -z-10 pointer-events-none" />
       <MinimalHeader aegisHome />
       <ThreatStatusBar />
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
