@@ -9,7 +9,7 @@ import { EnvironmentBadge } from "@/components/EnvironmentBadge";
 import { PlatformAdminBanner } from "@/components/PlatformAdminBanner";
 import { PlatformAdminEscape } from "@/components/PlatformAdminEscape";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useTenant } from "@/hooks/useTenant";
@@ -27,16 +27,13 @@ import {
  * Shows only: logo, status, notifications, quick-nav menu, settings, logout.
  * All operational pages accessible via the "More" dropdown or by asking AEGIS.
  */
-export const MinimalHeader = ({ aegisHome = false }: { aegisHome?: boolean }) => {
+export const MinimalHeader = () => {
   const { signOut } = useAuth();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { isSuperAdmin, isAdmin } = useUserRole();
   const { currentTenant } = useTenant();
-  // Local device clock for the Aegis-home header chrome (no data source).
-  const [now, setNow] = useState<Date>(() => new Date());
-  useEffect(() => { const id = setInterval(() => setNow(new Date()), 15000); return () => clearInterval(id); }, []);
   const uiProfile = getUiProfile(currentTenant?.settings);
   const clientNoun = getClientNoun(currentTenant?.settings);
 
@@ -76,7 +73,7 @@ export const MinimalHeader = ({ aegisHome = false }: { aegisHome?: boolean }) =>
   return (
     <header className="border-b border-border/50 bg-card/30 backdrop-blur-sm sticky top-0 z-50">
       <PlatformAdminBanner />
-      <div className="px-4 sm:px-6 py-2 flex items-center justify-between relative">
+      <div className="px-4 sm:px-6 py-2 flex items-center justify-between">
         {/* Logo */}
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-lg bg-primary/10">
@@ -88,27 +85,8 @@ export const MinimalHeader = ({ aegisHome = false }: { aegisHome?: boolean }) =>
           <EnvironmentBadge />
         </div>
 
-        {/* Aegis-home centre chrome: "AEGIS CORE / INTELLIGENCE OFFICER" (home only) */}
-        {aegisHome && (
-          <div className="hidden md:flex absolute left-1/2 -translate-x-1/2 flex-col items-center leading-tight pointer-events-none select-none">
-            <span className="font-aegis-mono text-[11px] tracking-[0.34em] text-[#8fb0ff]">AEGIS CORE</span>
-            <span className="font-aegis-mono text-[9px] tracking-[0.3em] text-muted-foreground">INTELLIGENCE OFFICER</span>
-          </div>
-        )}
-
         {/* Right side */}
         <div className="flex items-center gap-1.5">
-          {/* Aegis-home local clock/date (device time only) */}
-          {aegisHome && (
-            <div className="hidden sm:flex flex-col items-end leading-none mr-1 font-aegis-mono">
-              <span className="text-[12px] text-[#cfe0ff] tracking-wider">
-                {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
-              </span>
-              <span className="text-[9px] text-muted-foreground uppercase tracking-widest">
-                {now.toLocaleDateString([], { month: "short", day: "numeric" })}
-              </span>
-            </div>
-          )}
           {/* Status indicator */}
           <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30 mr-1">
             <Activity className="w-3 h-3 text-status-active animate-pulse" />
