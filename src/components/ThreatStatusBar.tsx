@@ -71,6 +71,21 @@ export function ThreatStatusBar() {
 
   const threatLevel = snapshot?.threat_level || "low";
 
+  // Honest no-client state — intentional, not a fake "all clear". Still fails closed:
+  // no client status (threat/incidents/signals) is shown until a client is selected.
+  if (!selectedClientId) {
+    return (
+      <div className="w-full bg-muted/40 border-b border-border/50 px-4 py-1.5 flex items-center gap-3 text-xs">
+        <span className="text-muted-foreground font-medium uppercase tracking-wide">Operational context</span>
+        <span className="text-muted-foreground">Select a client to begin — client status appears once a client is selected.</span>
+        <div className="ml-auto flex items-center gap-1 text-muted-foreground">
+          <Activity className="w-3 h-3 text-green-400 animate-pulse" />
+          <span>LIVE</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full bg-muted/40 border-b border-border/50 px-4 py-1.5 flex items-center gap-4 text-xs flex-wrap">
       <div className="flex items-center gap-2">

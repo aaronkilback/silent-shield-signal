@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -70,3 +72,10 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+/* Aegis Home (Fortress operator home) — presence-led typography + deep-space surface.
+   Scoped to opt-in classes; does not change global tokens or other pages. */
+.font-aegis-serif { font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif; }
+.font-aegis-ui { font-family: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif; }
+.font-aegis-mono { font-family: 'JetBrains Mono', ui-monospace, 'Share Tech Mono', monospace; }
+.aegis-deepspace { background: radial-gradient(95% 70% at 50% 8%, #0e1626, #0a0e18 46%, #050609); }
