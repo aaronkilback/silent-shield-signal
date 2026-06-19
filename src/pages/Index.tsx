@@ -57,8 +57,9 @@ const Index = () => {
   }
 
   // Truthful presence line from EXISTING selectedClientId state — no new query, no fallback.
+  // Honesty pass: no active-monitoring claim; "standing by" reflects what is actually true.
   const presenceLine = selectedClientId
-    ? "Watching the selected client context."
+    ? "Standing by in selected client context."
     : "Standing by — select a client to begin operational context.";
 
   return (
@@ -81,15 +82,17 @@ const Index = () => {
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
         <p className="inline-flex items-center gap-2 text-sm text-primary/90 mt-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-primary/80 animate-pulse" aria-hidden="true" />
+          <span className="w-1.5 h-1.5 rounded-full bg-primary/80 motion-safe:animate-pulse" aria-hidden="true" />
           {presenceLine}
         </p>
       </section>
-      {/* Slice 2A: contained, decorative Aegis Core. Bounded height (shrink-0) so it never
-          overlaps the chat; pointer-events-none + aria-hidden so it can't intercept chat/
-          voice/⌘K; small on mobile to keep the chat reachable (1c discipline). No data,
-          no labels, no operational claims, no overlay, no full-page wrapper. */}
-      <AegisCore className="shrink-0 h-24 sm:h-44 md:h-52" />
+      {/* Slice 2A (alive-core pass): contained, decorative Aegis Core. Bounded height
+          (shrink-0) so it never overlaps the chat; larger presence on desktop, modest on
+          mobile to keep the chat reachable (1c discipline). Slight negative top margin tucks
+          it under the greeting so greeting→core→chat read as one composition. pointer-events
+          -none + aria-hidden so it can't intercept chat/voice/⌘K. No data, no labels, no
+          operational claims, no overlay, no full-page wrapper. */}
+      <AegisCore className="shrink-0 -mt-2 sm:-mt-4 h-40 sm:h-64 md:h-80" />
       <main className="flex-1 flex flex-col overflow-hidden">
         <DashboardAIAssistant fullScreen />
       </main>
