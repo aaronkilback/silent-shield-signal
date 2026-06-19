@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { ThreatStatusBar } from "@/components/ThreatStatusBar";
 import { AegisCore } from "@/components/aegis/AegisCore";
+import { AegisGhostFrames } from "@/components/aegis/AegisGhostFrames";
 import { Loader2 } from "lucide-react";
 
 // Slice 1a — local-only helpers; no data queries, no external fonts, no layout restructure.
@@ -69,25 +70,25 @@ const Index = () => {
       className="relative isolate overflow-hidden min-h-screen flex flex-col"
       style={{ background: "linear-gradient(180deg, hsl(222 47% 7%) 0%, hsl(222 47% 5%) 60%, hsl(222 47% 4%) 100%)" }}
     >
-      {/* Slice 2A-R1: single-canvas backdrop. The Aegis Core is an absolute, behind-content
-          (-z-10), pointer-events-none decorative layer spanning the upper canvas, so the core
-          reads as the spatial anchor the whole page sits inside — not a stacked section below
-          the greeting. Out of flow -> cannot collapse layout; pointer-events-none -> cannot
-          block chat / voice / command palette. */}
-      <AegisCore className="absolute inset-x-0 top-0 h-[56vh] sm:h-[68vh] -z-10 pointer-events-none" />
+      {/* Slice 2A-Reframe v2: the Aegis Core is the HERO, an absolute behind-content (-z-10)
+          decorative layer that owns the upper viewport (chat docks low inside canvasMode, so
+          this is the dominant element of the first screen — not a thin band). Out of flow ->
+          cannot collapse layout; pointer-events-none -> cannot block chat / voice / palette.
+          AegisGhostFrames add decorative spatial depth (silhouettes only, no text/data). */}
+      <AegisCore className="absolute inset-x-0 top-0 h-[74vh] -z-10 pointer-events-none" />
+      <AegisGhostFrames className="absolute inset-0 -z-10" />
       <MinimalHeader aegisHome />
       <ThreatStatusBar />
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
           type/spacing polish only. Does NOT wrap/constrain the assistant; no overlay, no
           deep-space wrapper, no external fonts, no min-height. Assistant container unchanged. */}
-      {/* Slice 1c: mobile/responsive polish — tighten the band's base (mobile) padding and
-          greeting size so it doesn't dominate small screens or push chat below the fold.
-          All sm: values unchanged → desktop renders identically. No new classes/fonts. */}
-      <section className="relative z-10 shrink-0 px-4 sm:px-6 pt-4 sm:pt-8 pb-3 sm:pb-4 text-center">
-        <h1 className="font-serif text-2xl sm:text-4xl text-foreground leading-tight tracking-tight">
+      {/* Slice 2A-Reframe v2: greeting DEMOTED to a secondary line so the Aegis core owns the
+          hero. Smaller type + tighter footprint; presence line stays truthful/non-operational. */}
+      <section className="relative z-10 shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 pb-1 text-center">
+        <h1 className="font-serif text-xl sm:text-2xl text-foreground/90 leading-tight tracking-tight">
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
-        <p className="inline-flex items-center gap-2 text-sm text-primary/90 mt-1.5">
+        <p className="inline-flex items-center gap-2 text-xs text-primary/80 mt-1">
           <span className="w-1.5 h-1.5 rounded-full bg-primary/80 motion-safe:animate-pulse" aria-hidden="true" />
           {presenceLine}
         </p>

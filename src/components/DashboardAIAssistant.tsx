@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Send, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2 } from "lucide-react";
+import { Send, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2, History } from "lucide-react";
 import { AegisCapabilityHints } from "@/components/AegisCapabilityHints";
 import { useOpenAIRealtime } from "./voice/useOpenAIRealtime";
 import { toast } from "sonner";
@@ -1509,12 +1509,29 @@ How can I help you now?`,
     toast.info("Starting voice session...");
   };
 
+  // Slice 2A-R2 v2: history-toggle extracted unchanged from the header button's inline
+  // onClick so it can be reused by the relocated canvasMode control cluster. Body is
+  // byte-identical to the original inline — no behaviour/logic change.
+  const toggleHistoryView = () => {
+    if (showHistory) {
+      setMessages([{
+        role: "assistant",
+        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Upload documents for analysis or ask me anything!",
+      }]);
+      setShowHistory(false);
+    } else {
+      setMessages(historyMessages);
+      setShowHistory(true);
+    }
+  };
+
   return (
     <Card className={cn("w-full", fullScreen && "flex-1 flex flex-col border-0 rounded-none shadow-none", canvasMode && "bg-transparent")}>
-      <CardHeader className={canvasMode ? "pb-2 pt-3" : "pb-3"}>
+      {!canvasMode && (
+      <CardHeader className="pb-3">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-            <div className={cn("flex items-center gap-3", canvasMode && "hidden")}>
+            <div className="flex items-center gap-3">
               {/* Shield icon */}
               <div className="w-10 h-10 flex items-center justify-center">
                 <svg width="32" height="36" viewBox="0 0 140 160" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1615,18 +1632,7 @@ How can I help you now?`,
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    if (showHistory) {
-                      setMessages([{
-                        role: "assistant",
-                        content: "Hello! I'm your Fortress AI security assistant. I can help you analyze threats, find entities, and navigate through the platform. Upload documents for analysis or ask me anything!",
-                      }]);
-                      setShowHistory(false);
-                    } else {
-                      setMessages(historyMessages);
-                      setShowHistory(true);
-                    }
-                  }}
+                  onClick={toggleHistoryView}
                   className="text-xs shrink-0"
                   title="Toggle chat history"
                 >
@@ -1647,18 +1653,61 @@ How can I help you now?`,
           </div>
         </div>
       </CardHeader>
-      <CardContent className={cn("flex flex-col", fullScreen && "flex-1 min-h-0")}>
-        <div className={cn("flex flex-col gap-3", fullScreen && "flex-1 min-h-0")}>
+      )}
+      <CardContent className={cn("flex flex-col", canvasMode && "relative", fullScreen && "flex-1 min-h-0")}>
+        {/* Slice 2A-R2 v2: relocated minimal control cluster (canvasMode only). Replaces the
+            hidden CardHeader chrome. Reuses the EXISTING handlers/state (setViewMode,
+            toggleHistoryView, startNewChat) — no new logic, no handler change. */}
+        {canvasMode && (
+          <div className="absolute right-2 top-1 z-20 flex items-center gap-1.5">
+            {currentTenant && (
+              <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "personal" | "team")}>
+                <TabsList className="h-6 bg-background/40 backdrop-blur-sm">
+                  <TabsTrigger value="personal" className="h-5 px-1.5 text-[10px]" title="Personal">
+                    <User className="w-3 h-3" />
+                  </TabsTrigger>
+                  <TabsTrigger value="team" className="h-5 px-1.5 text-[10px]" title="Team">
+                    <Users className="w-3 h-3" />
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
+            {historyMessages.length > 0 && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleHistoryView}
+                className="h-7 w-7 text-muted-foreground hover:text-foreground bg-background/40 backdrop-blur-sm"
+                title={showHistory ? "Hide history" : `History (${historyMessages.length})`}
+              >
+                <History className="w-3.5 h-3.5" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={startNewChat}
+              className="h-7 w-7 text-muted-foreground hover:text-foreground bg-background/40 backdrop-blur-sm"
+              title="New chat"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        )}
+        <div className={cn("flex flex-col gap-3", fullScreen && "flex-1 min-h-0", canvasMode && "justify-end")}>
             {/* Fixed height container prevents layout shifts */}
             <div 
               className={cn(
                 "overflow-y-auto scroll-smooth",
-                // canvasMode: frosted "console" seated in the canvas (scrim + blur keeps text
-                // legible over the backdrop core) instead of the opaque boxed border.
-                canvasMode ? "rounded-xl border border-border/30 bg-background/40 backdrop-blur-sm" : "border rounded-md",
-                fullScreen
+                // canvasMode: frosted "console" seated LOW in the canvas (scrim + blur keeps
+                // text legible over the backdrop core), BOUNDED instead of flex-1 so the Aegis
+                // core hero owns the upper viewport rather than the chat consuming it.
+                canvasMode
+                  ? "rounded-xl border border-border/30 bg-background/40 backdrop-blur-sm max-h-[42vh] sm:max-h-[46vh]"
+                  : "border rounded-md",
+                !canvasMode && (fullScreen
                   ? "flex-1 min-h-0"
-                  : "h-[400px] sm:h-[500px] lg:h-[600px]"
+                  : "h-[400px] sm:h-[500px] lg:h-[600px]")
               )}
               ref={scrollRef}
             >
@@ -1832,7 +1881,7 @@ How can I help you now?`,
               </div>
             )}
 
-            <form ref={formRef} onSubmit={handleSubmit} className={cn("flex gap-2", canvasMode && "items-center rounded-full border border-primary/30 bg-background/50 backdrop-blur-md px-2.5 py-2 shadow-lg shadow-primary/10")}>
+            <form ref={formRef} onSubmit={handleSubmit} className={cn("flex gap-2", canvasMode && "items-center rounded-full border border-primary/40 bg-background/60 backdrop-blur-md px-3 py-2.5 shadow-2xl shadow-primary/20")}>
               <input
                 type="file"
                 ref={fileInputRef}
@@ -1854,9 +1903,9 @@ How can I help you now?`,
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={fullScreen ? "Ask AEGIS anything... (⌘K for quick nav)" : "Ask about threats, signals..."}
+                placeholder={canvasMode ? "Ask Aegis anything." : fullScreen ? "Ask AEGIS anything... (⌘K for quick nav)" : "Ask about threats, signals..."}
                 disabled={isLoading || isUploading}
-                className={cn("flex-1 min-w-0", canvasMode && "border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0")}
+                className={cn("flex-1 min-w-0", canvasMode && "h-11 border-0 bg-transparent text-base shadow-none focus-visible:ring-0 focus-visible:ring-offset-0")}
               />
               <Button 
                 type="submit" 
