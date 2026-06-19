@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { ThreatStatusBar } from "@/components/ThreatStatusBar";
+import { AegisCore } from "@/components/aegis/AegisCore";
 import { Loader2 } from "lucide-react";
 
 // Slice 1a — local-only helpers; no data queries, no external fonts, no layout restructure.
@@ -84,6 +85,11 @@ const Index = () => {
           {presenceLine}
         </p>
       </section>
+      {/* Slice 2A: contained, decorative Aegis Core. Bounded height (shrink-0) so it never
+          overlaps the chat; pointer-events-none + aria-hidden so it can't intercept chat/
+          voice/⌘K; small on mobile to keep the chat reachable (1c discipline). No data,
+          no labels, no operational claims, no overlay, no full-page wrapper. */}
+      <AegisCore className="shrink-0 h-24 sm:h-44 md:h-52" />
       <main className="flex-1 flex flex-col overflow-hidden">
         <DashboardAIAssistant fullScreen />
       </main>
