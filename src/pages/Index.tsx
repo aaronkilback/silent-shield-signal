@@ -72,8 +72,11 @@ const Index = () => {
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
           type/spacing polish only. Does NOT wrap/constrain the assistant; no overlay, no
           deep-space wrapper, no external fonts, no min-height. Assistant container unchanged. */}
-      <section className="shrink-0 px-4 sm:px-6 pt-6 sm:pt-8 pb-4 text-center border-b border-border/40">
-        <h1 className="font-serif text-3xl sm:text-4xl text-foreground leading-tight tracking-tight">
+      {/* Slice 1c: mobile/responsive polish — tighten the band's base (mobile) padding and
+          greeting size so it doesn't dominate small screens or push chat below the fold.
+          All sm: values unchanged → desktop renders identically. No new classes/fonts. */}
+      <section className="shrink-0 px-4 sm:px-6 pt-4 sm:pt-8 pb-3 sm:pb-4 text-center border-b border-border/40">
+        <h1 className="font-serif text-2xl sm:text-4xl text-foreground leading-tight tracking-tight">
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
         <p className="inline-flex items-center gap-2 text-sm text-primary/90 mt-1.5">
