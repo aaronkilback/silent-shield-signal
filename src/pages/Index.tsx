@@ -1,10 +1,10 @@
-import { DashboardAIAssistant } from "@/components/DashboardAIAssistant";
+import { DashboardAIAssistant, type AegisActivity } from "@/components/DashboardAIAssistant";
 import { useAuth } from "@/hooks/useAuth";
 import { useTenant } from "@/hooks/useTenant";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useOrientationEmail } from "@/hooks/useOrientationEmail";
 import { useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { ThreatStatusBar } from "@/components/ThreatStatusBar";
 import { AegisCoreCanvas } from "@/components/aegis/AegisCoreCanvas";
@@ -29,6 +29,11 @@ const Index = () => {
   const { currentTenant, isAllTenantsView } = useTenant();
   const { selectedClientId } = useClientSelection();
   const navigate = useNavigate();
+
+  // Slice 4A (Option C): real session-local Aegis activity, emitted by DashboardAIAssistant.
+  // Drives the decorative canvas/atmosphere only — no data binding, no roster, no claims.
+  const [aegisActivity, setAegisActivity] = useState<AegisActivity>({ thinking: false, streaming: false, uploading: false, voice: "off" });
+  const aegisActive = aegisActivity.thinking || aegisActivity.streaming || (aegisActivity.voice !== "off" && aegisActivity.voice !== "idle");
 
   // Fire orientation email (Email 2) on first successful dashboard landing.
   // Idempotent server-side — only sends once per first-login acceptance.
@@ -75,8 +80,8 @@ const Index = () => {
           chat/voice/palette). AegisCoreCanvas = the living particle-sphere hero (ported from
           the v9 handoff, abstract only — no agents/labels/data). AegisAtmosphere = the
           command-bar light coupling + attention pulse. No data/labels/operational claims. */}
-      <AegisCoreCanvas className="absolute inset-x-0 top-0 h-[82vh] -z-10" />
-      <AegisAtmosphere className="absolute inset-0 -z-10" />
+      <AegisCoreCanvas className="absolute inset-x-0 top-0 h-[82vh] -z-10" activity={aegisActivity} />
+      <AegisAtmosphere className="absolute inset-0 -z-10" active={aegisActive} />
       <MinimalHeader aegisHome />
       <ThreatStatusBar />
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
@@ -104,7 +109,7 @@ const Index = () => {
             mobile/tablet/narrow widths. At lg+ the centered max-w-3xl pill never reaches the
             bottom-right corner, so pb-3 is safe and desktop spacing is unchanged. */}
         <div className="w-full max-w-3xl mx-auto flex-1 flex flex-col min-h-0 px-2 sm:px-4 pb-24 lg:pb-3">
-          <DashboardAIAssistant fullScreen canvasMode />
+          <DashboardAIAssistant fullScreen canvasMode onActivity={setAegisActivity} />
         </div>
       </main>
     </div>

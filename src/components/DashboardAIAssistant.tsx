@@ -33,7 +33,16 @@ type Message = {
 
 const debug = (...args: unknown[]) => { if (import.meta.env.DEV) console.log(...args); };
 
-export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false }: { fullScreen?: boolean; canvasMode?: boolean }) => {
+// Slice 4A (Option C): shape of the REAL session-local activity emitted to the
+// decorative Aegis canvas. Read-only reflection of existing state — no new state.
+export type AegisActivity = {
+  thinking: boolean;
+  streaming: boolean;
+  uploading: boolean;
+  voice: "off" | "connecting" | "connected" | "listening" | "speaking" | "idle";
+};
+
+export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, onActivity }: { fullScreen?: boolean; canvasMode?: boolean; onActivity?: (a: AegisActivity) => void }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
@@ -1524,6 +1533,20 @@ How can I help you now?`,
       setShowHistory(true);
     }
   };
+
+  // Slice 4A (Option C, GATE C-1): emit REAL session-local activity to an optional,
+  // default-off callback so the decorative Aegis canvas can react to what Aegis is
+  // actually doing this session. Read-only over existing state — no logic/flow/handler
+  // change. No-op when onActivity is not provided (every non-home caller unaffected).
+  const _aegisStreaming = streamingContent.length > 0;
+  useEffect(() => {
+    onActivity?.({
+      thinking: isLoading,
+      streaming: _aegisStreaming,
+      uploading: isUploading,
+      voice: (isVoiceActive ? voiceStatus : "off") as AegisActivity["voice"],
+    });
+  }, [onActivity, isLoading, _aegisStreaming, isUploading, isVoiceActive, voiceStatus]);
 
   return (
     <Card className={cn("w-full", fullScreen && "flex-1 flex flex-col border-0 rounded-none shadow-none", canvasMode && "bg-transparent")}>

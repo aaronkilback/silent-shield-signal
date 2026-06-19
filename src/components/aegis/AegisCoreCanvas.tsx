@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { AegisActivity } from "@/components/DashboardAIAssistant";
 
 /**
  * AegisCoreCanvas — Slice 2A "Aegis Magical Core" (Canvas 2D).
@@ -27,8 +28,12 @@ import { useEffect, useRef } from "react";
  *  - rAF cancelled + all listeners/observers removed on unmount; loop pauses when the
  *    element scrolls out of view or the tab is hidden.
  */
-export const AegisCoreCanvas = ({ className = "" }: { className?: string }) => {
+export const AegisCoreCanvas = ({ className = "", activity }: { className?: string; activity?: AegisActivity }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Slice 4A (Option C): latest real session activity, read by the draw loop via ref
+  // (so the rAF effect never re-runs). Modulates intensity only — never adds labels/claims.
+  const activityRef = useRef<AegisActivity | undefined>(activity);
+  useEffect(() => { activityRef.current = activity; }, [activity]);
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -99,6 +104,7 @@ export const AegisCoreCanvas = ({ className = "" }: { className?: string }) => {
     let ptx = 0, pty = 0, pox = 0, poy = 0;
     let raf = 0;
     let visible = true;
+    let energy = 0; // eased 0..1 activity intensity (0 = calm idle baseline)
 
     const resize = () => {
       const r = el.getBoundingClientRect();
@@ -145,11 +151,23 @@ export const AegisCoreCanvas = ({ className = "" }: { className?: string }) => {
     function draw(now: number) {
       if (!W || !H) return;
       const t = (now - t0) / 1000;
+      // Slice 4A (Option C): ease energy toward a level set by REAL session activity.
+      const act = activityRef.current;
+      let target = 0;
+      if (act) {
+        if (act.thinking) target = Math.max(target, 0.55);
+        if (act.streaming) target = Math.max(target, 1);
+        if (act.uploading) target = Math.max(target, 0.45);
+        if (act.voice === "listening") target = Math.max(target, 0.5);
+        if (act.voice === "speaking") target = Math.max(target, 0.85);
+      }
+      energy += (target - energy) * 0.06;
+      const speakPulse = act && act.voice === "speaking" ? 0.5 + 0.5 * Math.sin(t * 6) : 0;
       ctx.clearRect(0, 0, W, H);
 
       const cx = W * 0.5, scy = H * 0.43, R = Math.min(W * 0.32, H * 0.4), fy = H * 0.85;
 
-      if (!reduce) { ry += 0.0038; }
+      if (!reduce) { ry += 0.0038 * (1 + energy * 0.5); }
       pox += (ptx - pox) * 0.06; poy += (pty - poy) * 0.06;
       const yaw = ry + pox * 0.5, pitch = rx + poy * 0.35;
       const cY = Math.cos(yaw), sY = Math.sin(yaw), cX = Math.cos(pitch), sX = Math.sin(pitch);
@@ -182,7 +200,7 @@ export const AegisCoreCanvas = ({ className = "" }: { className?: string }) => {
       const fb = ctx.createRadialGradient(cx, fy, 0, cx, fy, R * 1.1); fb.addColorStop(0, `hsla(${HUE},85%,72%,0.42)`); fb.addColorStop(0.5, `hsla(${HUE},85%,60%,0.10)`); fb.addColorStop(1, `hsla(${HUE},85%,60%,0)`); ctx.fillStyle = fb; ctx.beginPath(); ctx.ellipse(cx, fy, R * 1.1, R * 0.22, 0, 0, TAU); ctx.fill();
       const rf = ctx.createRadialGradient(cx, fy + R * 0.22, 0, cx, fy + R * 0.22, R * 0.95); rf.addColorStop(0, `hsla(${HUE},80%,62%,0.18)`); rf.addColorStop(0.6, `hsla(${HUE},80%,62%,0.05)`); rf.addColorStop(1, `hsla(${HUE},80%,62%,0)`); ctx.fillStyle = rf; ctx.beginPath(); ctx.ellipse(cx, fy + R * 0.22, R * 0.72, R * 0.52, 0, 0, TAU); ctx.fill();
 
-      const beam = ctx.createLinearGradient(cx, 0, cx, fy); beam.addColorStop(0, `hsla(${HUE},90%,78%,0)`); beam.addColorStop(0.45, `hsla(${HUE},90%,78%,0.5)`); beam.addColorStop(0.55, `hsla(${HUE},90%,78%,0.5)`); beam.addColorStop(1, `hsla(${HUE},90%,78%,0)`); ctx.fillStyle = beam; ctx.fillRect(cx - 1.2, 0, 2.4, fy);
+      const beamA = 0.4 + energy * 0.55; const beam = ctx.createLinearGradient(cx, 0, cx, fy); beam.addColorStop(0, `hsla(${HUE},90%,78%,0)`); beam.addColorStop(0.45, `hsla(${HUE},90%,78%,${beamA})`); beam.addColorStop(0.55, `hsla(${HUE},90%,78%,${beamA})`); beam.addColorStop(1, `hsla(${HUE},90%,78%,0)`); ctx.fillStyle = beam; ctx.fillRect(cx - 1.2, 0, 2.4, fy);
 
       for (const ring of rings) { ctx.beginPath(); let st = false; for (let k = 0; k <= ring.length; k++) { const [x, y] = proj(ring[k % ring.length]); if (!st) { ctx.moveTo(x, y); st = true; } else ctx.lineTo(x, y); } ctx.strokeStyle = `hsla(${HUE},75%,62%,0.13)`; ctx.lineWidth = 0.8; ctx.stroke(); }
 
@@ -193,9 +211,9 @@ export const AegisCoreCanvas = ({ className = "" }: { className?: string }) => {
         const [i, j] = links[sObj.li]; if (i == null) continue;
         const a = proj(dots[i]), b = proj(dots[j]);
         const depth = (a[2] + b[2]) / 2;
-        const f = (t * sObj.sp + sObj.off) % 1;
+        const f = (t * sObj.sp * (1 + energy * 1.3) + sObj.off) % 1;
         const x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f;
-        const al = 0.4 + depth * 0.6;
+        const al = (0.4 + depth * 0.6) * (0.7 + energy * 0.5);
         ctx.shadowBlur = 10; ctx.shadowColor = `hsla(${SYN_HUE},100%,78%,0.95)`;
         ctx.fillStyle = `hsla(${SYN_HUE},100%,88%,${al})`;
         ctx.beginPath(); ctx.arc(x, y, 2, 0, TAU); ctx.fill();
@@ -215,8 +233,9 @@ export const AegisCoreCanvas = ({ className = "" }: { className?: string }) => {
       ctx.shadowBlur = 0;
 
       const pulse = 0.5 + 0.5 * Math.sin(t * 1.2);
-      const cr = R * (0.5 + 0.04 * pulse);
-      const halo = ctx.createRadialGradient(cx, scy, 0, cx, scy, cr); halo.addColorStop(0, `hsla(${HUE},85%,80%,0.5)`); halo.addColorStop(0.4, `hsla(${HUE},85%,62%,0.16)`); halo.addColorStop(1, `hsla(${HUE},85%,55%,0)`); ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(cx, scy, cr, 0, TAU); ctx.fill();
+      const cr = R * (0.5 + 0.04 * pulse + energy * 0.05 + speakPulse * 0.04);
+      const haloA = 0.5 + energy * 0.35 + speakPulse * 0.1;
+      const halo = ctx.createRadialGradient(cx, scy, 0, cx, scy, cr); halo.addColorStop(0, `hsla(${HUE},85%,80%,${haloA})`); halo.addColorStop(0.4, `hsla(${HUE},85%,62%,${0.16 + energy * 0.12})`); halo.addColorStop(1, `hsla(${HUE},85%,55%,0)`); ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(cx, scy, cr, 0, TAU); ctx.fill();
       const sl = HUE;
       shield(cx, scy, R * 0.92, t, `hsla(${sl},90%,68%,0.9)`, {
         fill0: `hsla(${sl},80%,72%,0.28)`, fill1: `hsla(${sl},85%,55%,0.12)`,
