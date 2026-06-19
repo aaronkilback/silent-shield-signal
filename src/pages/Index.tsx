@@ -61,16 +61,25 @@ const Index = () => {
     : "Standing by — select a client to begin operational context.";
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    // Slice 1b: paint-only premium polish. Subtle vertical gradient on the EXISTING wrapper
+    // (theme palette, not a deep-space radial); structure unchanged (min-h-screen flex flex-col).
+    <div
+      className="min-h-screen flex flex-col"
+      style={{ background: "linear-gradient(180deg, hsl(222 47% 7%) 0%, hsl(222 47% 5%) 60%, hsl(222 47% 4%) 100%)" }}
+    >
       <MinimalHeader aegisHome />
       <ThreatStatusBar />
-      {/* Slice 1a greeting — a shrink-0 sibling (same structural role as ThreatStatusBar);
-          does NOT wrap or constrain the assistant. No deep-space, no fonts, no min-height. */}
-      <section className="shrink-0 px-4 sm:px-6 pt-4 pb-2 text-center">
-        <h1 className="font-serif text-2xl sm:text-3xl text-foreground leading-tight">
+      {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
+          type/spacing polish only. Does NOT wrap/constrain the assistant; no overlay, no
+          deep-space wrapper, no external fonts, no min-height. Assistant container unchanged. */}
+      <section className="shrink-0 px-4 sm:px-6 pt-6 sm:pt-8 pb-4 text-center border-b border-border/40">
+        <h1 className="font-serif text-3xl sm:text-4xl text-foreground leading-tight tracking-tight">
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
-        <p className="text-sm text-primary mt-0.5">{presenceLine}</p>
+        <p className="inline-flex items-center gap-2 text-sm text-primary/90 mt-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-primary/80 animate-pulse" aria-hidden="true" />
+          {presenceLine}
+        </p>
       </section>
       <main className="flex-1 flex flex-col overflow-hidden">
         <DashboardAIAssistant fullScreen />
