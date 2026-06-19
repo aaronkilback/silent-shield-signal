@@ -88,14 +88,22 @@ export const AegisCore = ({ className = "" }: { className?: string }) => {
           <path d="M200 120 A 80 80 0 0 1 78 182" opacity="0.16" className="aegis-flicker-2" />
         </g>
 
+        {/* Faint energy flow travelling along radial links (decorative) */}
+        <g stroke="currentColor" fill="none" strokeWidth="1" opacity="0.45" strokeLinecap="round">
+          <line x1="120" y1="120" x2="58" y2="74" strokeDasharray="2 9" className="aegis-flow" />
+          <line x1="120" y1="120" x2="188" y2="96" strokeDasharray="2 9" className="aegis-flow aegis-flow-2" />
+          <line x1="120" y1="120" x2="120" y2="40" strokeDasharray="2 9" className="aegis-flow aegis-flow-3" />
+          <line x1="120" y1="120" x2="170" y2="166" strokeDasharray="2 9" className="aegis-flow aegis-flow-2" />
+        </g>
+
         {/* Orbiting particles — two counter-rotating rings (parallax depth) */}
         <g
           fill="currentColor"
           className="aegis-rot-cw-slow"
           style={{ transformBox: "view-box", transformOrigin: "120px 120px" }}
         >
-          <circle cx="120" cy="40" r="2.2" opacity="0.7" />
-          <circle cx="188" cy="96" r="1.6" opacity="0.55" />
+          <circle cx="120" cy="40" r="2.2" opacity="0.7" className="aegis-node" />
+          <circle cx="188" cy="96" r="1.6" opacity="0.55" className="aegis-node aegis-node-2" />
           <circle cx="72" cy="170" r="1.9" opacity="0.55" />
           <circle cx="196" cy="142" r="1.4" opacity="0.45" />
           <circle cx="60" cy="80" r="1.6" opacity="0.5" />
@@ -152,6 +160,11 @@ export const AegisCore = ({ className = "" }: { className?: string }) => {
           .aegis-breathe-slow { animation: aegis-breathe 12s ease-in-out infinite; }
           .aegis-flicker-1 { animation: aegis-flicker 6s ease-in-out infinite; }
           .aegis-flicker-2 { animation: aegis-flicker 7.5s ease-in-out infinite 1.4s; }
+          .aegis-flow { animation: aegis-flow 1.9s linear infinite; }
+          .aegis-flow-2 { animation-duration: 2.5s; animation-delay: 0.4s; }
+          .aegis-flow-3 { animation-duration: 2.2s; animation-delay: 0.9s; }
+          .aegis-node { animation: aegis-node 3.4s ease-in-out infinite; }
+          .aegis-node-2 { animation-duration: 4.6s; animation-delay: 1.1s; }
         }
         @keyframes aegis-spin-cw { to { transform: rotate(360deg); } }
         @keyframes aegis-spin-ccw { to { transform: rotate(-360deg); } }
@@ -162,6 +175,11 @@ export const AegisCore = ({ className = "" }: { className?: string }) => {
         @keyframes aegis-flicker {
           0%, 100% { opacity: 0.10; }
           50% { opacity: 0.30; }
+        }
+        @keyframes aegis-flow { to { stroke-dashoffset: -33; } }
+        @keyframes aegis-node {
+          0%, 100% { opacity: 0.35; }
+          50% { opacity: 1; }
         }
       `}</style>
     </div>

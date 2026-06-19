@@ -99,7 +99,11 @@ const Index = () => {
           so the backdrop core shows through and the page reads as one interface, not stacked
           sections. relative z-10 keeps content above the -z-10 backdrop. */}
       <main className="relative z-10 flex-1 flex flex-col overflow-hidden">
-        <div className="w-full max-w-3xl mx-auto flex-1 flex flex-col min-h-0 px-2 sm:px-4 pb-3">
+        {/* pb-24 below lg lifts the command bar above the global SupportChatWidget FAB
+            (fixed bottom-6 right-6, h-14) so Send/Mic stay fully visible + tappable on
+            mobile/tablet/narrow widths. At lg+ the centered max-w-3xl pill never reaches the
+            bottom-right corner, so pb-3 is safe and desktop spacing is unchanged. */}
+        <div className="w-full max-w-3xl mx-auto flex-1 flex flex-col min-h-0 px-2 sm:px-4 pb-24 lg:pb-3">
           <DashboardAIAssistant fullScreen canvasMode />
         </div>
       </main>
