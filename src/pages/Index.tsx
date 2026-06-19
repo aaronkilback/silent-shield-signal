@@ -75,21 +75,22 @@ const Index = () => {
           this is the dominant element of the first screen — not a thin band). Out of flow ->
           cannot collapse layout; pointer-events-none -> cannot block chat / voice / palette.
           AegisGhostFrames add decorative spatial depth (silhouettes only, no text/data). */}
-      <AegisCore className="absolute inset-x-0 top-0 h-[74vh] -z-10 pointer-events-none" />
+      <AegisCore className="absolute inset-x-0 top-0 h-[78vh] -z-10 pointer-events-none" />
       <AegisGhostFrames className="absolute inset-0 -z-10" />
       <MinimalHeader aegisHome />
       <ThreatStatusBar />
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
           type/spacing polish only. Does NOT wrap/constrain the assistant; no overlay, no
           deep-space wrapper, no external fonts, no min-height. Assistant container unchanged. */}
-      {/* Slice 2A-Reframe v2: greeting DEMOTED to a secondary line so the Aegis core owns the
-          hero. Smaller type + tighter footprint; presence line stays truthful/non-operational. */}
-      <section className="relative z-10 shrink-0 px-4 sm:px-6 pt-3 sm:pt-4 pb-1 text-center">
-        <h1 className="font-serif text-xl sm:text-2xl text-foreground/90 leading-tight tracking-tight">
+      {/* Slice 2A-Reframe v2 (polish): greeting demoted further to a QUIET caption so it does
+          not compete with the core hero. Smaller/lighter type + minimal footprint; presence
+          line stays truthful/non-operational. */}
+      <section className="relative z-10 shrink-0 px-4 sm:px-6 pt-2.5 sm:pt-3 pb-1 text-center">
+        <h1 className="font-serif text-base sm:text-lg font-normal text-foreground/70 leading-tight tracking-tight">
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
-        <p className="inline-flex items-center gap-2 text-xs text-primary/80 mt-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-primary/80 motion-safe:animate-pulse" aria-hidden="true" />
+        <p className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
+          <span className="w-1 h-1 rounded-full bg-primary/70 motion-safe:animate-pulse" aria-hidden="true" />
           {presenceLine}
         </p>
       </section>

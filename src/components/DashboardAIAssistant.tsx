@@ -1659,14 +1659,14 @@ How can I help you now?`,
             hidden CardHeader chrome. Reuses the EXISTING handlers/state (setViewMode,
             toggleHistoryView, startNewChat) — no new logic, no handler change. */}
         {canvasMode && (
-          <div className="absolute right-2 top-1 z-20 flex items-center gap-1.5">
+          <div className="absolute right-2 top-1.5 z-20 flex items-center gap-0.5 opacity-60 hover:opacity-100 transition-opacity">
             {currentTenant && (
               <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "personal" | "team")}>
-                <TabsList className="h-6 bg-background/40 backdrop-blur-sm">
-                  <TabsTrigger value="personal" className="h-5 px-1.5 text-[10px]" title="Personal">
+                <TabsList className="h-6 bg-transparent gap-0.5 p-0">
+                  <TabsTrigger value="personal" className="h-5 px-1.5 text-[10px] data-[state=active]:bg-muted/50" title="Personal">
                     <User className="w-3 h-3" />
                   </TabsTrigger>
-                  <TabsTrigger value="team" className="h-5 px-1.5 text-[10px]" title="Team">
+                  <TabsTrigger value="team" className="h-5 px-1.5 text-[10px] data-[state=active]:bg-muted/50" title="Team">
                     <Users className="w-3 h-3" />
                   </TabsTrigger>
                 </TabsList>
@@ -1677,7 +1677,7 @@ How can I help you now?`,
                 variant="ghost"
                 size="icon"
                 onClick={toggleHistoryView}
-                className="h-7 w-7 text-muted-foreground hover:text-foreground bg-background/40 backdrop-blur-sm"
+                className="h-7 w-7 text-muted-foreground/60 hover:text-foreground"
                 title={showHistory ? "Hide history" : `History (${historyMessages.length})`}
               >
                 <History className="w-3.5 h-3.5" />
@@ -1687,7 +1687,7 @@ How can I help you now?`,
               variant="ghost"
               size="icon"
               onClick={startNewChat}
-              className="h-7 w-7 text-muted-foreground hover:text-foreground bg-background/40 backdrop-blur-sm"
+              className="h-7 w-7 text-muted-foreground/60 hover:text-foreground"
               title="New chat"
             >
               <MessageSquarePlus className="w-3.5 h-3.5" />
@@ -1699,11 +1699,12 @@ How can I help you now?`,
             <div 
               className={cn(
                 "overflow-y-auto scroll-smooth",
-                // canvasMode: frosted "console" seated LOW in the canvas (scrim + blur keeps
-                // text legible over the backdrop core), BOUNDED instead of flex-1 so the Aegis
-                // core hero owns the upper viewport rather than the chat consuming it.
+                // canvasMode: messages FLOAT on the canvas (no box/border/scrim) so the area
+                // never reads as a giant empty rectangle and the core is not visually cut off.
+                // Bounded (not flex-1) so the core hero owns the upper viewport; legibility
+                // comes from the message bubbles' own backgrounds.
                 canvasMode
-                  ? "rounded-xl border border-border/30 bg-background/40 backdrop-blur-sm max-h-[42vh] sm:max-h-[46vh]"
+                  ? "max-h-[40vh] sm:max-h-[44vh]"
                   : "border rounded-md",
                 !canvasMode && (fullScreen
                   ? "flex-1 min-h-0"
