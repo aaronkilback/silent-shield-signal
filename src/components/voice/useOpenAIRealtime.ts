@@ -3,6 +3,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/hooks/useTenant';
 import { useClientSelection } from '@/hooks/useClientSelection';
 
+// Voice reliability (post-TTS echo guard).
+const POST_TTS_COOLDOWN_MS = 800; // mic stays OFF this long after TTS ends, then re-arms
+const POST_TTS_LEAK_WINDOW_MS = 1500; // short transcripts within this window after TTS = likely self-echo
+
 interface UseOpenAIRealtimeOptions {
   onTranscript?: (text: string, isFinal: boolean) => void;
   onAgentResponse?: (text: string) => void;
@@ -36,7 +40,12 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const responseFallbackRef = useRef<number | null>(null);
   const userHasSpokenRef = useRef(false);
   const greetedRef = useRef(false);
-  
+  // Voice reliability: post-TTS cooldown timer, last-TTS-end stamp, and a buffer of
+  // Aegis's last spoken transcript (used to reject self-echo / phantom user turns).
+  const cooldownRef = useRef<number | null>(null);
+  const lastTtsEndRef = useRef(0);
+  const recentAssistantUtteranceRef = useRef('');
+
   // Use ref for options to avoid stale closures in event handlers
   const optionsRef = useRef(options);
   useEffect(() => {
@@ -134,12 +143,48 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     }
   }, [updateStatus]);
 
+  // Voice reliability: re-arm the mic only AFTER a post-TTS cooldown, so the mic can't
+  // capture the buffered tail of Aegis's own speech (the feedback loop). Never re-enables
+  // while a new response is speaking, the session ended, or the operator manually muted.
+  const scheduleMicResume = useCallback(() => {
+    lastTtsEndRef.current = Date.now();
+    if (cooldownRef.current) window.clearTimeout(cooldownRef.current);
+    cooldownRef.current = window.setTimeout(() => {
+      cooldownRef.current = null;
+      if (statusRef.current === 'idle' || statusRef.current === 'speaking') return;
+      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
+      if (!userMutedRef.current && statusRef.current !== 'thinking') updateStatus('listening');
+    }, POST_TTS_COOLDOWN_MS);
+  }, [updateStatus]);
+
   const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     console.log('Realtime event:', event.type, event);
 
     switch (event.type) {
       case 'session.created':
         console.log('Session created');
+        // Voice reliability: pin transcription to English (whisper-1 auto-detect was
+        // drifting to Spanish on echo/garbled tail audio) and RE-STATE the existing
+        // server_vad turn_detection so this update can't clobber VAD behaviour.
+        if (dcRef.current?.readyState === 'open') {
+          dcRef.current.send(JSON.stringify({
+            type: 'session.update',
+            session: {
+              audio: {
+                input: {
+                  transcription: { model: 'whisper-1', language: 'en' },
+                  turn_detection: {
+                    type: 'server_vad',
+                    threshold: 0.5,
+                    prefix_padding_ms: 300,
+                    silence_duration_ms: 800,
+                    create_response: true,
+                  },
+                },
+              },
+            },
+          }));
+        }
         break;
 
       case 'session.updated':
@@ -213,6 +258,29 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
             if (statusRef.current !== 'speaking') updateStatus('connected');
             break;
           }
+          // Reject TTS-tail self-echo: (a) short transcripts landing within the post-TTS
+          // leak window, and (b) transcripts that strongly overlap Aegis's last spoken
+          // response. Cancel the auto-created response and never call onTranscript, so a
+          // phantom turn is neither answered nor persisted.
+          const sinceTts = Date.now() - lastTtsEndRef.current;
+          const wordCount = norm ? norm.split(/\s+/).filter(Boolean).length : 0;
+          const overlapsAegis = (() => {
+            const recent = recentAssistantUtteranceRef.current;
+            if (!recent || !norm) return false;
+            const tokens = norm.split(/\s+/).filter(Boolean);
+            if (!tokens.length) return false;
+            const hits = tokens.filter(w => w.length > 2 && recent.includes(w)).length;
+            return hits / tokens.length >= 0.6;
+          })();
+          const isEcho = (sinceTts < POST_TTS_LEAK_WINDOW_MS && wordCount <= 3) || overlapsAegis;
+          if (isEcho) {
+            console.log('[Voice] Dropped likely TTS-echo transcript:', JSON.stringify(transcriptText), { sinceTts, wordCount, overlapsAegis });
+            if (dcRef.current?.readyState === 'open') {
+              dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
+            }
+            if (statusRef.current !== 'speaking') updateStatus('connected');
+            break;
+          }
           console.log('User transcript:', transcriptText);
           setTranscript(transcriptText);
           optionsRef.current.onTranscript?.(transcriptText, true);
@@ -259,6 +327,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           // Full transcript is complete - notify with final text
           const fullTranscript = (event as Record<string, unknown>).transcript as string;
           console.log('Agent finished speaking, full transcript:', fullTranscript);
+          // Buffer Aegis's own words so we can reject self-echo transcripts next turn.
+          recentAssistantUtteranceRef.current = (fullTranscript || '').toLowerCase();
           // Call a new callback for the complete response
           optionsRef.current.onAgentResponseComplete?.(fullTranscript || '');
         }
@@ -274,7 +344,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         }
         // Mute the mic while Aegis is speaking so it can't pick up the playback
         // or room silence (which the transcriber hallucinates into phantom turns).
-        // Trade-off: no barge-in while speaking; re-enabled on response end.
+        // Trade-off: no barge-in while speaking; re-enabled after a post-TTS cooldown.
+        // Cancel any pending cooldown from a prior turn so it can't re-arm mid-speech.
+        if (cooldownRef.current) { window.clearTimeout(cooldownRef.current); cooldownRef.current = null; }
         mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
         setIsAgentSpeaking(true);
         updateStatus('speaking');
@@ -282,21 +354,22 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'response.output_audio.done': // GA
       case 'response.audio.done': // beta (back-compat)
-        // Re-enable the mic now that Aegis has finished speaking — unless the
-        // operator has manually muted for a side conversation.
-        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
+        // Aegis finished GENERATING audio, but the <audio> element keeps playing the
+        // buffered tail. Keep the mic OFF and re-arm only after the post-TTS cooldown
+        // so it can't capture Aegis's own closing words (the feedback loop).
         setIsAgentSpeaking(false);
         updateStatus('connected');
+        scheduleMicResume();
         break;
 
       case 'response.done':
-        // Safety: ensure the mic is live again at the end of every response
-        // (unless the operator manually muted).
-        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
+        // Safety: re-arm the mic at the end of the response, but only AFTER the post-TTS
+        // cooldown (same guard as audio.done) so the tail can't leak back in.
         setIsAgentSpeaking(false);
         updateStatus('connected');
         // Reset internal agent response for next turn
         setAgentResponse('');
+        scheduleMicResume();
         break;
 
       case 'error':
@@ -313,7 +386,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           console.log('Unhandled event type:', event.type);
         }
     }
-  }, [updateStatus, executeToolCall]);
+  }, [updateStatus, executeToolCall, scheduleMicResume]);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting...');
@@ -332,6 +405,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       window.clearTimeout(responseFallbackRef.current);
       responseFallbackRef.current = null;
     }
+
+    // Voice reliability: cancel any pending post-TTS cooldown + clear the echo buffer.
+    if (cooldownRef.current) {
+      window.clearTimeout(cooldownRef.current);
+      cooldownRef.current = null;
+    }
+    recentAssistantUtteranceRef.current = '';
+    lastTtsEndRef.current = 0;
 
     // Close data channel
     if (dcRef.current) {
