@@ -3,22 +3,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/hooks/useTenant';
 import { useClientSelection } from '@/hooks/useClientSelection';
 
-// Voice reliability (post-TTS echo guard).
-const POST_TTS_COOLDOWN_MS = 800; // mic stays OFF this long after TTS ends, then re-arms
-const POST_TTS_LEAK_WINDOW_MS = 1500; // short transcripts within this window after TTS = likely self-echo
-
-// Fix A-i: iPhone voice diagnostics. Timestamped, prefixed console output so the operator
-// can capture the real iOS WebKit event order from Safari Web Inspector. Flip VOICE_DX to
-// false (or remove this block + dx() calls) after diagnosis — no behavior depends on it.
-const VOICE_DX = true;
-let _dxT0 = 0;
-const dx = (label: string, extra?: unknown) => {
-  if (!VOICE_DX) return;
-  const dt = _dxT0 ? Math.round(performance.now() - _dxT0) : 0;
-  if (extra !== undefined) console.log(`[VoiceDx +${dt}ms] ${label}`, extra);
-  else console.log(`[VoiceDx +${dt}ms] ${label}`);
-};
-
 interface UseOpenAIRealtimeOptions {
   onTranscript?: (text: string, isFinal: boolean) => void;
   onAgentResponse?: (text: string) => void;
@@ -52,16 +36,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const responseFallbackRef = useRef<number | null>(null);
   const userHasSpokenRef = useRef(false);
   const greetedRef = useRef(false);
-  // Voice reliability: post-TTS cooldown timer, last-TTS-end stamp, and a buffer of
-  // Aegis's last spoken transcript (used to reject self-echo / phantom user turns).
-  const cooldownRef = useRef<number | null>(null);
-  const lastTtsEndRef = useRef(0);
-  const recentAssistantUtteranceRef = useRef('');
-  // True while an Aegis response is live (between response.audio.delta and response.done).
-  // A dropped/filtered transcript must NEVER response.cancel while this is true — doing so
-  // terminates the active TTS mid-sentence. response.cancel is only safe when idle/listening.
-  const responseActiveRef = useRef(false);
-
+  
   // Use ref for options to avoid stale closures in event handlers
   const optionsRef = useRef(options);
   useEffect(() => {
@@ -159,62 +134,16 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     }
   }, [updateStatus]);
 
-  // Voice reliability: re-arm the mic only AFTER a post-TTS cooldown, so the mic can't
-  // capture the buffered tail of Aegis's own speech (the feedback loop). Never re-enables
-  // while a new response is speaking, the session ended, or the operator manually muted.
-  const scheduleMicResume = useCallback(() => {
-    lastTtsEndRef.current = Date.now();
-    if (cooldownRef.current) window.clearTimeout(cooldownRef.current);
-    dx('cooldown:start', { ms: POST_TTS_COOLDOWN_MS });
-    cooldownRef.current = window.setTimeout(() => {
-      cooldownRef.current = null;
-      if (statusRef.current === 'idle' || statusRef.current === 'speaking') { dx('cooldown:end skipped', { status: statusRef.current }); return; }
-      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
-      dx('cooldown:end -> mic', { enabled: !userMutedRef.current });
-      if (!userMutedRef.current && statusRef.current !== 'thinking') updateStatus('listening');
-    }, POST_TTS_COOLDOWN_MS);
-  }, [updateStatus]);
-
   const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     console.log('Realtime event:', event.type, event);
 
     switch (event.type) {
       case 'session.created':
         console.log('Session created');
-        dx('session.created', { dc: dcRef.current?.readyState });
-        // Voice reliability: pin transcription to English (whisper-1 auto-detect was
-        // drifting to Spanish on echo/garbled tail audio) and RE-STATE the existing
-        // server_vad turn_detection so this update can't clobber VAD behaviour.
-        if (dcRef.current?.readyState === 'open') {
-          dcRef.current.send(JSON.stringify({
-            type: 'session.update',
-            session: {
-              audio: {
-                input: {
-                  transcription: { model: 'whisper-1', language: 'en' },
-                  turn_detection: {
-                    type: 'server_vad',
-                    threshold: 0.5,
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: 800,
-                    create_response: true,
-                  },
-                },
-              },
-            },
-          }));
-          dx('session.update:sent (language=en)');
-        }
         break;
 
       case 'session.updated':
         console.log('Session updated');
-        // Surface whether the English transcription pin was actually acknowledged.
-        {
-          const sess = (event as Record<string, unknown>).session as Record<string, unknown> | undefined;
-          const lang = (((sess?.audio as Record<string, unknown>)?.input as Record<string, unknown>)?.transcription as Record<string, unknown>)?.language;
-          dx('session.updated', { ackLanguage: lang ?? '(none)' });
-        }
         break;
 
       case 'input_audio_buffer.speech_started':
@@ -277,45 +206,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
             || norm.startsWith('please subscribe') || norm.startsWith("we'll see you");
           if (isHallucination) {
             console.log('[Voice] Dropped likely hallucinated/empty transcript:', JSON.stringify(transcriptText));
-            dx('transcript:dropped(hallucination)', { text: transcriptText, responseActive: responseActiveRef.current, status: statusRef.current });
-            // Only cancel a phantom-triggered response when Aegis is NOT already speaking
-            // — cancelling an active response would cut off live TTS mid-sentence. While a
-            // response is live, drop silently and let Aegis finish; mic-off already prevents
-            // self-hearing, so no runaway reply results.
-            if (dcRef.current?.readyState === 'open' && !responseActiveRef.current && statusRef.current !== 'speaking') {
-              dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
-            }
-            if (statusRef.current !== 'speaking') updateStatus('connected');
-            break;
-          }
-          // Reject TTS-tail self-echo: (a) short transcripts landing within the post-TTS
-          // leak window, and (b) transcripts that strongly overlap Aegis's last spoken
-          // response. Cancel the auto-created response and never call onTranscript, so a
-          // phantom turn is neither answered nor persisted.
-          const sinceTts = Date.now() - lastTtsEndRef.current;
-          const wordCount = norm ? norm.split(/\s+/).filter(Boolean).length : 0;
-          const overlapsAegis = (() => {
-            const recent = recentAssistantUtteranceRef.current;
-            if (!recent || !norm) return false;
-            const tokens = norm.split(/\s+/).filter(Boolean);
-            if (!tokens.length) return false;
-            const hits = tokens.filter(w => w.length > 2 && recent.includes(w)).length;
-            return hits / tokens.length >= 0.6;
-          })();
-          const isEcho = (sinceTts < POST_TTS_LEAK_WINDOW_MS && wordCount <= 3) || overlapsAegis;
-          if (isEcho) {
-            console.log('[Voice] Dropped likely TTS-echo transcript:', JSON.stringify(transcriptText), { sinceTts, wordCount, overlapsAegis });
-            dx('transcript:dropped(echo)', { text: transcriptText, sinceTts, wordCount, overlapsAegis, responseActive: responseActiveRef.current, status: statusRef.current });
-            // Same guard: never cancel an active response (would cut off live TTS). Drop
-            // silently while speaking; only cancel a phantom auto-reply when Aegis is idle.
-            if (dcRef.current?.readyState === 'open' && !responseActiveRef.current && statusRef.current !== 'speaking') {
+            if (dcRef.current?.readyState === 'open') {
+              // Abort the auto-created response triggered by the phantom turn.
               dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
             }
             if (statusRef.current !== 'speaking') updateStatus('connected');
             break;
           }
           console.log('User transcript:', transcriptText);
-          dx('transcript:accepted', { text: transcriptText });
           setTranscript(transcriptText);
           optionsRef.current.onTranscript?.(transcriptText, true);
         }
@@ -361,8 +259,6 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           // Full transcript is complete - notify with final text
           const fullTranscript = (event as Record<string, unknown>).transcript as string;
           console.log('Agent finished speaking, full transcript:', fullTranscript);
-          // Buffer Aegis's own words so we can reject self-echo transcripts next turn.
-          recentAssistantUtteranceRef.current = (fullTranscript || '').toLowerCase();
           // Call a new callback for the complete response
           optionsRef.current.onAgentResponseComplete?.(fullTranscript || '');
         }
@@ -378,11 +274,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         }
         // Mute the mic while Aegis is speaking so it can't pick up the playback
         // or room silence (which the transcriber hallucinates into phantom turns).
-        // Trade-off: no barge-in while speaking; re-enabled after a post-TTS cooldown.
-        // Cancel any pending cooldown from a prior turn so it can't re-arm mid-speech.
-        if (cooldownRef.current) { window.clearTimeout(cooldownRef.current); cooldownRef.current = null; }
-        if (!responseActiveRef.current) dx('response.audio.delta:first -> mic OFF, speaking');
-        responseActiveRef.current = true;
+        // Trade-off: no barge-in while speaking; re-enabled on response end.
         mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
         setIsAgentSpeaking(true);
         updateStatus('speaking');
@@ -390,31 +282,27 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'response.output_audio.done': // GA
       case 'response.audio.done': // beta (back-compat)
-        // Aegis finished GENERATING audio, but the <audio> element keeps playing the
-        // buffered tail. Keep the mic OFF and re-arm only after the post-TTS cooldown
-        // so it can't capture Aegis's own closing words (the feedback loop).
-        dx('response.audio.done -> start cooldown');
+        // Re-enable the mic now that Aegis has finished speaking — unless the
+        // operator has manually muted for a side conversation.
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
         setIsAgentSpeaking(false);
         updateStatus('connected');
-        scheduleMicResume();
         break;
 
       case 'response.done':
-        // Safety: re-arm the mic at the end of the response, but only AFTER the post-TTS
-        // cooldown (same guard as audio.done) so the tail can't leak back in.
-        responseActiveRef.current = false;
+        // Safety: ensure the mic is live again at the end of every response
+        // (unless the operator manually muted).
+        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
         setIsAgentSpeaking(false);
         updateStatus('connected');
         // Reset internal agent response for next turn
         setAgentResponse('');
-        scheduleMicResume();
         break;
 
       case 'error':
         {
           const errorData = (event as Record<string, unknown>).error as Record<string, unknown>;
           console.error('Realtime error:', errorData);
-          dx('session.error', errorData);
           optionsRef.current.onError?.(errorData?.message as string || 'Unknown error');
         }
         break;
@@ -425,7 +313,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           console.log('Unhandled event type:', event.type);
         }
     }
-  }, [updateStatus, executeToolCall, scheduleMicResume]);
+  }, [updateStatus, executeToolCall]);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting...');
@@ -444,15 +332,6 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       window.clearTimeout(responseFallbackRef.current);
       responseFallbackRef.current = null;
     }
-
-    // Voice reliability: cancel any pending post-TTS cooldown + clear the echo buffer.
-    if (cooldownRef.current) {
-      window.clearTimeout(cooldownRef.current);
-      cooldownRef.current = null;
-    }
-    recentAssistantUtteranceRef.current = '';
-    lastTtsEndRef.current = 0;
-    responseActiveRef.current = false;
 
     // Close data channel
     if (dcRef.current) {
@@ -500,8 +379,6 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // getUserMedia + autoplay often require user gesture on some browsers,
       // so if connect is called without a click/tap it may fail.
       updateStatus('connecting');
-      _dxT0 = performance.now();
-      dx('connect:start');
       console.log('Requesting ephemeral token...');
 
       if (connectTimeoutRef.current) {
@@ -514,17 +391,10 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       }, 15000);
 
       // Get ephemeral token from our edge function
-      // Fix B: pass the operator's CURRENT tenant + selected client so the token fn can
-      // resolve the real client NAME (tenant-scoped, server-side) and inject truthful
-      // "Current client context" into the voice persona. Retrieval scoping is separate
-      // (voiceScopeRef -> voice-tool-executor-v2) and unchanged. Fails closed: no client
-      // selected -> token fn injects "no client selected"; mismatch -> no name injected.
       const { data: tokenData, error: tokenError } = await supabase.functions.invoke('openai-realtime-token', {
         body: {
           agentContext: optionsRef.current.agentContext,
-          conversationHistory: optionsRef.current.conversationHistory,
-          tenant_id: voiceScopeRef.current.tenantId,
-          client_id: voiceScopeRef.current.clientId,
+          conversationHistory: optionsRef.current.conversationHistory
         }
       });
 
@@ -541,7 +411,6 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       pc.oniceconnectionstatechange = () => {
         console.log('ICE state:', pc.iceConnectionState);
-        dx('iceConnectionState', pc.iceConnectionState);
         if (pc.iceConnectionState === 'failed') {
           optionsRef.current.onError?.('Voice connection failed (ICE).');
           disconnect();
@@ -549,8 +418,6 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       };
       pc.onconnectionstatechange = () => {
         console.log('Peer connection state:', pc.connectionState);
-        // A-i: log only (teardown behavior UNCHANGED pending captured iPhone logs / A-ii).
-        dx('connectionState', pc.connectionState);
         if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
           optionsRef.current.onError?.('Voice connection lost.');
           disconnect();
@@ -568,17 +435,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // Append to DOM to improve autoplay reliability on some browsers
       document.body.appendChild(audioEl);
 
-      // A-i: audio element lifecycle (catches iOS suspend/interrupt of remote playback).
-      audioEl.addEventListener('play', () => dx('audioEl:play'));
-      audioEl.addEventListener('playing', () => dx('audioEl:playing'));
-      audioEl.addEventListener('pause', () => dx('audioEl:pause'));
-      audioEl.addEventListener('ended', () => dx('audioEl:ended'));
-      audioEl.addEventListener('stalled', () => dx('audioEl:stalled'));
-      audioEl.addEventListener('suspend', () => dx('audioEl:suspend'));
-
       pc.ontrack = (event) => {
         console.log('Received audio track from OpenAI');
-        dx('pc.ontrack (remote audio)');
         audioEl.srcObject = event.streams[0];
         audioEl.play().catch((err) => {
           console.warn('Audio autoplay blocked, waiting for user gesture...', err);
