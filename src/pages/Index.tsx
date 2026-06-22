@@ -2,14 +2,16 @@ import { DashboardAIAssistant, type AegisActivity } from "@/components/Dashboard
 import { useAuth } from "@/hooks/useAuth";
 import { useTenant } from "@/hooks/useTenant";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { useVerifiedSelectedClient } from "@/hooks/useVerifiedSelectedClient";
 import { useOrientationEmail } from "@/hooks/useOrientationEmail";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { ThreatStatusBar } from "@/components/ThreatStatusBar";
+import { ClientSelector } from "@/components/ClientSelector";
 import { AegisCoreCanvas } from "@/components/aegis/AegisCoreCanvas";
 import { AegisAtmosphere } from "@/components/aegis/AegisAtmosphere";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 
 // Slice 1a — local-only helpers; no data queries, no external fonts, no layout restructure.
 function greetingPrefix() {
@@ -27,7 +29,10 @@ function firstNameOf(user: { email?: string | null; user_metadata?: Record<strin
 const Index = () => {
   const { user, loading } = useAuth();
   const { currentTenant, isAllTenantsView } = useTenant();
-  const { selectedClientId } = useClientSelection();
+  const { selectByUser } = useClientSelection();
+  // Sub-slice 1: TRUTHFUL client context — verified (active + non-fixture + in-tenant),
+  // not just a truthy selectedClientId. Drives the Home display + voice-readiness wording.
+  const { name: verifiedClientName, usable: clientUsable } = useVerifiedSelectedClient();
   const navigate = useNavigate();
 
   // Slice 4A (Option C): real session-local Aegis activity, emitted by DashboardAIAssistant.
@@ -62,11 +67,11 @@ const Index = () => {
     );
   }
 
-  // Truthful presence line from EXISTING selectedClientId state — no new query, no fallback.
-  // Honesty pass: no active-monitoring claim; "standing by" reflects what is actually true.
-  const presenceLine = selectedClientId
-    ? "Standing by in selected client context."
-    : "Standing by — select a client to begin operational context.";
+  // Sub-slice 1: presence line reflects the VERIFIED client (not a truthy id). Never claims
+  // a selected client context unless one actually resolves as usable.
+  const presenceLine = clientUsable
+    ? `Client context — ${verifiedClientName}.`
+    : "No client selected.";
 
   return (
     // Slice 1b: paint-only premium polish. Subtle vertical gradient on the EXISTING wrapper
@@ -95,9 +100,31 @@ const Index = () => {
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
         <p className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
-          <span className="w-1 h-1 rounded-full bg-primary/70 motion-safe:animate-pulse" aria-hidden="true" />
+          <span
+            className={`w-1 h-1 rounded-full ${clientUsable ? "bg-primary/70 motion-safe:animate-pulse" : "bg-muted-foreground/50"}`}
+            aria-hidden="true"
+          />
           {presenceLine}
         </p>
+        {/* Sub-slice 1: mobile-reachable, tenant-scoped client selector on Home. Reuses the
+            existing authorized ClientSelector (compact = the in-tenant/active/non-fixture
+            Select via selectByUser) — no new selection store, no Home-only path. Explicit
+            clear/change via selectByUser(null). */}
+        <div className="mt-2 flex items-center justify-center gap-2">
+          <div className="w-full max-w-[16rem]">
+            <ClientSelector compact />
+          </div>
+          {clientUsable && (
+            <button
+              type="button"
+              onClick={() => selectByUser(null)}
+              className="shrink-0 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              title="Clear selected client"
+            >
+              <X className="w-3.5 h-3.5" /> Clear
+            </button>
+          )}
+        </div>
       </section>
       {/* Slice 2A-R2: chat seated INSIDE the canvas. Centered command-surface width; canvasMode
           de-chromes the assistant (transparent card, slimmed internal header, command-bar input)
