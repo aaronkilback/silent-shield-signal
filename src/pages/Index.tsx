@@ -112,7 +112,9 @@ const Index = () => {
             clear/change via selectByUser(null). */}
         <div className="mt-2 flex items-center justify-center gap-2">
           <div className="w-full max-w-[16rem]">
-            <ClientSelector compact />
+            {/* native: iPhone uses the OS picker (Radix popper was unusable in Home's
+                isolate+overflow-hidden+Canvas context). Same authorized data + selectByUser. */}
+            <ClientSelector compact native />
           </div>
           {clientUsable && (
             <button

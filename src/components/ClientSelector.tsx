@@ -35,6 +35,14 @@ interface ClientSelectorProps {
   description?: string;
   /** Compact mode hides card wrapper */
   compact?: boolean;
+  /**
+   * Native mode (Aegis Home / iPhone): render a native HTML <select> instead of the Radix
+   * popper Select. The OS picker is immune to portal/stacking/overflow/touch issues that made
+   * the Radix dropdown unusable inside Home's isolate+overflow-hidden+Canvas context. Reuses
+   * the exact same authorized client list + selectByUser flow. Default off — /signals,
+   * /incidents, etc. keep the Radix Select unchanged.
+   */
+  native?: boolean;
 }
 
 /**
@@ -46,7 +54,8 @@ export const ClientSelector = ({
   mode = 'filter',
   title,
   description,
-  compact = false
+  compact = false,
+  native = false
 }: ClientSelectorProps) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -304,6 +313,30 @@ export const ClientSelector = ({
       </SelectContent>
     </Select>
   );
+
+  // Native HTML select (Aegis Home / iPhone). Same authorized `clients` + selectByUser flow;
+  // OS picker is touch-reliable and immune to portal/overflow/z-index interception.
+  if (native) {
+    if (loading) {
+      return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />;
+    }
+    return (
+      <select
+        aria-label={`Select ${noun.singularLower}`}
+        value={selectedClientId ?? ''}
+        onChange={(e) => { const v = e.target.value; selectByUser(v || null); }}
+        className="w-full h-10 rounded-md border border-input bg-background text-foreground text-sm px-3 focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        <option value="">{`Select a ${noun.singularLower}…`}</option>
+        {clients.map((client) => (
+          <option key={client.id} value={client.id}>
+            {(client.name?.trim() || client.organization || 'Unnamed client')}
+            {client.organization && client.name?.trim() ? ` (${client.organization})` : ''}
+          </option>
+        ))}
+      </select>
+    );
+  }
 
   if (compact) {
     if (loading) {
