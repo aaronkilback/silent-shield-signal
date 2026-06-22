@@ -1,17 +1,19 @@
 import { DashboardAIAssistant, type AegisActivity } from "@/components/DashboardAIAssistant";
 import { useAuth } from "@/hooks/useAuth";
 import { useTenant } from "@/hooks/useTenant";
-import { useClientSelection } from "@/hooks/useClientSelection";
-import { useVerifiedSelectedClient } from "@/hooks/useVerifiedSelectedClient";
+import { useUserRole } from "@/hooks/useUserRole";
 import { useOrientationEmail } from "@/hooks/useOrientationEmail";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { MinimalHeader } from "@/components/MinimalHeader";
 import { ThreatStatusBar } from "@/components/ThreatStatusBar";
-import { ClientSelector } from "@/components/ClientSelector";
 import { AegisCoreCanvas } from "@/components/aegis/AegisCoreCanvas";
 import { AegisAtmosphere } from "@/components/aegis/AegisAtmosphere";
-import { Loader2, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
+
+// P0 temporary diagnostics. Dev-console only (never rendered). Flip off / remove after the
+// iPhone tenant-context capture.
+const TENANT_DX = true;
 
 // Slice 1a — local-only helpers; no data queries, no external fonts, no layout restructure.
 function greetingPrefix() {
@@ -28,12 +30,20 @@ function firstNameOf(user: { email?: string | null; user_metadata?: Record<strin
 
 const Index = () => {
   const { user, loading } = useAuth();
-  const { currentTenant, isAllTenantsView } = useTenant();
-  const { selectByUser } = useClientSelection();
-  // Sub-slice 1: TRUTHFUL client context — verified (active + non-fixture + in-tenant),
-  // not just a truthy selectedClientId. Drives the Home display + voice-readiness wording.
-  const { name: verifiedClientName, usable: clientUsable } = useVerifiedSelectedClient();
+  const { currentTenant, isAllTenantsView, isHydrating } = useTenant();
+  // P0: Aegis client-context authorization is GLOBAL-app-role only (server-authoritative
+  // via user_roles RLS). super_admin OR admin may (eventually) change client context through
+  // Aegis. Tenant 'owner' alone does NOT — it's a tenant-membership role, not an Aegis grant.
+  const { roles: globalRoles, isSuperAdmin, isAdmin } = useUserRole();
+  const canChangeClientContextViaAegis = isSuperAdmin || isAdmin;
   const navigate = useNavigate();
+
+  // P0 tenant/context readiness gate. Until tenant resolution completes we do NOT query
+  // clients, form voice client scope, claim a client context, or show selection UI.
+  // Missing tenant after resolution = fail-closed (no auto-select).
+  const tenantResolving = isHydrating;
+  const tenantReady = !isHydrating && (!!currentTenant || isAllTenantsView);
+  const tenantUnavailable = !isHydrating && !currentTenant && !isAllTenantsView;
 
   // Slice 4A (Option C): real session-local Aegis activity, emitted by DashboardAIAssistant.
   // Drives the decorative canvas/atmosphere only — no data binding, no roster, no claims.
@@ -55,6 +65,22 @@ const Index = () => {
     }
   }, [user, loading, navigate]);
 
+  // P0 temporary diagnostics (dev console only — never rendered in production UI).
+  useEffect(() => {
+    if (!TENANT_DX || !user) return;
+    const tenantState = tenantResolving ? "resolving" : tenantReady ? "ready" : "unavailable";
+    const voiceScope = tenantUnavailable ? "absent (no tenant)" : tenantReady ? "tenant-valid (client TBD)" : "withheld (resolving)";
+    console.log("[TenantDx]", {
+      userId: user.id,
+      globalRoles,
+      tenantState,
+      currentTenantId: currentTenant?.id ?? null,
+      isAllTenantsView,
+      canChangeClientContextViaAegis,
+      voiceScope,
+    });
+  }, [user, globalRoles, tenantResolving, tenantReady, tenantUnavailable, currentTenant?.id, isAllTenantsView, canChangeClientContextViaAegis]);
+
   if (!user && !loading) {
     return null;
   }
@@ -67,11 +93,14 @@ const Index = () => {
     );
   }
 
-  // Sub-slice 1: presence line reflects the VERIFIED client (not a truthy id). Never claims
-  // a selected client context unless one actually resolves as usable.
-  const presenceLine = clientUsable
-    ? `Client context — ${verifiedClientName}.`
-    : "No client selected.";
+  // P0 voice-first Home: NO persistent client-context claim and NO selection UI by default.
+  // The only context-relevant line shown is a truthful, fail-closed tenant-state note — and
+  // only when tenant scope is genuinely unavailable after resolution. No client claim here.
+  const tenantNote = tenantResolving
+    ? null
+    : tenantUnavailable
+      ? "No active context. Select a tenant to begin."
+      : null; // tenantReady → stay minimal; client context is summoned/conversational, not persistent
 
   return (
     // Slice 1b: paint-only premium polish. Subtle vertical gradient on the EXISTING wrapper
@@ -92,41 +121,20 @@ const Index = () => {
       {/* Slice 1b presence band — shrink-0 sibling (same structural role as ThreatStatusBar);
           type/spacing polish only. Does NOT wrap/constrain the assistant; no overlay, no
           deep-space wrapper, no external fonts, no min-height. Assistant container unchanged. */}
-      {/* Slice 2A-Reframe v2 (polish): greeting demoted further to a QUIET caption so it does
-          not compete with the core hero. Smaller/lighter type + minimal footprint; presence
-          line stays truthful/non-operational. */}
+      {/* P0 voice-first Home: greeting only by default — NO persistent client selector, chip,
+          list, or client-context claim. The sole context line is a truthful, fail-closed
+          tenant note shown ONLY when tenant scope is unavailable after resolution. Client
+          context is summoned/conversational (deferred), never a persistent control. */}
       <section className="relative z-10 shrink-0 px-4 sm:px-6 pt-2.5 sm:pt-3 pb-1 text-center">
         <h1 className="font-serif text-base sm:text-lg font-normal text-foreground/70 leading-tight tracking-tight">
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
-        <p className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
-          <span
-            className={`w-1 h-1 rounded-full ${clientUsable ? "bg-primary/70 motion-safe:animate-pulse" : "bg-muted-foreground/50"}`}
-            aria-hidden="true"
-          />
-          {presenceLine}
-        </p>
-        {/* Sub-slice 1: mobile-reachable, tenant-scoped client selector on Home. Reuses the
-            existing authorized ClientSelector (compact = the in-tenant/active/non-fixture
-            Select via selectByUser) — no new selection store, no Home-only path. Explicit
-            clear/change via selectByUser(null). */}
-        <div className="mt-2 flex items-center justify-center gap-2">
-          <div className="w-full max-w-[16rem]">
-            {/* native: iPhone uses the OS picker (Radix popper was unusable in Home's
-                isolate+overflow-hidden+Canvas context). Same authorized data + selectByUser. */}
-            <ClientSelector compact native />
-          </div>
-          {clientUsable && (
-            <button
-              type="button"
-              onClick={() => selectByUser(null)}
-              className="shrink-0 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-              title="Clear selected client"
-            >
-              <X className="w-3.5 h-3.5" /> Clear
-            </button>
-          )}
-        </div>
+        {tenantNote && (
+          <p className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
+            <span className="w-1 h-1 rounded-full bg-muted-foreground/50" aria-hidden="true" />
+            {tenantNote}
+          </p>
+        )}
       </section>
       {/* Slice 2A-R2: chat seated INSIDE the canvas. Centered command-surface width; canvasMode
           de-chromes the assistant (transparent card, slimmed internal header, command-bar input)
