@@ -45,6 +45,10 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const cooldownRef = useRef<number | null>(null);
   const lastTtsEndRef = useRef(0);
   const recentAssistantUtteranceRef = useRef('');
+  // True while an Aegis response is live (between response.audio.delta and response.done).
+  // A dropped/filtered transcript must NEVER response.cancel while this is true — doing so
+  // terminates the active TTS mid-sentence. response.cancel is only safe when idle/listening.
+  const responseActiveRef = useRef(false);
 
   // Use ref for options to avoid stale closures in event handlers
   const optionsRef = useRef(options);
@@ -251,8 +255,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
             || norm.startsWith('please subscribe') || norm.startsWith("we'll see you");
           if (isHallucination) {
             console.log('[Voice] Dropped likely hallucinated/empty transcript:', JSON.stringify(transcriptText));
-            if (dcRef.current?.readyState === 'open') {
-              // Abort the auto-created response triggered by the phantom turn.
+            // Only cancel a phantom-triggered response when Aegis is NOT already speaking
+            // — cancelling an active response would cut off live TTS mid-sentence. While a
+            // response is live, drop silently and let Aegis finish; mic-off already prevents
+            // self-hearing, so no runaway reply results.
+            if (dcRef.current?.readyState === 'open' && !responseActiveRef.current && statusRef.current !== 'speaking') {
               dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
             }
             if (statusRef.current !== 'speaking') updateStatus('connected');
@@ -275,7 +282,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           const isEcho = (sinceTts < POST_TTS_LEAK_WINDOW_MS && wordCount <= 3) || overlapsAegis;
           if (isEcho) {
             console.log('[Voice] Dropped likely TTS-echo transcript:', JSON.stringify(transcriptText), { sinceTts, wordCount, overlapsAegis });
-            if (dcRef.current?.readyState === 'open') {
+            // Same guard: never cancel an active response (would cut off live TTS). Drop
+            // silently while speaking; only cancel a phantom auto-reply when Aegis is idle.
+            if (dcRef.current?.readyState === 'open' && !responseActiveRef.current && statusRef.current !== 'speaking') {
               dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
             }
             if (statusRef.current !== 'speaking') updateStatus('connected');
@@ -347,6 +356,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         // Trade-off: no barge-in while speaking; re-enabled after a post-TTS cooldown.
         // Cancel any pending cooldown from a prior turn so it can't re-arm mid-speech.
         if (cooldownRef.current) { window.clearTimeout(cooldownRef.current); cooldownRef.current = null; }
+        responseActiveRef.current = true;
         mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
         setIsAgentSpeaking(true);
         updateStatus('speaking');
@@ -365,6 +375,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       case 'response.done':
         // Safety: re-arm the mic at the end of the response, but only AFTER the post-TTS
         // cooldown (same guard as audio.done) so the tail can't leak back in.
+        responseActiveRef.current = false;
         setIsAgentSpeaking(false);
         updateStatus('connected');
         // Reset internal agent response for next turn
@@ -413,6 +424,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     }
     recentAssistantUtteranceRef.current = '';
     lastTtsEndRef.current = 0;
+    responseActiveRef.current = false;
 
     // Close data channel
     if (dcRef.current) {
