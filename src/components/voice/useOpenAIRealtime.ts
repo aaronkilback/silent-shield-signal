@@ -13,6 +13,9 @@ interface UseOpenAIRealtimeOptions {
   onError?: (error: string) => void;
   onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'speaking' | 'listening' | 'thinking') => void;
   onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
+  // Admin Voice Tenant Context: browser-side handler for tenant resolve/confirm tools. Returns
+  // a JSON-able result (model-safe — never raw tenant IDs) that is sent back as the tool output.
+  onTenantTool?: (toolName: string, args: Record<string, unknown>) => Promise<unknown>;
   agentContext?: string;
   conversationHistory?: Array<{ role: string; content: string }>;
 }
@@ -189,6 +192,30 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     voiceDx("tool-invoke", toolName); // P0 diag: scope state immediately before the tool call
     updateStatus('thinking');
     optionsRef.current.onToolCall?.(toolName, toolArgs);
+
+    // Admin Voice Tenant Context: tenant resolution/confirmation tools are handled in the
+    // BROWSER (onTenantTool) against server-authorized edge functions using the app session —
+    // NOT routed to voice-tool-executor-v2 (which is client-data-scoped). Authorization is
+    // enforced server-side; this only surfaces the result back to the model.
+    const TENANT_TOOLS = new Set(['resolve_tenant_candidate', 'confirm_tenant_candidate']);
+    if (TENANT_TOOLS.has(toolName)) {
+      let resultStr: string;
+      try {
+        const r = await optionsRef.current.onTenantTool?.(toolName, toolArgs);
+        resultStr = JSON.stringify(r ?? { status: 'unavailable' });
+      } catch (e) {
+        resultStr = JSON.stringify({ status: 'error' });
+      }
+      if (dcRef.current?.readyState === 'open') {
+        dcRef.current.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: { type: 'function_call_output', call_id: callId, output: resultStr },
+        }));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        requestResponse('tenant-tool-continuation', { queueIfBusy: true });
+      }
+      return;
+    }
 
     try {
       const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {

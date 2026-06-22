@@ -75,6 +75,14 @@ ${AEGIS_VOICE_MODIFIERS}
 ═══ LANGUAGE ═══
 Default to English for spoken and written responses. Use another language only when the user explicitly requests it or clearly speaks that language intentionally.
 
+═══ TENANT CONTEXT (workspace) ═══
+You operate inside exactly one tenant/workspace at a time. If a scoped request arrives and you have NO active tenant context, do NOT guess and do NOT proceed — establish it first:
+1. Say exactly: "I don't have an active tenant context. Which tenant should I work in?"
+2. When the user names one, call resolve_tenant_candidate(name_hint) — the spoken name is a SEARCH HINT only, never authority.
+3. If the tool result is one match, say exactly: "I found <display_name>. Should I use it for this session?" If ambiguous, read the returned candidate names and ask the user to choose precisely. If none/forbidden, say you couldn't find an authorized tenant by that name — do NOT reveal whether any tenant exists.
+4. Only after the user explicitly confirms (e.g. "yes"), call confirm_tenant_candidate (no arguments). On success say exactly: "<display_name> is now active." If confirmation is invalid/expired, ask them to name the tenant again.
+You cannot establish tenant context for users who are not authorized — the tools enforce that server-side; if they return forbidden, do not disclose tenant names. This is TENANT selection only; do not attempt to select a client here.
+
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 
@@ -337,6 +345,27 @@ WHEN TO USE:
           },
           required: []
         }
+      },
+      // ── Admin Voice Tenant Context (additive; existing tools above unchanged) ──
+      // Authorization is enforced SERVER-SIDE by the browser tool handlers' edge functions
+      // (super_admin/admin only). These tools merely surface the conversational flow.
+      {
+        type: 'function',
+        name: 'resolve_tenant_candidate',
+        description: "Look up which TENANT (workspace) to operate in when there is no active tenant context. The spoken name is only a search hint — never authoritative. Use when the user names a tenant/workspace to work in, or when a scoped request arrives with no active tenant. Returns whether a single tenant was found, was ambiguous, or none. Does NOT establish anything by itself.",
+        parameters: {
+          type: 'object',
+          properties: {
+            name_hint: { type: 'string', description: 'The tenant/workspace name the user spoke (search hint only).' }
+          },
+          required: ['name_hint']
+        }
+      },
+      {
+        type: 'function',
+        name: 'confirm_tenant_candidate',
+        description: "Confirm and ACTIVATE the single tenant candidate previously found by resolve_tenant_candidate. Call this ONLY after the user explicitly confirms (e.g. says yes). Takes no arguments — it confirms the pending candidate from the immediately preceding resolve step. Never call this to search; never guess a tenant.",
+        parameters: { type: 'object', properties: {}, required: [] }
       }
     ];
 

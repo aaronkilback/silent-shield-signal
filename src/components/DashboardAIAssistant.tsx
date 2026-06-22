@@ -47,7 +47,51 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isSuperAdmin } = useUserRole();
-  const { currentTenant, isAllTenantsView } = useTenant();
+  const { currentTenant, isAllTenantsView, tenants, setCurrentTenant, refetchTenants } = useTenant();
+  // Admin Voice Tenant Context: short-lived opaque pending-candidate handle from the server
+  // resolver. Held in the BROWSER (never surfaced to the model), used only by confirm.
+  const pendingTenantHandleRef = useRef<string | null>(null);
+
+  // Browser-side handler for the tenant resolve/confirm voice tools. Calls the server-
+  // authorized edge functions with the APP session (supabase.functions.invoke includes the
+  // user's JWT). The server enforces super_admin/admin + membership-scope; this only routes
+  // results back to the model (model-safe — no raw tenant IDs) and establishes context via
+  // the existing TenantProvider mechanism on confirmation.
+  const handleTenantTool = async (toolName: string, args: Record<string, unknown>): Promise<unknown> => {
+    try {
+      if (toolName === "resolve_tenant_candidate") {
+        const nameHint = String((args?.name_hint ?? "")).trim();
+        const { data, error } = await supabase.functions.invoke("aegis-tenant-resolve", { body: { name_hint: nameHint } });
+        if (error || !data) return { status: "error" };
+        if (data.status === "one") {
+          pendingTenantHandleRef.current = data.handle ?? null; // keep handle browser-side only
+          return { status: "one", display_name: data.display_name };
+        }
+        if (data.status === "ambiguous") return { status: "ambiguous", candidates: data.candidates ?? [] };
+        // none / forbidden / unauthorized / error → no tenant-name disclosure to the model
+        return { status: data.status === "ambiguous" ? "ambiguous" : (data.status ?? "none") };
+      }
+      if (toolName === "confirm_tenant_candidate") {
+        const handle = pendingTenantHandleRef.current;
+        if (!handle) return { status: "invalid" }; // nothing to confirm; never re-search
+        const { data, error } = await supabase.functions.invoke("aegis-tenant-confirm", { body: { handle } });
+        pendingTenantHandleRef.current = null; // single-use
+        if (error || !data || data.status !== "confirmed") return { status: "invalid" };
+        // Establish via the existing canonical mechanism (no parallel state).
+        let tenant = (tenants ?? []).find((t) => t.id === data.tenant_id);
+        if (!tenant) { await refetchTenants(); tenant = (tenants ?? []).find((t) => t.id === data.tenant_id); }
+        if (tenant) {
+          setCurrentTenant(tenant);
+          toast.success(`${data.display_name} is now active.`);
+          return { status: "confirmed", display_name: data.display_name };
+        }
+        return { status: "invalid" };
+      }
+      return { status: "unavailable" };
+    } catch {
+      return { status: "error" };
+    }
+  };
   // PROD-AA (2026-05-24) — derive explicit tenant_id for chat tool dispatch.
   // Super_admin users can be owner of multiple tenants; the backend lottery
   // (tenant_users.limit(1).single()) is non-deterministic. The frontend already
@@ -396,6 +440,7 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   } = useOpenAIRealtime({
     agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
     conversationHistory: messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
+    onTenantTool: handleTenantTool,
     onTranscript: (text, isFinal) => {
       if (isFinal && text.trim()) {
         // User finished speaking - add to chat
