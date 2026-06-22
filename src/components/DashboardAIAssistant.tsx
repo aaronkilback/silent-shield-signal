@@ -386,6 +386,7 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   // Voice hook integration - must be after saveMessageToDb is defined
   const {
     status: voiceStatus,
+    inputReady: voiceInputReady,
     isAgentSpeaking,
     connect: connectVoice,
     disconnect: disconnectVoice,
@@ -436,6 +437,18 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
       // No longer save on idle - we save on onAgentResponseComplete instead
     },
   });
+
+  // P1-A temporary observability: log the actual voice cue rendered vs the real gate state,
+  // so the next iPhone test can confirm the UI never invites speech while !inputReady.
+  useEffect(() => {
+    if (!isVoiceActive) return;
+    const cue = voiceStatus === 'speaking' ? 'Aegis is responding…'
+      : voiceStatus === 'connecting' ? 'Connecting to Aegis…'
+      : voiceStatus === 'idle' ? 'Disconnected'
+      : voiceInputReady ? 'Listening — speak now'
+      : 'Aegis is finishing…';
+    console.log(`[Voice][ui] @${Math.round(performance.now())}ms status=${voiceStatus} inputReady=${voiceInputReady} rendered="${cue}"`);
+  }, [voiceStatus, voiceInputReady, isVoiceActive]);
 
   // Toggle sharing for current conversation
   const toggleConversationSharing = async () => {
@@ -1835,41 +1848,41 @@ How can I help you now?`,
                         </div>
                       </div>
                     )}
-                    {/* Voice status indicator */}
+                    {/* Voice status indicator — P1-A: "ready to speak" wording/visual is shown
+                        ONLY when voiceInputReady (the real transport gate is open). During
+                        playback + the 1500ms post-output tail the mic is closed, so we show
+                        "Aegis is finishing…" (waiting), never "speak now". */}
                     {isVoiceActive && (
                       <div className="flex justify-center animate-fade-in">
-                        <div className="rounded-lg p-3 bg-primary/5 border border-primary/20">
+                        <div className={cn(
+                          "rounded-lg p-3 border",
+                          voiceInputReady ? "bg-primary/5 border-primary/20" : "bg-muted/30 border-border/40"
+                        )}>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            {voiceStatus === 'connecting' && (
+                            {voiceStatus === 'speaking' ? (
                               <>
                                 <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                                <span>Connecting to Aegis...</span>
+                                <span>Aegis is responding…</span>
                               </>
-                            )}
-                            {voiceStatus === 'connected' && (
-                              <>
-                                <div className="flex gap-1">
-                                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                                </div>
-                                <span>Connected - speak now</span>
-                              </>
-                            )}
-                            {voiceStatus === 'listening' && (
-                              <>
-                                <Mic className="w-4 h-4 text-primary animate-pulse" />
-                                <span>Hearing you...</span>
-                              </>
-                            )}
-                            {voiceStatus === 'speaking' && (
+                            ) : voiceStatus === 'connecting' ? (
                               <>
                                 <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                                <span>Aegis is responding...</span>
+                                <span>Connecting to Aegis…</span>
                               </>
-                            )}
-                            {voiceStatus === 'idle' && (
+                            ) : voiceStatus === 'idle' ? (
                               <>
                                 <span className="w-2 h-2 bg-muted-foreground rounded-full" />
                                 <span>Disconnected</span>
+                              </>
+                            ) : voiceInputReady ? (
+                              <>
+                                <Mic className="w-4 h-4 text-primary animate-pulse" />
+                                <span>Listening — speak now</span>
+                              </>
+                            ) : (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                                <span>Aegis is finishing…</span>
                               </>
                             )}
                           </div>

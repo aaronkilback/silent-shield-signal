@@ -25,6 +25,10 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   // while Aegis is speaking. userMutedRef mirrors isMuted for use in handlers.
   const [isMuted, setIsMuted] = useState(false);
   const userMutedRef = useRef(false);
+  // P1-A: TRUE microphone-readiness for the UI — reflects the actual half-duplex transport
+  // gate (mic track live + listening), NOT inferred response status. false from
+  // closeInputGate() until openInputGate() genuinely re-enables the track.
+  const [inputReady, setInputReady] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -84,7 +88,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     gateGenRef.current += 1;
     if (gateReopenRef.current) { window.clearTimeout(gateReopenRef.current); gateReopenRef.current = null; }
     mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
-    console.log(`[Voice] input gate CLOSED (gen ${gateGenRef.current}): ${reason}`);
+    setInputReady(false); // UI: not ready to speak
+    console.log(`[Voice][gate] CLOSED @${Math.round(performance.now())}ms (gen ${gateGenRef.current}): ${reason} — inputReady=false`);
   }, []);
 
   // openInputGate: re-enable mic transport + transcript acceptance + listening (unless the
@@ -92,11 +97,15 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const openInputGate = useCallback((reason: string) => {
     if (gateReopenRef.current) { window.clearTimeout(gateReopenRef.current); gateReopenRef.current = null; }
     inputGateOpenRef.current = true;
-    if (statusRef.current !== 'idle' && !userMutedRef.current) {
+    // inputReady becomes true ONLY when the mic track is actually live + listening (not idle,
+    // not manually muted). The UI keys "ready to speak" off this, never off raw status.
+    const micLive = statusRef.current !== 'idle' && !userMutedRef.current;
+    if (micLive) {
       mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = true; });
       updateStatus('listening');
     }
-    console.log(`[Voice] input gate OPEN: ${reason}`);
+    setInputReady(micLive);
+    console.log(`[Voice][gate] OPEN @${Math.round(performance.now())}ms: ${reason} — inputReady=${micLive}`);
   }, [updateStatus]);
 
   // scheduleInputGateOpen: reopen only after a deterministic post-output tail, and only if
@@ -442,6 +451,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     responsePendingRef.current = false;
     queuedResponseRef.current = null;
     lastAcceptedTranscriptRef.current = { text: '', at: 0 };
+    setInputReady(false); // UI: not ready until a live session re-opens the gate
 
     // Close data channel
     if (dcRef.current) {
@@ -702,6 +712,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   return {
     status,
     isAgentSpeaking,
+    inputReady,
     transcript,
     agentResponse,
     connect,
