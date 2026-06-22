@@ -514,10 +514,17 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       }, 15000);
 
       // Get ephemeral token from our edge function
+      // Fix B: pass the operator's CURRENT tenant + selected client so the token fn can
+      // resolve the real client NAME (tenant-scoped, server-side) and inject truthful
+      // "Current client context" into the voice persona. Retrieval scoping is separate
+      // (voiceScopeRef -> voice-tool-executor-v2) and unchanged. Fails closed: no client
+      // selected -> token fn injects "no client selected"; mismatch -> no name injected.
       const { data: tokenData, error: tokenError } = await supabase.functions.invoke('openai-realtime-token', {
         body: {
           agentContext: optionsRef.current.agentContext,
-          conversationHistory: optionsRef.current.conversationHistory
+          conversationHistory: optionsRef.current.conversationHistory,
+          tenant_id: voiceScopeRef.current.tenantId,
+          client_id: voiceScopeRef.current.clientId,
         }
       });
 
