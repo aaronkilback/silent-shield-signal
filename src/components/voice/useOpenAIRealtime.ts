@@ -7,6 +7,18 @@ import { useClientSelection } from '@/hooks/useClientSelection';
 const POST_TTS_COOLDOWN_MS = 800; // mic stays OFF this long after TTS ends, then re-arms
 const POST_TTS_LEAK_WINDOW_MS = 1500; // short transcripts within this window after TTS = likely self-echo
 
+// Fix A-i: iPhone voice diagnostics. Timestamped, prefixed console output so the operator
+// can capture the real iOS WebKit event order from Safari Web Inspector. Flip VOICE_DX to
+// false (or remove this block + dx() calls) after diagnosis — no behavior depends on it.
+const VOICE_DX = true;
+let _dxT0 = 0;
+const dx = (label: string, extra?: unknown) => {
+  if (!VOICE_DX) return;
+  const dt = _dxT0 ? Math.round(performance.now() - _dxT0) : 0;
+  if (extra !== undefined) console.log(`[VoiceDx +${dt}ms] ${label}`, extra);
+  else console.log(`[VoiceDx +${dt}ms] ${label}`);
+};
+
 interface UseOpenAIRealtimeOptions {
   onTranscript?: (text: string, isFinal: boolean) => void;
   onAgentResponse?: (text: string) => void;
@@ -153,10 +165,12 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const scheduleMicResume = useCallback(() => {
     lastTtsEndRef.current = Date.now();
     if (cooldownRef.current) window.clearTimeout(cooldownRef.current);
+    dx('cooldown:start', { ms: POST_TTS_COOLDOWN_MS });
     cooldownRef.current = window.setTimeout(() => {
       cooldownRef.current = null;
-      if (statusRef.current === 'idle' || statusRef.current === 'speaking') return;
+      if (statusRef.current === 'idle' || statusRef.current === 'speaking') { dx('cooldown:end skipped', { status: statusRef.current }); return; }
       mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
+      dx('cooldown:end -> mic', { enabled: !userMutedRef.current });
       if (!userMutedRef.current && statusRef.current !== 'thinking') updateStatus('listening');
     }, POST_TTS_COOLDOWN_MS);
   }, [updateStatus]);
@@ -167,6 +181,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     switch (event.type) {
       case 'session.created':
         console.log('Session created');
+        dx('session.created', { dc: dcRef.current?.readyState });
         // Voice reliability: pin transcription to English (whisper-1 auto-detect was
         // drifting to Spanish on echo/garbled tail audio) and RE-STATE the existing
         // server_vad turn_detection so this update can't clobber VAD behaviour.
@@ -188,11 +203,18 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
               },
             },
           }));
+          dx('session.update:sent (language=en)');
         }
         break;
 
       case 'session.updated':
         console.log('Session updated');
+        // Surface whether the English transcription pin was actually acknowledged.
+        {
+          const sess = (event as Record<string, unknown>).session as Record<string, unknown> | undefined;
+          const lang = (((sess?.audio as Record<string, unknown>)?.input as Record<string, unknown>)?.transcription as Record<string, unknown>)?.language;
+          dx('session.updated', { ackLanguage: lang ?? '(none)' });
+        }
         break;
 
       case 'input_audio_buffer.speech_started':
@@ -255,6 +277,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
             || norm.startsWith('please subscribe') || norm.startsWith("we'll see you");
           if (isHallucination) {
             console.log('[Voice] Dropped likely hallucinated/empty transcript:', JSON.stringify(transcriptText));
+            dx('transcript:dropped(hallucination)', { text: transcriptText, responseActive: responseActiveRef.current, status: statusRef.current });
             // Only cancel a phantom-triggered response when Aegis is NOT already speaking
             // — cancelling an active response would cut off live TTS mid-sentence. While a
             // response is live, drop silently and let Aegis finish; mic-off already prevents
@@ -282,6 +305,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           const isEcho = (sinceTts < POST_TTS_LEAK_WINDOW_MS && wordCount <= 3) || overlapsAegis;
           if (isEcho) {
             console.log('[Voice] Dropped likely TTS-echo transcript:', JSON.stringify(transcriptText), { sinceTts, wordCount, overlapsAegis });
+            dx('transcript:dropped(echo)', { text: transcriptText, sinceTts, wordCount, overlapsAegis, responseActive: responseActiveRef.current, status: statusRef.current });
             // Same guard: never cancel an active response (would cut off live TTS). Drop
             // silently while speaking; only cancel a phantom auto-reply when Aegis is idle.
             if (dcRef.current?.readyState === 'open' && !responseActiveRef.current && statusRef.current !== 'speaking') {
@@ -291,6 +315,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
             break;
           }
           console.log('User transcript:', transcriptText);
+          dx('transcript:accepted', { text: transcriptText });
           setTranscript(transcriptText);
           optionsRef.current.onTranscript?.(transcriptText, true);
         }
@@ -356,6 +381,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         // Trade-off: no barge-in while speaking; re-enabled after a post-TTS cooldown.
         // Cancel any pending cooldown from a prior turn so it can't re-arm mid-speech.
         if (cooldownRef.current) { window.clearTimeout(cooldownRef.current); cooldownRef.current = null; }
+        if (!responseActiveRef.current) dx('response.audio.delta:first -> mic OFF, speaking');
         responseActiveRef.current = true;
         mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
         setIsAgentSpeaking(true);
@@ -367,6 +393,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         // Aegis finished GENERATING audio, but the <audio> element keeps playing the
         // buffered tail. Keep the mic OFF and re-arm only after the post-TTS cooldown
         // so it can't capture Aegis's own closing words (the feedback loop).
+        dx('response.audio.done -> start cooldown');
         setIsAgentSpeaking(false);
         updateStatus('connected');
         scheduleMicResume();
@@ -387,6 +414,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         {
           const errorData = (event as Record<string, unknown>).error as Record<string, unknown>;
           console.error('Realtime error:', errorData);
+          dx('session.error', errorData);
           optionsRef.current.onError?.(errorData?.message as string || 'Unknown error');
         }
         break;
@@ -472,6 +500,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // getUserMedia + autoplay often require user gesture on some browsers,
       // so if connect is called without a click/tap it may fail.
       updateStatus('connecting');
+      _dxT0 = performance.now();
+      dx('connect:start');
       console.log('Requesting ephemeral token...');
 
       if (connectTimeoutRef.current) {
@@ -504,6 +534,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       pc.oniceconnectionstatechange = () => {
         console.log('ICE state:', pc.iceConnectionState);
+        dx('iceConnectionState', pc.iceConnectionState);
         if (pc.iceConnectionState === 'failed') {
           optionsRef.current.onError?.('Voice connection failed (ICE).');
           disconnect();
@@ -511,6 +542,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       };
       pc.onconnectionstatechange = () => {
         console.log('Peer connection state:', pc.connectionState);
+        // A-i: log only (teardown behavior UNCHANGED pending captured iPhone logs / A-ii).
+        dx('connectionState', pc.connectionState);
         if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
           optionsRef.current.onError?.('Voice connection lost.');
           disconnect();
@@ -528,8 +561,17 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // Append to DOM to improve autoplay reliability on some browsers
       document.body.appendChild(audioEl);
 
+      // A-i: audio element lifecycle (catches iOS suspend/interrupt of remote playback).
+      audioEl.addEventListener('play', () => dx('audioEl:play'));
+      audioEl.addEventListener('playing', () => dx('audioEl:playing'));
+      audioEl.addEventListener('pause', () => dx('audioEl:pause'));
+      audioEl.addEventListener('ended', () => dx('audioEl:ended'));
+      audioEl.addEventListener('stalled', () => dx('audioEl:stalled'));
+      audioEl.addEventListener('suspend', () => dx('audioEl:suspend'));
+
       pc.ontrack = (event) => {
         console.log('Received audio track from OpenAI');
+        dx('pc.ontrack (remote audio)');
         audioEl.srcObject = event.streams[0];
         audioEl.play().catch((err) => {
           console.warn('Audio autoplay blocked, waiting for user gesture...', err);
