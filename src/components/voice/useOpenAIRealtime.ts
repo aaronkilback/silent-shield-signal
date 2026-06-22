@@ -42,8 +42,15 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const responseActiveRef = useRef(false);   // true between response.created and response.done
   const responsePendingRef = useRef(false);  // true between our send and response.created
   const queuedResponseRef = useRef<{ reason: string; response: unknown } | null>(null); // tool continuation
-  const micCooldownRef = useRef<number | null>(null); // post-speaking cooldown before re-listening
   const lastAcceptedTranscriptRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
+  // Half-Duplex Gate: while CLOSED, Aegis owns the channel — the mic track is disabled
+  // (no audio content transmitted) AND every transcript is discarded before any render/
+  // persist/response. Reopened only after a deterministic post-output tail. gateGenRef is a
+  // monotonic id so a stale reopen timer can never reopen the mic during a newer response.
+  const POST_OUTPUT_TAIL_MS = 1500;
+  const inputGateOpenRef = useRef(true);
+  const gateGenRef = useRef(0);
+  const gateReopenRef = useRef<number | null>(null);
   
   // Use ref for options to avoid stale closures in event handlers
   const optionsRef = useRef(options);
@@ -69,6 +76,42 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     optionsRef.current.onStatusChange?.(newStatus);
   }, []);
 
+  // Half-Duplex Gate helpers (idempotent).
+  // closeInputGate: synchronously stop the mic from transmitting audio + bump generation +
+  // cancel any pending reopen. Called before every gateway-owned response.create send.
+  const closeInputGate = useCallback((reason: string) => {
+    inputGateOpenRef.current = false;
+    gateGenRef.current += 1;
+    if (gateReopenRef.current) { window.clearTimeout(gateReopenRef.current); gateReopenRef.current = null; }
+    mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
+    console.log(`[Voice] input gate CLOSED (gen ${gateGenRef.current}): ${reason}`);
+  }, []);
+
+  // openInputGate: re-enable mic transport + transcript acceptance + listening (unless the
+  // operator manually muted or the session ended).
+  const openInputGate = useCallback((reason: string) => {
+    if (gateReopenRef.current) { window.clearTimeout(gateReopenRef.current); gateReopenRef.current = null; }
+    inputGateOpenRef.current = true;
+    if (statusRef.current !== 'idle' && !userMutedRef.current) {
+      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = true; });
+      updateStatus('listening');
+    }
+    console.log(`[Voice] input gate OPEN: ${reason}`);
+  }, [updateStatus]);
+
+  // scheduleInputGateOpen: reopen only after a deterministic post-output tail, and only if
+  // no newer response has since closed the gate (generation check) and none is active.
+  const scheduleInputGateOpen = useCallback((reason: string) => {
+    const myGen = gateGenRef.current;
+    if (gateReopenRef.current) window.clearTimeout(gateReopenRef.current);
+    gateReopenRef.current = window.setTimeout(() => {
+      gateReopenRef.current = null;
+      if (gateGenRef.current !== myGen) { console.log('[Voice] stale gate-reopen ignored'); return; }
+      if (responseActiveRef.current) { console.log('[Voice] gate-reopen deferred (response active)'); return; }
+      openInputGate(`tail-elapsed: ${reason}`);
+    }, POST_OUTPUT_TAIL_MS);
+  }, [openInputGate]);
+
   // Voice Recovery: THE single response gateway. Every client-originated response.create
   // (voice turn, greeting, typed message, tool continuation) MUST go through here. It
   // refuses a send when a response is already active/pending or the session is gone, so
@@ -86,24 +129,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       console.log(`[Voice] requestResponse refused (busy): ${reason}`);
       return false;
     }
+    // Half-duplex: close the input gate SYNCHRONOUSLY before the response.create send, so the
+    // mic stops transmitting the instant we commit to a response (covers the pre-audio window).
+    closeInputGate(`pre-response.create: ${reason}`);
     responsePendingRef.current = true;
     dc.send(JSON.stringify(opts?.response ? { type: 'response.create', response: opts.response } : { type: 'response.create' }));
     console.log(`[Voice] requestResponse sent: ${reason}`);
     return true;
-  }, []);
-
-  // Re-arm the mic only AFTER a post-speaking cooldown (state machine: SPEAKING -> cooldown
-  // -> LISTENING), so the mic can't capture Aegis's buffered audio tail. Never re-enables
-  // while a response is active, the session ended, or the operator manually muted.
-  const scheduleMicResume = useCallback(() => {
-    if (micCooldownRef.current) window.clearTimeout(micCooldownRef.current);
-    micCooldownRef.current = window.setTimeout(() => {
-      micCooldownRef.current = null;
-      if (statusRef.current === 'idle' || responseActiveRef.current) return;
-      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
-      if (!userMutedRef.current) updateStatus('listening');
-    }, 600);
-  }, [updateStatus]);
+  }, [closeInputGate]);
 
   // Execute a tool and send result back to OpenAI
   const executeToolCall = useCallback(async (
@@ -220,6 +253,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       case 'conversation.item.input_audio_transcription.completed':
         {
           const transcriptText = (event as Record<string, unknown>).transcript as string;
+          // HALF-DUPLEX ACCEPTANCE GATE (top, before anything else): while Aegis owns the
+          // channel, a leaked echo transcript must produce ZERO render/persist/response.
+          // Discard if the input gate is closed, a response is active, or a post-output
+          // tail reopen is still pending.
+          if (!inputGateOpenRef.current || responseActiveRef.current || gateReopenRef.current !== null) {
+            console.log('[Voice] transcript DISCARDED (input gate closed):', JSON.stringify(transcriptText));
+            break;
+          }
           // Whisper hallucinates stock phrases on silence/echo ("thank you for watching",
           // "we'll see you next time", "peace", bare "you", "bye bye"). Drop these and
           // cancel any auto-created response so Aegis never replies to a phantom turn.
@@ -307,10 +348,10 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'response.created':
         // A response is now live (ours, via the gateway). Mark ownership so the gateway
-        // refuses any concurrent create. Cancel any pending mic-resume cooldown.
+        // refuses any concurrent create. The input gate is already closed (closeInputGate
+        // ran in requestResponse, bumping the generation so any prior reopen timer is void).
         responseActiveRef.current = true;
         responsePendingRef.current = false;
-        if (micCooldownRef.current) { window.clearTimeout(micCooldownRef.current); micCooldownRef.current = null; }
         break;
 
       case 'response.output_audio.delta': // GA
@@ -326,27 +367,27 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'response.output_audio.done': // GA
       case 'response.audio.done': // beta (back-compat)
-        // Audio generation finished; the <audio> tail may still be playing. Do NOT re-enable
-        // the mic immediately — schedule it after the cooldown (SPEAKING -> cooldown -> LISTENING).
+        // Audio generation finished; the device playout tail may still be sounding. Keep the
+        // gate CLOSED — reopening is owned by response.done's deterministic tail timer.
         setIsAgentSpeaking(false);
         updateStatus('connected');
-        scheduleMicResume();
         break;
 
       case 'response.done':
-        // Response fully complete: release ownership so the gateway can accept the next turn.
+        // Response fully complete: release response ownership. The input gate STAYS CLOSED
+        // and reopens only after the deterministic POST_OUTPUT_TAIL_MS (1500ms) tail.
         responseActiveRef.current = false;
         responsePendingRef.current = false;
         setIsAgentSpeaking(false);
         updateStatus('connected');
         setAgentResponse('');
-        // Fire any queued continuation (e.g. tool result that arrived mid-response).
+        // Fire any queued continuation (e.g. tool result mid-response) — it re-closes the gate.
         if (queuedResponseRef.current) {
           const q = queuedResponseRef.current;
           queuedResponseRef.current = null;
           requestResponse(q.reason, { response: q.response ?? undefined });
         } else {
-          scheduleMicResume();
+          scheduleInputGateOpen('response.done');
         }
         break;
 
@@ -354,8 +395,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         {
           const errorData = (event as Record<string, unknown>).error as Record<string, unknown>;
           console.error('Realtime error:', errorData);
-          // Clear pending so a failed send never wedges the gateway closed.
+          // Recover the gateway AND the mic so a failed/empty response can never wedge the
+          // gate closed permanently: clear pending/active and schedule the normal tail reopen.
           responsePendingRef.current = false;
+          responseActiveRef.current = false;
+          scheduleInputGateOpen('error-recovery');
           optionsRef.current.onError?.(errorData?.message as string || 'Unknown error');
         }
         break;
@@ -366,7 +410,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           console.log('Unhandled event type:', event.type);
         }
     }
-  }, [updateStatus, executeToolCall, requestResponse, scheduleMicResume]);
+  }, [updateStatus, executeToolCall, requestResponse, scheduleInputGateOpen]);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting...');
@@ -386,11 +430,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       responseFallbackRef.current = null;
     }
 
-    // Voice Recovery: reset response-ownership state + cooldown so a fresh session starts clean.
-    if (micCooldownRef.current) {
-      window.clearTimeout(micCooldownRef.current);
-      micCooldownRef.current = null;
+    // Voice Recovery + Half-Duplex Gate: reset response-ownership + gate state so a fresh
+    // session starts clean and no stale reopen timer can fire.
+    if (gateReopenRef.current) {
+      window.clearTimeout(gateReopenRef.current);
+      gateReopenRef.current = null;
     }
+    gateGenRef.current += 1;            // invalidate any in-flight reopen timer
+    inputGateOpenRef.current = true;    // next session starts with the gate open
     responseActiveRef.current = false;
     responsePendingRef.current = false;
     queuedResponseRef.current = null;
@@ -553,19 +600,16 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
           greetedRef.current = true;
           console.log('Sending proactive greeting request...');
-          // Greeting goes through the SAME gateway (single ownership). Mic off while the
-          // greeting response is active so it can't enter listening / capture the greeting;
-          // response.done -> cooldown -> listening re-arms the mic.
-          const sent = requestResponse('greeting', {
+          // Greeting goes through the SAME gateway, which closes the input gate before the
+          // send — so the mic is held closed through the greeting + its 1500ms tail, then
+          // reopened by response.done. No separate mic toggle needed.
+          requestResponse('greeting', {
             response: {
               output_modalities: ['audio'],
               instructions:
                 'Greet the user briefly. Say something like "Aegis here. How can I help?" Keep it under 10 words.',
             },
           });
-          if (sent === true) {
-            mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
-          }
         }, 500);
       };
 
@@ -676,7 +720,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       const next = !userMutedRef.current;
       userMutedRef.current = next;
       setIsMuted(next);
-      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !next && statusRef.current !== 'speaking'; });
+      // Unmuting may only re-enable the mic when the half-duplex input gate is OPEN — never
+      // open the mic while Aegis owns the channel (gate closed / mid-speech).
+      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !next && inputGateOpenRef.current; });
     },
     isConnected: status !== 'idle' && status !== 'connecting'
   };
