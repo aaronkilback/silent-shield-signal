@@ -45,10 +45,11 @@ Deno.serve(async (req) => {
       return json({ status: "forbidden" }, 403); // no tenant-name disclosure
     }
 
-    // 3) Parse the search hint (hint only — never scope).
-    let nameHint = "";
-    try { nameHint = String((await req.json())?.name_hint ?? "").trim(); } catch { /* ignore */ }
-    if (!nameHint || nameHint.length < 2) return json({ status: "none" });
+    // 3) Parse the search hint (hint only — never scope) + the browser/voice interaction nonce.
+    let nameHint = "", nonce = "";
+    try { const b = await req.json(); nameHint = String(b?.name_hint ?? "").trim(); nonce = String(b?.nonce ?? "").trim(); } catch { /* ignore */ }
+    if (!nonce) return json({ status: "error" });                       // nonce is required (session binding)
+    if (!nameHint || nameHint.length < 2 || nameHint.length > 200) return json({ status: "none" }); // bounded hint
 
     // 4) Caller's OWN authorized, active tenants (membership-scoped; no cross-tenant discovery).
     const { data: memberships } = await svc.from("tenant_users").select("tenant_id").eq("user_id", user.id);
@@ -75,12 +76,17 @@ Deno.serve(async (req) => {
       return json({ status: "ambiguous", candidates: matches.map((t) => t.name) });
     }
 
-    // 6) Exactly one → create short-lived server-held pending candidate; return opaque handle + name.
+    // 6) Exactly one → supersede any prior pending for THIS (user, nonce) so a second lookup in
+    //    the same interaction invalidates the first, then create a fresh short-lived pending.
     const only = matches[0];
+    await svc.from("aegis_pending_tenant_candidates")
+      .update({ status: "superseded", used_at: new Date().toISOString() })
+      .eq("user_id", user.id).eq("nonce", nonce).eq("status", "pending").is("used_at", null);
+
     const handle = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
     const expiresAt = new Date(Date.now() + PENDING_TTL_SECONDS * 1000).toISOString();
     const { error: insErr } = await svc.from("aegis_pending_tenant_candidates").insert({
-      handle, user_id: user.id, tenant_id: only.id, display_name: only.name,
+      handle, nonce, user_id: user.id, tenant_id: only.id, display_name: only.name,
       authorized_role: authorizedRole, status: "pending", expires_at: expiresAt,
     });
     if (insErr) { console.error("[aegis-tenant-resolve] pending insert failed:", insErr.message); return json({ status: "error" }, 500); }

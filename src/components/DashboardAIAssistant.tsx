@@ -49,8 +49,11 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   const { isAdmin, isSuperAdmin } = useUserRole();
   const { currentTenant, isAllTenantsView, tenants, setCurrentTenant, refetchTenants } = useTenant();
   // Admin Voice Tenant Context: short-lived opaque pending-candidate handle from the server
-  // resolver. Held in the BROWSER (never surfaced to the model), used only by confirm.
+  // resolver + a per-interaction nonce. Both held in the BROWSER (never surfaced to the model);
+  // confirm supplies both. The nonce binds the candidate to THIS browser/voice interaction so
+  // concurrent tabs/sessions can't confirm each other's, and a new lookup supersedes the prior.
   const pendingTenantHandleRef = useRef<string | null>(null);
+  const tenantNonceRef = useRef<string | null>(null);
 
   // Browser-side handler for the tenant resolve/confirm voice tools. Calls the server-
   // authorized edge functions with the APP session (supabase.functions.invoke includes the
@@ -60,8 +63,13 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   const handleTenantTool = async (toolName: string, args: Record<string, unknown>): Promise<unknown> => {
     try {
       if (toolName === "resolve_tenant_candidate") {
+        // Lazily mint the interaction nonce; reuse across lookups in this interaction so the
+        // server supersedes a prior pending for this (user, nonce). Never sent to the model.
+        if (!tenantNonceRef.current) tenantNonceRef.current = crypto.randomUUID();
         const nameHint = String((args?.name_hint ?? "")).trim();
-        const { data, error } = await supabase.functions.invoke("aegis-tenant-resolve", { body: { name_hint: nameHint } });
+        const { data, error } = await supabase.functions.invoke("aegis-tenant-resolve", {
+          body: { name_hint: nameHint, nonce: tenantNonceRef.current },
+        });
         if (error || !data) return { status: "error" };
         if (data.status === "one") {
           pendingTenantHandleRef.current = data.handle ?? null; // keep handle browser-side only
@@ -73,9 +81,11 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
       }
       if (toolName === "confirm_tenant_candidate") {
         const handle = pendingTenantHandleRef.current;
-        if (!handle) return { status: "invalid" }; // nothing to confirm; never re-search
-        const { data, error } = await supabase.functions.invoke("aegis-tenant-confirm", { body: { handle } });
+        const nonce = tenantNonceRef.current;
+        if (!handle || !nonce) return { status: "invalid" }; // nothing to confirm; never re-search
+        const { data, error } = await supabase.functions.invoke("aegis-tenant-confirm", { body: { handle, nonce } });
         pendingTenantHandleRef.current = null; // single-use
+        tenantNonceRef.current = null; // end this interaction's binding
         if (error || !data || data.status !== "confirmed") return { status: "invalid" };
         // Establish via the existing canonical mechanism (no parallel state).
         let tenant = (tenants ?? []).find((t) => t.id === data.tenant_id);
