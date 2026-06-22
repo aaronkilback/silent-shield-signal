@@ -72,6 +72,9 @@ Deno.serve(async (req) => {
 
 ${AEGIS_VOICE_MODIFIERS}
 
+═══ LANGUAGE ═══
+Default to English for spoken and written responses. Use another language only when the user explicitly requests it or clearly speaks that language intentionally.
+
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 
@@ -363,7 +366,12 @@ WHEN TO USE:
                 threshold: 0.5,
                 prefix_padding_ms: 300,
                 silence_duration_ms: 800,
-                create_response: true
+                // Client-owned turns (Voice Recovery): server VAD detects speech + drives
+                // transcription, but does NOT auto-create or interrupt responses. The client
+                // is the sole owner of response.create (via its gateway), after validating
+                // the final transcript. This removes the dual-ownership race.
+                create_response: false,
+                interrupt_response: false
               }
             },
             output: { voice: 'ash' }

@@ -36,6 +36,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   const responseFallbackRef = useRef<number | null>(null);
   const userHasSpokenRef = useRef(false);
   const greetedRef = useRef(false);
+  // Voice Recovery (client-owned turns, Option B): the client is the SOLE owner of
+  // response.create (token sets server_vad.create_response:false). These refs enforce
+  // single ownership so two response-creation paths can never race.
+  const responseActiveRef = useRef(false);   // true between response.created and response.done
+  const responsePendingRef = useRef(false);  // true between our send and response.created
+  const queuedResponseRef = useRef<{ reason: string; response: unknown } | null>(null); // tool continuation
+  const micCooldownRef = useRef<number | null>(null); // post-speaking cooldown before re-listening
+  const lastAcceptedTranscriptRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   
   // Use ref for options to avoid stale closures in event handlers
   const optionsRef = useRef(options);
@@ -60,6 +68,42 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     setStatus(newStatus);
     optionsRef.current.onStatusChange?.(newStatus);
   }, []);
+
+  // Voice Recovery: THE single response gateway. Every client-originated response.create
+  // (voice turn, greeting, typed message, tool continuation) MUST go through here. It
+  // refuses a send when a response is already active/pending or the session is gone, so
+  // we can never trigger "Conversation already has an active response in progress". Tool
+  // continuations may queue (queueIfBusy) and fire on the next response.done.
+  const requestResponse = useCallback((reason: string, opts?: { response?: unknown; queueIfBusy?: boolean }): boolean | 'queued' => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== 'open') { console.log(`[Voice] requestResponse refused (disconnected): ${reason}`); return false; }
+    if (responseActiveRef.current || responsePendingRef.current) {
+      if (opts?.queueIfBusy) {
+        queuedResponseRef.current = { reason, response: opts?.response ?? null };
+        console.log(`[Voice] requestResponse queued (busy): ${reason}`);
+        return 'queued';
+      }
+      console.log(`[Voice] requestResponse refused (busy): ${reason}`);
+      return false;
+    }
+    responsePendingRef.current = true;
+    dc.send(JSON.stringify(opts?.response ? { type: 'response.create', response: opts.response } : { type: 'response.create' }));
+    console.log(`[Voice] requestResponse sent: ${reason}`);
+    return true;
+  }, []);
+
+  // Re-arm the mic only AFTER a post-speaking cooldown (state machine: SPEAKING -> cooldown
+  // -> LISTENING), so the mic can't capture Aegis's buffered audio tail. Never re-enables
+  // while a response is active, the session ended, or the operator manually muted.
+  const scheduleMicResume = useCallback(() => {
+    if (micCooldownRef.current) window.clearTimeout(micCooldownRef.current);
+    micCooldownRef.current = window.setTimeout(() => {
+      micCooldownRef.current = null;
+      if (statusRef.current === 'idle' || responseActiveRef.current) return;
+      mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
+      if (!userMutedRef.current) updateStatus('listening');
+    }, 600);
+  }, [updateStatus]);
 
   // Execute a tool and send result back to OpenAI
   const executeToolCall = useCallback(async (
@@ -101,15 +145,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         };
         console.log('[Voice] Output event:', JSON.stringify(outputEvent));
         dcRef.current.send(JSON.stringify(outputEvent));
-        
+
         // Small delay to ensure the item is created before requesting response
         await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Trigger response generation
-        console.log('[Voice] Triggering response generation...');
-        dcRef.current.send(JSON.stringify({
-          type: 'response.create'
-        }));
+
+        // Trigger response generation via the single gateway. queueIfBusy: the tool-call
+        // response that requested this tool may not have emitted response.done yet; queue
+        // and let response.done fire the continuation. Exactly one continuation results.
+        requestResponse('tool-continuation', { queueIfBusy: true });
       } else {
         console.error('[Voice] Data channel not open, cannot send function output');
       }
@@ -126,13 +169,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
             output: JSON.stringify({ error: 'Tool execution failed' })
           }
         }));
-        
-        dcRef.current.send(JSON.stringify({
-          type: 'response.create'
-        }));
+
+        requestResponse('tool-continuation-error', { queueIfBusy: true });
       }
     }
-  }, [updateStatus]);
+  }, [updateStatus, requestResponse]);
 
   const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     console.log('Realtime event:', event.type, event);
@@ -164,21 +205,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'input_audio_buffer.speech_stopped':
         console.log('User stopped speaking, waiting for transcription...');
-        // VAD detected end of speech - update status to show we're processing
-        // The server will automatically create a response due to turn_detection.create_response: true
+        // Client-owned turns: server VAD does NOT auto-create a response
+        // (create_response:false). We wait for transcription.completed, validate it, then
+        // send exactly one response.create via the gateway. NO timer-based fallback — that
+        // 3s fallback was the confirmed source of the iPhone "active response" race.
         updateStatus('thinking');
-        
-        // Fallback: if no response comes within 3 seconds, manually request one
-        if (responseFallbackRef.current) {
-          window.clearTimeout(responseFallbackRef.current);
-        }
-        responseFallbackRef.current = window.setTimeout(() => {
-          // Use statusRef.current to get current value (not stale closure)
-          if (dcRef.current?.readyState === 'open' && statusRef.current === 'thinking') {
-            console.log('[Voice] Fallback: manually requesting response after speech stopped');
-            dcRef.current.send(JSON.stringify({ type: 'response.create' }));
-          }
-        }, 3000);
         break;
       
       case 'input_audio_buffer.committed':
@@ -204,18 +235,28 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           const isHallucination = !norm || norm.length < 2 || HALLUCINATIONS.has(norm)
             || norm.startsWith('thank you for watching') || norm.startsWith('thanks for watching')
             || norm.startsWith('please subscribe') || norm.startsWith("we'll see you");
+          // Client-owned turns: a REJECTED transcript simply creates no response. Because
+          // the server no longer auto-responds (create_response:false), there is nothing to
+          // cancel — so NO response.cancel, NO onTranscript, NO persistence/render. Recover
+          // cleanly to listening.
           if (isHallucination) {
-            console.log('[Voice] Dropped likely hallucinated/empty transcript:', JSON.stringify(transcriptText));
-            if (dcRef.current?.readyState === 'open') {
-              // Abort the auto-created response triggered by the phantom turn.
-              dcRef.current.send(JSON.stringify({ type: 'response.cancel' }));
-            }
-            if (statusRef.current !== 'speaking') updateStatus('connected');
+            console.log('[Voice] Dropped likely hallucinated/empty transcript (no response created):', JSON.stringify(transcriptText));
+            if (statusRef.current !== 'speaking') updateStatus('listening');
             break;
           }
-          console.log('User transcript:', transcriptText);
+          // Duplicate guard: ignore an identical transcript repeated within 4s (prevents
+          // duplicate user-turn render + a second response).
+          const nowTs = Date.now();
+          if (norm === lastAcceptedTranscriptRef.current.text && (nowTs - lastAcceptedTranscriptRef.current.at) < 4000) {
+            console.log('[Voice] Ignored duplicate transcript:', JSON.stringify(transcriptText));
+            break;
+          }
+          lastAcceptedTranscriptRef.current = { text: norm, at: nowTs };
+          console.log('User transcript accepted:', transcriptText);
           setTranscript(transcriptText);
           optionsRef.current.onTranscript?.(transcriptText, true);
+          // Exactly one response for this accepted turn, via the gateway.
+          requestResponse('voice-turn');
         }
         break;
 
@@ -264,17 +305,20 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         }
         break;
 
+      case 'response.created':
+        // A response is now live (ours, via the gateway). Mark ownership so the gateway
+        // refuses any concurrent create. Cancel any pending mic-resume cooldown.
+        responseActiveRef.current = true;
+        responsePendingRef.current = false;
+        if (micCooldownRef.current) { window.clearTimeout(micCooldownRef.current); micCooldownRef.current = null; }
+        break;
+
       case 'response.output_audio.delta': // GA
       case 'response.audio.delta': // beta (back-compat)
-        // Audio is handled by WebRTC track, but this indicates agent is speaking
-        // Clear fallback timer since we're getting a response
-        if (responseFallbackRef.current) {
-          window.clearTimeout(responseFallbackRef.current);
-          responseFallbackRef.current = null;
-        }
-        // Mute the mic while Aegis is speaking so it can't pick up the playback
-        // or room silence (which the transcriber hallucinates into phantom turns).
-        // Trade-off: no barge-in while speaking; re-enabled on response end.
+        // Aegis is speaking. Belt-and-suspenders ownership (in case response.created was
+        // missed). Mute the mic while speaking so it can't capture the playback.
+        responseActiveRef.current = true;
+        responsePendingRef.current = false;
         mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
         setIsAgentSpeaking(true);
         updateStatus('speaking');
@@ -282,27 +326,36 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
       case 'response.output_audio.done': // GA
       case 'response.audio.done': // beta (back-compat)
-        // Re-enable the mic now that Aegis has finished speaking — unless the
-        // operator has manually muted for a side conversation.
-        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
+        // Audio generation finished; the <audio> tail may still be playing. Do NOT re-enable
+        // the mic immediately — schedule it after the cooldown (SPEAKING -> cooldown -> LISTENING).
         setIsAgentSpeaking(false);
         updateStatus('connected');
+        scheduleMicResume();
         break;
 
       case 'response.done':
-        // Safety: ensure the mic is live again at the end of every response
-        // (unless the operator manually muted).
-        mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !userMutedRef.current; });
+        // Response fully complete: release ownership so the gateway can accept the next turn.
+        responseActiveRef.current = false;
+        responsePendingRef.current = false;
         setIsAgentSpeaking(false);
         updateStatus('connected');
-        // Reset internal agent response for next turn
         setAgentResponse('');
+        // Fire any queued continuation (e.g. tool result that arrived mid-response).
+        if (queuedResponseRef.current) {
+          const q = queuedResponseRef.current;
+          queuedResponseRef.current = null;
+          requestResponse(q.reason, { response: q.response ?? undefined });
+        } else {
+          scheduleMicResume();
+        }
         break;
 
       case 'error':
         {
           const errorData = (event as Record<string, unknown>).error as Record<string, unknown>;
           console.error('Realtime error:', errorData);
+          // Clear pending so a failed send never wedges the gateway closed.
+          responsePendingRef.current = false;
           optionsRef.current.onError?.(errorData?.message as string || 'Unknown error');
         }
         break;
@@ -313,7 +366,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           console.log('Unhandled event type:', event.type);
         }
     }
-  }, [updateStatus, executeToolCall]);
+  }, [updateStatus, executeToolCall, requestResponse, scheduleMicResume]);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting...');
@@ -332,6 +385,16 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       window.clearTimeout(responseFallbackRef.current);
       responseFallbackRef.current = null;
     }
+
+    // Voice Recovery: reset response-ownership state + cooldown so a fresh session starts clean.
+    if (micCooldownRef.current) {
+      window.clearTimeout(micCooldownRef.current);
+      micCooldownRef.current = null;
+    }
+    responseActiveRef.current = false;
+    responsePendingRef.current = false;
+    queuedResponseRef.current = null;
+    lastAcceptedTranscriptRef.current = { text: '', at: 0 };
 
     // Close data channel
     if (dcRef.current) {
@@ -490,14 +553,19 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
           greetedRef.current = true;
           console.log('Sending proactive greeting request...');
-          dc.send(JSON.stringify({
-            type: 'response.create',
+          // Greeting goes through the SAME gateway (single ownership). Mic off while the
+          // greeting response is active so it can't enter listening / capture the greeting;
+          // response.done -> cooldown -> listening re-arms the mic.
+          const sent = requestResponse('greeting', {
             response: {
               output_modalities: ['audio'],
               instructions:
                 'Greet the user briefly. Say something like "Aegis here. How can I help?" Keep it under 10 words.',
             },
-          }));
+          });
+          if (sent === true) {
+            mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
+          }
         }, 500);
       };
 
@@ -555,7 +623,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       updateStatus('idle');
       disconnect();
     }
-  }, [updateStatus, disconnect, handleRealtimeEvent]);
+  }, [updateStatus, disconnect, handleRealtimeEvent, requestResponse]);
 
   const sendTextMessage = useCallback((text: string) => {
     if (dcRef.current?.readyState !== 'open') {
@@ -563,7 +631,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       return;
     }
 
-    // Send a text message to the agent
+    // Send a text message to the agent, then request the response via the single gateway.
     const event = {
       type: 'conversation.item.create',
       item: {
@@ -577,8 +645,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     };
 
     dcRef.current.send(JSON.stringify(event));
-    dcRef.current.send(JSON.stringify({ type: 'response.create' }));
-  }, []);
+    requestResponse('text-message', { queueIfBusy: true });
+  }, [requestResponse]);
 
   // Cleanup on unmount
   useEffect(() => {
