@@ -3,6 +3,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/hooks/useTenant';
 import { useClientSelection } from '@/hooks/useClientSelection';
 
+// P0 diagnostics flag (dev console only — never UI). Flip off / remove after the iPhone capture.
+const VOICE_SCOPE_DX = true;
+
 interface UseOpenAIRealtimeOptions {
   onTranscript?: (text: string, isFinal: boolean) => void;
   onAgentResponse?: (text: string) => void;
@@ -67,12 +70,41 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
   // the operator's CURRENT tenant + selected client on every tool call so voice
   // can only ever read the selected client's data. Held in a ref so the
   // tool-call handler reads the latest selection without re-binding.
-  const { currentTenant } = useTenant();
+  const { currentTenant, isAllTenantsView, isHydrating } = useTenant();
   const { selectedClientId } = useClientSelection();
   const voiceScopeRef = useRef<{ tenantId: string | null; clientId: string | null }>({ tenantId: null, clientId: null });
+  // P0 diagnostics: read-only meta mirror so the dev log reflects the LIVE tenant resolution
+  // state at the hook boundary (refs => accurate inside connect()/tool-call closures).
+  const voiceScopeMetaRef = useRef<{ resolving: boolean; allTenants: boolean }>({ resolving: true, allTenants: false });
+
+  // Diagnostic-only. Logs privacy-safe scope state at the hook boundary (NO user/tenant/
+  // client IDs, names, tool args, or returned data). Flip off / remove after the iPhone
+  // P0 capture. Behavior unchanged — pure observability.
+  const voiceDx = useCallback((event: string, toolName?: string) => {
+    if (!VOICE_SCOPE_DX) return;
+    const s = voiceScopeRef.current;
+    const m = voiceScopeMetaRef.current;
+    const tenantPresent = !!s.tenantId;
+    const clientPresent = !!s.clientId;
+    const tenantState = m.resolving ? "resolving" : (tenantPresent || m.allTenants) ? "ready" : "unavailable";
+    console.log("[VoiceScopeDx]", {
+      event,
+      ...(toolName ? { tool: toolName } : {}),
+      tenantState,
+      tenantPresent,
+      clientPresent,
+      clientScope: clientPresent ? "sent" : "absent",
+      isAllTenantsView: m.allTenants,
+      scopePresent: tenantPresent && clientPresent,
+      staleClientNoTenant: clientPresent && !tenantPresent,
+    });
+  }, []);
+
   useEffect(() => {
     voiceScopeRef.current = { tenantId: currentTenant?.id ?? null, clientId: selectedClientId ?? null };
-  }, [currentTenant?.id, selectedClientId]);
+    voiceScopeMetaRef.current = { resolving: isHydrating, allTenants: isAllTenantsView };
+    voiceDx("scope-update");
+  }, [currentTenant?.id, selectedClientId, isHydrating, isAllTenantsView, voiceDx]);
 
   const updateStatus = useCallback((newStatus: typeof status) => {
     statusRef.current = newStatus;
@@ -154,9 +186,10 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     toolArgs: Record<string, unknown>
   ) => {
     console.log(`[Voice] Executing tool: ${toolName}`, toolArgs);
+    voiceDx("tool-invoke", toolName); // P0 diag: scope state immediately before the tool call
     updateStatus('thinking');
     optionsRef.current.onToolCall?.(toolName, toolArgs);
-    
+
     try {
       const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
         body: {
@@ -215,7 +248,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         requestResponse('tool-continuation-error', { queueIfBusy: true });
       }
     }
-  }, [updateStatus, requestResponse]);
+  }, [updateStatus, requestResponse, voiceDx]);
 
   const handleRealtimeEvent = useCallback((event: Record<string, unknown>) => {
     console.log('Realtime event:', event.type, event);
@@ -499,6 +532,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // getUserMedia + autoplay often require user gesture on some browsers,
       // so if connect is called without a click/tap it may fail.
       updateStatus('connecting');
+      voiceDx("session-start"); // P0 diag: scope state at voice session start
       console.log('Requesting ephemeral token...');
 
       if (connectTimeoutRef.current) {
@@ -677,7 +711,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       updateStatus('idle');
       disconnect();
     }
-  }, [updateStatus, disconnect, handleRealtimeEvent, requestResponse]);
+  }, [updateStatus, disconnect, handleRealtimeEvent, requestResponse, voiceDx]);
 
   const sendTextMessage = useCallback((text: string) => {
     if (dcRef.current?.readyState !== 'open') {
