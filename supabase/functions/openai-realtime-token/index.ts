@@ -1,5 +1,4 @@
 import { AEGIS_CORE_IDENTITY, AEGIS_VOICE_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -57,49 +56,13 @@ Deno.serve(async (req) => {
 
     let agentContext = '';
     let conversationHistory: Array<{ role: string; content: string }> = [];
-    let clientId: string | null = null;
-    let tenantId: string | null = null;
-
+    
     try {
       const body = await req.json();
       agentContext = body.agentContext || '';
       conversationHistory = body.conversationHistory || [];
-      clientId = (body.client_id as string) || null;
-      tenantId = (body.tenant_id as string) || null;
     } catch {
       // No body or invalid JSON, continue with defaults
-    }
-
-    // Fix B: resolve the SELECTED client's name for truthful voice attribution.
-    // Tenant-scoped + fails closed: the lookup runs as the CALLER (their JWT -> RLS), and is
-    // additionally filtered by the supplied tenant_id, so the only name that can resolve is a
-    // client the caller may see AND that belongs to the supplied tenant. No client selected,
-    // a tenant mismatch, or any error -> NO name is injected (we never fabricate or fall back
-    // to a tenant-wide/global identity, and never expose another tenant's client name).
-    let clientContextLine = 'No client is currently selected. Do not attribute findings to a specific client. Ask the operator to select one.';
-    if (clientId && tenantId) {
-      try {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-        const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-        const authHeader = req.headers.get('Authorization') ?? '';
-        const scoped = createClient(supabaseUrl, anonKey, {
-          global: { headers: { Authorization: authHeader } },
-        });
-        const { data: clientRow } = await scoped
-          .from('clients')
-          .select('name')
-          .eq('id', clientId)
-          .eq('tenant_id', tenantId)
-          .maybeSingle();
-        const name = (clientRow?.name as string | undefined)?.trim();
-        if (name) {
-          clientContextLine = `Current client context: ${name}. Operate strictly within this client's context.`;
-        } else {
-          console.warn('[realtime-token] client name not resolved (mismatch/no access); failing closed');
-        }
-      } catch (e) {
-        console.error('[realtime-token] client lookup error; failing closed:', e);
-      }
     }
 
     // Build unified AEGIS persona for voice
@@ -138,10 +101,6 @@ WHEN TO USE:
 • "Remember this" → remember_this
 • "Best practices for X" / "What framework" → query_expert_knowledge
 • "What new tech should we look at?" → query_fortress_data on tech_radar_recommendations`;
-
-    // Truthful, scoped client attribution (Fix B). No claims of active monitoring/protection
-    // or client-specific agent activity — just which client context the operator selected.
-    instructions += `\n\n═══ CLIENT CONTEXT ═══\n${clientContextLine}`;
 
     if (agentContext) {
       instructions += `\n\n═══ SESSION CONTEXT ═══\n${agentContext}`;
