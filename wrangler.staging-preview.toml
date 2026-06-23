@@ -1,0 +1,19 @@
+# Dedicated, single-purpose Cloudflare config for the one-approval staging
+# preview release path (.github/workflows/release-staging-preview.yml).
+#
+# This file intentionally contains ONLY the staging worker + staging route, and
+# NO [build] step — `wrangler deploy --config wrangler.staging-preview.toml`
+# uploads the exact pre-built, already-isolation-scanned ./dist with no rebuild.
+#
+# Production is not representable here: there is no `silent-shield-signal`
+# worker and no `fortress.silentshieldsecurity.com` route in this file, so the
+# release workflow cannot target production even if misconfigured.
+name = "silent-shield-signal-staging"
+compatibility_date = "2025-01-01"
+routes = [
+  { pattern = "aegis-staging.silentshieldsecurity.com/*", zone_name = "silentshieldsecurity.com" }
+]
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"

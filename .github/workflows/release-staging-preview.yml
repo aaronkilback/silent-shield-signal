@@ -1,0 +1,193 @@
+name: Release — Staging Preview (one-approval)
+
+# This workflow, the isolation scanner (scripts/check-bundle-isolation.mjs), and
+# the staging-only deploy config (wrangler.staging-preview.toml) live ONLY on the
+# protected control branch. The candidate branch provides application source at one
+# immutable SHA and CANNOT alter the scanner, the deploy target, or the approval gate.
+#
+# Authority = the approved release record (release/approved-staging-candidate.json)
+# on this control branch. The workflow resolves the SHA from that record, verifies it
+# against the candidate branch, builds ONLY that SHA's app source, scans, then gates
+# the publish behind the `staging-preview` GitHub Environment approval (the one button).
+#
+# ONE human decision: "Approve staging deployment" on the staging-preview Environment.
+
+# A release is initiated by updating the approved-candidate record on the protected
+# control branch (via reviewed PR). That push runs verify; the publish job then waits
+# at the staging-preview Environment approval. Control-plane edits to the workflow,
+# scanner, or config do NOT initiate a release (path-scoped trigger).
+on:
+  push:
+    branches: [release-control]
+    paths:
+      - 'release/approved-staging-candidate.json'
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "(optional) candidate SHA — must equal the approved release record"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-staging-preview
+  cancel-in-progress: false
+
+env:
+  EXPECTED_WORKER: silent-shield-signal-staging
+  EXPECTED_ROUTE: aegis-staging.silentshieldsecurity.com
+  EXPECTED_SUPABASE_REF: lkvyrvuakzguszbpwnfz
+  FORBIDDEN_SUPABASE_REF: kpuqukppbmwebiptqmog
+  PROD_WORKER: silent-shield-signal
+  PROD_ROUTE: fortress.silentshieldsecurity.com
+  RELEASE_WRANGLER_CONFIG: wrangler.staging-preview.toml
+
+jobs:
+  verify:
+    name: Build candidate & isolation gate (no publish)
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.scan.outputs.verdict }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      # 1) Control plane: checkout THIS protected branch (workflow + scanner + config + record).
+      - name: Checkout control branch (protected rules)
+        uses: actions/checkout@v4
+
+      # 2) Resolve & verify the approved candidate SHA against the release record.
+      - name: Resolve approved candidate SHA
+        id: resolve
+        run: |
+          RECORD="release/approved-staging-candidate.json"
+          [ -f "$RECORD" ] || { echo "::error::missing release record $RECORD"; exit 1; }
+          SHA=$(jq -r '.sha' "$RECORD")
+          BR=$(jq -r '.source_branch' "$RECORD")
+          echo "Record SHA: $SHA   source branch: $BR"
+
+          INPUT="${{ inputs.candidate_sha }}"
+          if [ -n "$INPUT" ] && [ "$INPUT" != "$SHA" ]; then
+            echo "::error::dispatch SHA $INPUT does not match approved release record $SHA"; exit 1
+          fi
+          # branch name must encode the SHA prefix (immutable pin)
+          case "$SHA" in "${BR##*/}"*) : ;; *) echo "::error::branch name ${BR##*/} is not a prefix of $SHA"; exit 1 ;; esac
+          # the candidate branch tip must equal the record SHA
+          TIP=$(git ls-remote origin "refs/heads/$BR" | cut -f1)
+          [ -n "$TIP" ] || { echo "::error::candidate branch $BR not found on origin"; exit 1; }
+          if [ "$TIP" != "$SHA" ]; then
+            echo "::error::candidate branch $BR tip ($TIP) != approved record SHA ($SHA)"; exit 1
+          fi
+          echo "✓ approved candidate verified: $SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # 3) Guard: deploy config can only target staging (protected config, not candidate's).
+      - name: Guard — staging-only deploy config
+        run: node scripts/check-bundle-isolation.mjs --phase config
+
+      # 4) Application source: checkout the EXACT candidate SHA only, into ./app.
+      - name: Checkout candidate app source (exact SHA only)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+          path: app
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Guard — staging build secrets present
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.STAGING_VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [[ -z "$VITE_SUPABASE_URL" || -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]]; then
+            echo "::error::Missing STAGING_VITE_SUPABASE_URL / STAGING_VITE_SUPABASE_PUBLISHABLE_KEY"; exit 1
+          fi
+
+      - name: Install candidate deps
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+
+      - name: Build candidate (staging env)
+        working-directory: app
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.STAGING_VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: npm run build
+
+      # Move the built bundle to the control-plane root so the PROTECTED scanner runs on it.
+      - name: Stage built bundle for scanning
+        run: |
+          [ -d app/dist ] || { echo "::error::candidate build produced no dist/"; exit 1; }
+          mv app/dist ./dist
+
+      - name: Isolation scan (bundle)
+        id: scan
+        run: node scripts/check-bundle-isolation.mjs --phase bundle
+
+      - name: Fingerprint the scanned artifact
+        run: node scripts/check-bundle-isolation.mjs --phase manifest-write
+
+      - name: Upload scanned artifact (exact bytes + manifest)
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-preview-dist
+          path: |
+            dist
+            dist.manifest.sha256
+          retention-days: 1
+
+  publish:
+    name: Publish staging preview (requires approval)
+    needs: verify
+    if: needs.verify.outputs.verdict == 'isolated'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging-preview
+      url: https://aegis-staging.silentshieldsecurity.com
+    steps:
+      # Control plane only — scanner + staging-only config. The candidate SHA is
+      # NOT checked out here; nothing is rebuilt.
+      - name: Checkout control branch (protected rules)
+        uses: actions/checkout@v4
+
+      - name: Download the scanned artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-preview-dist
+          path: .
+
+      - name: Verify artifact manifest (byte-identical to what was scanned)
+        run: node scripts/check-bundle-isolation.mjs --phase manifest-verify
+
+      - name: Re-guard — staging-only deploy config
+        run: node scripts/check-bundle-isolation.mjs --phase config
+
+      - name: Re-scan the exact bundle being published
+        run: node scripts/check-bundle-isolation.mjs --phase bundle
+
+      - name: Deploy — staging worker only (no rebuild, no candidate checkout)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.STAGING_CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config wrangler.staging-preview.toml
+
+      - name: Post-deploy report
+        run: |
+          {
+            echo "## ✅ Staging preview published"
+            echo ""
+            echo "| | |"
+            echo "|--|--|"
+            echo "| Staging URL | https://${EXPECTED_ROUTE} |"
+            echo "| Exact commit | \`${{ needs.verify.outputs.sha }}\` |"
+            echo "| Deploy config | \`${RELEASE_WRANGLER_CONFIG}\` — worker \`${EXPECTED_WORKER}\` only |"
+            echo "| Production target in config | None — prod worker \`${PROD_WORKER}\` / route \`${PROD_ROUTE}\` are not present |"
+            echo "| Production-reference scan | Passed — zero \`${FORBIDDEN_SUPABASE_REF}\`; staging \`${EXPECTED_SUPABASE_REF}\` only |"
+            echo "| Artifact integrity | Verified — published bytes match the scanned build manifest (no rebuild) |"
+            echo "| Production guarantee | Guarded by independent checks (config + scans + approval). Credential is account-scoped — see plan note. |"
+          } >> "$GITHUB_STEP_SUMMARY"
