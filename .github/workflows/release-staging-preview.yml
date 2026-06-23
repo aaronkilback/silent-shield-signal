@@ -65,7 +65,7 @@ jobs:
           BR=$(jq -r '.source_branch' "$RECORD")
           echo "Record SHA: $SHA   source branch: $BR"
 
-          INPUT="${{ inputs.candidate_sha }}"
+          INPUT="${{ github.event.inputs.candidate_sha }}"
           if [ -n "$INPUT" ] && [ "$INPUT" != "$SHA" ]; then
             echo "::error::dispatch SHA $INPUT does not match approved release record $SHA"; exit 1
           fi
