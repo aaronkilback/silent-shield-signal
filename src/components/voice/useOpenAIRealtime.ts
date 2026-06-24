@@ -2,6 +2,10 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/hooks/useTenant';
 import { useClientSelection } from '@/hooks/useClientSelection';
+import { voiceTransition, gateShouldBeClosed, WATCHDOG_MS } from '@/components/voice/voiceMachine';
+import type { VoicePhase, VoiceEvent, VoiceEffect } from '@/components/voice/voiceMachine';
+import { createVoiceTelemetry } from '@/components/voice/voiceTelemetry';
+import type { VoiceTelemetry } from '@/components/voice/voiceTelemetry';
 
 // P0 diagnostics flag (dev console only — never UI). Flip off / remove after the iPhone capture.
 const VOICE_SCOPE_DX = true;
@@ -13,6 +17,9 @@ interface UseOpenAIRealtimeOptions {
   onError?: (error: string) => void;
   onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'speaking' | 'listening' | 'thinking') => void;
   onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
+  // Slice 1 reliability: typed loop telemetry (no transcript text / IDs) for the
+  // truthful recovery cues + the 20-turn proof scorecard.
+  onVoiceEvent?: (event: string, data?: Record<string, unknown>) => void;
   // Admin Voice Tenant Context: browser-side handler for tenant resolve/confirm tools. Returns
   // a JSON-able result (model-safe — never raw tenant IDs) that is sent back as the tool output.
   onTenantTool?: (toolName: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -155,6 +162,77 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       openInputGate(`tail-elapsed: ${reason}`);
     }, POST_OUTPUT_TAIL_MS);
   }, [openInputGate]);
+
+  // ── Slice 1 reliability: derived state machine + telemetry + recovery watchdog ──
+  // The PURE machine (voiceMachine.ts) consumes the SAME Realtime events handled
+  // below and owns: phase, telemetry, the recovery watchdog, and refusal/timeout
+  // recovery. It does NOT duplicate transport — close_gate / request_response /
+  // schedule_gate_open effects are intentional NO-OPs here because the existing
+  // imperative handlers already perform them. Telemetry stores ONLY event names +
+  // categorical reasons — never transcript text, client/tenant IDs, or conversation.
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
+  const voicePhaseRef = useRef<VoicePhase>('idle');
+  const sessionIdRef = useRef<string>('');
+  const telemetryRef = useRef<VoiceTelemetry | null>(null);
+  const watchdogRef = useRef<number | null>(null);
+  const dispatchRef = useRef<(ev: VoiceEvent) => void>(() => {});
+
+  const emitVoice = useCallback((event: string, data?: Record<string, unknown>) => {
+    telemetryRef.current?.emit(event, Date.now(), data);
+    optionsRef.current.onVoiceEvent?.(event, data);
+  }, []);
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current) { window.clearTimeout(watchdogRef.current); watchdogRef.current = null; }
+  }, []);
+
+  const applyEffect = useCallback((e: VoiceEffect) => {
+    switch (e.kind) {
+      case 'telemetry': emitVoice(e.event, e.data); break;
+      case 'begin_turn': telemetryRef.current?.beginTurn(); break;
+      case 'clear_watchdog': clearWatchdog(); break;
+      case 'arm_watchdog': {
+        clearWatchdog();
+        const which = e.which;
+        watchdogRef.current = window.setTimeout(() => {
+          watchdogRef.current = null;
+          dispatchRef.current({ type: 'watchdog', which });
+        }, WATCHDOG_MS[which]);
+        break;
+      }
+      case 'cancel_response': {
+        // Stuck PROCESSING/SPEAKING recovery: tell the server to stop AND clear the
+        // gateway ownership refs so the next turn is accepted (never wedged).
+        try { if (dcRef.current?.readyState === 'open') dcRef.current.send(JSON.stringify({ type: 'response.cancel' })); } catch { /* noop */ }
+        responsePendingRef.current = false;
+        responseActiveRef.current = false;
+        setIsAgentSpeaking(false);
+        break;
+      }
+      case 'open_gate': openInputGate('recovery'); break;
+      // Transport effects owned by the imperative handlers — intentionally not duplicated:
+      case 'close_gate':
+      case 'request_response':
+      case 'schedule_gate_open':
+      default: break;
+    }
+  }, [emitVoice, clearWatchdog, openInputGate]);
+
+  // Map a Realtime/loop event into the machine, run its effects, surface the phase.
+  const dispatch = useCallback((ev: VoiceEvent) => {
+    const out = voiceTransition(voicePhaseRef.current, ev);
+    if (out.phase !== voicePhaseRef.current) {
+      voicePhaseRef.current = out.phase;
+      setVoicePhase(out.phase);
+      // Dev-only invariant: the gate may be closed ONLY while a response is in flight.
+      if (!gateShouldBeClosed(out.phase) && !inputGateOpenRef.current && !responseActiveRef.current && !responsePendingRef.current) {
+        emitVoice('invariant.violation', { which: 'gate_closed_when_idle', phase: out.phase });
+        openInputGate('invariant-autorecover');
+      }
+    }
+    for (const e of out.effects) applyEffect(e);
+  }, [applyEffect, emitVoice, openInputGate]);
+  useEffect(() => { dispatchRef.current = dispatch; }, [dispatch]);
 
   // Voice Recovery: THE single response gateway. Every client-originated response.create
   // (voice turn, greeting, typed message, tool continuation) MUST go through here. It
@@ -328,6 +406,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           // tail reopen is still pending.
           if (!inputGateOpenRef.current || responseActiveRef.current || gateReopenRef.current !== null) {
             console.log('[Voice] transcript DISCARDED (input gate closed):', JSON.stringify(transcriptText));
+            dispatch({ type: 'transcript_final', accepted: false, discardReason: 'gate_closed' });
             break;
           }
           // Whisper hallucinates stock phrases on silence/echo ("thank you for watching",
@@ -351,6 +430,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           // cleanly to listening.
           if (isHallucination) {
             console.log('[Voice] Dropped likely hallucinated/empty transcript (no response created):', JSON.stringify(transcriptText));
+            dispatch({ type: 'transcript_final', accepted: false, discardReason: 'hallucination' });
             if (statusRef.current !== 'speaking') updateStatus('listening');
             break;
           }
@@ -359,14 +439,19 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           const nowTs = Date.now();
           if (norm === lastAcceptedTranscriptRef.current.text && (nowTs - lastAcceptedTranscriptRef.current.at) < 4000) {
             console.log('[Voice] Ignored duplicate transcript:', JSON.stringify(transcriptText));
+            dispatch({ type: 'transcript_final', accepted: false, discardReason: 'duplicate' });
             break;
           }
           lastAcceptedTranscriptRef.current = { text: norm, at: nowTs };
           console.log('User transcript accepted:', transcriptText);
           setTranscript(transcriptText);
           optionsRef.current.onTranscript?.(transcriptText, true);
-          // Exactly one response for this accepted turn, via the gateway.
-          requestResponse('voice-turn');
+          // Accepted turn: machine begins the turn + arms the PROCESSING watchdog;
+          // the gateway sends exactly one response.create. If the gateway refuses
+          // (busy/disconnected), recover instead of silently dropping the turn.
+          dispatch({ type: 'transcript_final', accepted: true });
+          const sent = requestResponse('voice-turn');
+          if (sent !== true) dispatch({ type: 'request_refused' });
         }
         break;
 
@@ -421,6 +506,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         // ran in requestResponse, bumping the generation so any prior reopen timer is void).
         responseActiveRef.current = true;
         responsePendingRef.current = false;
+        // Slice 1: clear PROCESSING watchdog, arm SPEAKING watchdog (user-turn only;
+        // the proactive greeting is not a tracked turn).
+        if (voicePhaseRef.current === 'processing') dispatch({ type: 'response_created' });
         break;
 
       case 'response.output_audio.delta': // GA
@@ -432,6 +520,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = false; });
         setIsAgentSpeaking(true);
         updateStatus('speaking');
+        // Slice 1: first audio delta of a tracked turn → SPEAKING (records latency).
+        if (voicePhaseRef.current === 'processing' || voicePhaseRef.current === 'speaking') dispatch({ type: 'audio_delta' });
         break;
 
       case 'response.output_audio.done': // GA
@@ -450,6 +540,9 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         setIsAgentSpeaking(false);
         updateStatus('connected');
         setAgentResponse('');
+        // Slice 1: tracked turn complete → machine returns to LISTENING (clears watchdog,
+        // records speaking.end / response.done). Greeting/tool-only paths are guarded out.
+        if (voicePhaseRef.current === 'processing' || voicePhaseRef.current === 'speaking') dispatch({ type: 'response_done' });
         // Fire any queued continuation (e.g. tool result mid-response) — it re-closes the gate.
         if (queuedResponseRef.current) {
           const q = queuedResponseRef.current;
@@ -469,6 +562,16 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           responsePendingRef.current = false;
           responseActiveRef.current = false;
           scheduleInputGateOpen('error-recovery');
+          // Slice 1: this is a RECOVERABLE realtime error (session stays up). Clear any
+          // watchdog, record it, and sync the loop phase back to LISTENING (do NOT use the
+          // machine 'error' transition, which is reserved for session teardown).
+          clearWatchdog();
+          emitVoice('error', { kind: 'realtime' });
+          emitVoice('recover', { type: 'realtime_error' });
+          if (voicePhaseRef.current !== 'idle' && voicePhaseRef.current !== 'connecting') {
+            voicePhaseRef.current = 'listening';
+            setVoicePhase('listening');
+          }
           optionsRef.current.onError?.(errorData?.message as string || 'Unknown error');
         }
         break;
@@ -479,10 +582,14 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           console.log('Unhandled event type:', event.type);
         }
     }
-  }, [updateStatus, executeToolCall, requestResponse, scheduleInputGateOpen]);
+  }, [updateStatus, executeToolCall, requestResponse, scheduleInputGateOpen, dispatch, clearWatchdog, emitVoice]);
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting...');
+
+    // Slice 1: stop any recovery watchdog and drive the machine to IDLE (session.end).
+    clearWatchdog();
+    dispatch({ type: 'disconnect' });
 
     if (connectTimeoutRef.current) {
       window.clearTimeout(connectTimeoutRef.current);
@@ -552,7 +659,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     setAgentResponse('');
     setIsAgentSpeaking(false);
     updateStatus('idle');
-  }, [updateStatus]);
+  }, [updateStatus, clearWatchdog, dispatch]);
 
   const connect = useCallback(async () => {
     try {
@@ -560,6 +667,12 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // so if connect is called without a click/tap it may fail.
       updateStatus('connecting');
       voiceDx("session-start"); // P0 diag: scope state at voice session start
+      // Slice 1: fresh per-session telemetry + drive the machine IDLE → CONNECTING.
+      sessionIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `s_${Date.now()}`;
+      telemetryRef.current = createVoiceTelemetry(sessionIdRef.current);
+      voicePhaseRef.current = 'idle';
+      setVoicePhase('idle');
+      dispatch({ type: 'connect' });
       console.log('Requesting ephemeral token...');
 
       if (connectTimeoutRef.current) {
@@ -567,7 +680,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       }
       connectTimeoutRef.current = window.setTimeout(() => {
         console.warn('Realtime voice connection timed out');
-        optionsRef.current.onError?.('Voice connection timed out. Tap mic to try again.');
+        emitVoice('error', { kind: 'timeout' });
+        optionsRef.current.onError?.('Voice connection timed out. Tap the mic to try again — you can also type your question below.');
         disconnect();
       }, 15000);
 
@@ -593,14 +707,16 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       pc.oniceconnectionstatechange = () => {
         console.log('ICE state:', pc.iceConnectionState);
         if (pc.iceConnectionState === 'failed') {
-          optionsRef.current.onError?.('Voice connection failed (ICE).');
+          emitVoice('error', { kind: 'connection_lost' });
+          optionsRef.current.onError?.('Voice connection failed. You can type your question below while we reconnect.');
           disconnect();
         }
       };
       pc.onconnectionstatechange = () => {
         console.log('Peer connection state:', pc.connectionState);
         if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-          optionsRef.current.onError?.('Voice connection lost.');
+          emitVoice('error', { kind: 'connection_lost' });
+          optionsRef.current.onError?.('Voice connection lost. You can type your question below or tap the mic to reconnect.');
           disconnect();
         }
       };
@@ -621,7 +737,8 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         audioEl.srcObject = event.streams[0];
         audioEl.play().catch((err) => {
           console.warn('Audio autoplay blocked, waiting for user gesture...', err);
-          optionsRef.current.onError?.('Audio playback blocked by browser. Tap once to enable sound.');
+          emitVoice('error', { kind: 'tts_blocked' });
+          optionsRef.current.onError?.('Audio playback blocked by browser. Tap once to enable sound — your turn was understood.');
           const resume = () => {
             audioEl.play().catch(() => {});
           };
@@ -658,6 +775,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           connectTimeoutRef.current = null;
         }
         updateStatus('connected');
+        dispatch({ type: 'connected' }); // Slice 1: CONNECTING → LISTENING
 
         // Reset per-session greeting state
         userHasSpokenRef.current = false;
@@ -734,11 +852,17 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
         connectTimeoutRef.current = null;
       }
       console.error('Connection error:', error);
-      optionsRef.current.onError?.(error instanceof Error ? error.message : 'Connection failed');
+      const denied = (error as { name?: string })?.name === 'NotAllowedError';
+      emitVoice('error', { kind: denied ? 'mic_denied' : 'connect_failed' });
+      optionsRef.current.onError?.(
+        denied
+          ? 'Microphone access was denied. Enable mic permission to use voice, or type your question below.'
+          : (error instanceof Error ? error.message : 'Connection failed'),
+      );
       updateStatus('idle');
       disconnect();
     }
-  }, [updateStatus, disconnect, handleRealtimeEvent, requestResponse, voiceDx]);
+  }, [updateStatus, disconnect, handleRealtimeEvent, requestResponse, voiceDx, dispatch, emitVoice]);
 
   const sendTextMessage = useCallback((text: string) => {
     if (dcRef.current?.readyState !== 'open') {
@@ -796,6 +920,12 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
       // open the mic while Aegis owns the channel (gate closed / mid-speech).
       mediaStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !next && inputGateOpenRef.current; });
     },
-    isConnected: status !== 'idle' && status !== 'connecting'
+    isConnected: status !== 'idle' && status !== 'connecting',
+    // Slice 1 reliability surface.
+    voicePhase, // 'idle' | 'connecting' | 'listening' | 'processing' | 'speaking'
+    // The 20-turn proof scorecard (pass/fail + counts + latencies). No transcript/IDs.
+    voiceScorecard: (targetTurns?: number) => telemetryRef.current?.scorecard(targetTurns) ?? null,
+    // Raw telemetry records (event names + categorical reasons + timestamps only).
+    dumpVoiceTelemetry: () => telemetryRef.current?.all() ?? [],
   };
 }

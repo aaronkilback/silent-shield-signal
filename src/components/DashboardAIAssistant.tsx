@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -437,9 +437,21 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
     saveMessageRef.current = saveMessageToDb;
   });
 
+  // Slice 1: transient, TRUTHFUL cue for discarded/recovered turns. This never
+  // fabricates an Aegis response — it just tells the operator the loop is alive and
+  // still listening, so a filtered echo/duplicate/timeout doesn't read as a dead mic.
+  const [voiceNotice, setVoiceNotice] = useState<string>("");
+  const voiceNoticeTimerRef = useRef<number | null>(null);
+  const showVoiceNotice = useCallback((msg: string) => {
+    setVoiceNotice(msg);
+    if (voiceNoticeTimerRef.current) window.clearTimeout(voiceNoticeTimerRef.current);
+    voiceNoticeTimerRef.current = window.setTimeout(() => setVoiceNotice(""), 2500);
+  }, []);
+
   // Voice hook integration - must be after saveMessageToDb is defined
   const {
     status: voiceStatus,
+    voicePhase,
     inputReady: voiceInputReady,
     isAgentSpeaking,
     connect: connectVoice,
@@ -447,6 +459,8 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
     isConnected: isVoiceConnected,
     isMuted: voiceMuted,
     toggleMute: toggleVoiceMute,
+    voiceScorecard,
+    dumpVoiceTelemetry,
   } = useOpenAIRealtime({
     agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
     conversationHistory: messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
@@ -491,7 +505,29 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
       debug('Voice status:', status);
       // No longer save on idle - we save on onAgentResponseComplete instead
     },
+    // Slice 1: typed loop telemetry (no transcript text / IDs). Drives the truthful
+    // transient cue so a discarded or recovered turn never looks like a dead mic.
+    onVoiceEvent: (event, data) => {
+      if (event === 'transcript.discarded') {
+        showVoiceNotice("Didn't catch that — still listening.");
+      } else if (event === 'recover') {
+        showVoiceNotice("Let's pick that back up — still listening.");
+      }
+    },
   });
+
+  // Slice 1 proof tooling: expose the scorecard/telemetry on window while a voice
+  // session is active so the operator can capture the 20-turn result from the console
+  // (e.g. __aegisVoiceScorecard(20)). Read-only; cleared when voice ends.
+  useEffect(() => {
+    if (!isVoiceActive) return;
+    (window as unknown as Record<string, unknown>).__aegisVoiceScorecard = voiceScorecard;
+    (window as unknown as Record<string, unknown>).__aegisVoiceDump = dumpVoiceTelemetry;
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__aegisVoiceScorecard;
+      delete (window as unknown as Record<string, unknown>).__aegisVoiceDump;
+    };
+  }, [isVoiceActive, voiceScorecard, dumpVoiceTelemetry]);
 
   // P1-A temporary observability: log the actual voice cue rendered vs the real gate state,
   // so the next iPhone test can confirm the UI never invites speech while !inputReady.
@@ -1941,6 +1977,14 @@ How can I help you now?`,
                               </>
                             )}
                           </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* Slice 1: transient truthful cue (discard/recovery) — never a fabricated reply */}
+                    {isVoiceActive && voiceNotice && (
+                      <div className="flex justify-center animate-fade-in">
+                        <div className="rounded-lg px-3 py-1.5 bg-amber-500/10 border border-amber-500/30">
+                          <span className="text-xs text-amber-700 dark:text-amber-300">{voiceNotice}</span>
                         </div>
                       </div>
                     )}
