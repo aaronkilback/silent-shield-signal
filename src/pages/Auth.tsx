@@ -636,12 +636,13 @@ const Auth = () => {
                   });
                   if (error) toast.error(error.message);
                   else {
-                    toast.success("Password reset email sent. Check your inbox.");
+                    toast.success("We emailed you a 6-digit code. Enter it on the reset page.");
                     setShowForgotPassword(false);
+                    navigate(`/reset-password?email=${encodeURIComponent(resetEmail)}`);
                   }
                 }}
               >
-                <Mail className="w-3 h-3 mr-1" /> Send Reset Link
+                <Mail className="w-3 h-3 mr-1" /> Send Reset Code
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setShowForgotPassword(false)}>
                 Cancel
