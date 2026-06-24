@@ -1,7 +1,7 @@
 {
-  "sha": "f1869ee379594f2a93aeaface7068bd28ab0666d",
-  "source_branch": "release/staging-preview/f1869ee3",
-  "label": "Aegis Home Voice Slice 1 \u2014 staging preview (candidate)",
+  "sha": "ac216988f1666bb16f718a27cad9f8855857e439",
+  "source_branch": "release/staging-preview/ac216988",
+  "label": "Auth Recovery Slice (OTP reset) + Voice Slice 1 baseline \u2014 staging preview (candidate)",
   "prepared_by": "release-control",
-  "rev": "r3-voice-slice1"
+  "rev": "r4-auth-recovery"
 }
