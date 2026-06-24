@@ -1,7 +1,7 @@
 {
-  "sha": "f3931a0463c52b46fb213e642a0a0ab3cfdd38d6",
-  "source_branch": "release/staging-preview/f3931a04",
-  "label": "Admin Voice Tenant Context — staging preview",
+  "sha": "f1869ee379594f2a93aeaface7068bd28ab0666d",
+  "source_branch": "release/staging-preview/f1869ee3",
+  "label": "Aegis Home Voice Slice 1 \u2014 staging preview (candidate)",
   "prepared_by": "release-control",
-  "rev": "r2-startup-fix"
+  "rev": "r3-voice-slice1"
 }
