@@ -516,18 +516,25 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
     },
   });
 
-  // Slice 1 proof tooling: expose the scorecard/telemetry on window while a voice
-  // session is active so the operator can capture the 20-turn result from the console
-  // (e.g. __aegisVoiceScorecard(20)). Read-only; cleared when voice ends.
+  // Slice 1 proof tooling: expose the scorecard/telemetry on window in STAGING ONLY,
+  // independent of isVoiceActive, so the operator can run __aegisVoiceScorecard()/
+  // __aegisVoiceDump() before, during, and after a session. With no session the hook
+  // returns null/[], so we surface a safe inactive/empty result. Read-only diagnostic;
+  // gated to the staging Supabase project so production is unaffected.
+  const voiceTelemetryApiRef = useRef({ scorecard: voiceScorecard, dump: dumpVoiceTelemetry });
+  voiceTelemetryApiRef.current = { scorecard: voiceScorecard, dump: dumpVoiceTelemetry };
   useEffect(() => {
-    if (!isVoiceActive) return;
-    (window as unknown as Record<string, unknown>).__aegisVoiceScorecard = voiceScorecard;
-    (window as unknown as Record<string, unknown>).__aegisVoiceDump = dumpVoiceTelemetry;
+    const isStaging = (import.meta.env.VITE_SUPABASE_URL || "").includes("lkvyrvuakzguszbpwnfz");
+    if (!isStaging) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__aegisVoiceScorecard = (target?: number) =>
+      voiceTelemetryApiRef.current.scorecard(target) ?? { active: false, turnsStarted: 0, completedTurns: 0, note: "no voice session yet" };
+    w.__aegisVoiceDump = () => voiceTelemetryApiRef.current.dump();
     return () => {
-      delete (window as unknown as Record<string, unknown>).__aegisVoiceScorecard;
-      delete (window as unknown as Record<string, unknown>).__aegisVoiceDump;
+      delete w.__aegisVoiceScorecard;
+      delete w.__aegisVoiceDump;
     };
-  }, [isVoiceActive, voiceScorecard, dumpVoiceTelemetry]);
+  }, []);
 
   // P1-A temporary observability: log the actual voice cue rendered vs the real gate state,
   // so the next iPhone test can confirm the UI never invites speech while !inputReady.
@@ -1613,13 +1620,22 @@ How can I help you now?`,
       return;
     }
 
+    // Require an EXPLICIT tenant context before starting voice — never an unscoped
+    // session. (Non-super_admin users auto-hydrate their single tenant, so this only
+    // blocks a global role that hasn't selected one yet.) All-tenants view is not a
+    // concrete scope, so it is also blocked here.
+    if (!currentTenant?.id) {
+      toast.error("Select a tenant on Home to begin before starting voice.");
+      return;
+    }
+
     // Start voice
     lastVoiceSavedRef.current = null;
     setIsVoiceActive(true);
     setVoiceTranscript("");
     setVoiceAgentResponse("");
     connectVoice();
-    toast.info("Starting voice session...");
+    toast.info(`Starting voice session — ${currentTenant.name}`);
   };
 
   // Slice 2A-R2 v2: history-toggle extracted unchanged from the header button's inline

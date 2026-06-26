@@ -30,7 +30,7 @@ function firstNameOf(user: { email?: string | null; user_metadata?: Record<strin
 
 const Index = () => {
   const { user, loading } = useAuth();
-  const { currentTenant, isAllTenantsView, isHydrating } = useTenant();
+  const { currentTenant, isAllTenantsView, isHydrating, tenants, setCurrentTenant } = useTenant();
   // P0: Aegis client-context authorization is GLOBAL-app-role only (server-authoritative
   // via user_roles RLS). super_admin OR admin may (eventually) change client context through
   // Aegis. Tenant 'owner' alone does NOT — it's a tenant-membership role, not an Aegis grant.
@@ -129,12 +129,39 @@ const Index = () => {
         <h1 className="font-serif text-base sm:text-lg font-normal text-foreground/70 leading-tight tracking-tight">
           {greetingPrefix()}, {firstNameOf(user)}.
         </h1>
-        {tenantNote && (
+        {/* Persistent tenant/context selector for global roles (super_admin/admin).
+            EXPLICIT selection only — no auto-select across tenants. Selecting a tenant
+            establishes context (setCurrentTenant) BEFORE voice can start, and the
+            selection stays visibly shown here. Non-global roles auto-hydrate their
+            single tenant and see only the truthful fail-closed note. */}
+        {!tenantResolving && canChangeClientContextViaAegis && tenants.length > 0 ? (
+          <div className="mt-1 inline-flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="w-1 h-1 rounded-full bg-muted-foreground/50" aria-hidden="true" />
+            <label htmlFor="home-tenant-select">Context:</label>
+            <select
+              id="home-tenant-select"
+              className="bg-secondary/60 border border-border rounded px-2 py-1 text-foreground max-w-[60vw]"
+              value={currentTenant?.id ?? ""}
+              onChange={(e) => {
+                const t = tenants.find((x) => x.id === e.target.value) ?? null;
+                setCurrentTenant(t);
+              }}
+            >
+              <option value="">Select a tenant…</option>
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            {currentTenant
+              ? <span className="text-primary/80">· {currentTenant.name} active</span>
+              : <span>· voice waits for selection</span>}
+          </div>
+        ) : tenantNote ? (
           <p className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
             <span className="w-1 h-1 rounded-full bg-muted-foreground/50" aria-hidden="true" />
             {tenantNote}
           </p>
-        )}
+        ) : null}
       </section>
       {/* Slice 2A-R2: chat seated INSIDE the canvas. Centered command-surface width; canvasMode
           de-chromes the assistant (transparent card, slimmed internal header, command-bar input)
