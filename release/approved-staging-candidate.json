@@ -1,7 +1,7 @@
 {
-  "sha": "ac216988f1666bb16f718a27cad9f8855857e439",
-  "source_branch": "release/staging-preview/ac216988",
-  "label": "Auth Recovery Slice (OTP reset) + Voice Slice 1 baseline \u2014 staging preview (candidate)",
+  "sha": "d398ed67810e00892383b4f3374a0181a1405419",
+  "source_branch": "release/staging-preview/d398ed67",
+  "label": "Home tenant selector (super_admin) + always-on staging voice telemetry \u2014 staging preview (candidate)",
   "prepared_by": "release-control",
-  "rev": "r4-auth-recovery"
+  "rev": "r5-tenant-context-telemetry"
 }
