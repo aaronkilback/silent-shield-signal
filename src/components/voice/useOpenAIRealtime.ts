@@ -6,6 +6,7 @@ import { voiceTransition, gateShouldBeClosed, WATCHDOG_MS } from '@/components/v
 import type { VoicePhase, VoiceEvent, VoiceEffect } from '@/components/voice/voiceMachine';
 import { createVoiceTelemetry } from '@/components/voice/voiceTelemetry';
 import type { VoiceTelemetry } from '@/components/voice/voiceTelemetry';
+import { buildVoiceToolRequest } from '@/components/voice/buildVoiceToolRequest';
 
 // P0 diagnostics flag (dev console only — never UI). Flip off / remove after the iPhone capture.
 const VOICE_SCOPE_DX = true;
@@ -297,12 +298,7 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
 
     try {
       const { data, error } = await supabase.functions.invoke('voice-tool-executor-v2', {
-        body: {
-          tool_name: toolName,
-          arguments: toolArgs,
-          tenant_id: voiceScopeRef.current.tenantId,
-          client_id: voiceScopeRef.current.clientId,
-        }
+        body: buildVoiceToolRequest(toolName, toolArgs, voiceScopeRef.current),
       });
       
       if (error) throw error;

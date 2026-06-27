@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Send, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2, History } from "lucide-react";
 import { AegisCapabilityHints } from "@/components/AegisCapabilityHints";
 import { useOpenAIRealtime } from "./voice/useOpenAIRealtime";
+import { startVoiceIfAllowed } from "./voice/voiceStartGate";
+import { isStagingTelemetry, safeScorecard } from "./voice/voiceTelemetry";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -524,11 +526,9 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   const voiceTelemetryApiRef = useRef({ scorecard: voiceScorecard, dump: dumpVoiceTelemetry });
   voiceTelemetryApiRef.current = { scorecard: voiceScorecard, dump: dumpVoiceTelemetry };
   useEffect(() => {
-    const isStaging = (import.meta.env.VITE_SUPABASE_URL || "").includes("lkvyrvuakzguszbpwnfz");
-    if (!isStaging) return;
+    if (!isStagingTelemetry(import.meta.env.VITE_SUPABASE_URL)) return; // staging-only; absent in prod
     const w = window as unknown as Record<string, unknown>;
-    w.__aegisVoiceScorecard = (target?: number) =>
-      voiceTelemetryApiRef.current.scorecard(target) ?? { active: false, turnsStarted: 0, completedTurns: 0, note: "no voice session yet" };
+    w.__aegisVoiceScorecard = (target?: number) => safeScorecard(voiceTelemetryApiRef.current.scorecard, target);
     w.__aegisVoiceDump = () => voiceTelemetryApiRef.current.dump();
     return () => {
       delete w.__aegisVoiceScorecard;
@@ -1620,22 +1620,21 @@ How can I help you now?`,
       return;
     }
 
-    // Require an EXPLICIT tenant context before starting voice — never an unscoped
-    // session. (Non-super_admin users auto-hydrate their single tenant, so this only
-    // blocks a global role that hasn't selected one yet.) All-tenants view is not a
-    // concrete scope, so it is also blocked here.
-    if (!currentTenant?.id) {
-      toast.error("Select a tenant on Home to begin before starting voice.");
-      return;
-    }
-
-    // Start voice
-    lastVoiceSavedRef.current = null;
-    setIsVoiceActive(true);
-    setVoiceTranscript("");
-    setVoiceAgentResponse("");
-    connectVoice();
-    toast.info(`Starting voice session — ${currentTenant.name}`);
+    // Start voice ONLY with an explicit selected tenant — never an unscoped session.
+    // The single path to connect() (→ openai-realtime-token + WebRTC) is an allowed
+    // decision. Non-global users auto-hydrate their tenant; this blocks a global role
+    // that hasn't picked one (and all-tenants view, which has no concrete tenant).
+    const decision = startVoiceIfAllowed(currentTenant, {
+      connect: () => {
+        lastVoiceSavedRef.current = null;
+        setIsVoiceActive(true);
+        setVoiceTranscript("");
+        setVoiceAgentResponse("");
+        connectVoice();
+      },
+      onBlocked: (m) => toast.error(m),
+    });
+    if (decision.allowed) toast.info(`Starting voice session — ${decision.tenantName ?? "tenant"}`);
   };
 
   // Slice 2A-R2 v2: history-toggle extracted unchanged from the header button's inline

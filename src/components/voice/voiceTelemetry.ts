@@ -36,6 +36,29 @@ export interface VoiceTelemetry {
   scorecard(targetTurns?: number): VoiceScorecard;
 }
 
+// Safe inactive result returned by the window telemetry globals before any session.
+export const INACTIVE_SCORECARD = {
+  active: false,
+  turnsStarted: 0,
+  completedTurns: 0,
+  note: "no voice session yet",
+} as const;
+
+// The telemetry window globals are a STAGING-ONLY diagnostic. This predicate gates
+// their exposure so they are absent from the production build at runtime.
+export function isStagingTelemetry(supabaseUrl: string | undefined | null): boolean {
+  return (supabaseUrl || "").includes("lkvyrvuakzguszbpwnfz");
+}
+
+// Wraps the per-session scorecard getter so calling it with no active session returns
+// a safe inactive value instead of null.
+export function safeScorecard(
+  getter: (target?: number) => VoiceScorecard | null,
+  target?: number,
+): VoiceScorecard | typeof INACTIVE_SCORECARD {
+  return getter(target) ?? INACTIVE_SCORECARD;
+}
+
 export function createVoiceTelemetry(sessionId: string, cap = 2000): VoiceTelemetry {
   const buf: VoiceTelemetryRecord[] = [];
   let turnId = 0;
