@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity } from "../_shared/supabase-client.ts";
 
 /**
  * Incident Ticket Management Tool for Fortress AI
@@ -78,6 +78,17 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    // INTERIM CONTAINMENT (2026-06-27, service-role-only): this service-role + verify_jwt=false
+    // endpoint accepts ONLY internal service-role callers. Anonymous/invalid -> 401; any
+    // authenticated USER JWT -> 403 (a user must not reach incident writes here until the
+    // hardened, membership-scoped authorization replaces this). Enforced BEFORE the service-role
+    // client is constructed or any write is reached.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind !== "service_role") {
+      if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+      return errorResponse("service-role access required", 403);
+    }
+
     const supabase = createServiceClient();
 
     const requestBody: IncidentTicketRequest = await req.json();
