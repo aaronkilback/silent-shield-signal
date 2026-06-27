@@ -13,6 +13,10 @@ import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import {
+  buildInvestigationInsertPayload,
+  resolveInvestigationClientContext,
+} from "@/lib/investigation-client-context";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -105,7 +109,19 @@ const Investigations = () => {
     }
   };
 
+  const resolveCreateClientContext = () =>
+    resolveInvestigationClientContext({
+      selectedClientId,
+      tenantClientIds,
+    });
+
   const handleNewInvestigation = async () => {
+    const clientContext = resolveCreateClientContext();
+    if (!clientContext.ok) {
+      toast.error(clientContext.message);
+      return;
+    }
+
     // Fetch templates if we have learned patterns
     await fetchTemplates();
     if (templates.length > 0 || loadingTemplates) {
@@ -118,6 +134,13 @@ const Investigations = () => {
 
   const createNewInvestigation = async (template: InvestigationTemplate | null) => {
     if (!user) return;
+
+    const clientContext = resolveCreateClientContext();
+    if (!clientContext.ok) {
+      toast.error(clientContext.message);
+      setShowTemplateDialog(false);
+      return;
+    }
 
     setIsCreating(true);
     setShowTemplateDialog(false);
@@ -133,12 +156,12 @@ const Investigations = () => {
         .eq('id', user.id)
         .single();
 
-      const insertData: any = {
-        file_number: fileNumber,
-        prepared_by: user.id,
-        created_by_name: profile?.name || user.email || 'Unknown',
-        client_id: selectedClientId || null,
-      };
+      const insertData: any = buildInvestigationInsertPayload({
+        fileNumber,
+        preparedBy: user.id,
+        createdByName: profile?.name || user.email || 'Unknown',
+        clientId: clientContext.clientId,
+      });
 
       // Apply template if selected
       if (template) {
@@ -186,7 +209,7 @@ const Investigations = () => {
       navigate(`/investigation/${data.id}`);
     } catch (error: any) {
       console.error('Error creating investigation:', error);
-      toast.error(error.message || "Failed to create investigation");
+      toast.error("Failed to create investigation. Check the selected client and try again.");
     } finally {
       setIsCreating(false);
     }
