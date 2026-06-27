@@ -78,13 +78,15 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
-    // EMERGENCY CONTAINMENT (2026-06-27): service-role + verify_jwt=false endpoint.
-    // Reject any request without a verifiable caller identity (anonymous / invalid bearer)
-    // BEFORE constructing the service-role client or reaching any write. Internal service-role
-    // callers and valid user JWTs pass; full membership-scoped authorization is tracked separately.
+    // INTERIM CONTAINMENT (2026-06-27, service-role-only): this service-role + verify_jwt=false
+    // endpoint accepts ONLY internal service-role callers. Anonymous/invalid -> 401; any
+    // authenticated USER JWT -> 403 (a user must not reach incident writes here until the
+    // hardened, membership-scoped authorization replaces this). Enforced BEFORE the service-role
+    // client is constructed or any write is reached.
     const caller = await getCallerIdentity(req);
-    if (caller.kind === "unauthorized") {
-      return errorResponse(caller.error, caller.status);
+    if (caller.kind !== "service_role") {
+      if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+      return errorResponse("service-role access required", 403);
     }
 
     const supabase = createServiceClient();
