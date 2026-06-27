@@ -1,7 +1,7 @@
 {
-  "sha": "d398ed67810e00892383b4f3374a0181a1405419",
-  "source_branch": "release/staging-preview/d398ed67",
-  "label": "Home tenant selector (super_admin) + always-on staging voice telemetry \u2014 staging preview (candidate)",
+  "sha": "4e599013811ff7506ea7549bb13fd962d27d209e",
+  "source_branch": "release/staging-preview/4e599013",
+  "label": "Home tenant selector + always-on staging telemetry + voice-gate tests \u2014 staging preview (candidate)",
   "prepared_by": "release-control",
-  "rev": "r5-tenant-context-telemetry"
+  "rev": "r6-voice-gate-tests"
 }
