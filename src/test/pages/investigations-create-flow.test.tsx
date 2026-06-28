@@ -79,6 +79,10 @@ beforeEach(() => {
     data: { templates: [] },
     error: null,
   });
+  vi.mocked(supabase.rpc).mockResolvedValue({
+    data: { id: "investigation-1", file_number: "INV-2026-0065" },
+    error: null,
+  } as any);
 
   vi.mocked(supabase.from).mockImplementation((table: string) => {
     if (table === "profiles") {
@@ -111,14 +115,7 @@ beforeEach(() => {
     } as any;
   });
 
-  investigationInsert.mockReturnValue({
-    select: vi.fn(() => ({
-      single: vi.fn().mockResolvedValue({
-        data: { id: "investigation-1" },
-        error: null,
-      }),
-    })),
-  });
+  investigationInsert.mockReset();
 });
 
 describe("Investigations create flow client context", () => {
@@ -131,6 +128,7 @@ describe("Investigations create flow client context", () => {
     expect(toast.error).toHaveBeenCalledWith("Select a client before creating an investigation.");
     expect(supabase.functions.invoke).not.toHaveBeenCalled();
     expect(investigationInsert).not.toHaveBeenCalled();
+    expect(supabase.rpc).not.toHaveBeenCalled();
   });
 
   it("blocks a stale foreign selected client before template assist or investigation insert", async () => {
@@ -152,6 +150,7 @@ describe("Investigations create flow client context", () => {
     );
     expect(supabase.functions.invoke).not.toHaveBeenCalled();
     expect(investigationInsert).not.toHaveBeenCalled();
+    expect(supabase.rpc).not.toHaveBeenCalled();
   });
 
   it("uses the sanitized create error instead of exposing the raw database constraint", async () => {
@@ -159,16 +158,40 @@ describe("Investigations create flow client context", () => {
       selectedClientId: "client-a",
       isContextReady: true,
     });
-    investigationInsert.mockReturnValue({
-      select: vi.fn(() => ({
-        single: vi.fn().mockResolvedValue({
-          data: null,
-          error: {
-            message:
-              'new row for relation "investigations" violates check constraint "chk_investigations_provenance"',
-          },
-        }),
-      })),
+    vi.mocked(supabase.rpc).mockResolvedValue({
+      data: null,
+      error: {
+        message:
+          'new row for relation "investigations" violates check constraint "chk_investigations_provenance"',
+      },
+    } as any);
+
+    renderInvestigations();
+
+    await screen.findByText("No investigations yet");
+    fireEvent.click(screen.getByRole("button", { name: /new investigation/i }));
+
+    await waitFor(() => {
+      expect(supabase.rpc).toHaveBeenCalledWith("create_investigation_v2", {
+        p_client_id: "client-a",
+        p_incident_id: null,
+        p_template_id: null,
+      });
+    });
+    expect(investigationInsert).not.toHaveBeenCalled();
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "Failed to create investigation. Check the selected client and try again."
+    );
+    expect(toast.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("chk_investigations_provenance")
+    );
+  });
+
+  it("creates through the server authority without submitting a file number override", async () => {
+    mockUseClientSelection.mockReturnValue({
+      selectedClientId: "client-a",
+      isContextReady: true,
     });
 
     renderInvestigations();
@@ -177,16 +200,14 @@ describe("Investigations create flow client context", () => {
     fireEvent.click(screen.getByRole("button", { name: /new investigation/i }));
 
     await waitFor(() => {
-      expect(investigationInsert).toHaveBeenCalledWith(
-        expect.objectContaining({ client_id: "client-a" })
-      );
+      expect(supabase.rpc).toHaveBeenCalledWith("create_investigation_v2", {
+        p_client_id: "client-a",
+        p_incident_id: null,
+        p_template_id: null,
+      });
     });
-
-    expect(toast.error).toHaveBeenCalledWith(
-      "Failed to create investigation. Check the selected client and try again."
-    );
-    expect(toast.error).not.toHaveBeenCalledWith(
-      expect.stringContaining("chk_investigations_provenance")
-    );
+    expect(JSON.stringify(vi.mocked(supabase.rpc).mock.calls)).not.toContain("file_number");
+    expect(investigationInsert).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith("Investigation file INV-2026-0065 created");
   });
 });

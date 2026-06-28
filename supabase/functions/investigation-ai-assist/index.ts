@@ -21,16 +21,21 @@ interface RequestBody {
   information?: string;
 }
 
-async function fetchLearnedPatterns(supabase: any) {
+async function fetchLearnedPatterns(supabase: any, clientId?: string | null) {
+  const templatesQuery = supabase
+    .from('investigation_templates')
+    .select('template_name, category, description, typical_synopsis_structure, typical_recommendations, common_entry_patterns, avg_entry_count')
+    .order('times_accepted', { ascending: false })
+    .limit(5);
+
+  if (clientId) templatesQuery.eq('client_id', clientId);
+  else templatesQuery.not('client_id', 'is', null);
+
   const [
     { data: templates },
     { data: workflowProfile },
   ] = await Promise.all([
-    supabase
-      .from('investigation_templates')
-      .select('template_name, category, description, typical_synopsis_structure, typical_recommendations, common_entry_patterns, avg_entry_count')
-      .order('times_accepted', { ascending: false })
-      .limit(5),
+    templatesQuery,
     supabase
       .from('learning_profiles')
       .select('features')
@@ -116,9 +121,14 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'suggest_template') {
+      if (!client_id) {
+        return successResponse({ templates: [] });
+      }
+
       const { data: templates } = await supabase
         .from('investigation_templates')
         .select('id, template_name, category, description, typical_synopsis_structure, typical_recommendations, common_entry_patterns, avg_entry_count, avg_days_to_close, confidence_score')
+        .eq('client_id', client_id)
         .order('confidence_score', { ascending: false })
         .limit(10);
       return successResponse({ templates: templates || [] });
@@ -127,7 +137,7 @@ Deno.serve(async (req) => {
     const hasSubstantiveContext = (context && context.length > 80 && !context.includes('Not yet written')) 
       || (existingText && existingText.length > 50);
 
-    const { patternsContext } = await fetchLearnedPatterns(supabase);
+    const { patternsContext } = await fetchLearnedPatterns(supabase, client_id);
 
     let referenceContext = '';
     if (hasSubstantiveContext) {

@@ -1,16 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildInvestigationInsertPayload,
-  resolveInvestigationClientContext,
-} from "@/lib/investigation-client-context";
-
-const buildPayloadForResolvedClient = (clientId: string) =>
-  buildInvestigationInsertPayload({
-    fileNumber: "INV-2026-0001",
-    preparedBy: "operator-1",
-    createdByName: "Operator One",
-    clientId,
-  });
+import { resolveInvestigationClientContext } from "@/lib/investigation-client-context";
+import { buildCreateInvestigationV2Args } from "@/lib/investigation-create-authority";
 
 describe("investigation client context", () => {
   it("uses an existing valid current client context in all-tenants view", () => {
@@ -21,8 +11,10 @@ describe("investigation client context", () => {
 
     expect(result).toEqual({ ok: true, clientId: "client-current" });
     if (result.ok) {
-      expect(buildPayloadForResolvedClient(result.clientId)).toMatchObject({
-        client_id: "client-current",
+      expect(buildCreateInvestigationV2Args({ clientId: result.clientId })).toEqual({
+        p_client_id: "client-current",
+        p_incident_id: null,
+        p_template_id: null,
       });
     }
   });
@@ -47,8 +39,10 @@ describe("investigation client context", () => {
 
     expect(result).toEqual({ ok: true, clientId: "client-b" });
     if (result.ok) {
-      expect(buildPayloadForResolvedClient(result.clientId)).toMatchObject({
-        client_id: "client-b",
+      expect(buildCreateInvestigationV2Args({ clientId: result.clientId })).toEqual({
+        p_client_id: "client-b",
+        p_incident_id: null,
+        p_template_id: null,
       });
     }
   });

@@ -11,6 +11,10 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const clientId = body.client_id || null;
 
+    if (!clientId) {
+      return errorResponse('client_id is required for investigation template learning', 400);
+    }
+
     console.log(`[learn-from-investigations] Starting pattern extraction...`);
 
     // 1. Fetch completed investigations
@@ -22,7 +26,7 @@ Deno.serve(async (req) => {
       .order('updated_at', { ascending: false })
       .limit(100);
 
-    if (clientId) query.eq('client_id', clientId);
+    query.eq('client_id', clientId);
 
     const { data: investigations, error: invError } = await query;
 

@@ -41,20 +41,3 @@ export const resolveInvestigationClientContext = ({
     message: "Select a client before creating an investigation.",
   };
 };
-
-export const buildInvestigationInsertPayload = ({
-  fileNumber,
-  preparedBy,
-  createdByName,
-  clientId,
-}: {
-  fileNumber: string;
-  preparedBy: string;
-  createdByName: string;
-  clientId: string;
-}) => ({
-  file_number: fileNumber,
-  prepared_by: preparedBy,
-  created_by_name: createdByName,
-  client_id: clientId,
-});

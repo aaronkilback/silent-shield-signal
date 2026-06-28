@@ -18997,6 +18997,38 @@ export type Database = {
         Args: { _is_group: boolean; _name: string }
         Returns: string
       }
+      create_investigation_v2: {
+        Args: {
+          p_client_id: string
+          p_incident_id?: string | null
+          p_template_id?: string | null
+        }
+        Returns: {
+          client_id: string | null
+          correlated_entity_ids: string[] | null
+          created_at: string | null
+          created_by_name: string | null
+          cross_references: Json | null
+          file_number: string
+          file_status: string | null
+          id: string
+          incident_id: string | null
+          information: string | null
+          intake_email_tag: string | null
+          maximo_number: string | null
+          police_file_number: string | null
+          prepared_by: string | null
+          recommendations: string | null
+          synopsis: string | null
+          updated_at: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "investigations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {
@@ -20519,4 +20551,3 @@ export const Constants = {
     },
   },
 } as const
-

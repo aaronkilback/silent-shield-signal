@@ -12,10 +12,11 @@ import { format } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
+import { resolveInvestigationClientContext } from "@/lib/investigation-client-context";
 import {
-  buildInvestigationInsertPayload,
-  resolveInvestigationClientContext,
-} from "@/lib/investigation-client-context";
+  buildCreateInvestigationV2Args,
+  investigationCreateFailureMessage,
+} from "@/lib/investigation-create-authority";
 import {
   Dialog,
   DialogContent,
@@ -145,71 +146,23 @@ const Investigations = () => {
     setIsCreating(true);
     setShowTemplateDialog(false);
     try {
-      // Generate file number
-      const year = new Date().getFullYear();
-      const count = investigations.length + 1;
-      const fileNumber = `INV-${year}-${String(count).padStart(4, '0')}`;
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('name')
-        .eq('id', user.id)
-        .single();
-
-      const insertData: any = buildInvestigationInsertPayload({
-        fileNumber,
-        preparedBy: user.id,
-        createdByName: profile?.name || user.email || 'Unknown',
-        clientId: clientContext.clientId,
-      });
-
-      // Apply template if selected
-      if (template) {
-        if (template.typical_synopsis_structure) {
-          insertData.synopsis = template.typical_synopsis_structure;
-        }
-        if (template.typical_recommendations?.length) {
-          insertData.recommendations = template.typical_recommendations.join('\n\n');
-        }
-      }
-
       const { data, error } = await supabase
-        .from('investigations')
-        .insert(insertData)
-        .select()
-        .single();
+        .rpc('create_investigation_v2', buildCreateInvestigationV2Args({
+          clientId: clientContext.clientId,
+          templateId: template?.id ?? null,
+        }));
 
       if (error) throw error;
+      if (!data) throw new Error("create_investigation_v2 returned no investigation");
 
-      // If template had entry patterns, create initial entries
-      if (template?.common_entry_patterns?.length) {
-        const firstPattern = template.common_entry_patterns[0];
-        if (firstPattern) {
-          await supabase.from('investigation_entries').insert({
-            investigation_id: data.id,
-            entry_text: firstPattern,
-            created_by: user.id,
-            created_by_name: profile?.name || user.email || 'Unknown',
-            is_ai_generated: true,
-          });
-        }
-      }
-
-      // Track template usage for feedback loop
-      if (template) {
-        await supabase.from('investigation_templates')
-          .update({ times_used: (template as any).times_used ? (template as any).times_used + 1 : 1 })
-          .eq('id', template.id);
-      }
-
-      toast.success(template 
-        ? `Investigation created from "${template.template_name}" template` 
-        : "Investigation file created"
+      toast.success(template
+        ? `Investigation ${data.file_number} created from "${template.template_name}" template`
+        : `Investigation file ${data.file_number} created`
       );
       navigate(`/investigation/${data.id}`);
     } catch (error: any) {
       console.error('Error creating investigation:', error);
-      toast.error("Failed to create investigation. Check the selected client and try again.");
+      toast.error(investigationCreateFailureMessage);
     } finally {
       setIsCreating(false);
     }

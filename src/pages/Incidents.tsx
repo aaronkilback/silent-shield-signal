@@ -19,6 +19,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
 import { DashboardClientSelector } from "@/components/ClientSelector";
+import {
+  buildCreateInvestigationV2Args,
+  investigationCreateFailureMessage,
+} from "@/lib/investigation-create-authority";
 
 
 interface Incident {
@@ -193,68 +197,26 @@ const Incidents = () => {
 
     setCreatingInvestigation(incident.id);
     try {
-      // Generate file number
-      const year = new Date().getFullYear();
-      const { count } = await supabase
-        .from('investigations')
-        .select('*', { count: 'exact', head: true });
-      
-      const fileNumber = `INV-${year}-${String((count || 0) + 1).padStart(4, '0')}`;
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('name')
-        .eq('id', user.id)
-        .single();
-
-      // Get signal details if exists
-      let signalDetails = '';
-      if (incident.signal_id) {
-        const { data: signal } = await supabase
-          .from('signals')
-          .select('normalized_text, category, severity, location')
-          .eq('id', incident.signal_id)
-          .single();
-        
-        if (signal) {
-          signalDetails = `Signal: ${signal.normalized_text || 'N/A'}\nCategory: ${signal.category || 'N/A'}\nSeverity: ${signal.severity || 'N/A'}\nLocation: ${signal.location || 'N/A'}`;
-        }
+      if (!incident.client_id) {
+        throw new Error("missing-client");
       }
 
-      // Build initial information from incident
-      const incidentInfo = `Incident Details:
-Priority: ${incident.priority?.toUpperCase()}
-Status: ${incident.status?.toUpperCase()}
-Opened: ${new Date(incident.opened_at).toLocaleString()}
-${incident.acknowledged_at ? `Acknowledged: ${new Date(incident.acknowledged_at).toLocaleString()}` : ''}
-${incident.contained_at ? `Contained: ${new Date(incident.contained_at).toLocaleString()}` : ''}
-${incident.resolved_at ? `Resolved: ${new Date(incident.resolved_at).toLocaleString()}` : ''}
-
-${signalDetails ? `\n${signalDetails}\n` : ''}
-${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${incident.timeline_json.map((t: any) => `- ${new Date(t.timestamp).toLocaleString()}: ${t.details}`).join('\n')}` : ''}`;
-
-      const synopsis = `Investigation opened for ${incident.priority?.toUpperCase()} priority incident involving ${incident.clients?.name || 'unknown client'}.`;
+      if (selectedClientId && selectedClientId !== incident.client_id) {
+        throw new Error("stale-client");
+      }
 
       const { data, error } = await supabase
-        .from('investigations')
-        .insert({
-          file_number: fileNumber,
-          prepared_by: user.id,
-          created_by_name: profile?.name || user.email || 'Unknown',
-          incident_id: incident.id,
-          client_id: incident.client_id,
-          synopsis,
-          information: incidentInfo,
-          file_status: 'open'
-        })
-        .select()
-        .single();
+        .rpc('create_investigation_v2', buildCreateInvestigationV2Args({
+          clientId: incident.client_id,
+          incidentId: incident.id,
+        }));
 
       if (error) throw error;
+      if (!data) throw new Error("create_investigation_v2 returned no investigation");
 
       toast({
         title: "Investigation Created",
-        description: `Investigation file ${fileNumber} created from incident`,
+        description: `Investigation file ${data.file_number} created from incident`,
       });
       
       navigate(`/investigation/${data.id}`);
@@ -262,7 +224,7 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
       console.error('Error creating investigation:', error);
       toast({
         title: "Error",
-        description: error.message || "Failed to create investigation",
+        description: investigationCreateFailureMessage,
         variant: "destructive",
       });
     } finally {

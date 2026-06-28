@@ -22,6 +22,7 @@ vi.mock('@/integrations/supabase/client', () => ({
       })),
       upsert: vi.fn().mockResolvedValue({ data: null, error: null }),
     })),
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
     functions: {
       invoke: vi.fn().mockResolvedValue({ data: null, error: null }),
     },
