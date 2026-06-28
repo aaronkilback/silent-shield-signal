@@ -20,9 +20,8 @@
 // alert-delivery-secure remains deny-all. Legacy failed debt is never touched here.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Resend } from "npm:resend@2.0.0";
-import {
-  authorizeInternal, buildSendParams, classifyError, isRecipientAllowed, isSupportedChannel, nextState,
-} from "./lib.ts";
+import { authorizeInternal } from "./lib.ts";
+import { processClaimedAlert } from "./processor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,34 +64,19 @@ Deno.serve(async (req) => {
   const allow = new Set((allowRows ?? []).map((r: any) => String(r.email).trim().toLowerCase()));
 
   const resend = new Resend(Deno.env.get("RESEND_API_KEY") as string); // initialized AFTER auth + claim
+  const send = (p: any) => resend.emails.send(p as any);
+  const finalizeDep = (alert: any, ns: any, classified?: any) => finalize(supabase, alert, ns, classified);
   const results: any[] = [];
 
   for (const a of (claimed ?? [])) {
-    try {
-      if (!isSupportedChannel(a.channel)) { await finalize(supabase, a, nextState({ kind: "unsupported_channel" })); results.push({ id: a.id, outcome: "unsupported_channel" }); continue; }
-      if (!isRecipientAllowed(a.recipient, allow)) { await finalize(supabase, a, nextState({ kind: "recipient_blocked" })); results.push({ id: a.id, outcome: "recipient_blocked" }); continue; }
-
-      // Idempotency: a prior attempt accepted by the provider but not finalized leaves a
-      // provider_message_id; do NOT resend — finalize as sent.
-      if (a.provider_message_id) { await finalize(supabase, a, nextState({ kind: "accepted", provider_message_id: a.provider_message_id })); results.push({ id: a.id, outcome: "already_accepted_finalized" }); continue; }
-
-      const p = buildSendParams(fromEmail, a); // server-controlled config only
-      const sent = await resend.emails.send(p as any);
-      if ((sent as any).error) throw (sent as any).error;
-      const pmid = (sent as any).data?.id ?? null;
-      await finalize(supabase, a, nextState({ kind: "accepted", provider_message_id: pmid }));
-      results.push({ id: a.id, outcome: "sent" });
-    } catch (e) {
-      const classified = classifyError(e);
-      await finalize(supabase, a, nextState({ kind: "failed", classified }), classified);
-      results.push({ id: a.id, outcome: "failed", error_class: classified.error_class });
-    }
+    const r = await processClaimedAlert(a, { fromEmail, allow, send, finalize: finalizeDep });
+    results.push({ id: a.id, outcome: r.outcome, ...(r.error_class ? { error_class: r.error_class } : {}) });
   }
 
   return json({ worker, claimed: (claimed ?? []).length, results });
 });
 
-async function finalize(supabase: any, a: any, ns: ReturnType<typeof nextState>, classified?: { error_message_safe: string; retryable: boolean }) {
+async function finalize(supabase: any, a: any, ns: any, classified?: { error_message_safe: string; retryable: boolean }) {
   const patch: any = {
     status: ns.status,
     error_class: ns.error_class,
