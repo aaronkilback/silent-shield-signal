@@ -94,17 +94,21 @@ const Investigations = () => {
       (isAllTenantsView || tenantClientIds !== undefined),
   });
 
-  const fetchTemplates = async () => {
+  const fetchTemplates = async (clientId: string) => {
     setLoadingTemplates(true);
     try {
       const { data, error } = await supabase.functions.invoke('investigation-ai-assist', {
-        body: { action: 'suggest_template' }
+        body: { action: 'suggest_template', client_id: clientId }
       });
       if (error) throw error;
-      setTemplates(data.templates || []);
+      const nextTemplates = data.templates || [];
+      setTemplates(nextTemplates);
+      return nextTemplates;
     } catch (err) {
       console.error('Failed to fetch templates:', err);
       // Silently fail — templates are optional
+      setTemplates([]);
+      return [];
     } finally {
       setLoadingTemplates(false);
     }
@@ -124,8 +128,8 @@ const Investigations = () => {
     }
 
     // Fetch templates if we have learned patterns
-    await fetchTemplates();
-    if (templates.length > 0 || loadingTemplates) {
+    const nextTemplates = await fetchTemplates(clientContext.clientId);
+    if (nextTemplates.length > 0) {
       setShowTemplateDialog(true);
     } else {
       // No templates available — create directly
@@ -171,7 +175,10 @@ const Investigations = () => {
   // Re-fetch templates when dialog opens
   useEffect(() => {
     if (showTemplateDialog && templates.length === 0) {
-      fetchTemplates();
+      const clientContext = resolveCreateClientContext();
+      if (clientContext.ok) {
+        fetchTemplates(clientContext.clientId);
+      }
     }
   }, [showTemplateDialog]);
 

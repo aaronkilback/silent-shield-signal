@@ -119,39 +119,52 @@ beforeEach(() => {
 });
 
 describe("Investigations create flow client context", () => {
-  it("blocks tenant-only creation before template assist or investigation insert", async () => {
-    renderInvestigations();
-
-    await screen.findByText("Create First Investigation");
-    fireEvent.click(screen.getByRole("button", { name: /create first investigation/i }));
-
-    expect(toast.error).toHaveBeenCalledWith("Select a client before creating an investigation.");
-    expect(supabase.functions.invoke).not.toHaveBeenCalled();
-    expect(investigationInsert).not.toHaveBeenCalled();
-    expect(supabase.rpc).not.toHaveBeenCalled();
-  });
-
-  it("blocks a stale foreign selected client before template assist or investigation insert", async () => {
-    mockUseClientSelection.mockReturnValue({
+  it.each([
+    {
+      name: "missing client context",
+      selectedClientId: null,
+      tenantClientIds: undefined,
+      message: "Client context is still loading. Try again in a moment.",
+    },
+    {
+      name: "tenant-only context",
+      selectedClientId: null,
+      tenantClientIds: ["client-a"],
+      message: "Select a client before creating an investigation.",
+    },
+    {
+      name: "stale selected client",
+      selectedClientId: "client-stale",
+      tenantClientIds: ["client-a"],
+      message: "Select a client within the current tenant before creating an investigation.",
+    },
+    {
+      name: "foreign selected client",
       selectedClientId: "client-foreign",
-      isContextReady: true,
-    });
-    mockUseTenantScopedClientIds.mockReturnValue({
-      clientIds: ["client-a"],
-    });
+      tenantClientIds: ["client-a"],
+      message: "Select a client within the current tenant before creating an investigation.",
+    },
+  ])(
+    "blocks $name before template assist or investigation persistence",
+    async ({ selectedClientId, tenantClientIds, message }) => {
+      mockUseClientSelection.mockReturnValue({
+        selectedClientId,
+        isContextReady: true,
+      });
+      mockUseTenantScopedClientIds.mockReturnValue({
+        clientIds: tenantClientIds,
+      });
 
-    renderInvestigations();
+      renderInvestigations();
 
-    await screen.findByText("No investigations yet");
-    fireEvent.click(screen.getByRole("button", { name: /new investigation/i }));
+      fireEvent.click(await screen.findByRole("button", { name: /new investigation/i }));
 
-    expect(toast.error).toHaveBeenCalledWith(
-      "Select a client within the current tenant before creating an investigation."
-    );
-    expect(supabase.functions.invoke).not.toHaveBeenCalled();
-    expect(investigationInsert).not.toHaveBeenCalled();
-    expect(supabase.rpc).not.toHaveBeenCalled();
-  });
+      expect(toast.error).toHaveBeenCalledWith(message);
+      expect(supabase.functions.invoke).not.toHaveBeenCalled();
+      expect(investigationInsert).not.toHaveBeenCalled();
+      expect(supabase.rpc).not.toHaveBeenCalled();
+    }
+  );
 
   it("uses the sanitized create error instead of exposing the raw database constraint", async () => {
     mockUseClientSelection.mockReturnValue({
@@ -171,6 +184,11 @@ describe("Investigations create flow client context", () => {
     await screen.findByText("No investigations yet");
     fireEvent.click(screen.getByRole("button", { name: /new investigation/i }));
 
+    await waitFor(() => {
+      expect(supabase.functions.invoke).toHaveBeenCalledWith("investigation-ai-assist", {
+        body: { action: "suggest_template", client_id: "client-a" },
+      });
+    });
     await waitFor(() => {
       expect(supabase.rpc).toHaveBeenCalledWith("create_investigation_v2", {
         p_client_id: "client-a",
@@ -199,6 +217,11 @@ describe("Investigations create flow client context", () => {
     await screen.findByText("No investigations yet");
     fireEvent.click(screen.getByRole("button", { name: /new investigation/i }));
 
+    await waitFor(() => {
+      expect(supabase.functions.invoke).toHaveBeenCalledWith("investigation-ai-assist", {
+        body: { action: "suggest_template", client_id: "client-a" },
+      });
+    });
     await waitFor(() => {
       expect(supabase.rpc).toHaveBeenCalledWith("create_investigation_v2", {
         p_client_id: "client-a",
