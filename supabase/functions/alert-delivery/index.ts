@@ -1,64 +1,66 @@
 // Alert Delivery v2 — EMAIL ONLY, staging hardened replacement.
 //
-// Boundary contract (see lib.ts for the testable core):
-//   1. AUTHORIZATION FIRST — the dedicated internal header is validated (constant-time)
-//      BEFORE any service-role client, DB read/write, provider init, or outbound call.
-//      A service-role bearer ALONE is NOT accepted.
-//   2. Truthful state model — pending -> sending (atomic claim) -> sent|failed.
-//      'sent' only on provider acceptance (+sent_at). 'delivered' reserved for a verified
-//      webhook (unused here). 'failed' sets failed_at + sanitized error_class, never sent_at.
-//   3. Idempotent — rows are atomically claimed; the stable delivery_key is used as the
-//      provider Idempotency-Key; provider_message_id is persisted so a post-send DB failure
-//      cannot cause a duplicate on the next claim (lease recovery re-claims stuck rows).
+// Boundary contract (testable core in lib.ts):
+//   1. AUTHORIZATION FIRST — dedicated internal header validated (constant-time) BEFORE any
+//      service-role client, DB read/write, provider init, or outbound call. Service-role
+//      bearer ALONE is rejected. Only POST + OPTIONS are accepted.
+//   2. Truthful state — pending -> sending (atomic claim) -> sent | failed |
+//      requires_reconciliation. 'sent' only on provider acceptance (+sent_at). 'failed' sets
+//      failed_at + sanitized error_class, never sent_at. 'requires_reconciliation' = lease
+//      expired AFTER the provider idempotency window; never auto-resent.
+//   3. Idempotent — stable delivery_key persisted before provider contact and used as the
+//      provider Idempotency-Key; provider_message_id persisted; reclaim/resend only inside the
+//      idempotency window; past it -> requires_reconciliation (no second send).
 //   4. Safe observability — only sanitized error_class/message, timestamps, provider id,
 //      retryability. No raw provider bodies, inbound payloads, recipient PII, or secrets.
-//   5. Staging recipient safety — only explicitly-approved test mailboxes may receive.
+//   5. Email safety — sender/reply-to/cc/bcc/attachments/headers/api-key/endpoint are NEVER
+//      taken from the alert record or request body. Sender is fixed server config. Staging may
+//      send only to the single approved allowlisted mailbox. The request body is never read.
 //
 // alert-delivery-secure remains deny-all. Legacy failed debt is never touched here.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Resend } from "npm:resend@2.0.0";
 import {
-  authorizeInternal, classifyError, isRecipientAllowed, isSupportedChannel, nextState,
+  authorizeInternal, buildSendParams, classifyError, isRecipientAllowed, isSupportedChannel, nextState,
 } from "./lib.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-alert-delivery-internal",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 const CLAIM_LIMIT = 10;
 const LEASE_SECONDS = 120;
-
-function buildHtml(a: any): string {
-  const rj = a.response_json ?? {};
-  const subject = typeof rj.subject === "string" ? rj.subject : "Security Alert";
-  const body = typeof rj.body === "string" ? rj.body : "Security alert";
-  return `<!DOCTYPE html><html><body style="font-family:sans-serif"><h2>${escapeHtml(subject)}</h2><p>${escapeHtml(body)}</p></body></html>`;
-}
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
-}
+const IDEMPOTENCY_WINDOW_SECONDS = 86400; // provider (Resend) idempotency keys expire ~24h
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   // ── 1. AUTHORIZATION FIRST — before any client/db/provider/outbound work ──
   const auth = authorizeInternal(req.headers, Deno.env.get("ALERT_DELIVERY_INTERNAL_SECRET"));
   if (!auth.ok) return json({ error: auth.error }, auth.status);
 
-  // ── privileged work begins only after authorization ──
+  // Sender is FIXED server config and must be configured (verified domain). No DB/body override.
+  const fromEmail = Deno.env.get("ALERT_FROM_EMAIL");
+  if (!fromEmail) return json({ error: "sender_unconfigured" }, 503);
+
+  // NOTE: the request body is intentionally NOT read — callers cannot specify recipients or any
+  // delivery configuration. This function only drains the claimed email queue.
+
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const worker = crypto.randomUUID();
 
-  // Atomic claim (durable, lease-based, recovers stuck 'sending' rows).
+  // Atomic claim. The RPC also reconciles lease-expired 'sending' rows that are past the
+  // idempotency window into 'requires_reconciliation' (never returned for resend).
   const { data: claimed, error: claimErr } = await supabase.rpc("claim_pending_email_alerts", {
-    p_worker: worker, p_limit: CLAIM_LIMIT, p_lease_seconds: LEASE_SECONDS,
+    p_worker: worker, p_limit: CLAIM_LIMIT, p_lease_seconds: LEASE_SECONDS, p_idempotency_window_seconds: IDEMPOTENCY_WINDOW_SECONDS,
   });
   if (claimErr) { console.error("[alert-delivery v2] claim failed:", claimErr.message); return json({ error: "claim_failed" }, 500); }
 
-  // Staging recipient allowlist (hard safety gate).
   const { data: allowRows } = await supabase.from("alert_delivery_allowed_recipients").select("email");
   const allow = new Set((allowRows ?? []).map((r: any) => String(r.email).trim().toLowerCase()));
 
@@ -74,13 +76,8 @@ Deno.serve(async (req) => {
       // provider_message_id; do NOT resend — finalize as sent.
       if (a.provider_message_id) { await finalize(supabase, a, nextState({ kind: "accepted", provider_message_id: a.provider_message_id })); results.push({ id: a.id, outcome: "already_accepted_finalized" }); continue; }
 
-      const sent = await resend.emails.send({
-        from: Deno.env.get("ALERT_FROM_EMAIL") || "Security Alert <alerts@silentshieldsecurity.com>",
-        to: [a.recipient],
-        subject: (a.response_json?.subject as string) || "Security Alert",
-        html: buildHtml(a),
-        headers: { "Idempotency-Key": a.delivery_key }, // provider-side dedup keyed on our stable id
-      } as any);
+      const p = buildSendParams(fromEmail, a); // server-controlled config only
+      const sent = await resend.emails.send(p as any);
       if ((sent as any).error) throw (sent as any).error;
       const pmid = (sent as any).data?.id ?? null;
       await finalize(supabase, a, nextState({ kind: "accepted", provider_message_id: pmid }));
@@ -115,5 +112,5 @@ async function finalize(supabase: any, a: any, ns: ReturnType<typeof nextState>,
   if (ns.set_sent_at) patch.sent_at = new Date().toISOString();
   if (ns.set_failed_at) patch.failed_at = new Date().toISOString();
   const { error } = await supabase.from("alerts").update(patch).eq("id", a.id);
-  if (error) console.error("[alert-delivery v2] finalize update failed (will be lease-recovered):", error.message);
+  if (error) console.error("[alert-delivery v2] finalize update failed (lease/window-recovered):", error.message);
 }
