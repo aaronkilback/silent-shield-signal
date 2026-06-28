@@ -8,6 +8,7 @@ import { enqueueJob } from '../_shared/queue.ts';
 import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
 import { getCallerIdentity, getAccessibleClientIds } from '../_shared/supabase-client.ts';
 import { upsertHostileHandleOnSignal, extractHandleFromRawJson } from '../_shared/hostile-attribution.ts';
+import { recordTelemetry } from '../_shared/observability.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -41,6 +42,19 @@ const SignalInputSchema = z.object({
   // platform-scoped analysis). Optional; when present, written to
   // signals.platform on insert.
   platform: z.enum(['x','reddit','instagram','facebook','telegram_public','youtube','rss','other']).optional(),
+  // #256 Phase 1 (2026-05-23) — explicit opt-in for tenant-fan-out signals.
+  // Schema is accepted in Phase 1 but actual broadcast routing is NOT
+  // implemented — broadcast requests return 501 NotImplemented until Phase 3
+  // re-introduces a vetted fan-out path. Callers MUST either pass an explicit
+  // `client_id` (single-tenant) or `tenant_broadcast` (multi-tenant intent).
+  // Object shape (vs boolean) forces an explicit scope declaration; future
+  // scopes can extend the enum without breaking callers.
+  tenant_broadcast: z.object({
+    scope: z.enum(['all_active_tenants']),
+    // future Phase 3+: 'tenant_ids' (z.array(z.string().uuid())),
+    //                  'tenant_filter' (industry / role / capability),
+    //                  'exclude_tenants' (z.array(z.string().uuid())).
+  }).optional(),
 }).refine(data => data.text || data.event || data.url, {
   message: "Either 'text', 'event', or 'url' must be provided"
 });
@@ -106,6 +120,7 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const requestStartedAt = Date.now();
   try {
     // F-026 (2026-05-14) — auth gate at true handler entry. Locked rules:
     //   anonymous (no auth / anon publishable key) → 401
@@ -174,7 +189,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity, platform } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity, platform, tenant_broadcast } = validationResult.data;
     // Auto-flag any signal whose source URL points at example.com / qa.test / localhost
     // as is_test=true, regardless of caller. These domains are always test fixtures and
     // must never appear in the production live feed (operators have mistaken them for
@@ -204,10 +219,50 @@ Deno.serve(async (req) => {
         );
       }
 
+      // F-026 — AUTHORIZATION CHECK MUST PRECEDE ALL BUSINESS-RULE CHECKS.
+      //
+      // Reasoning: the F-026 access gate determines whether the CALLER is
+      // permitted to interact with this client_id AT ALL. Any subsequent
+      // check that returns information about the client (its status, its
+      // name in the error message, its existence as distinct from "not
+      // found") is a cross-tenant information disclosure if the caller
+      // does not actually own the client.
+      //
+      // Defect history (caught by F-026 staging Mode 6 validation, #112):
+      //   Originally (commit f2965d9c, 2026-05-18) this check ran AFTER
+      //   the test-signals-on-active-clients guard at line ~250. A CRT
+      //   user sending `is_test=true` + a Petronas `client_id` received
+      //   `{"error":"test signals not permitted on active clients",
+      //   "message":"Client Petronas Canada has status='active'..."}`
+      //   — leaking the existence + name + status of a client outside
+      //   the caller's accessible scope, AND skipping the 403 entirely.
+      //
+      //   Reordered 2026-05-20 (#112) so the F-026 gate fires before any
+      //   subsequent guard that could leak client metadata or differential
+      //   timing.
+      //
+      // Service-role callers (accessibleClientIds === null) bypass this
+      // check — same as before. Trusted internal caller inventory is in
+      // the F-026 evidence record.
+      if (caller.kind === 'user' && accessibleClientIds !== null
+          && !accessibleClientIds.includes(clientCheck.id)) {
+        console.error(`⚠ FORBIDDEN: user ${caller.userId} attempted ingest into client ${clientCheck.id} outside accessible scope`);
+        return new Response(
+          JSON.stringify({
+            error: 'forbidden: client_id outside accessible scope',
+          }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       // Block test signals against active clients. Until 2026-05-07 the
       // fortress-qa-agent injected synthetic signals into Petronas Canada
       // because is_test=true was permitted on any client. Use a status
       // != 'active' QA client (e.g. _qa_test_client).
+      //
+      // This check is INTENTIONALLY downstream of F-026 — it only fires
+      // for callers that already have access to the target client. A
+      // cross-tenant caller is rejected at the F-026 gate above.
       if (is_test === true && clientCheck.status === 'active') {
         console.error(`⚠ TEST SIGNAL BLOCKED: is_test=true cannot target active client ${clientCheck.name} (${clientCheck.id})`);
         return new Response(
@@ -219,44 +274,76 @@ Deno.serve(async (req) => {
         );
       }
 
-      // F-006 (2026-05-13): Symmetric guard — block PRODUCTION signals
-      // (is_test=false, no benchmark_run_id) from landing on INACTIVE
-      // sandbox clients. Audit found 4 real CCCS advisories on
-      // _qa_test_client + _benchmark_petronas in May 2026; they should
-      // have gone to Petronas Canada. Counterpart to the is_test guard
-      // above — closes the bidirectional leak.
-      const isBenchmarkRun = !!(rawBody?.benchmark_run_id) || !!(raw_json?.benchmark_run_id);
-      if (is_test !== true && !isBenchmarkRun && clientCheck.status !== 'active') {
-        console.error(`⚠ PRODUCTION SIGNAL BLOCKED: client ${clientCheck.name} status=${clientCheck.status} — only test/benchmark signals allowed on non-active clients`);
-        return new Response(
-          JSON.stringify({
-            status: 'rejected',
-            reason: 'production_signal_inactive_client',
-            detail: `Client ${clientCheck.name} status='${clientCheck.status}'. Production signals must target an active client. Use is_test=true or set benchmark_run_id for sandbox traffic.`,
-          }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
       validatedExplicitClientId = clientCheck.id;
       console.log(`✓ VALIDATED EXPLICIT CLIENT: ${clientCheck.name} (${clientCheck.id}) status=${clientCheck.status}`);
-
-      // F-026 — user-tier callers must own the explicit client_id. Service-role
-      // is exempt (trusted internal caller list documented in evidence file).
-      // Rejection is 403 (not 404) here because the client_id existence was
-      // already confirmed above — at this point hiding existence is moot.
-      if (caller.kind === 'user' && accessibleClientIds !== null
-          && !accessibleClientIds.includes(clientCheck.id)) {
-        console.error(`⚠ FORBIDDEN: user ${caller.userId} attempted ingest into client ${clientCheck.name} outside accessible scope`);
-        return new Response(
-          JSON.stringify({
-            error: 'forbidden: client_id outside accessible scope',
-          }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
     }
-    
+
+    // #256 Phase 1 (2026-05-23) — TENANT-BOUNDARY CONTRACT (EARLY REJECT)
+    // Fires BEFORE the AI classifier, the URL fetcher, the F-034 gates, and
+    // any downstream cost. See block comment near the matching block below
+    // for full rationale. The reject is positioned here so callers that omit
+    // client_id burn ~0 OpenAI tokens and ~0 outbound HTTP — the failure
+    // mode is visible and cheap.
+    if (!validatedExplicitClientId && !tenant_broadcast) {
+      const previewText = (text || JSON.stringify(event) || '').toString().substring(0, 200);
+      console.warn(`[#256 Phase 1] REJECTED: signal lacks client_id and tenant_broadcast. source_key=${source_key ?? 'none'} preview="${previewText}"`);
+      // Branch 2A.0 — surface contract rejections on the canonical watchdog
+      // telemetry source (function_telemetry). P0.4 watchdog rule reads this.
+      await recordTelemetry(supabase, {
+        functionName: 'ingest-signal',
+        durationMs: Date.now() - requestStartedAt,
+        status: 'error',
+        errorClass: 'other',
+        errorMessage: 'contract_rejected:missing_client_id',
+        context: {
+          rejection_reason: 'missing_client_id',
+          ticket: '#256',
+          phase: 1,
+          source_key: source_key ?? null,
+          caller_kind: caller.kind,
+        },
+      });
+      return new Response(
+        JSON.stringify({
+          status: 'rejected',
+          reason: 'missing_client_id',
+          message: 'client_id is required. Cross-tenant signal scoring was removed 2026-05-23 (#256) — callers must pass an explicit client_id or use tenant_broadcast (Phase 3, not yet implemented).',
+          ticket: '#256',
+          phase: 1,
+          source_key: source_key ?? null,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    if (!validatedExplicitClientId && tenant_broadcast) {
+      console.warn(`[#256 Phase 1] tenant_broadcast rejected: routing not yet implemented (scope=${tenant_broadcast.scope})`);
+      await recordTelemetry(supabase, {
+        functionName: 'ingest-signal',
+        durationMs: Date.now() - requestStartedAt,
+        status: 'error',
+        errorClass: 'other',
+        errorMessage: 'contract_rejected:broadcast_not_implemented',
+        context: {
+          rejection_reason: 'broadcast_not_implemented',
+          ticket: '#256',
+          phase: 1,
+          broadcast_scope: tenant_broadcast.scope,
+          source_key: source_key ?? null,
+          caller_kind: caller.kind,
+        },
+      });
+      return new Response(
+        JSON.stringify({
+          status: 'rejected',
+          reason: 'broadcast_not_implemented',
+          message: `tenant_broadcast routing (scope=${tenant_broadcast.scope}) is reserved for #256 Phase 3 and not yet implemented. Until then, pass an explicit client_id.`,
+          ticket: '#256',
+          phase: 1,
+        }),
+        { status: 501, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     let signalText = text || JSON.stringify(event);
 
     // ════════════════════════════════════════════════════════════════════
@@ -606,6 +693,46 @@ Be specific and concise. Focus on facts, not speculation.`
       sourceId = source.id;
     }
 
+    // ─── #120 Phase 1 — REGRESSION GUARD: external signal attribution invariant ───
+    // Goal: prevent new externally-sourced signals from landing silently without
+    // source attribution. "Aegis confidently citing junk destroys trust faster than
+    // missing marginal signals" — un-attributed external signals are exactly that.
+    //
+    // Modes:
+    //   Always-on: emit a console.warn marker that watchdogs / log aggregators
+    //   can grep for ("EXTERNAL_UNATTRIBUTED"). Makes silent drift observable.
+    //
+    //   Env-gated strict block: when INGEST_STRICT_SOURCE_ATTRIBUTION=true is set,
+    //   reject any external signal (source_url present, not example.com, not test)
+    //   that arrives without a resolvable source_id. Default OFF so the current
+    //   broken paths (#125 — 280 other_external signals, monitor-cisa-kev's
+    //   re-processing-path bug) don't immediately 4xx. Flip to true once #125
+    //   audits each monitor.
+    const externalUrl = source_url || url || null;
+    if (
+      sourceId === null &&
+      externalUrl &&
+      !externalUrl.includes('example.com') &&
+      !externalUrl.includes('qa.test') &&
+      is_test_input !== true
+    ) {
+      console.warn(
+        `[ingest-signal] EXTERNAL_UNATTRIBUTED — source_id null, source_url=${externalUrl.substring(0, 120)} ` +
+        `source_key=${source_key ?? 'NOT_PROVIDED'} client_id=${client_id ?? clientIdCamel ?? 'NOT_PROVIDED'}`
+      );
+      if (Deno.env.get('INGEST_STRICT_SOURCE_ATTRIBUTION') === 'true') {
+        return new Response(
+          JSON.stringify({
+            error: 'External signal blocked: missing source attribution',
+            message: 'Signals with source_url must pass a source_key that matches a registered sources row. Set source_key, register the source in the sources table, or set INGEST_STRICT_SOURCE_ATTRIBUTION=false to bypass this guard.',
+            source_url: externalUrl,
+            source_key_provided: source_key ?? null,
+          }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     // Step 1: Apply rules-based classification
     const rulesResult = applyRules(signalText);
     console.log('Rules matched:', rulesResult);
@@ -620,14 +747,41 @@ Be specific and concise. Focus on facts, not speculation.`
       confidence: 0.5
     };
 
+    // #130 Phase 0B — tenant-scope few-shot feedback to prevent cross-tenant
+    // ML contamination of signal classification. Resolve the incoming signal's
+    // tenant_id via its client (if known). Fail-closed: if tenant cannot be
+    // resolved (matching-mode signal where client_id isn't yet derived), skip
+    // few-shot entirely — better to lose calibration than contaminate
+    // classification with another tenant's feedback notes.
+    let fewShotTenantId: string | null = null;
+    if (explicitClientId) {
+      const { data: fewShotClientRow } = await supabase
+        .from('clients')
+        .select('tenant_id')
+        .eq('id', explicitClientId)
+        .maybeSingle();
+      fewShotTenantId = fewShotClientRow?.tenant_id ?? null;
+    }
+
     // Fetch analyst feedback for severity calibration (few-shot injection)
-    // Reads from feedback_events joined to signals — the live feedback path
+    // Reads from feedback_events joined to signals — tenant-scoped per #130 Phase 0B
     let fewShotBlock = '';
+    let fewShotTelemetry: { state: string; tenant_id: string | null; examples: number } = {
+      state: 'unknown', tenant_id: fewShotTenantId, examples: 0,
+    };
     try {
+      // #130 Phase 0B: skip few-shot entirely if no tenant context (fail-closed)
+      if (!fewShotTenantId) {
+        fewShotTelemetry = { state: 'skipped_no_tenant', tenant_id: null, examples: 0 };
+        console.log(`[#130 telemetry] ingest-signal few_shot=skipped reason=no_tenant_context`);
+      } else {
+      // PostgREST inner-join scopes feedback to signals owned by THIS tenant.
+      // This is the marker-provable tenant isolation gate.
       const { data: feedbackEvents } = await supabase
         .from('feedback_events')
-        .select('feedback, notes, correction, object_id')
+        .select('feedback, notes, correction, object_id, signals!inner(tenant_id)')
         .eq('object_type', 'signal')
+        .eq('signals.tenant_id', fewShotTenantId)
         .in('feedback', ['irrelevant', 'wrong_severity', 'confirmed'])
         .not('notes', 'is', null)
         .order('created_at', { ascending: false })
@@ -654,12 +808,33 @@ Be specific and concise. Focus on facts, not speculation.`
 
         if (examples.length > 0) {
           fewShotBlock = '\n\nANALYST CALIBRATION EXAMPLES (learn from these real corrections):\n' + examples.join('\n');
+          fewShotTelemetry = { state: 'applied', tenant_id: fewShotTenantId, examples: examples.length };
+          console.log(`[#130 telemetry] ingest-signal few_shot=applied tenant=${fewShotTenantId} examples=${examples.length}`);
+        } else {
+          fewShotTelemetry = { state: 'applied_empty', tenant_id: fewShotTenantId, examples: 0 };
+          console.log(`[#130 telemetry] ingest-signal few_shot=applied_empty tenant=${fewShotTenantId} (no tenant-local feedback yet)`);
         }
+      } else {
+        fewShotTelemetry = { state: 'applied_empty', tenant_id: fewShotTenantId, examples: 0 };
+        console.log(`[#130 telemetry] ingest-signal few_shot=applied_empty tenant=${fewShotTenantId} (query returned 0)`);
       }
-    } catch { /* non-blocking */ }
+      } // close `if (fewShotTenantId)` from #130 Phase 0B
+    } catch (err) {
+      fewShotTelemetry = { state: 'error', tenant_id: fewShotTenantId, examples: 0 };
+      console.warn(`[#130 telemetry] ingest-signal few_shot=error tenant=${fewShotTenantId} err=${err instanceof Error ? err.message : String(err)}`);
+    }
 
     const classResult = await callAiGatewayJson({
       model: 'gpt-4o-mini',
+      // #130 Phase 0B observation — annotate telemetry with few-shot state
+      // so we can measure the calibration-quality tradeoff from fail-closed
+      // skipping when explicitClientId is absent (matching-mode signals).
+      extraContext: {
+        few_shot_state: fewShotTelemetry.state,
+        few_shot_tenant_id: fewShotTelemetry.tenant_id,
+        few_shot_examples: fewShotTelemetry.examples,
+        explicit_client_id_provided: !!explicitClientId,
+      },
       messages: [
         {
           role: 'system',
@@ -811,185 +986,40 @@ Respond ONLY with valid JSON.`
     let matchedKeywords: string[] = [];
     let matchConfidence: 'explicit' | 'high' | 'medium' | 'low' | 'ai' | 'none' = 'none';
     
-    // If explicit client_id provided (e.g., from inject_test_signal), skip matching and use it directly
-    if (validatedExplicitClientId) {
-      console.log(`✓ EXPLICIT CLIENT OVERRIDE: Using validated client_id ${validatedExplicitClientId}`);
-      matchedKeywords.push('explicit_client_override');
-      matchConfidence = 'explicit';
-    } else {
-      // Only perform client matching if no explicit client_id provided
-      const { data: clients } = await supabase
-        .from('clients')
-        .select('id, name, organization, industry, locations, high_value_assets, monitoring_keywords');
-      
-      if (clients && clients.length > 0) {
-      const textLower = signalText.toLowerCase();
-      
-      // IMPROVED MATCHING: Score all clients and pick the best match
-      // This prevents generic keywords from incorrectly matching before specific ones
-      interface ClientScore {
-        client: typeof clients[0];
-        score: number;
-        matchedKeywords: string[];
-        matchType: 'name' | 'keyword' | 'asset' | 'location';
-      }
-      
-      const clientScores: ClientScore[] = [];
-      
-      for (const client of clients) {
-        let score = 0;
-        const foundKeywords: string[] = [];
-        let matchType: 'name' | 'keyword' | 'asset' | 'location' = 'keyword';
-        
-        // Check client name (highest priority - 1000 points base + length bonus)
-        if (textLower.includes(client.name.toLowerCase())) {
-          score += 1000 + client.name.length;
-          foundKeywords.push(`client_name:${client.name}`);
-          matchType = 'name';
-        }
-        
-        // Check monitoring keywords - score by specificity (length) and count
-        if (client.monitoring_keywords && Array.isArray(client.monitoring_keywords)) {
-          for (const keyword of client.monitoring_keywords) {
-            if (keyword && textLower.includes(keyword.toLowerCase())) {
-              // Longer keywords are more specific, worth more points
-              // Also count word count - multi-word phrases are more specific
-              const wordCount = keyword.split(/\s+/).length;
-              const keywordScore = keyword.length + (wordCount * 10);
-              score += keywordScore;
-              foundKeywords.push(keyword);
-            }
-          }
-        }
-        
-        // Check high value assets (slightly lower priority than keywords)
-        if (client.high_value_assets && Array.isArray(client.high_value_assets)) {
-          for (const asset of client.high_value_assets) {
-            if (asset && textLower.includes(asset.toLowerCase())) {
-              const assetScore = asset.length + 5;
-              score += assetScore;
-              foundKeywords.push(`asset:${asset}`);
-              if (matchType === 'keyword') matchType = 'asset';
-            }
-          }
-        }
-        
-        // Check locations
-        if (client.locations && Array.isArray(client.locations)) {
-          for (const location of client.locations) {
-            if (location && textLower.includes(location.toLowerCase())) {
-              score += 15; // Location match bonus
-              foundKeywords.push(`location:${location}`);
-              if (matchType === 'keyword') matchType = 'location';
-            }
-          }
-        }
-        
-        if (score > 0) {
-          clientScores.push({
-            client,
-            score,
-            matchedKeywords: foundKeywords,
-            matchType
-          });
-        }
-      }
-      
-      // Sort by score descending and pick the best match
-      if (clientScores.length > 0) {
-        clientScores.sort((a, b) => b.score - a.score);
-        const bestMatch = clientScores[0];
-        clientId = bestMatch.client.id;
-        matchedKeywords = bestMatch.matchedKeywords;
-        
-        // Determine match confidence based on score and match type
-        if (bestMatch.matchType === 'name' || bestMatch.score >= 1000) {
-          matchConfidence = 'high';
-        } else if (bestMatch.score >= 50) {
-          matchConfidence = 'medium';
-        } else {
-          matchConfidence = 'low';
-        }
-        
-        console.log(`✓ BEST MATCH: ${bestMatch.client.name} (score: ${bestMatch.score}, type: ${bestMatch.matchType}, confidence: ${matchConfidence})`);
-        console.log(`  Matched keywords: ${matchedKeywords.join(', ')}`);
-        
-        // Log runner-up if there was competition
-        if (clientScores.length > 1) {
-          const runnerUp = clientScores[1];
-          console.log(`  Runner-up: ${runnerUp.client.name} (score: ${runnerUp.score})`);
-          
-          // Warn if scores are close - potential misattribution risk
-          if (bestMatch.score > 0 && runnerUp.score / bestMatch.score > 0.7) {
-            console.warn(`⚠ CLOSE MATCH WARNING: Runner-up score is ${Math.round(runnerUp.score / bestMatch.score * 100)}% of best match. Review may be needed.`);
-          }
-        }
-      }
-      
-      // If no keyword match, try AI matching as fallback
-      if (!clientId) {
-        console.log('No keyword match found, trying AI matching...');
-        
-        // Build client context for AI matching
-        const clientsContext = clients.map(c => ({
-          id: c.id,
-          name: c.name,
-          organization: c.organization,
-          industry: c.industry,
-          locations: c.locations,
-          assets: c.high_value_assets,
-          keywords: c.monitoring_keywords
-        }));
+    // #256 Phase 1 (2026-05-23) — TENANT-BOUNDARY CONTRACT HARDENING
+    //
+    // BACKGROUND
+    //   The prior cross-tenant scoring loop (formerly at this site, removed
+    //   2026-05-23) read ALL clients across ALL tenants without a tenant
+    //   filter, scored each on keyword/asset/location match against the
+    //   inbound signal text, and assigned the signal to the single highest-
+    //   scoring client. This silently misattributed signals when multiple
+    //   tenants had overlapping keywords — empirical proof: 3 prod CISA-KEV
+    //   signals from monitor-threat-intel all landed in Petronas Canada
+    //   despite being generic infrastructure CVEs. The "losing" tenants
+    //   silently never saw signals they had legitimate interest in.
+    //
+    // NEW CONTRACT (Aaron-approved, Option D, 2026-05-23)
+    //   Default: reject any signal arriving with neither `client_id` nor
+    //   `tenant_broadcast`. The reject fires EARLY (right after explicit
+    //   client_id validation, before any AI / URL-fetch / F-034 work) —
+    //   see the early-reject block at ~line 278. By the time we reach this
+    //   site, `validatedExplicitClientId` is guaranteed truthy.
+    //
+    //   Phase 3 will introduce broadcast routing for legitimate fan-out
+    //   feeds. In Phase 1, broadcast is accepted at the schema layer but
+    //   the routing is not implemented; broadcast requests return 501.
+    //
+    //   The old scoring loop is REMOVED entirely (not gated by a flag) so
+    //   it cannot accidentally come back. To re-introduce ambiguous matching
+    //   would require an intentional new feature, not a flag flip.
+    console.log(`✓ EXPLICIT CLIENT: Using validated client_id ${validatedExplicitClientId}`);
+    matchedKeywords.push('explicit_client_override');
+    matchConfidence = 'explicit';
 
-        try {
-          const { data: matchResult, error: matchErr } = await callAiGatewayJson({
-            model: 'gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: `You are a client matching specialist. Match security signals to clients based on:
-- Direct mentions of client names or organizations
-- Monitoring keywords configured for each client
-- Industry relevance (e.g., pipeline activism → energy companies)
-- Geographic overlap (locations mentioned)
-- Asset relevance (e.g., "CGL" or "Coastal GasLink" → pipeline assets)
-- Project connections (e.g., LNG projects → energy sector)
-
-Respond with ONLY a JSON object: {"client_id": "uuid-here"} or {"client_id": null} if no match.`
-              },
-              {
-                role: 'user',
-                content: `Signal content:\n${signalText.substring(0, 2000)}\n\nAvailable clients:\n${JSON.stringify(clientsContext, null, 2)}\n\nWhich client does this signal relate to?`
-              }
-            ],
-            extraBody: { max_completion_tokens: 150 },
-            functionName: 'ingest-signal',
-          });
-
-          if (!matchErr && matchResult?.client_id) {
-              // Validate AI-suggested client_id exists
-              const aiSuggestedClient = clients.find(c => c.id === matchResult.client_id);
-              if (aiSuggestedClient) {
-                clientId = matchResult.client_id;
-                matchedKeywords.push('ai_contextual_match');
-                matchConfidence = 'ai';
-                console.log(`✓ AI MATCH: Signal matched to client ${aiSuggestedClient.name}`);
-              } else {
-                console.warn(`⚠ AI suggested invalid client_id: ${matchResult.client_id}`);
-              }
-          }
-        } catch (error) {
-          console.error('AI client matching failed:', error);
-        }
-      }
-      
-      // Log unmatched signals for audit trail
-      if (!clientId) {
-        console.warn(`⚠ UNMATCHED SIGNAL: No client could be matched for signal. Text preview: ${signalText.substring(0, 200)}`);
-        matchConfidence = 'none';
-      }
-    }
-    } // Close the validatedExplicitClientId else block
+    // (#256 Phase 1 — pre-#256 cross-tenant scoring + AI-match loop deleted
+    //  2026-05-23. See block comment above for context. Any future
+    //  multi-tenant fan-out must go through Phase 3 broadcast routing.)
 
     // Calculate content hash BEFORE insertion for duplicate detection.
     // Hash on source_url when available — AI paraphrases snippet text each run, so
@@ -1559,20 +1589,11 @@ Score this signal's relevance and classify the connection.`
           if (gateScore < relevanceThreshold) {
             console.log(`[AI Relevance Gate] REJECTED (score ${gateScore.toFixed(2)}): ${gateReason}`);
 
-            // Audit trail — write to filtered_signals.
-            // F-004 (2026-05-13): source_name must NEVER be null. Audit found
-            // 19% of rejections had null source_name making cross-source
-            // debugging impossible. Use a 3-step fallback before defaulting
-            // to a labeled 'unknown:<caller>' marker.
-            const resolvedSourceName = source_key
-              || signalRaw?.source_name
-              || signalRaw?.source
-              || signalRaw?.monitor
-              || `unknown:ingest-signal:relevance-gate`;
+            // Audit trail — write to filtered_signals
             supabase.from('filtered_signals').insert({
               raw_text: (classification.normalized_text || signalText).substring(0, 2000),
               source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
-              source_name: resolvedSourceName,
+              source_name: source_key || signalRaw?.source_name || null,
               client_id: clientId,
               filter_reason: 'ai_relevance_gate',
               relevance_score: gateScore,
@@ -1624,16 +1645,10 @@ Score this signal's relevance and classify the connection.`
           // OpenAI 429s caused gate failures; monitor-news-google scanned
           // 49 items and created 0 signals, with filtered_signals empty —
           // operators saw symptoms but no diagnostic trail).
-          // F-004: source_name fallback chain — never null
-          const resolvedSourceName2 = source_key
-            || signalRaw?.source_name
-            || signalRaw?.source
-            || signalRaw?.monitor
-            || `unknown:ingest-signal:gate-error`;
           supabase.from('filtered_signals').insert({
             raw_text: signalText.substring(0, 2000),
             source_url: source_url || signalRaw?.source_url || signalRaw?.url || signalRaw?.link || null,
-            source_name: resolvedSourceName2,
+            source_name: source_key || signalRaw?.source_name || null,
             client_id: clientId,
             filter_reason: 'ai_relevance_gate_error',
             relevance_score: null,
@@ -2212,9 +2227,12 @@ Score this signal's relevance and classify the connection.`
                 }
               });
               
-              // Trigger email alert delivery immediately
+              // Trigger email alert delivery immediately.
+              // Service-role is only the transport; alert-delivery v2 requires the dedicated
+              // internal header as the function-level authority (rejects service-role alone).
               supabase.functions.invoke('alert-delivery', {
-                body: { priority: 'immediate' }
+                body: { priority: 'immediate' },
+                headers: { 'x-alert-delivery-internal': Deno.env.get('ALERT_DELIVERY_INTERNAL_SECRET') ?? '' }
               }).catch(err => console.error('Alert delivery error:', err));
               
               // === SECURE MESSAGING FAST-PATH ===
