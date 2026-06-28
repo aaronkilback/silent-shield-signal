@@ -10,6 +10,15 @@ name: Deploy Edge Functions (Staging)
 #   STAGING_SUPABASE_SERVICE_ROLE_KEY    new staging service-role key
 # Reused (same operator access token works across projects):
 #   SUPABASE_ACCESS_TOKEN
+#
+# PROVENANCE-REPAIR (deployment-control): the change detection now fails CLOSED.
+# Previously a shallow checkout (fetch-depth: 2) could leave `github.event.before`
+# unresolvable; the diff then failed, `|| true` swallowed the error, the function
+# set became empty, and the job exited 0 reporting "No functions to deploy" while
+# deploying nothing. Fixes: full history; resolvable-base + diff-success are
+# REQUIRED (never converted to a no-op); an empty set is only a legitimate no-op
+# when the diff actually succeeded with zero function/config changes; explicit
+# dispatch targets are validated and asserted to have been deployed.
 
 on:
   push:
@@ -21,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Function name, "all", or blank for changed-only'
+        description: 'Function name (e.g. "alert-delivery"), "all", or blank for changed-only'
         required: false
         default: ''
 
@@ -37,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0          # full history: the change-detection diff needs the base commit
 
       - uses: supabase/setup-cli@v1
         with:
@@ -45,91 +54,165 @@ jobs:
 
       - name: Determine functions to deploy
         id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          TARGET_INPUT: ${{ github.event.inputs.target }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          GIT_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          MODE="changed"
-          TARGET_INPUT='${{ github.event.inputs.target }}'
 
           list_all_functions() {
             find supabase/functions -mindepth 1 -maxdepth 1 -type d \
-              | awk -F/ '{print $NF}' \
-              | grep -v '^_' \
-              | while read -r dir; do
-                  if [[ -f "supabase/functions/$dir/index.ts" ]]; then
-                    echo "$dir"
-                  fi
-                done \
+              | awk -F/ '{print $NF}' | grep -v '^_' \
+              | while read -r dir; do [[ -f "supabase/functions/$dir/index.ts" ]] && echo "$dir"; done \
               | sort
           }
 
-          if [[ -n "$TARGET_INPUT" ]]; then
-            if [[ "$TARGET_INPUT" == "all" ]]; then
-              MODE="all"
-              FUNCTIONS=$(list_all_functions)
+          MODE=""; FUNCTIONS=""
+
+          if [[ -n "${TARGET_INPUT}" ]]; then
+            # ── explicit, auditable manual dispatch ──
+            if [[ "${TARGET_INPUT}" == "all" ]]; then
+              MODE="all"; FUNCTIONS="$(list_all_functions)"
             else
-              MODE="manual"
-              FUNCTIONS="$TARGET_INPUT"
+              MODE="manual"; FUNCTIONS="${TARGET_INPUT}"
+              # defense-in-depth: safe charset ONLY (no shell metacharacters). TARGET_INPUT is read
+              # from env and is NEVER interpolated into a command — it is validated, then a known-safe
+              # function name from the resolved list is what gets passed to the deploy command.
+              if [[ ! "${TARGET_INPUT}" =~ ^[a-z0-9-]+$ ]]; then
+                echo "::error::Forced target '${TARGET_INPUT}' contains illegal characters (allowed: [a-z0-9-])."; exit 1
+              fi
+              # RECOVERY CONSTRAINT: the forced single-target dispatch is restricted to an allowlist.
+              # Currently ONLY 'alert-delivery' (the deployment-control recovery). Reject anything else.
+              # Relax this allowlist deliberately if another function ever needs a forced staging deploy.
+              case "${TARGET_INPUT}" in
+                alert-delivery) : ;;
+                *) echo "::error::Forced dispatch target '${TARGET_INPUT}' is not permitted. Only 'alert-delivery' is allowed for this recovery."; exit 1 ;;
+              esac
+              RESOLVED_DIR="supabase/functions/${TARGET_INPUT}"
+              if [[ ! -f "${RESOLVED_DIR}/index.ts" ]]; then
+                echo "::error::Requested function '${TARGET_INPUT}' has no ${RESOLVED_DIR}/index.ts at ${AFTER_SHA}"; exit 1
+              fi
+              echo "Resolved function directory: ${RESOLVED_DIR}"
             fi
           else
-            CHANGED=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- supabase/functions/ supabase/config.toml \
-              | awk -F/ '/^supabase\/functions\// {print $3}; /^supabase\/config\.toml$/ {print "_config_toml_"}' \
-              | sort -u | grep -v '^$' || true)
-            if echo "$CHANGED" | grep -qE '^_shared$|^_config_toml_$'; then
-              MODE="redeploy_all"
-              FUNCTIONS=$(list_all_functions)
+            # ── push: changed-only. Base MUST be resolvable AND the diff MUST succeed. ──
+            if [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
+              echo "::error::Base commit (github.event.before) is empty/all-zeros (new branch / unknown). Refusing to guess — use workflow_dispatch with an explicit target."; exit 1
+            fi
+            if ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+              echo "::error::Base commit ${BEFORE_SHA} not resolvable in checkout (history too shallow?). FAILING CLOSED rather than deploying nothing."; exit 1
+            fi
+            # NO '|| true' on the diff: a diff failure must FAIL the job, never fall back to empty.
+            if ! CHANGED_RAW="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}" -- supabase/functions/ supabase/config.toml)"; then
+              echo "::error::git diff ${BEFORE_SHA}..${AFTER_SHA} failed. FAILING CLOSED (never 'no functions to deploy')."; exit 1
+            fi
+            CHANGED="$(printf '%s\n' "${CHANGED_RAW}" | awk -F/ '/^supabase\/functions\// {print $3}; /^supabase\/config\.toml$/ {print "_config_toml_"}' | sort -u | grep -v '^$' || true)"
+            if printf '%s\n' "${CHANGED}" | grep -qE '^_shared$|^_config_toml_$'; then
+              MODE="redeploy_all"; FUNCTIONS="$(list_all_functions)"
             else
-              FUNCTIONS=$(echo "$CHANGED" | grep -v '^_' || true)
+              MODE="changed"; FUNCTIONS="$(printf '%s\n' "${CHANGED}" | grep -v '^_' || true)"
             fi
           fi
 
-          if [[ -z "$FUNCTIONS" ]]; then
-            echo "No functions to deploy."
-            echo "mode=noop" >> "$GITHUB_OUTPUT"
-            echo "functions=" >> "$GITHUB_OUTPUT"
-            exit 0
+          # ── provenance: always emit resolved SHAs + function list ──
+          {
+            echo "### Deploy detection (staging)"
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| event | ${EVENT_NAME} |"
+            echo "| workflow_ref | ${WORKFLOW_REF:-${GIT_REF}} |"
+            echo "| checkout_sha | ${AFTER_SHA} |"
+            echo "| before | ${BEFORE_SHA:-n/a} |"
+            echo "| requested_target | ${TARGET_INPUT:-<changed-only>} |"
+            echo "| mode | ${MODE} |"
+            echo "| functions | ${FUNCTIONS:-<none>} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "workflow_ref=${WORKFLOW_REF:-${GIT_REF}} checkout_sha=${AFTER_SHA} event=${EVENT_NAME} before=${BEFORE_SHA:-n/a} mode=${MODE} requested_target=${TARGET_INPUT:-<changed-only>}"
+          echo "Functions to deploy: ${FUNCTIONS:-<none>}"
+
+          # A legitimate no-op ONLY when the diff SUCCEEDED and genuinely changed no functions.
+          if [[ -z "${FUNCTIONS}" ]]; then
+            if [[ "${MODE}" == "changed" ]]; then
+              echo "::notice::No function/config changes in ${BEFORE_SHA}..${AFTER_SHA} — nothing to deploy (legitimate no-op)."
+              { echo "mode=noop"; echo "functions="; echo "requested="; } >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            echo "::error::Empty function set in mode='${MODE}' — failing closed."; exit 1
           fi
 
           {
-            echo "mode=$MODE"
-            echo "functions<<EOF"
-            echo "$FUNCTIONS"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+            echo "mode=${MODE}"
+            echo "requested=${TARGET_INPUT}"
+            echo "functions<<EOF"; echo "${FUNCTIONS}"; echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
-          echo "Mode: $MODE"
-          echo "Functions to deploy:"
-          echo "$FUNCTIONS"
+      - name: Source provenance (subtree hashes of functions to deploy)
+        if: steps.detect.outputs.mode != 'noop'
+        run: |
+          set -euo pipefail
+          echo "### Source subtree hashes (pre-deploy)" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| function | tree-hash |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "|---|---|" >> "${GITHUB_STEP_SUMMARY}"
+          while IFS= read -r fn; do
+            [[ -z "$fn" ]] && continue
+            h="$(git rev-parse "HEAD:supabase/functions/${fn}" 2>/dev/null || echo 'n/a')"
+            echo "subtree ${fn}: ${h} @ HEAD ${GITHUB_SHA}"
+            echo "| ${fn} | ${h} |" >> "${GITHUB_STEP_SUMMARY}"
+          done <<< "${{ steps.detect.outputs.functions }}"
 
       - name: Deploy to staging
         if: steps.detect.outputs.mode != 'noop'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PROJECT_REF: ${{ secrets.STAGING_PROJECT_REF }}
+          REQUESTED: ${{ steps.detect.outputs.requested }}
         run: |
-          if [[ -z "$PROJECT_REF" ]]; then
-            echo "::error::STAGING_PROJECT_REF secret is not set. Add it in GitHub repo settings."
-            exit 1
+          set -euo pipefail
+          if [[ -z "${PROJECT_REF}" ]]; then
+            echo "::error::STAGING_PROJECT_REF secret is not set."; exit 1
           fi
-          FAILED=()
-          DEPLOYED=()
-          while IFS= read -r fn; do
-            [[ -z "$fn" ]] && continue
-            echo "::group::Deploy $fn (staging)"
-            if supabase functions deploy "$fn" --project-ref "$PROJECT_REF"; then
-              DEPLOYED+=("$fn")
-              echo "::endgroup::"
+          mapfile -t WANT < <(printf '%s\n' "${{ steps.detect.outputs.functions }}" | grep -v '^$')
+          if [[ ${#WANT[@]} -eq 0 ]]; then
+            echo "::error::mode is not noop but the resolved function list is empty — failing closed."; exit 1
+          fi
+          FAILED=(); DEPLOYED=()
+          for fn in "${WANT[@]}"; do
+            echo "::group::Deploy ${fn} (staging)"
+            # exact command logged with the project ref MASKED (the fn is a validated, known-safe name)
+            echo "exact deploy command: supabase functions deploy ${fn} --project-ref ***"
+            if supabase functions deploy "${fn}" --project-ref "${PROJECT_REF}"; then
+              DEPLOYED+=("${fn}")
             else
-              FAILED+=("$fn")
-              echo "::endgroup::"
-              echo "::error title=Staging deploy failed::$fn"
+              FAILED+=("${fn}"); echo "::error title=Staging deploy failed::${fn}"
             fi
-          done <<< "${{ steps.detect.outputs.functions }}"
+            echo "::endgroup::"
+          done
           echo "─── Summary (staging) ───"
-          echo "Deployed: ${#DEPLOYED[@]}"
-          echo "Failed:   ${#FAILED[@]}"
-          if [ ${#FAILED[@]} -gt 0 ]; then
-            printf '  - %s\n' "${FAILED[@]}"
-            exit 1
+          printf 'Requested: %s\n' "${WANT[*]}"
+          printf 'Deployed:  %s\n' "${DEPLOYED[*]:-<none>}"
+          printf 'Failed:    %s\n' "${FAILED[*]:-<none>}"
+          {
+            echo "### Deploy result (staging)"
+            echo "- requested: ${WANT[*]}"
+            echo "- deployed: ${DEPLOYED[*]:-<none>}"
+            echo "- failed: ${FAILED[*]:-<none>}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          if [[ ${#FAILED[@]} -gt 0 ]]; then exit 1; fi
+          # Fail if any requested function was NOT actually passed-to/accepted-by the deploy command.
+          for fn in "${WANT[@]}"; do
+            if ! printf '%s\n' "${DEPLOYED[@]}" | grep -qx "${fn}"; then
+              echo "::error::Requested function '${fn}' was not deployed."; exit 1
+            fi
+          done
+          # Extra guard for explicit dispatch: the requested target must be in the deployed set.
+          if [[ -n "${REQUESTED}" && "${REQUESTED}" != "all" ]]; then
+            if ! printf '%s\n' "${DEPLOYED[@]}" | grep -qx "${REQUESTED}"; then
+              echo "::error::Explicitly requested target '${REQUESTED}' was not deployed."; exit 1
+            fi
           fi
 
   benchmark-regression-check-staging:
