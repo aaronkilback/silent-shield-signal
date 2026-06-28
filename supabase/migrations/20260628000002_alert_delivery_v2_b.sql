@@ -16,10 +16,14 @@ ALTER TABLE public.alerts
   ADD COLUMN IF NOT EXISTS error_class           text,
   ADD COLUMN IF NOT EXISTS error_message_safe    text,
   ADD COLUMN IF NOT EXISTS retryable             boolean,
-  ADD COLUMN IF NOT EXISTS provider_message_id   text;
+  ADD COLUMN IF NOT EXISTS provider_message_id   text,
+  -- STAGING test-mode marker: ONLY deliberately-created synthetic test fixtures (set true) are
+  -- ever claimed. Defaults false so existing/legacy/generated/real rows are ignored. This is a
+  -- staging safety control, NOT the future production recipient model.
+  ADD COLUMN IF NOT EXISTS delivery_test_mode    boolean NOT NULL DEFAULT false;
 
 CREATE UNIQUE INDEX IF NOT EXISTS alerts_delivery_key_uq ON public.alerts (delivery_key) WHERE delivery_key IS NOT NULL;
-CREATE INDEX IF NOT EXISTS alerts_email_claimable_idx ON public.alerts (created_at) WHERE channel = 'email' AND status IN ('pending','sending');
+CREATE INDEX IF NOT EXISTS alerts_email_claimable_idx ON public.alerts (created_at) WHERE channel = 'email' AND delivery_test_mode AND status IN ('pending','sending');
 
 -- ── staging recipient allowlist (hard safety gate; seeded at provision time, not here) ──
 CREATE TABLE IF NOT EXISTS public.alert_delivery_allowed_recipients (
@@ -50,6 +54,7 @@ BEGIN
          claimed_by = NULL, claimed_at = NULL, lease_expires_at = NULL,
          updated_at = now()
    WHERE a.channel = 'email' AND a.status = 'sending'
+     AND a.delivery_test_mode = true                 -- staging: only marked test fixtures
      AND a.lease_expires_at < now()
      AND a.idempotency_anchor_at IS NOT NULL
      AND a.idempotency_anchor_at <= now() - make_interval(secs => p_idempotency_window_seconds);
@@ -69,6 +74,7 @@ BEGIN
    WHERE a.id IN (
      SELECT id FROM public.alerts
       WHERE channel = 'email'
+        AND delivery_test_mode = true                -- staging: ONLY marked synthetic fixtures
         AND ( status = 'pending'
               OR ( status = 'sending' AND lease_expires_at < now()
                    AND idempotency_anchor_at > now() - make_interval(secs => p_idempotency_window_seconds) ) )

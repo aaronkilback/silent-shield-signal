@@ -109,3 +109,24 @@ export function buildSendParams(fromEmail: string, alert: { recipient: string; d
     headers: { "Idempotency-Key": alert.delivery_key }, // server-controlled only
   };
 }
+
+/**
+ * STAGING test-mode claim eligibility (mirrors the claim RPC WHERE). A row is eligible ONLY if it
+ * is an email row EXPLICITLY marked as a controlled staging test fixture (delivery_test_mode), and
+ * is either 'pending' or a lease-expired 'sending' still inside the idempotency window. Recipient
+ * allowlisting is a SEPARATE, additional gate. Existing/legacy/generated/unmarked rows are ignored.
+ * This strict marker is a staging safety control, NOT the future production recipient model.
+ */
+export function claimEligible(row: {
+  channel: string | null | undefined;
+  status: string;
+  delivery_test_mode: boolean | null | undefined;
+  leaseExpired: boolean;
+  withinIdempotencyWindow: boolean;
+}): boolean {
+  if (row.channel !== "email") return false;
+  if (row.delivery_test_mode !== true) return false; // marker required
+  if (row.status === "pending") return true;
+  if (row.status === "sending" && row.leaseExpired && row.withinIdempotencyWindow) return true;
+  return false;
+}

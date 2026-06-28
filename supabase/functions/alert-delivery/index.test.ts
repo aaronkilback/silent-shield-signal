@@ -4,7 +4,7 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   timingSafeEqual, authorizeInternal, ALERT_INTERNAL_HEADER,
   isRecipientAllowed, isSupportedChannel, classifyError, nextState,
-  reclaimDecision, buildSendParams,
+  reclaimDecision, buildSendParams, claimEligible,
 } from "./lib.ts";
 
 const SECRET = "x".repeat(48);
@@ -110,4 +110,17 @@ Deno.test("buildSendParams: DB record cannot override delivery config", () => {
   assertEquals(("api_key" in (p as any)) || ("endpoint" in (p as any)), false);
   // content is escaped (no raw HTML injection)
   assertEquals(p.html.includes("<h2>Hi</h2>"), true);
+});
+
+Deno.test("staging test-mode marker: only marked synthetic fixtures are claimable", () => {
+  const base = { channel: "email", leaseExpired: false, withinIdempotencyWindow: true };
+  // marked synthetic fixture -> claimable
+  assertEquals(claimEligible({ ...base, status: "pending", delivery_test_mode: true }), true);
+  // allowlisted recipient but NOT marked -> NOT claimed (allowlist alone is insufficient)
+  assertEquals(claimEligible({ ...base, status: "pending", delivery_test_mode: false }), false);
+  // ordinary/generated/legacy row (marker absent/false) -> ignored even if recipient allowlisted
+  assertEquals(claimEligible({ ...base, status: "pending", delivery_test_mode: null as any }), false);
+  // marked lease-expired sending within window -> claimable; non-email never claimable
+  assertEquals(claimEligible({ channel: "email", status: "sending", delivery_test_mode: true, leaseExpired: true, withinIdempotencyWindow: true }), true);
+  assertEquals(claimEligible({ channel: "secure_messaging", status: "pending", delivery_test_mode: true, leaseExpired: false, withinIdempotencyWindow: true }), false);
 });
