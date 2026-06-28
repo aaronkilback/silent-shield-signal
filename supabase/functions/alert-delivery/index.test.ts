@@ -4,7 +4,7 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   timingSafeEqual, authorizeInternal, ALERT_INTERNAL_HEADER,
   isRecipientAllowed, isSupportedChannel, classifyError, nextState,
-  reclaimDecision, buildSendParams, claimEligible,
+  reclaimDecision, buildSendParams, claimEligible, isWithinIdempotencyWindow,
 } from "./lib.ts";
 
 const SECRET = "x".repeat(48);
@@ -76,6 +76,35 @@ Deno.test("reclaimDecision: idempotency window", () => {
   assertEquals(reclaimDecision({ status: "sending", leaseExpired: true, withinIdempotencyWindow: false }), "reconcile");
   // still leased -> skip
   assertEquals(reclaimDecision({ status: "sending", leaseExpired: false, withinIdempotencyWindow: true }), "skip");
+});
+
+Deno.test("idempotency margin: boundary is STRICTLY inside the cutoff (just-inside=reclaim, at/beyond=reconcile)", () => {
+  // The cutoff value is irrelevant to this LOGIC test — the DB owns the real value
+  // (alert_delivery_idempotency_window_seconds(), asserted == 79200 in IDEMPOTENCY_MARGIN_TEST.sql).
+  // Here we prove the strictly-inside boundary semantics for an arbitrary cutoff.
+  const C = 1000;
+  const now = 1_000_000;
+  const within = (ageSec: number) => isWithinIdempotencyWindow(now - ageSec, now, C);
+  // just inside -> within -> reclaim
+  assertEquals(within(C - 1), true);
+  assertEquals(reclaimDecision({ status: "sending", leaseExpired: true, withinIdempotencyWindow: within(C - 1) }), "reclaim");
+  // exactly at cutoff -> NOT within -> reconcile (no resend)
+  assertEquals(within(C), false);
+  assertEquals(reclaimDecision({ status: "sending", leaseExpired: true, withinIdempotencyWindow: within(C) }), "reconcile");
+  // beyond cutoff -> NOT within -> reconcile (no resend)
+  assertEquals(within(C + 1), false);
+  assertEquals(reclaimDecision({ status: "sending", leaseExpired: true, withinIdempotencyWindow: within(C + 1) }), "reconcile");
+  // claimEligible mirrors: at/beyond cutoff a marked 'sending' fixture is NOT claimable; just-inside is
+  assertEquals(claimEligible({ channel: "email", status: "sending", delivery_test_mode: true, leaseExpired: true, withinIdempotencyWindow: within(C) }), false);
+  assertEquals(claimEligible({ channel: "email", status: "sending", delivery_test_mode: true, leaseExpired: true, withinIdempotencyWindow: within(C - 1) }), true);
+});
+
+Deno.test("handler cannot override the DB retry policy (no window arg / window constant in handler)", async () => {
+  // Single-authoritative-source guard: the handler must neither define its own window constant nor
+  // pass a window to the claim RPC. The cutoff is owned solely by the database.
+  const src = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  assertEquals(src.includes("p_idempotency_window_seconds"), false);
+  assertEquals(src.includes("IDEMPOTENCY_WINDOW_SECONDS"), false);
 });
 
 Deno.test("expired sending: provider-accept + failed-DB-finalize + window-expiry => no second send", () => {

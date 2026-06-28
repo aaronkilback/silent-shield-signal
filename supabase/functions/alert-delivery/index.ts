@@ -9,8 +9,9 @@
 //      failed_at + sanitized error_class, never sent_at. 'requires_reconciliation' = lease
 //      expired AFTER the provider idempotency window; never auto-resent.
 //   3. Idempotent — stable delivery_key persisted before provider contact and used as the
-//      provider Idempotency-Key; provider_message_id persisted; reclaim/resend only inside the
-//      idempotency window; past it -> requires_reconciliation (no second send).
+//      provider Idempotency-Key; provider_message_id persisted; reclaim/resend only STRICTLY
+//      inside the DB-authoritative retry cutoff (margin-bearing, < the provider's key retention);
+//      at/past the cutoff -> requires_reconciliation (no second send).
 //   4. Safe observability — only sanitized error_class/message, timestamps, provider id,
 //      retryability. No raw provider bodies, inbound payloads, recipient PII, or secrets.
 //   5. Email safety — sender/reply-to/cc/bcc/attachments/headers/api-key/endpoint are NEVER
@@ -33,7 +34,10 @@ const json = (b: unknown, s = 200) =>
 
 const CLAIM_LIMIT = 10;
 const LEASE_SECONDS = 120;
-const IDEMPOTENCY_WINDOW_SECONDS = 86400; // provider (Resend) idempotency keys expire ~24h
+// The idempotency/retry cutoff is intentionally NOT defined here. It is owned SOLELY by the
+// database — public.alert_delivery_idempotency_window_seconds() (currently 22h, strictly inside
+// Resend's 24h key retention). The handler cannot pass or drift it: claim_pending_email_alerts
+// reads the authoritative value internally and exposes no window parameter.
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -53,10 +57,11 @@ Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const worker = crypto.randomUUID();
 
-  // Atomic claim. The RPC also reconciles lease-expired 'sending' rows that are past the
-  // idempotency window into 'requires_reconciliation' (never returned for resend).
+  // Atomic claim. The RPC also reconciles lease-expired 'sending' rows that are at/past the
+  // DB-authoritative idempotency cutoff into 'requires_reconciliation' (never returned for resend).
+  // No window argument is passed — the cutoff is owned solely by the database (see note above).
   const { data: claimed, error: claimErr } = await supabase.rpc("claim_pending_email_alerts", {
-    p_worker: worker, p_limit: CLAIM_LIMIT, p_lease_seconds: LEASE_SECONDS, p_idempotency_window_seconds: IDEMPOTENCY_WINDOW_SECONDS,
+    p_worker: worker, p_limit: CLAIM_LIMIT, p_lease_seconds: LEASE_SECONDS,
   });
   if (claimErr) { console.error("[alert-delivery v2] claim failed:", claimErr.message); return json({ error: "claim_failed" }, 500); }
 

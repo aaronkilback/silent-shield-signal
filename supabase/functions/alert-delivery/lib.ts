@@ -76,16 +76,28 @@ export function nextState(o: Outcome): NextState {
 }
 
 /**
- * Idempotency-window reclaim decision (mirrors the claim RPC; provider idempotency keys expire
- * after ~24h). A 'sending' row whose lease expired may be re-sent automatically ONLY while still
- * within the provider idempotency window; once past it, the prior provider outcome is unknown and
- * it must NEVER be auto-resent — it is moved to 'requires_reconciliation'.
+ * Idempotency-window reclaim decision (mirrors the claim RPC). A 'sending' row whose lease expired
+ * may be re-sent automatically ONLY while still STRICTLY inside the retry cutoff; at/past it the
+ * prior provider outcome is unknown and it must NEVER be auto-resent — it is moved to
+ * 'requires_reconciliation'. The cutoff VALUE is owned solely by the database
+ * (public.alert_delivery_idempotency_window_seconds()); this pure decision embeds no value.
  */
 export type ReclaimDecision = "reclaim" | "reconcile" | "skip";
 export function reclaimDecision(p: { status: string; leaseExpired: boolean; withinIdempotencyWindow: boolean }): ReclaimDecision {
   if (p.status === "pending") return "reclaim";
   if (p.status === "sending" && p.leaseExpired) return p.withinIdempotencyWindow ? "reclaim" : "reconcile";
   return "skip";
+}
+
+/**
+ * Pure boundary helper (tests/clarity only). Returns whether an idempotency anchor is STRICTLY
+ * inside the retry cutoff. age == cutoff is OUTSIDE (false) -> reconcile, mirroring the claim RPC
+ * ('>' for claim, '<=' for reconcile). The AUTHORITATIVE cutoff value lives ONLY in the database
+ * function alert_delivery_idempotency_window_seconds(); this helper takes it as a parameter and
+ * embeds NO constant, so it cannot drift from the DB and the handler cannot set it.
+ */
+export function isWithinIdempotencyWindow(anchorEpochSec: number, nowEpochSec: number, cutoffSec: number): boolean {
+  return (nowEpochSec - anchorEpochSec) < cutoffSec;
 }
 
 /**

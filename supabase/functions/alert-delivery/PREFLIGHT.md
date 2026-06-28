@@ -69,7 +69,7 @@ INSERT INTO public.alerts(channel, recipient, status, delivery_test_mode, respon
 VALUES ('email', lower('<APPROVED_TEST_MAILBOX>'), 'pending', false,
         jsonb_build_object('subject','[control] unmarked','body','must be ignored'));
 SELECT id, delivery_test_mode
-  FROM public.claim_pending_email_alerts('preflight-dryrun', 50, 120, 86400);
+  FROM public.claim_pending_email_alerts('preflight-dryrun', 50, 120);  -- window is DB-authoritative (no caller arg)
 --     expect: ONLY delivery_test_mode = true rows; the unmarked control is absent.
 ```
 (The pure `claimEligible()` logic for these cases is already proven by unit tests; this is the
