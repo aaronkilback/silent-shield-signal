@@ -3,6 +3,10 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 import type { ToolHandlerRegistry } from "./aegis-tool-executor.ts";
 import { entityIntelligence, entityDetails, entitySignals, entityRelationships } from "./tenant-entity-graph.ts";
+import { getAccessibleClientIds, isSuperAdmin } from "./supabase-client.ts";
+import { computeSignalClientScope } from "./signal-client-scope.ts";
+
+const CLIENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Helper — reused across handlers for edge function calls with timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
@@ -112,7 +116,7 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     };
   },
 
-  get_recent_signals: async (args, supabaseClient, _userId, tenantId, _tenantName) => {
+  get_recent_signals: async (args, supabaseClient, userId, tenantId, _tenantName) => {
     // PROD-EE (2026-05-24) — CRITICAL tenant isolation hotfix.
     // Real-user prod observation: with selectedClient=Petronas (tenant
     // feff5c44) the LLM summary referenced BC Place (CRT tenant
@@ -144,36 +148,89 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
       .order("received_at", { ascending: false })
       .limit(args.limit || 50);
 
-    if (args.client_id) {
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (uuidRegex.test(args.client_id)) {
-        // Validate the requested client belongs to the active tenant
-        // before applying the filter — prevents LLM-supplied UUID
-        // from escaping the tenant scope.
-        const { data: clientCheck } = await supabaseClient
-          .from("clients")
-          .select("id")
-          .eq("id", args.client_id)
-          .eq("tenant_id", tenantId)
-          .maybeSingle();
-        if (!clientCheck) {
-          return {
-            message: `Client ${args.client_id} not found in current tenant scope`,
-            signals: [],
-          };
+    // ── INC-SIGNALS-CLIENT-SCOPE (2026-06-29) — client-isolation containment ──
+    // The tenant filters above are NOT a client-authorization boundary: this
+    // handler runs with SERVICE_ROLE (RLS bypassed), and a tenant can hold
+    // sibling clients. A caller authorized for only some of a tenant's clients
+    // must never receive another client's signals. Derive the caller's
+    // accessible client_ids SERVER-SIDE from the AUTHENTICATED user (never from
+    // model/frontend input) and constrain the query to that set. Operators
+    // (super_admin) retain tenant-scope (existing behavior). null-client
+    // signals are already excluded by the clients!inner join above.
+    const operator = !!userId && (await isSuperAdmin(supabaseClient, userId));
+
+    if (operator) {
+      // Operator path — tenant scope is the authority. Existing behavior
+      // preserved: an explicit, tenant-validated client_id narrows the result.
+      if (args.client_id) {
+        if (CLIENT_UUID_RE.test(args.client_id)) {
+          const { data: clientCheck } = await supabaseClient
+            .from("clients")
+            .select("id")
+            .eq("id", args.client_id)
+            .eq("tenant_id", tenantId)
+            .maybeSingle();
+          if (!clientCheck) {
+            return { message: `Client ${args.client_id} not found in current tenant scope`, signals: [] };
+          }
+          query = query.eq("client_id", args.client_id);
+        } else {
+          const { data: client, error: clientError } = await supabaseClient
+            .from("clients")
+            .select("id")
+            .eq("tenant_id", tenantId)
+            .not("name", "ilike", "\\_%")
+            .ilike("name", `%${args.client_id}%`)
+            .limit(1)
+            .maybeSingle();
+          if (clientError || !client) return { message: `No client found matching "${args.client_id}" in current tenant scope`, signals: [] };
+          query = query.eq("client_id", client.id);
         }
-        query = query.eq("client_id", args.client_id);
+      }
+    } else {
+      // Non-operator path — constrain to the caller's accessible client set,
+      // derived SERVER-SIDE from the authenticated user. Frontend/model values
+      // are requests only and cannot widen this set.
+      const accessibleClientIds = userId ? await getAccessibleClientIds(supabaseClient, userId) : [];
+
+      // Resolve any caller-requested client to a concrete client_id within the
+      // tenant. It is validated against the accessible set below — never honored
+      // merely because it resolves within the tenant.
+      let requestedClientId: string | null = null;
+      let requestedUnresolved = false;
+      if (args.client_id) {
+        if (CLIENT_UUID_RE.test(args.client_id)) {
+          requestedClientId = args.client_id;
+        } else {
+          const { data: client } = await supabaseClient
+            .from("clients")
+            .select("id")
+            .eq("tenant_id", tenantId)
+            .not("name", "ilike", "\\_%")
+            .ilike("name", `%${args.client_id}%`)
+            .limit(1)
+            .maybeSingle();
+          if (client?.id) requestedClientId = client.id;
+          else requestedUnresolved = true;
+        }
+      }
+
+      const scope = computeSignalClientScope({
+        accessibleClientIds,
+        requestedClientId,
+        requestedUnresolved,
+        hasUser: !!userId,
+      });
+
+      if (scope.mode === "deny") {
+        console.warn(`[INC-SIGNALS-CLIENT-SCOPE] get_recent_signals denied (${scope.reason})`);
+        return { signals: [], message: "No signals are available within your authorized client scope." };
+      }
+      if (scope.mode === "single-client") {
+        query = query.eq("client_id", scope.clientIds[0]);
       } else {
-        const { data: client, error: clientError } = await supabaseClient
-          .from("clients")
-          .select("id")
-          .eq("tenant_id", tenantId)
-          .not("name", "ilike", "\\_%")
-          .ilike("name", `%${args.client_id}%`)
-          .limit(1)
-          .maybeSingle();
-        if (clientError || !client) return { message: `No client found matching "${args.client_id}" in current tenant scope`, signals: [] };
-        query = query.eq("client_id", client.id);
+        // client-set: the caller's full accessible client set within the tenant
+        query = query.in("client_id", scope.clientIds);
       }
     }
 

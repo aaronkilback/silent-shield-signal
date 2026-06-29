@@ -269,6 +269,28 @@ export async function getAccessibleClientIds(
     .filter((id: string | undefined): id is string => typeof id === 'string');
 }
 
+/**
+ * INC-SIGNALS-CLIENT-SCOPE helper — is this user a platform operator
+ * (super_admin)? Operators legitimately read across a tenant's clients, so the
+ * client-scope containment skips client narrowing for them. Calls the canonical
+ * `is_super_admin(_user_id)` SQL function (the same predicate RLS uses).
+ *
+ * Fail-closed: any error returns FALSE (treated as a normal, client-scoped
+ * caller) — an error must never silently grant operator-wide visibility.
+ */
+export async function isSuperAdmin(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .rpc('is_super_admin', { _user_id: userId });
+  if (error) {
+    console.error('[isSuperAdmin] RPC error:', error);
+    return false;
+  }
+  return data === true;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //                           RESPONSE HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
