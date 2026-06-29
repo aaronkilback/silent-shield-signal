@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Send, Loader2, Paperclip, X, Mic, MicOff, MessageSquarePlus, Users, User, Share2, History } from "lucide-react";
 import { AegisCapabilityHints } from "@/components/AegisCapabilityHints";
 import { useOpenAIRealtime } from "./voice/useOpenAIRealtime";
+import { admitVoiceTurn } from "@/lib/voiceTranscriptRouting";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -93,6 +94,11 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   const [voiceAgentResponse, setVoiceAgentResponse] = useState("");
   const voiceAgentResponseRef = useRef("");
   const lastVoiceSavedRef = useRef<string | null>(null);
+  // Voice-turn admission: one final transcript → one voice-originated Aegis turn.
+  // `pending` blocks overlapping voice turns; the last-admitted record dedups a
+  // doubly-emitted final. Voice-only — never gates the typed path.
+  const voiceTurnPendingRef = useRef(false);
+  const lastVoiceAdmitRef = useRef<{ normalized: string | null; at: number }>({ normalized: null, at: 0 });
   
   // Keep refs for callback data to avoid stale closures
   const messagesRef = useRef<Message[]>([]);
@@ -397,14 +403,32 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
     agentContext: `You are Aegis, a strategic AI security advisor for Silent Shield. Be concise and helpful.`,
     conversationHistory: messagesRef.current.slice(-10).map(m => ({ role: m.role, content: m.content })),
     onTranscript: (text, isFinal) => {
-      if (isFinal && text.trim()) {
-        // User finished speaking - add to chat
-        const userMsg: Message = { role: "user", content: `🎙️ ${text}` };
-        setMessages(prev => [...prev, userMsg]);
-        saveMessageRef.current?.(userMsg);
-        setVoiceTranscript(""); // Clear transcript after saving
-      } else {
+      // Submit a FINAL transcript through the SAME Aegis request path as typed
+      // text (streamChat). The admission guard enforces ONE utterance → ONE
+      // voice-originated turn: interim partials, duplicate emits, and finals that
+      // arrive while a voice turn is still pending are NOT submitted. Voice-only —
+      // it never blocks the typed path.
+      const decision = admitVoiceTurn(
+        text,
+        isFinal,
+        {
+          pending: voiceTurnPendingRef.current,
+          lastNormalized: lastVoiceAdmitRef.current.normalized,
+          lastAtMs: lastVoiceAdmitRef.current.at,
+        },
+        Date.now(),
+      );
+      if (decision.admit && decision.text) {
+        voiceTurnPendingRef.current = true;
+        lastVoiceAdmitRef.current = { normalized: decision.normalized ?? null, at: Date.now() };
+        setVoiceTranscript("");
+        // Release the admission lock when the Aegis turn settles (success OR error).
+        streamChat(decision.text).finally(() => { voiceTurnPendingRef.current = false; });
+      } else if (decision.reason === 'interim') {
         setVoiceTranscript(text);
+      } else {
+        // empty / duplicate / pending — clear any caption; do not submit.
+        setVoiceTranscript("");
       }
     },
     onAgentResponse: (delta) => {

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/hooks/useTenant';
 import { useClientSelection } from '@/hooks/useClientSelection';
+import { sttOnlySessionUpdate } from '@/lib/voiceTranscriptRouting';
 
 // P0 diagnostics flag (dev console only — never UI). Flip off / remove after the iPhone capture.
 const VOICE_SCOPE_DX = true;
@@ -256,6 +257,13 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
     switch (event.type) {
       case 'session.created':
         console.log('Session created');
+        // Make this session speech-to-text ONLY: the realtime model must not
+        // generate (or speak) its own answer — Aegis (dashboard-ai-assistant)
+        // is the single conversational brain for both typed and voice. We route
+        // the final transcript there; the realtime layer only captures speech.
+        if (dcRef.current?.readyState === 'open') {
+          dcRef.current.send(JSON.stringify(sttOnlySessionUpdate()));
+        }
         break;
 
       case 'session.updated':
@@ -337,9 +345,11 @@ export function useOpenAIRealtime(options: UseOpenAIRealtimeOptions = {}) {
           lastAcceptedTranscriptRef.current = { text: norm, at: nowTs };
           console.log('User transcript accepted:', transcriptText);
           setTranscript(transcriptText);
+          // Route the accepted transcript to Aegis — the SAME request path as
+          // typed text — via onTranscript → streamChat. The realtime layer is
+          // speech-to-text ONLY: we intentionally do NOT trigger a realtime
+          // 'voice-turn' response, so a second, tenant-blind brain cannot answer.
           optionsRef.current.onTranscript?.(transcriptText, true);
-          // Exactly one response for this accepted turn, via the gateway.
-          requestResponse('voice-turn');
         }
         break;
 
