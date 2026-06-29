@@ -13,6 +13,12 @@ import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import {
+  CREATE_INVESTIGATION_RPC,
+  buildCreateInvestigationV1Args,
+  extractInvestigationRow,
+  safeCreateInvestigationMessage,
+} from "@/lib/investigation-create-v1";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -106,14 +112,12 @@ const Investigations = () => {
   };
 
   const handleNewInvestigation = async () => {
-    // Fetch templates if we have learned patterns
-    await fetchTemplates();
-    if (templates.length > 0 || loadingTemplates) {
-      setShowTemplateDialog(true);
-    } else {
-      // No templates available — create directly
-      await createNewInvestigation(null);
-    }
+    // Template content (synopsis/recommendations, initial entry, usage) is NOT
+    // applied in this hotfix release (deferred — see createNewInvestigation), so
+    // template selection is intentionally hidden here to avoid implying the
+    // template was applied. Always create a blank investigation file. Template
+    // selection returns once content is applied via a server-side path.
+    await createNewInvestigation(null);
   };
 
   const createNewInvestigation = async (template: InvestigationTemplate | null) => {
@@ -122,71 +126,51 @@ const Investigations = () => {
     setIsCreating(true);
     setShowTemplateDialog(false);
     try {
-      // Generate file number
-      const year = new Date().getFullYear();
-      const count = investigations.length + 1;
-      const fileNumber = `INV-${year}-${String(count).padStart(4, '0')}`;
-
+      // Authenticated profile display name (server-derived identity; never user-editable here).
       const { data: profile } = await supabase
         .from('profiles')
         .select('name')
         .eq('id', user.id)
         .single();
 
-      const insertData: any = {
-        file_number: fileNumber,
-        prepared_by: user.id,
-        created_by_name: profile?.name || user.email || 'Unknown',
-        client_id: selectedClientId || null,
-      };
+      // Build v1 RPC args from the AUTHENTICATED identity only. Throws a safe
+      // CreateInvestigationBlocked (caught below) BEFORE any RPC call when there
+      // is no signed-in user or no selected client.
+      const args = buildCreateInvestigationV1Args({
+        userId: user.id,
+        userEmail: user.email,
+        profileName: profile?.name,
+        selectedClientId,
+      });
 
-      // Apply template if selected
-      if (template) {
-        if (template.typical_synopsis_structure) {
-          insertData.synopsis = template.typical_synopsis_structure;
-        }
-        if (template.typical_recommendations?.length) {
-          insertData.recommendations = template.typical_recommendations.join('\n\n');
-        }
-      }
-
-      const { data, error } = await supabase
-        .from('investigations')
-        .insert(insertData)
-        .select()
-        .single();
-
+      // The SERVER allocates the file number under an advisory lock and enforces
+      // client membership. No client-side INV-YYYY-NNNN, no direct insert.
+      const { data, error } = await supabase.rpc(CREATE_INVESTIGATION_RPC, args);
       if (error) throw error;
+      const row = extractInvestigationRow<{ id: string; file_number: string }>(data);
+      if (!row?.id) throw new Error('create_investigation returned no investigation');
 
-      // If template had entry patterns, create initial entries
-      if (template?.common_entry_patterns?.length) {
-        const firstPattern = template.common_entry_patterns[0];
-        if (firstPattern) {
-          await supabase.from('investigation_entries').insert({
-            investigation_id: data.id,
-            entry_text: firstPattern,
-            created_by: user.id,
-            created_by_name: profile?.name || user.email || 'Unknown',
-            is_ai_generated: true,
-          });
-        }
-      }
+      // The create_investigation RPC is the ONLY investigation mutation in this
+      // path. Template content (synopsis/recommendations, an initial entry, and
+      // usage tracking) is intentionally DEFERRED for this hotfix: persisting it
+      // would require a post-create client-side write — which we removed so that
+      // an RPC-succeeds-then-client-post-write-fails case cannot leave partial
+      // state — and there is no server-side authorized mutation for it yet.
+      // SCOPE OF THE DUPLICATE GUARANTEE: this removes duplicates caused by a
+      // successful create followed by a FAILED client-side post-create write. It
+      // does NOT protect against a transport failure after the RPC commits but
+      // before the browser receives the response — v1 has no idempotency key, so
+      // a manual retry could still create a second investigation.
+      // The investigation is created on the canonical server row; the UI
+      // proceeds to it regardless of the (deferred) template behaviour.
+      void template;
 
-      // Track template usage for feedback loop
-      if (template) {
-        await supabase.from('investigation_templates')
-          .update({ times_used: (template as any).times_used ? (template as any).times_used + 1 : 1 })
-          .eq('id', template.id);
-      }
-
-      toast.success(template 
-        ? `Investigation created from "${template.template_name}" template` 
-        : "Investigation file created"
-      );
-      navigate(`/investigation/${data.id}`);
+      toast.success("Investigation file created");
+      // Canonical: navigate using the SERVER-returned row id (server-issued file number).
+      navigate(`/investigation/${row.id}`);
     } catch (error: any) {
       console.error('Error creating investigation:', error);
-      toast.error(error.message || "Failed to create investigation");
+      toast.error(safeCreateInvestigationMessage(error));
     } finally {
       setIsCreating(false);
     }
