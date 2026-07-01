@@ -45,6 +45,24 @@ function jobBlock(source: string, jobKey: string): string {
   return lines.slice(start, end).join('\n');
 }
 
+/** Extract every job block from the workflow. */
+function jobBlocks(source: string): Array<{ key: string; block: string }> {
+  const lines = source.split('\n');
+  const jobsStart = lines.findIndex((l) => l === 'jobs:');
+  if (jobsStart === -1) throw new Error('workflow has no jobs block');
+
+  const starts: Array<{ key: string; index: number }> = [];
+  for (let i = jobsStart + 1; i < lines.length; i++) {
+    const match = lines[i].match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
+    if (match) starts.push({ key: match[1], index: i });
+  }
+
+  return starts.map(({ key, index }, idx) => ({
+    key,
+    block: lines.slice(index, starts[idx + 1]?.index ?? lines.length).join('\n'),
+  }));
+}
+
 /** Pull the (possibly folded `>-`) `if:` condition out of a job block, normalized. */
 function extractIf(block: string): string {
   const lines = block.split('\n');
@@ -63,6 +81,18 @@ function extractIf(block: string): string {
     else break;
   }
   return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function hasIf(block: string): boolean {
+  return /^ {4}if:/m.test(block);
+}
+
+function postsToSystemOps(block: string): boolean {
+  return /-X\s+POST/.test(block) && block.includes('/functions/v1/system-ops');
+}
+
+function systemOpsAction(block: string): string | null {
+  return block.match(/"action"\s*:\s*"([^"]+)"/)?.[1] ?? null;
 }
 
 /**
@@ -120,6 +150,21 @@ const PRIVILEGED_JOBS = [
   { key: 'pipeline-smoke', action: 'pipeline-tests' },
 ];
 
+const SYSTEM_OPS_POST_JOBS = jobBlocks(ciYml)
+  .filter(({ block }) => postsToSystemOps(block))
+  .map(({ key, block }) => ({
+    key,
+    block,
+    action: systemOpsAction(block),
+    condition: hasIf(block) ? extractIf(block) : 'true',
+  }));
+
+const REQUIRED_MANUAL_CONDITION_TERMS = [
+  "github.event_name == 'workflow_dispatch'",
+  "github.ref == 'refs/heads/main'",
+  `github.event.inputs.${CONFIRM_KEY} == '${CONFIRM_VALUE}'`,
+];
+
 describe('main-push mutation quarantine', () => {
   it('workflow exposes the confirmation-gated manual dispatch input', () => {
     expect(ciYml).toContain('workflow_dispatch:');
@@ -127,6 +172,35 @@ describe('main-push mutation quarantine', () => {
     // still runs ordinary CI on push + PR to main
     expect(ciYml).toMatch(/push:\s*\n\s*branches:\s*\[main\]/);
     expect(ciYml).toMatch(/pull_request:\s*\n\s*branches:\s*\[main\]/);
+  });
+
+  it('inventories every CI job that POSTs to system-ops', () => {
+    expect(SYSTEM_OPS_POST_JOBS.map((job) => job.key).sort()).toEqual([
+      'health-gate',
+      'pipeline-smoke',
+    ]);
+  });
+
+  it('no push- or pull_request-reachable CI job can POST to system-ops', () => {
+    expect(SYSTEM_OPS_POST_JOBS.length).toBeGreaterThan(0);
+
+    for (const job of SYSTEM_OPS_POST_JOBS) {
+      expect(job.condition, `${job.key} must have an explicit guard`).not.toBe('true');
+      expect(evalCondition(job.condition, CONTEXTS.pushToMain), job.key).toBe(false);
+      expect(evalCondition(job.condition, CONTEXTS.pullRequest), job.key).toBe(false);
+    }
+  });
+
+  it('every system-ops POST job requires the exact manual main-branch confirmation gate', () => {
+    for (const job of SYSTEM_OPS_POST_JOBS) {
+      for (const term of REQUIRED_MANUAL_CONDITION_TERMS) {
+        expect(job.condition, `${job.key} condition must include ${term}`).toContain(term);
+      }
+      expect(evalCondition(job.condition, CONTEXTS.dispatchNoConfirm), job.key).toBe(false);
+      expect(evalCondition(job.condition, CONTEXTS.dispatchWrongValue), job.key).toBe(false);
+      expect(evalCondition(job.condition, CONTEXTS.dispatchConfirmedWrongBranch), job.key).toBe(false);
+      expect(evalCondition(job.condition, CONTEXTS.dispatchConfirmed), job.key).toBe(true);
+    }
   });
 
   for (const { key, action } of PRIVILEGED_JOBS) {
