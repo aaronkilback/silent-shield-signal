@@ -97,4 +97,33 @@ describe('client membership substrate migration contract', () => {
     expect(doc).toContain('profiles.client_id');
     expect(doc).toContain('not an authorization source');
   });
+
+  it('keeps behavioral proof in a real PostgreSQL service workflow with no remote Supabase secrets', () => {
+    const workflow = readFileSync(join(root, '.github/workflows/client-membership-substrate.yml'), 'utf8');
+
+    expect(workflow).toContain('postgres:16.4-alpine');
+    expect(workflow).toContain('services:');
+    expect(workflow).toContain('psql -v ON_ERROR_STOP=1 -f scripts/client-membership-substrate/behavioral-test.sql');
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toContain('supabase/migrations/20260701090000_client_membership_substrate_v1.sql');
+    expect(workflow).not.toContain('SUPABASE_ACCESS_TOKEN');
+    expect(workflow).not.toContain('SUPABASE_DB_PASSWORD');
+    expect(workflow).not.toContain('secrets.');
+  });
+
+  it('runs the actual migration inside the PostgreSQL behavioral harness', () => {
+    const harness = readFileSync(join(root, 'scripts/client-membership-substrate/behavioral-test.sql'), 'utf8');
+
+    expect(harness).toContain('\\i supabase/migrations/20260701090000_client_membership_substrate_v1.sql');
+    expect(harness).toContain('CREATE SCHEMA auth');
+    expect(harness).toContain('CREATE OR REPLACE FUNCTION auth.uid()');
+    expect(harness).toContain('CREATE ROLE anon NOLOGIN');
+    expect(harness).toContain('CREATE ROLE authenticated NOLOGIN');
+    expect(harness).toContain('CREATE ROLE service_role NOLOGIN');
+    expect(harness).toContain('SET ROLE authenticated');
+    expect(harness).toContain('SET ROLE anon');
+    expect(harness).toContain('SET ROLE public_probe');
+    expect(harness).toContain('mismatched client_id and tenant_id fails through composite foreign key');
+    expect(harness).toContain('migration does not add intelligence table policies');
+  });
 });
