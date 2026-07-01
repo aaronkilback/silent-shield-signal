@@ -459,12 +459,12 @@ RESET ROLE;
 SET ROLE service_role;
 SELECT public.cm_assert_eq(
   (SELECT count(*)::int FROM public.client_memberships),
-  4,
+  5,
   'service_role bypasses user-facing RLS and can see all fixture memberships'
 );
 SELECT public.cm_assert_eq(
   (SELECT count(*)::int FROM public.client_memberships WHERE status IN ('pending', 'revoked')),
-  2,
+  3,
   'service_role can see pending and revoked memberships hidden from authenticated users'
 );
 SELECT public.cm_assert_eq(
