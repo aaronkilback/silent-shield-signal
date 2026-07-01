@@ -5,6 +5,21 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Privileged operational checks (health-gate, pipeline-smoke) run ONLY via
+  # deliberate manual dispatch with the exact confirmation value below. They are
+  # never an automatic consequence of a source push/merge to main. See the
+  # "Live operational checks" boundary note above those jobs.
+  workflow_dispatch:
+    inputs:
+      confirm_live_operational_checks:
+        description: >-
+          Type RUN_LIVE_SYSTEM_OPS to run the privileged, potentially MUTATING
+          live system-ops checks (health-check + pipeline-tests). Leave blank for
+          ordinary CI — the privileged jobs stay skipped unless this exact value
+          is supplied.
+        required: false
+        default: ''
+        type: string
 
 env:
   VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -134,10 +149,26 @@ jobs:
           SUPABASE_PAT: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: kpuqukppbmwebiptqmog
 
+  # ────────────────────────────────────────────────────────────────────────
+  # PRIVILEGED OPERATIONAL CHECKS — health-gate + pipeline-smoke
+  #
+  # Live operational checks are deliberately privileged and potentially
+  # mutating. They are not permitted as an automatic consequence of a source
+  # merge. (health-check writes audit_events, updates stuck documents, and
+  # enqueues retries; pipeline-tests creates/deletes signals, writes pipeline
+  # test results, and invokes downstream privileged functions.)
+  #
+  # They run ONLY via manual `workflow_dispatch` with the exact confirmation
+  # input `confirm_live_operational_checks: RUN_LIVE_SYSTEM_OPS`. A push or
+  # pull_request to main will NOT run them.
+  # ────────────────────────────────────────────────────────────────────────
   health-gate:
-    name: Live System Health Gate
+    name: 'Live Operational Checks — Manual Only / Health Gate'
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.confirm_live_operational_checks == 'RUN_LIVE_SYSTEM_OPS'
     steps:
       - name: Query system-ops health-check
         run: |
@@ -209,10 +240,15 @@ jobs:
           fi
 
   pipeline-smoke:
-    name: Pipeline Smoke Tests
+    name: 'Live Operational Checks — Manual Only / Pipeline Smoke'
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Privileged/mutating: creates+deletes signals, writes pipeline test results,
+    # invokes downstream privileged functions. Manual dispatch + confirmation only.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.confirm_live_operational_checks == 'RUN_LIVE_SYSTEM_OPS'
     steps:
       - name: Trigger pipeline tests
         run: |
