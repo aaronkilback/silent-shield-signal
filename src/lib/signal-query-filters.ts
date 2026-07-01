@@ -20,9 +20,9 @@
  *        unambiguously analyst-facing.
  *
  *   2. applySignalFilterForRole(query, role)
- *      → Conditional filter based on caller role. Use in mixed-role
- *        contexts (e.g. components reachable by both analyst and
- *        super_admin via the same route).
+ *      → Conditional filter based on browser-safe caller role. Use in
+ *        mixed-role contexts (e.g. components reachable by both analyst
+ *        and super_admin via the same route).
  *
  *   3. isQuarantineHiddenForRole(row, role)
  *      → For realtime channel handlers and array post-filtering where
@@ -35,10 +35,11 @@
  * so future static-grep audits can distinguish intentional unfiltered
  * queries from new defects.
  *
- * EDGE FUNCTIONS: mirror at supabase/functions/_shared/signal-query-filters.ts.
+ * EDGE FUNCTIONS: browser code must not model privileged server credentials.
+ * Server-only filtering primitives live under supabase/functions/_shared/.
  */
 
-export type SignalAccessRole = 'analyst' | 'operator' | 'service_role';
+export type SignalAccessRole = 'analyst' | 'operator';
 
 /**
  * ALWAYS-FILTER. Use in analyst-only frontend components / hooks.
@@ -53,15 +54,13 @@ export function applyAnalystSignalFilter<
 }
 
 /**
- * ROLE-AWARE FILTER. Use in mixed-role components and edge functions
- * where the caller's role is determined at runtime.
+ * ROLE-AWARE FILTER. Use in mixed-role browser components where the caller's
+ * role is determined from authenticated application state.
  *
  * - role='analyst'   → filters out quarantined rows
  * - role='operator'  → returns query unchanged (full visibility)
- * - role='service_role' → returns query unchanged (internal pipeline)
  *
- * The caller MUST source `role` from an authoritative origin (JWT claims,
- * authenticated session role lookup, server-side role gate). Do NOT pass
+ * The caller MUST source `role` from authenticated role state. Do NOT pass
  * 'analyst' as a constant from analyst surfaces — use applyAnalystSignalFilter
  * for that. This helper exists specifically for sites where the role varies
  * per call.

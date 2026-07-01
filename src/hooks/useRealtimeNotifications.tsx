@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { differenceInDays } from 'date-fns';
 import { useIsSuperAdmin } from '@/hooks/useIsSuperAdmin';
 import { useTenant } from '@/hooks/useTenant';
-import { isQuarantineHiddenForRole } from '@/lib/signal-query-filters';
+import { isQuarantineHiddenForRole, type SignalAccessRole } from '@/lib/signal-query-filters';
 
 /** Returns true if a signal's event_date is older than 90 days (historical). */
 const isHistoricalSignal = (signal: { event_date?: string | null; created_at?: string }): boolean => {
@@ -22,6 +22,9 @@ const VISIBILITY_REFETCH_KEYS = [
   ['incident-feed'],
   ['entity-notifications'],
 ];
+
+export const resolveRealtimeSignalAccessRole = (isSuperAdmin: boolean): SignalAccessRole =>
+  isSuperAdmin ? 'operator' : 'analyst';
 
 // INC-CRT-VISIBILITY (2026-05-26) — notification tenant-scoping.
 //
@@ -53,9 +56,9 @@ export const useRealtimeNotifications = () => {
   // quarantine-suppression. Ref-mirrored so the channel handler always reads
   // the latest role without channel teardown when role changes mid-session
   // (e.g., after impersonation toggle).
-  const roleRef = useRef<'analyst' | 'operator'>(isSuperAdmin ? 'operator' : 'analyst');
+  const roleRef = useRef<SignalAccessRole>(resolveRealtimeSignalAccessRole(isSuperAdmin));
   useEffect(() => {
-    roleRef.current = isSuperAdmin ? 'operator' : 'analyst';
+    roleRef.current = resolveRealtimeSignalAccessRole(isSuperAdmin);
   }, [isSuperAdmin]);
   const lastSeenSignalAt = useRef<string>(new Date().toISOString());
   const lastSeenIncidentAt = useRef<string>(new Date().toISOString());
