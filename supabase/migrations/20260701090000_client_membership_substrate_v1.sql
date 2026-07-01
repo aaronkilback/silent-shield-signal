@@ -248,7 +248,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.manage_client_membership(text, uuid, uuid, uuid, uuid, text, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.manage_client_membership(text, uuid, uuid, uuid, uuid, text, text, text)
-  TO authenticated, service_role;
+  TO authenticated;
 
 COMMENT ON FUNCTION public.manage_client_membership(text, uuid, uuid, uuid, uuid, text, text, text) IS
   'Protected v1 membership-management RPC. Requires server-derived super_admin '

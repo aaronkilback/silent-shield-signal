@@ -64,6 +64,12 @@ describe('client membership substrate migration contract', () => {
     expect(migration).toContain('updated_by');
     expect(migration).toContain('revoked_by = v_actor');
     expect(migration).toContain("RAISE EXCEPTION 'client membership management requires super_admin'");
+    expect(migration).toContain(
+      'GRANT EXECUTE ON FUNCTION public.manage_client_membership(text, uuid, uuid, uuid, uuid, text, text, text)\n  TO authenticated;'
+    );
+    expect(migration).not.toContain(
+      'GRANT EXECUTE ON FUNCTION public.manage_client_membership(text, uuid, uuid, uuid, uuid, text, text, text)\n  TO authenticated, service_role;'
+    );
   });
 
   it('prevents self-grant, self-activation, self-revocation, and client reassignment through table writes', () => {
@@ -124,6 +130,8 @@ describe('client membership substrate migration contract', () => {
     expect(harness).toContain('SET ROLE anon');
     expect(harness).toContain('SET ROLE public_probe');
     expect(harness).toContain('SET ROLE service_role');
+    expect(harness).toContain('service_role cannot execute membership management RPC even with super-admin claim context');
+    expect(harness).toContain('service_role can still execute active-membership helper using validated caller context');
     expect(harness).toContain('service_role bypasses user-facing RLS and can see all fixture memberships');
     expect(harness).toContain('mismatched client_id and tenant_id fails through composite foreign key');
     expect(harness).toContain('migration does not add intelligence table policies');
