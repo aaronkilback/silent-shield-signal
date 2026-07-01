@@ -129,6 +129,25 @@ EXCEPTION
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.cm_assert_raises_state(_sql text, _expected_state text, _message text)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  EXECUTE _sql;
+  RAISE EXCEPTION 'ASSERTION FAILED: %, expected SQLSTATE % but statement succeeded', _message, _expected_state;
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLERRM LIKE 'ASSERTION FAILED:%' THEN
+      RAISE;
+    END IF;
+    IF SQLSTATE IS DISTINCT FROM _expected_state THEN
+      RAISE EXCEPTION 'ASSERTION FAILED: %, expected SQLSTATE %, got % [%]', _message, _expected_state, SQLSTATE, SQLERRM;
+    END IF;
+    RAISE NOTICE 'ok: % [% %]', _message, SQLSTATE, SQLERRM;
+END;
+$$;
+
 \echo 'client-membership-substrate: loading fixtures'
 
 INSERT INTO auth.users (id, email) VALUES
@@ -169,18 +188,19 @@ SELECT public.cm_assert(
   EXISTS (SELECT 1 FROM public.client_memberships WHERE id = 'aaaaaaaa-0000-0000-0000-000000000001'),
   'matching client_id and tenant_id membership insert succeeds'
 );
-SELECT public.cm_assert_raises(
+SELECT public.cm_assert_raises_state(
   $SQL$
     INSERT INTO public.client_memberships (
       user_id, tenant_id, client_id, role, status
     ) VALUES (
-      '00000000-0000-0000-0000-0000000000a1',
+      '00000000-0000-0000-0000-0000000000b2',
       '20000000-0000-0000-0000-000000000002',
       '11000000-0000-0000-0000-000000000001',
       'analyst',
       'active'
     )
   $SQL$,
+  '23503',
   'mismatched client_id and tenant_id fails through composite foreign key'
 );
 
@@ -201,7 +221,7 @@ SELECT public.cm_assert_raises(
   'duplicate active membership for user and client fails'
 );
 INSERT INTO public.client_memberships (
-  id, user_id, tenant_id, client_id, role, status, created_by, updated_by
+  id, user_id, tenant_id, client_id, role, status, created_by, updated_by, revoked_at, revoked_by, revocation_reason
 ) VALUES (
   'aaaaaaaa-0000-0000-0000-000000000002',
   '00000000-0000-0000-0000-0000000000a1',
@@ -210,7 +230,10 @@ INSERT INTO public.client_memberships (
   'viewer',
   'active',
   '00000000-0000-0000-0000-0000000000ad',
-  '00000000-0000-0000-0000-0000000000ad'
+  '00000000-0000-0000-0000-0000000000ad',
+  null,
+  null,
+  null
 ), (
   'aaaaaaaa-0000-0000-0000-000000000003',
   '00000000-0000-0000-0000-0000000000a1',
@@ -219,7 +242,10 @@ INSERT INTO public.client_memberships (
   'viewer',
   'pending',
   '00000000-0000-0000-0000-0000000000ad',
-  '00000000-0000-0000-0000-0000000000ad'
+  '00000000-0000-0000-0000-0000000000ad',
+  null,
+  null,
+  null
 ), (
   'aaaaaaaa-0000-0000-0000-000000000004',
   '00000000-0000-0000-0000-0000000000a1',
