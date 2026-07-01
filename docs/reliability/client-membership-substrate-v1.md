@@ -9,6 +9,7 @@ This is a local substrate only. It creates the authoritative membership primitiv
 - `client_memberships` is the client grant.
 - Browser-selected `client_id` is only a filter after membership is verified.
 - Service-role Edge Functions must validate the caller JWT, then query the same `client_memberships` source using the validated caller user id and selected client id. This substrate intentionally does not add a public arbitrary-user lookup RPC.
+- The PostgreSQL behavioral harness models `service_role` as privileged with `BYPASSRLS`. That is intentional for internal server operations and is not evidence that user-facing Aegis, report, briefing, voice, or Edge Function reads are safe. Future service-role reads must still validate the caller JWT and active client membership before querying client intelligence.
 
 ## Backfill Plan, Not Executed
 
@@ -30,4 +31,3 @@ Later slices must separately:
 - Add RLS policies that use `has_active_client_membership(client_id)` plus a separate protected `is_super_admin(auth.uid())` bypass where approved.
 - Update service-role Edge Functions to validate caller JWT and enforce the same client membership source before any privileged read.
 - Validate same-tenant Client A / Client B denial through direct PostgREST, realtime, RPC, Edge Functions, Aegis, reports, briefings, and voice retrieval.
-

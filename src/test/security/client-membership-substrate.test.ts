@@ -119,10 +119,12 @@ describe('client membership substrate migration contract', () => {
     expect(harness).toContain('CREATE OR REPLACE FUNCTION auth.uid()');
     expect(harness).toContain('CREATE ROLE anon NOLOGIN');
     expect(harness).toContain('CREATE ROLE authenticated NOLOGIN');
-    expect(harness).toContain('CREATE ROLE service_role NOLOGIN');
+    expect(harness).toContain('CREATE ROLE service_role BYPASSRLS NOLOGIN');
     expect(harness).toContain('SET ROLE authenticated');
     expect(harness).toContain('SET ROLE anon');
     expect(harness).toContain('SET ROLE public_probe');
+    expect(harness).toContain('SET ROLE service_role');
+    expect(harness).toContain('service_role bypasses user-facing RLS and can see all fixture memberships');
     expect(harness).toContain('mismatched client_id and tenant_id fails through composite foreign key');
     expect(harness).toContain('migration does not add intelligence table policies');
   });

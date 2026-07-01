@@ -9,7 +9,7 @@ CREATE SCHEMA public;
 
 CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
-CREATE ROLE service_role NOLOGIN;
+CREATE ROLE service_role BYPASSRLS NOLOGIN;
 CREATE ROLE public_probe NOLOGIN;
 
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role, public_probe;
@@ -86,6 +86,12 @@ ORDER BY tablename, policyname;
 
 \echo 'client-membership-substrate: applying actual migration'
 \i supabase/migrations/20260701090000_client_membership_substrate_v1.sql
+
+-- The local fixture models Supabase's privileged service_role for behavioral
+-- proof only. BYPASSRLS plus table privileges below demonstrate that internal
+-- service-role access is intentionally privileged and is not evidence that
+-- user-facing Aegis, report, briefing, voice, or Edge Function reads are safe.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.client_memberships TO service_role;
 
 \echo 'client-membership-substrate: installing assertion helpers'
 
@@ -448,7 +454,27 @@ SELECT public.cm_assert(
 );
 RESET ROLE;
 
-\echo 'client-membership-substrate: category 8 scope discipline'
+\echo 'client-membership-substrate: category 8 service_role privilege boundary'
+
+SET ROLE service_role;
+SELECT public.cm_assert_eq(
+  (SELECT count(*)::int FROM public.client_memberships),
+  4,
+  'service_role bypasses user-facing RLS and can see all fixture memberships'
+);
+SELECT public.cm_assert_eq(
+  (SELECT count(*)::int FROM public.client_memberships WHERE status IN ('pending', 'revoked')),
+  2,
+  'service_role can see pending and revoked memberships hidden from authenticated users'
+);
+SELECT public.cm_assert_eq(
+  (SELECT count(*)::int FROM public.client_memberships WHERE user_id <> '00000000-0000-0000-0000-0000000000a1'),
+  1,
+  'service_role can see another user membership and must not prove caller authorization'
+);
+RESET ROLE;
+
+\echo 'client-membership-substrate: category 9 scope discipline'
 
 SELECT public.cm_assert_eq(
   (SELECT count(*)::int FROM (
