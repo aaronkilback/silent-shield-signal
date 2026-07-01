@@ -32,6 +32,7 @@ describe('client membership substrate migration contract', () => {
   });
 
   it('revokes authenticated write access and allows users to read only their own active memberships', () => {
+    expect(migration).toContain('REVOKE ALL ON TABLE public.client_memberships FROM PUBLIC');
     expect(migration).toContain('REVOKE ALL ON public.client_memberships FROM anon');
     expect(migration).toContain('REVOKE ALL ON public.client_memberships FROM authenticated');
     expect(migration).toContain('GRANT SELECT ON public.client_memberships TO authenticated');

@@ -55,6 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_client_memberships_client_status
 
 ALTER TABLE public.client_memberships ENABLE ROW LEVEL SECURITY;
 
+REVOKE ALL ON TABLE public.client_memberships FROM PUBLIC;
 REVOKE ALL ON public.client_memberships FROM anon;
 REVOKE ALL ON public.client_memberships FROM authenticated;
 GRANT SELECT ON public.client_memberships TO authenticated;
@@ -252,4 +253,3 @@ GRANT EXECUTE ON FUNCTION public.manage_client_membership(text, uuid, uuid, uuid
 COMMENT ON FUNCTION public.manage_client_membership(text, uuid, uuid, uuid, uuid, text, text, text) IS
   'Protected v1 membership-management RPC. Requires server-derived super_admin '
   'via auth.uid(); sets audit fields server-side; does not use profiles.client_id.';
-
