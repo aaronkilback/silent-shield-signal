@@ -462,6 +462,12 @@ SELECT public.cm_assert_raises(
   $SQL$ SELECT public.manage_client_membership('create', NULL, '00000000-0000-0000-0000-0000000000c3', '10000000-0000-0000-0000-000000000001', '13000000-0000-0000-0000-000000000003', 'viewer', 'pending', NULL) $SQL$,
   'service_role cannot execute membership management RPC even with super-admin claim context'
 );
+SELECT public.cm_assert_eq(
+  (SELECT count(*)::int FROM public.client_memberships),
+  5,
+  'service_role denied management RPC creates no membership or audit row'
+);
+SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000a1', false);
 SELECT public.cm_assert(
   public.has_active_client_membership('11000000-0000-0000-0000-000000000001'),
   'service_role can still execute active-membership helper using validated caller context'
