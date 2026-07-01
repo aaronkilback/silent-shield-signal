@@ -409,17 +409,23 @@ SELECT public.cm_assert(
   :'created_membership_id' IS NOT NULL,
   'super-admin can create pending membership'
 );
+RESET ROLE;
 SELECT public.cm_assert_eq(
   (SELECT created_by FROM public.client_memberships WHERE id = :'created_membership_id'::uuid),
   '00000000-0000-0000-0000-0000000000ad'::uuid,
   'RPC create populates created_by server-side'
 );
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000ad', false);
 SELECT public.manage_client_membership('set_role', :'created_membership_id'::uuid, NULL, NULL, NULL, 'analyst', NULL, NULL);
+RESET ROLE;
 SELECT public.cm_assert_eq(
   (SELECT role FROM public.client_memberships WHERE id = :'created_membership_id'::uuid),
   'analyst',
   'super-admin can update membership role through RPC'
 );
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000ad', false);
 SELECT public.manage_client_membership('activate', :'created_membership_id'::uuid, NULL, NULL, NULL, NULL, NULL, NULL);
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000b2', false);
 SELECT public.cm_assert(
@@ -428,11 +434,13 @@ SELECT public.cm_assert(
 );
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000ad', false);
 SELECT public.manage_client_membership('revoke', :'created_membership_id'::uuid, NULL, NULL, NULL, NULL, NULL, 'behavioral test cleanup');
+RESET ROLE;
 SELECT public.cm_assert_eq(
   (SELECT revoked_by FROM public.client_memberships WHERE id = :'created_membership_id'::uuid),
   '00000000-0000-0000-0000-0000000000ad'::uuid,
   'RPC revoke populates revoked_by server-side'
 );
+SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000b2', false);
 SELECT public.cm_assert(
   NOT public.has_active_client_membership('13000000-0000-0000-0000-000000000003'),
