@@ -20,6 +20,15 @@ on:
         required: false
         default: ''
         type: string
+      confirm_live_production_reads:
+        description: >-
+          Type RUN_LIVE_PRODUCTION_READS to run privileged production-facing
+          read checks (loop activity, cron alignment, DB types drift). Leave
+          blank for ordinary CI — these live-read jobs stay skipped unless this
+          exact value is supplied.
+        required: false
+        default: ''
+        type: string
 
 env:
   VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -122,8 +131,12 @@ jobs:
         run: node scripts/check-no-autonomous-execution-on-score.mjs
 
   cron-alignment:
-    name: Cron Schedule Alignment
+    name: 'Live Production Reads — Manual Only / Cron Alignment'
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.confirm_live_production_reads == 'RUN_LIVE_PRODUCTION_READS'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -136,8 +149,12 @@ jobs:
           SUPABASE_PROJECT_REF: kpuqukppbmwebiptqmog
 
   db-types-drift:
-    name: DB Types Drift Check
+    name: 'Live Production Reads — Manual Only / DB Types Drift'
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.confirm_live_production_reads == 'RUN_LIVE_PRODUCTION_READS'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -180,9 +197,12 @@ jobs:
           echo "Health gate passed"
 
   loop-health:
-    name: Fortress Loop Activity Check
+    name: 'Live Production Reads — Manual Only / Loop Activity'
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.confirm_live_production_reads == 'RUN_LIVE_PRODUCTION_READS'
     steps:
       - name: Check loop activity via Supabase
         run: |
