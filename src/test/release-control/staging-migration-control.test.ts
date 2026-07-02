@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { EventEmitter } from 'node:events';
 import {
   FIXED_MANIFEST_PATH,
+  MIGRATION_HISTORY_GRACE_MS,
   MIGRATION_HISTORY_TIMEOUT_MS,
   PERMITTED_MUTATION_COMMAND,
   PRODUCTION_PROJECT_REF,
@@ -15,8 +17,60 @@ import {
   preflight,
   parseMigrationList,
   pendingVersions,
+  superviseSupabaseCommand,
   validateManifest,
 } from '../../../scripts/release-control/staging-migration-control.mjs';
+
+type TimerRecord = {
+  fn: () => void;
+  ms: number;
+  cleared: boolean;
+  unref: () => void;
+};
+
+class FakeChild extends EventEmitter {
+  stdout = new EventEmitter() as EventEmitter & { destroy: () => void; unref: () => void };
+  stderr = new EventEmitter() as EventEmitter & { destroy: () => void; unref: () => void };
+  killedSignals: string[] = [];
+  unrefCalled = false;
+
+  constructor() {
+    super();
+    this.stdout.destroy = () => {};
+    this.stdout.unref = () => {};
+    this.stderr.destroy = () => {};
+    this.stderr.unref = () => {};
+  }
+
+  kill(signal: string) {
+    this.killedSignals.push(signal);
+    return true;
+  }
+
+  unref() {
+    this.unrefCalled = true;
+  }
+}
+
+function makeTimerHarness() {
+  const timers: TimerRecord[] = [];
+  return {
+    timers,
+    setTimer(fn: () => void, ms: number) {
+      const timer: TimerRecord = {
+        fn,
+        ms,
+        cleared: false,
+        unref: () => {},
+      };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer(timer: TimerRecord) {
+      timer.cleared = true;
+    },
+  };
+}
 
 
 function cleanProof() {
@@ -37,10 +91,10 @@ function removeReceiptFiles(paths: string[]) {
   for (const path of paths) rmSync(path, { force: true });
 }
 
-function withReceiptCapture(fn: () => void) {
+async function withReceiptCapture(fn: () => void | Promise<void>) {
   const before = new Set(receiptFiles());
   try {
-    fn();
+    await fn();
   } finally {
     const created = receiptFiles().filter((path) => !before.has(path));
     removeReceiptFiles(created);
@@ -54,12 +108,12 @@ function validHistory() {
   });
 }
 
-function withProjectRef(value: string | null, fn: (path: string) => void) {
+async function withProjectRef(value: string | null, fn: (path: string) => void | Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), 'staging-link-'));
   const path = join(dir, 'project-ref');
   if (value !== null) writeFileSync(path, value);
   try {
-    fn(path);
+    await fn(path);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -87,20 +141,20 @@ describe('staging migration control packet', () => {
     expect(FIXED_MANIFEST_PATH).toBe('release-control/staging-db/client-membership-substrate-v1.manifest.json');
   });
 
-  it('proves linked-project assertion with a real project-ref file', () => {
-    withProjectRef(STAGING_PROJECT_REF, (path) => {
+  it('proves linked-project assertion with a real project-ref file', async () => {
+    await withProjectRef(STAGING_PROJECT_REF, (path) => {
       expect(assertLinkedToStaging(path)).toBe(STAGING_PROJECT_REF);
     });
 
-    withProjectRef(PRODUCTION_PROJECT_REF, (path) => {
+    await withProjectRef(PRODUCTION_PROJECT_REF, (path) => {
       expect(() => assertLinkedToStaging(path)).toThrow(/linked to production/);
     });
 
-    withProjectRef('abcdefghijklmnopqrst', (path) => {
+    await withProjectRef('abcdefghijklmnopqrst', (path) => {
       expect(() => assertLinkedToStaging(path)).toThrow(/not linked to approved staging/);
     });
 
-    withProjectRef(null, (path) => {
+    await withProjectRef(null, (path) => {
       expect(() => assertLinkedToStaging(path)).toThrow(/project ref is missing/);
     });
   });
@@ -111,6 +165,7 @@ describe('staging migration control packet', () => {
 
     expect(manifest.permitted_mutation_command).toEqual(PERMITTED_MUTATION_COMMAND);
     expect(manifest.permitted_mutation_command.join(' ')).toBe('supabase migration up --linked');
+    expect(runner).toContain("spawnChild('supabase', args");
     expect(runner).toContain("spawnSync('supabase', args");
     expect(runner).not.toContain('STAGING_MIGRATION_SUPABASE_BIN');
     expect(runner).not.toMatch(/process\.env\.[A-Z0-9_]*SUPABASE_BIN/);
@@ -210,25 +265,35 @@ describe('staging migration control packet', () => {
   });
 
 
-  it('writes a failed preflight-attempt receipt when migration-history read times out', () => {
-    withProjectRef(STAGING_PROJECT_REF, (projectRefPath) => {
-      withReceiptCapture(() => {
+  it('writes a failed preflight-attempt receipt when a timed-out child confirms termination', async () => {
+    await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
+      await withReceiptCapture(async () => {
         const calls: string[][] = [];
+        const child = new FakeChild();
+        const timers = makeTimerHarness();
         const stdout = 'partial history output that must not be trusted';
-        const executor = (args: string[], options: { timeoutMs?: number }) => {
+        const executor = (args: string[], options: { timeoutMs?: number; operation?: string }) => {
           calls.push(args);
-          return {
-            status: null,
-            signal: 'SIGTERM',
-            stdout,
-            stderr: '',
-            error: { code: 'ETIMEDOUT' },
-          };
+          return superviseSupabaseCommand(args, {
+            operation: options.operation,
+            timeoutMs: options.timeoutMs,
+            graceMs: MIGRATION_HISTORY_GRACE_MS,
+            spawnChild: () => child,
+            setTimer: timers.setTimer,
+            clearTimer: timers.clearTimer,
+          });
         };
 
-        expect(() => preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof })).toThrow(/timed out/);
+        const result = preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
+        child.stdout.emit('data', stdout);
+        expect(timers.timers[0].ms).toBe(MIGRATION_HISTORY_TIMEOUT_MS);
+        timers.timers[0].fn();
+        child.emit('close', null, 'SIGTERM');
+
+        await expect(result).rejects.toThrow(/termination confirmed/);
         expect(calls).toEqual([['migration', 'list', '--linked', '--output', 'json']]);
         expect(calls.flat().join(' ')).not.toContain('up --linked');
+        expect(child.killedSignals).toEqual(['SIGTERM']);
 
         const created = receiptFiles().filter((path) => path.includes('preflight-attempt'));
         expect(created.length).toBe(1);
@@ -240,17 +305,64 @@ describe('staging migration control packet', () => {
         expect(receipt.result).toBe('failed');
         expect(receipt.error_metadata.operation).toBe('migration_history_read');
         expect(receipt.error_metadata.timeout_ms).toBe(MIGRATION_HISTORY_TIMEOUT_MS);
+        expect(receipt.error_metadata.grace_ms).toBe(MIGRATION_HISTORY_GRACE_MS);
+        expect(receipt.error_metadata.timed_out).toBe(true);
+        expect(receipt.error_metadata.termination_confirmed).toBe(true);
+        expect(receipt.error_metadata.signals_attempted).toEqual(['SIGTERM']);
         expect(receipt.error_metadata.signal).toBe('SIGTERM');
         expect(receipt.error_metadata.stdout).toEqual({ present: true, length: stdout.length });
       });
     });
   });
 
-  it('valid simulated migration history writes both attempt and reviewed preflight receipts', () => {
-    withProjectRef(STAGING_PROJECT_REF, (projectRefPath) => {
-      withReceiptCapture(() => {
-        const executor = () => ({ status: 0, signal: null, stdout: validHistory(), stderr: '' });
+  it('returns after bounded grace and writes a failed receipt when a timed-out child never closes', async () => {
+    await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
+      await withReceiptCapture(async () => {
+        const calls: string[][] = [];
+        const child = new FakeChild();
+        const timers = makeTimerHarness();
+        const executor = (args: string[], options: { timeoutMs?: number; operation?: string }) => {
+          calls.push(args);
+          return superviseSupabaseCommand(args, {
+            operation: options.operation,
+            timeoutMs: options.timeoutMs,
+            graceMs: MIGRATION_HISTORY_GRACE_MS,
+            spawnChild: () => child,
+            setTimer: timers.setTimer,
+            clearTimer: timers.clearTimer,
+          });
+        };
+
         const result = preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
+        expect(timers.timers[0].ms).toBe(MIGRATION_HISTORY_TIMEOUT_MS);
+        timers.timers[0].fn();
+        expect(timers.timers[1].ms).toBe(MIGRATION_HISTORY_GRACE_MS);
+        timers.timers[1].fn();
+
+        await expect(result).rejects.toThrow(/termination unconfirmed/);
+        expect(calls).toEqual([['migration', 'list', '--linked', '--output', 'json']]);
+        expect(calls.flat().join(' ')).not.toContain('up --linked');
+        expect(child.killedSignals).toEqual(['SIGTERM', 'SIGKILL']);
+        expect(child.unrefCalled).toBe(true);
+
+        const created = receiptFiles().filter((path) => path.includes('preflight-attempt'));
+        expect(created.length).toBe(1);
+        const receipt = JSON.parse(readFileSync(created[0], 'utf8'));
+        expect(receipt.result).toBe('failed');
+        expect(receipt.error_metadata.timed_out).toBe(true);
+        expect(receipt.error_metadata.termination_confirmed).toBe(false);
+        expect(receipt.error_metadata.signals_attempted).toEqual(['SIGTERM', 'SIGKILL']);
+        expect(receipt.error_metadata.exit_status).toBeNull();
+        expect(receipt.error_metadata.signal).toBeNull();
+      });
+    });
+  });
+
+  it('valid simulated migration history writes both attempt and reviewed preflight receipts', async () => {
+    await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
+      await withReceiptCapture(async () => {
+        const executor = () => Promise.resolve({ stdout: validHistory(), metadata: {} });
+        const result = await preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
 
         expect(result.receipt.result).toBe('preflight_passed');
         expect(result.attemptReceipt.result).toBe('preflight_passed');
@@ -266,33 +378,63 @@ describe('staging migration control packet', () => {
     });
   });
 
-  it('unknown output, non-zero exit, and signal interruption fail closed with failed attempt receipts', () => {
+  it('unknown output, non-zero exit, and signal interruption fail closed with failed attempt receipts', async () => {
     const cases = [
       {
         name: 'unknown output',
-        executor: () => ({ status: 0, signal: null, stdout: JSON.stringify({ migrations: [{ version: '20260701090000' }] }), stderr: '' }),
+        executor: () => Promise.resolve({
+          stdout: JSON.stringify({ migrations: [{ version: '20260701090000' }] }),
+          metadata: {
+            operation: 'migration_history_read',
+            timeout_ms: MIGRATION_HISTORY_TIMEOUT_MS,
+            exit_status: 0,
+            signal: null,
+            stdout: { present: true, length: 44 },
+            stderr: { present: false, length: 0 },
+          },
+        }),
         message: /local_versions and remote_versions/,
       },
       {
         name: 'non-zero exit',
-        executor: () => ({ status: 1, signal: null, stdout: '', stderr: 'remote refused' }),
+        executor: () => Promise.reject(Object.assign(new Error('migration_history_read failed'), {
+          name: 'SupabaseCommandError',
+          metadata: {
+            operation: 'migration_history_read',
+            timeout_ms: MIGRATION_HISTORY_TIMEOUT_MS,
+            exit_status: 1,
+            signal: null,
+            stdout: { present: false, length: 0 },
+            stderr: { present: true, length: 14 },
+          },
+        })),
         message: /migration_history_read failed/,
       },
       {
         name: 'signal interruption',
-        executor: () => ({ status: null, signal: 'SIGINT', stdout: '', stderr: 'interrupted' }),
+        executor: () => Promise.reject(Object.assign(new Error('migration_history_read failed'), {
+          name: 'SupabaseCommandError',
+          metadata: {
+            operation: 'migration_history_read',
+            timeout_ms: MIGRATION_HISTORY_TIMEOUT_MS,
+            exit_status: null,
+            signal: 'SIGINT',
+            stdout: { present: false, length: 0 },
+            stderr: { present: true, length: 11 },
+          },
+        })),
         message: /migration_history_read failed/,
       },
     ];
 
     for (const testCase of cases) {
-      withProjectRef(STAGING_PROJECT_REF, (projectRefPath) => {
-        withReceiptCapture(() => {
-          expect(() => preflight({
+      await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
+        await withReceiptCapture(async () => {
+          await expect(preflight({
             projectRefPath,
             executor: testCase.executor,
             cleanWorktreeProvider: cleanProof,
-          })).toThrow(testCase.message);
+          })).rejects.toThrow(testCase.message);
 
           const created = receiptFiles().filter((path) => path.includes('preflight-attempt'));
           expect(created.length, testCase.name).toBe(1);
