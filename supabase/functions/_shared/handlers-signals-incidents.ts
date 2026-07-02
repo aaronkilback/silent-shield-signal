@@ -21,6 +21,150 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
   }
 }
 
+type SignalTemporalContext = {
+  event_date: string | null;
+  ingested_at: string | null;
+  age_category: "current" | "recent" | "dated" | "historical" | "undated" | "unknown";
+  age_description: string;
+  is_historical: boolean;
+  warning: string | null;
+};
+
+type SignalEvidenceGrade = {
+  signal_id: string;
+  title: string | null;
+  severity: string | null;
+  status: string | null;
+  source_url: string | null;
+  source_label: "source_available" | "source_unavailable" | "unsafe_source_omitted";
+  temporal_label: SignalTemporalContext["age_category"];
+  support_label: "evidence_supported" | "not_decision_grade";
+  recommended_framing: "evidence_supported" | "hold_or_uncertain";
+  confidence: number | null;
+  relevance_score: number | null;
+  not_decision_grade_reasons: string[];
+};
+
+function safeHttpUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeConfidenceForEvidence(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value <= 1 ? value * 100 : value;
+}
+
+export function buildSignalTemporalContext(signal: { event_date?: string | null; received_at?: string | null; created_at?: string | null }, now = new Date()): SignalTemporalContext {
+  const ingestedAt = signal.received_at || signal.created_at || null;
+  if (!signal.event_date) {
+    return {
+      event_date: null,
+      ingested_at: ingestedAt,
+      age_category: "undated",
+      age_description: "event date unavailable",
+      is_historical: false,
+      warning: "Event date unavailable. Do NOT present as current; describe only as observed/ingested.",
+    };
+  }
+
+  const eventDate = new Date(signal.event_date);
+  if (Number.isNaN(eventDate.getTime())) {
+    return {
+      event_date: signal.event_date,
+      ingested_at: ingestedAt,
+      age_category: "unknown",
+      age_description: "event date could not be parsed",
+      is_historical: false,
+      warning: "Event date could not be parsed. Do NOT present as current.",
+    };
+  }
+
+  const ageDays = Math.floor((now.getTime() - eventDate.getTime()) / (1000 * 60 * 60 * 24));
+  let ageCategory: SignalTemporalContext["age_category"] = "current";
+  let ageDescription = "";
+
+  if (ageDays <= 7) {
+    ageCategory = "current";
+    ageDescription = ageDays === 0 ? "Today" : ageDays === 1 ? "Yesterday" : `${ageDays} days ago`;
+  } else if (ageDays <= 30) {
+    ageCategory = "recent";
+    ageDescription = `${Math.ceil(ageDays / 7)} weeks ago`;
+  } else if (ageDays <= 365) {
+    ageCategory = "dated";
+    ageDescription = `${Math.floor(ageDays / 30)} months ago`;
+  } else {
+    ageCategory = "historical";
+    const years = Math.floor(ageDays / 365);
+    ageDescription = years === 1 ? "1 year ago" : `${years} years ago`;
+  }
+
+  return {
+    event_date: signal.event_date,
+    ingested_at: ingestedAt,
+    age_category: ageCategory,
+    age_description: ageDescription,
+    is_historical: ageCategory === "historical" || ageCategory === "dated",
+    warning:
+      ageCategory === "historical"
+        ? `HISTORICAL: This event occurred ${ageDescription}. Do NOT present as current threat.`
+        : ageCategory === "dated"
+          ? `DATED: This event occurred ${ageDescription}. Provide temporal context when reporting.`
+          : null,
+  };
+}
+
+export function buildSignalEvidenceGrade(signal: any, temporalContext: SignalTemporalContext): SignalEvidenceGrade {
+  const safeSourceUrl = safeHttpUrl(signal.source_url);
+  const sourceLabel = safeSourceUrl
+    ? "source_available"
+    : signal.source_url
+      ? "unsafe_source_omitted"
+      : "source_unavailable";
+  const normalizedConfidence = normalizeConfidenceForEvidence(signal.confidence);
+  const relevanceScore = typeof signal.relevance_score === "number" && Number.isFinite(signal.relevance_score)
+    ? signal.relevance_score
+    : null;
+  const qualityScore = typeof signal.quality_score === "number" && Number.isFinite(signal.quality_score)
+    ? signal.quality_score
+    : null;
+
+  const reasons: string[] = [];
+  if (!safeSourceUrl) reasons.push(sourceLabel === "unsafe_source_omitted" ? "unsafe_source_url_omitted" : "missing_source_url");
+  if (temporalContext.age_category === "undated") reasons.push("missing_event_date_cannot_be_current");
+  if (temporalContext.age_category === "unknown") reasons.push("unparseable_event_date_cannot_be_current");
+  if (temporalContext.is_historical) reasons.push(`${temporalContext.age_category}_event_requires_temporal_context`);
+  // Reuse the existing SignalHistory questionable-signal cutoffs: confidence < 30,
+  // relevance in (0, 0.4), quality_score < 0.4.
+  if (normalizedConfidence !== null && normalizedConfidence < 30) reasons.push("low_confidence_existing_signal_history_threshold");
+  if (relevanceScore !== null && relevanceScore > 0 && relevanceScore < 0.4) reasons.push("low_relevance_existing_signal_history_threshold");
+  if (qualityScore !== null && qualityScore < 0.4) reasons.push("low_quality_existing_signal_history_threshold");
+  if (["false_positive", "noise", "dismissed"].includes(String(signal.status || "").toLowerCase())) {
+    reasons.push(`status_${String(signal.status).toLowerCase()}_not_decision_grade`);
+  }
+
+  return {
+    signal_id: signal.id,
+    title: signal.title ?? null,
+    severity: signal.severity ?? null,
+    status: signal.status ?? null,
+    source_url: safeSourceUrl,
+    source_label: sourceLabel,
+    temporal_label: temporalContext.age_category,
+    support_label: reasons.length === 0 ? "evidence_supported" : "not_decision_grade",
+    recommended_framing: reasons.length === 0 ? "evidence_supported" : "hold_or_uncertain",
+    confidence: signal.confidence ?? null,
+    relevance_score: relevanceScore,
+    not_decision_grade_reasons: reasons,
+  };
+}
+
 export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
 
   // R6 (Task #107) — tenant-scope hardening. Mirrors PROD-EE pattern.
@@ -136,7 +280,7 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
 
     let query = supabaseClient
       .from("signals")
-      .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, source_url, clients!inner(name, tenant_id)")
+      .select("id, title, description, severity, received_at, created_at, event_date, status, client_id, source_url, confidence, relevance_score, quality_score, clients!inner(name, tenant_id)")
       .eq("tenant_id", tenantId)
       .eq("clients.tenant_id", tenantId)
       .not("clients.name", "ilike", "\\_%")
@@ -180,45 +324,15 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
     const { data, error } = await query;
     if (error) throw error;
 
-    const now = new Date();
     const enrichedSignals = (data || []).map((signal: any) => {
-      const eventDate = signal.event_date ? new Date(signal.event_date) : null;
-      let ageCategory = "current";
-      let ageDescription = "";
-
-      if (eventDate) {
-        const ageDays = Math.floor((now.getTime() - eventDate.getTime()) / (1000 * 60 * 60 * 24));
-        if (ageDays <= 7) {
-          ageCategory = "current";
-          ageDescription = ageDays === 0 ? "Today" : ageDays === 1 ? "Yesterday" : `${ageDays} days ago`;
-        } else if (ageDays <= 30) {
-          ageCategory = "recent";
-          ageDescription = `${Math.ceil(ageDays / 7)} weeks ago`;
-        } else if (ageDays <= 365) {
-          ageCategory = "dated";
-          ageDescription = `${Math.floor(ageDays / 30)} months ago`;
-        } else {
-          ageCategory = "historical";
-          const years = Math.floor(ageDays / 365);
-          ageDescription = years === 1 ? "1 year ago" : `${years} years ago`;
-        }
-      }
+      const temporalContext = buildSignalTemporalContext(signal);
+      const evidenceGrade = buildSignalEvidenceGrade(signal, temporalContext);
 
       return {
         ...signal,
-        temporal_context: {
-          event_date: signal.event_date,
-          ingested_at: signal.received_at || signal.created_at,
-          age_category: ageCategory,
-          age_description: ageDescription,
-          is_historical: ageCategory === "historical" || ageCategory === "dated",
-          warning:
-            ageCategory === "historical"
-              ? `⚠️ HISTORICAL: This event occurred ${ageDescription}. Do NOT present as current threat.`
-              : ageCategory === "dated"
-                ? `📜 DATED: This event occurred ${ageDescription}. Provide temporal context when reporting.`
-                : null,
-        },
+        source_url: evidenceGrade.source_url,
+        temporal_context: temporalContext,
+        evidence_grade: evidenceGrade,
       };
     });
 
