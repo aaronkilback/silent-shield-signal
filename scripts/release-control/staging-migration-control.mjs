@@ -34,6 +34,22 @@ function sha256Text(text) {
   return sha256Bytes(text);
 }
 
+function safeTimestampForPath(timestamp) {
+  return timestamp.replace(/[:.]/g, '-');
+}
+
+function redactSensitiveOutput(text) {
+  return text
+    .replace(/((?:postgres(?:ql)?|pooler):\/\/[^:\s/@]+:)[^@\s/]+(@)/gi, '$1[REDACTED]$2')
+    .replace(/\b(password\s*=\s*)[^\s;&]+/gi, '$1[REDACTED]')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]')
+    .replace(/\bsbp_[A-Za-z0-9._-]{16,}\b/g, '[REDACTED_SUPABASE_TOKEN]')
+    .replace(/\bsb_secret_[A-Za-z0-9._-]{16,}\b/g, '[REDACTED_SUPABASE_SECRET]')
+    .replace(/\bsb_publishable_[A-Za-z0-9._-]{16,}\b/g, '[REDACTED_SUPABASE_TOKEN]')
+    .replace(/\b(SUPABASE_[A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=\s*)[^\s;&]+/g, '$1[REDACTED]');
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -118,27 +134,38 @@ export function assertLinkedToStaging(projectRefPath = DEFAULT_LINKED_PROJECT_RE
   return linkedRef;
 }
 
-function safeTextMetadata(value) {
+function byteLength(value) {
   const text = typeof value === 'string' ? value : value == null ? '' : String(value);
+  return Buffer.byteLength(text);
+}
+
+function safeTextMetadata(value) {
+  const length = byteLength(value);
   return {
-    present: text.length > 0,
-    length: text.length,
+    present: length > 0,
+    length,
+    original_byte_length: length,
+    captured_byte_length: length,
+    truncated: false,
   };
 }
 
-function capturedOutputMetadata(capturedLength, truncated) {
+function capturedOutputMetadata(originalByteLength, capturedLength, truncated) {
   return {
     present: capturedLength > 0,
     length: capturedLength,
+    original_byte_length: originalByteLength,
+    captured_byte_length: capturedLength,
     truncated,
   };
 }
 
 export class SupabaseCommandError extends Error {
-  constructor(message, metadata) {
+  constructor(message, metadata, outputs = {}) {
     super(message);
     this.name = 'SupabaseCommandError';
     this.metadata = metadata;
+    this.outputs = outputs;
   }
 }
 
@@ -161,13 +188,26 @@ export function runSupabase(args, { operation = 'supabase_command', executor = d
   };
 
   if (result?.error) {
-    throw new SupabaseCommandError(`${operation} failed`, metadata);
+    throw new SupabaseCommandError(`${operation} failed`, metadata, {
+      stdout: Buffer.from(result?.stdout || ''),
+      stderr: Buffer.from(result?.stderr || ''),
+    });
   }
   if (result?.status !== 0) {
-    throw new SupabaseCommandError(`${operation} failed`, metadata);
+    throw new SupabaseCommandError(`${operation} failed`, metadata, {
+      stdout: Buffer.from(result?.stdout || ''),
+      stderr: Buffer.from(result?.stderr || ''),
+    });
   }
 
-  return { stdout: result.stdout || '', metadata };
+  return {
+    stdout: result.stdout || '',
+    metadata,
+    outputs: {
+      stdout: Buffer.from(result?.stdout || ''),
+      stderr: Buffer.from(result?.stderr || ''),
+    },
+  };
 }
 
 export function superviseSupabaseCommand(
@@ -185,6 +225,8 @@ export function superviseSupabaseCommand(
   return new Promise((resolvePromise, rejectPromise) => {
     const stdoutChunks = [];
     const stderrChunks = [];
+    let stdoutOriginalLength = 0;
+    let stderrOriginalLength = 0;
     let stdoutCapturedLength = 0;
     let stderrCapturedLength = 0;
     let stdoutTruncated = false;
@@ -206,6 +248,13 @@ export function superviseSupabaseCommand(
       shell: false,
     });
 
+    function outputs() {
+      return {
+        stdout: Buffer.concat(stdoutChunks),
+        stderr: Buffer.concat(stderrChunks),
+      };
+    }
+
     function metadata() {
       return {
         operation,
@@ -219,8 +268,8 @@ export function superviseSupabaseCommand(
         termination_confirmed: terminationConfirmed,
         exit_status: exitStatus,
         signal,
-        stdout: capturedOutputMetadata(stdoutCapturedLength, stdoutTruncated),
-        stderr: capturedOutputMetadata(stderrCapturedLength, stderrTruncated),
+        stdout: capturedOutputMetadata(stdoutOriginalLength, stdoutCapturedLength, stdoutTruncated),
+        stderr: capturedOutputMetadata(stderrOriginalLength, stderrCapturedLength, stderrTruncated),
       };
     }
 
@@ -251,6 +300,7 @@ export function superviseSupabaseCommand(
       return new SupabaseCommandError(
         `${operation} timed out after ${timeoutMs} ms; termination ${confirmed ? 'confirmed' : 'unconfirmed'}`,
         metadata(),
+        outputs(),
       );
     }
 
@@ -259,6 +309,7 @@ export function superviseSupabaseCommand(
       return new SupabaseCommandError(
         `${operation} output limit exceeded on ${outputLimitStream}; termination ${confirmed ? 'confirmed' : 'unconfirmed'}`,
         metadata(),
+        outputs(),
       );
     }
 
@@ -281,6 +332,8 @@ export function superviseSupabaseCommand(
       if (settled) return;
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
       const isStdout = streamName === 'stdout';
+      if (isStdout) stdoutOriginalLength += bytes.length;
+      else stderrOriginalLength += bytes.length;
       const capturedLength = isStdout ? stdoutCapturedLength : stderrCapturedLength;
       const remaining = outputCaptureLimitBytes - capturedLength;
       if (remaining > 0) {
@@ -306,7 +359,7 @@ export function superviseSupabaseCommand(
     child.stderr?.on?.('data', (chunk) => captureOutput('stderr', chunk));
     child.on?.('error', (error) => {
       if (settled) return;
-      settle('reject', new SupabaseCommandError(`${operation} failed`, { ...metadata(), error_name: error?.name ?? null }));
+      settle('reject', new SupabaseCommandError(`${operation} failed`, { ...metadata(), error_name: error?.name ?? null }, outputs()));
     });
     child.on?.('close', (code, closeSignal) => {
       if (settled) return;
@@ -321,10 +374,16 @@ export function superviseSupabaseCommand(
         return;
       }
       if (exitStatus !== 0) {
-        settle('reject', new SupabaseCommandError(`${operation} failed`, metadata()));
+        settle('reject', new SupabaseCommandError(`${operation} failed`, metadata(), outputs()));
         return;
       }
-      settle('resolve', { stdout: Buffer.concat(stdoutChunks).toString('utf8'), metadata: metadata() });
+      const capturedOutputs = outputs();
+      settle('resolve', {
+        stdout: capturedOutputs.stdout.toString('utf8'),
+        stderr: capturedOutputs.stderr.toString('utf8'),
+        metadata: metadata(),
+        outputs: capturedOutputs,
+      });
     });
 
     deadlineTimer = setTimer(() => {
@@ -385,17 +444,71 @@ export function assertAfterHistory(manifest, beforeHistory, afterHistory) {
   assert(pendingVersions(afterHistory).length === 0, 'local pending migrations remain after apply');
 }
 
+function outputBuffer(outputs, streamName) {
+  const value = outputs?.[streamName];
+  if (Buffer.isBuffer(value)) return value;
+  if (typeof value === 'string') return Buffer.from(value);
+  return Buffer.alloc(0);
+}
+
+function outputArtifactBody(buffer, metadata) {
+  const redacted = redactSensitiveOutput(buffer.toString('utf8'));
+  const marker = metadata?.truncated
+    ? `\n[fortress-output-truncated: captured first ${metadata.captured_byte_length ?? metadata.length ?? buffer.length} bytes; additional output omitted]\n`
+    : '';
+  return redacted + marker;
+}
+
+function writeSubprocessArtifacts({ releaseId, operation, timestamp, metadata, outputs = {} }) {
+  const updated = { ...metadata };
+  const safeOperation = operation.replace(/[^a-z0-9_-]/gi, '-');
+  const safeTimestamp = safeTimestampForPath(timestamp);
+  mkdirSync(resolve(repoRoot, RECEIPT_DIR), { recursive: true });
+
+  for (const streamName of ['stdout', 'stderr']) {
+    const buffer = outputBuffer(outputs, streamName);
+    const streamMetadata = metadata?.[streamName] || capturedOutputMetadata(buffer.length, buffer.length, false);
+    const body = outputArtifactBody(buffer, streamMetadata);
+    const artifactPath = `${RECEIPT_DIR}/${releaseId}-${safeOperation}-${safeTimestamp}-${streamName}.txt`;
+    writeFileSync(resolve(repoRoot, artifactPath), body);
+    updated[streamName] = {
+      ...streamMetadata,
+      present: (streamMetadata.original_byte_length ?? streamMetadata.length ?? buffer.length) > 0,
+      length: streamMetadata.captured_byte_length ?? streamMetadata.length ?? buffer.length,
+      original_byte_length: streamMetadata.original_byte_length ?? streamMetadata.length ?? buffer.length,
+      captured_byte_length: streamMetadata.captured_byte_length ?? streamMetadata.length ?? buffer.length,
+      artifact_path: artifactPath,
+      artifact_sha256: sha256Text(body),
+    };
+  }
+
+  return updated;
+}
+
 export async function readRemoteHistory({ executor = superviseSupabaseCommand } = {}) {
   const result = await executor(['migration', 'list', '--linked', '--output', 'json'], {
     operation: 'migration_history_read',
     timeoutMs: MIGRATION_HISTORY_TIMEOUT_MS,
   });
   try {
-    return parseMigrationList(result.stdout);
+    return {
+      history: parseMigrationList(result.stdout),
+      commandEvidence: {
+        metadata: result.metadata,
+        outputs: result.outputs || {
+          stdout: Buffer.from(result.stdout || ''),
+          stderr: Buffer.from(result.stderr || ''),
+        },
+      },
+    };
   } catch (caught) {
     throw new SupabaseCommandError(
       caught instanceof Error ? caught.message : 'migration_history_read output could not be parsed',
       result.metadata,
+      result.outputs || {
+        stdout: Buffer.from(result.stdout || ''),
+        stderr: Buffer.from(result.stderr || ''),
+      },
     );
   }
 }
@@ -456,21 +569,33 @@ export async function preflight({
   const attemptBase = preflightAttemptBase({ manifest, manifestProof, source_commit, clean_worktree, linkedProjectRef, startedAt: checkedAt });
 
   let beforeHistory = null;
+  let readEvidence = null;
   try {
-    beforeHistory = await readRemoteHistory({ executor });
+    const readResult = await readRemoteHistory({ executor });
+    beforeHistory = readResult.history;
+    readEvidence = readResult.commandEvidence;
     assertPreflightHistory(manifest, beforeHistory);
   } catch (caught) {
     const failedAt = new Date().toISOString();
-    const errorMetadata = caught instanceof SupabaseCommandError
+    const baseErrorMetadata = caught instanceof SupabaseCommandError
       ? caught.metadata
       : {
           operation: 'migration_history_read',
           timeout_ms: MIGRATION_HISTORY_TIMEOUT_MS,
           exit_status: null,
           signal: null,
-          stdout: { present: false, length: 0 },
-          stderr: { present: false, length: 0 },
+          stdout: capturedOutputMetadata(0, 0, false),
+          stderr: capturedOutputMetadata(0, 0, false),
         };
+    const errorMetadata = writeReceiptFile
+      ? writeSubprocessArtifacts({
+          releaseId: manifest.release_id,
+          operation: baseErrorMetadata.operation || 'migration_history_read',
+          timestamp: failedAt,
+          metadata: baseErrorMetadata,
+          outputs: caught instanceof SupabaseCommandError ? caught.outputs : {},
+        })
+      : baseErrorMetadata;
     const attemptReceipt = {
       ...attemptBase,
       remote_history: beforeHistory ? historyForReceipt(beforeHistory) : null,
@@ -491,6 +616,15 @@ export async function preflight({
     result: 'preflight_passed',
     error: null,
     error_metadata: null,
+    migration_history_read_artifacts: writeReceiptFile && readEvidence
+      ? writeSubprocessArtifacts({
+          releaseId: manifest.release_id,
+          operation: readEvidence.metadata.operation || 'migration_history_read',
+          timestamp: passedAt,
+          metadata: readEvidence.metadata,
+          outputs: readEvidence.outputs,
+        })
+      : null,
   };
   const attemptPath = writeReceiptFile ? writeReceipt('preflight-attempt', manifest.release_id, passedAt, attemptReceipt) : null;
 
@@ -549,7 +683,7 @@ export async function apply(reviewedPreflightReceiptPath) {
     beforeHistory = currentPreflight.beforeHistory;
     assertPreflightReceiptMatches(currentPreflight, reviewedReceipt);
     runSupabase(PERMITTED_MUTATION_COMMAND.slice(1));
-    afterHistory = await readRemoteHistory();
+    afterHistory = (await readRemoteHistory()).history;
     assertAfterHistory(manifest, beforeHistory, afterHistory);
     result = 'applied';
   } catch (caught) {

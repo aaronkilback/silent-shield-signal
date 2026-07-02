@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,6 +108,18 @@ function validHistory() {
     local_versions: ['20260601000000', '20260701090000'],
     remote_versions: ['20260601000000'],
   });
+}
+
+function sha256Text(text: string) {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+function expectArtifact(path: string, expectedHash: string) {
+  expect(path).toMatch(/^release-control\/staging-db\/receipts\/.+\.txt$/);
+  expect(existsSync(path)).toBe(true);
+  const body = readFileSync(path, 'utf8');
+  expect(sha256Text(body)).toBe(expectedHash);
+  return body;
 }
 
 async function withProjectRef(value: string | null, fn: (path: string) => void | Promise<void>) {
@@ -267,13 +280,22 @@ describe('staging migration control packet', () => {
   });
 
 
-  it('writes a failed preflight-attempt receipt when a timed-out child confirms termination', async () => {
+  it('writes a failed preflight-attempt receipt with stdout and stderr artifacts when a timed-out child confirms termination', async () => {
     await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
       await withReceiptCapture(async () => {
         const calls: string[][] = [];
         const child = new FakeChild();
         const timers = makeTimerHarness();
         const stdout = 'partial history output that must not be trusted';
+        const stderr = [
+          'failed to connect to postgresql://postgres:super-secret-password@aws-0-us-west-1.pooler.supabase.com:6543/postgres',
+          'password=another-secret',
+          'Bearer abcdefghijklmnopqrstuvwxyz0123456789',
+          'token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhYmNkZWZnaGlqa2xtbm9wIn0.signaturevalue',
+          'SUPABASE_ACCESS_TOKEN=sbp_abcdefghijklmnopqrstuvwxyz0123456789',
+          'bare token sbp_zxywvutsrqponmlkjihgfedcba9876543210',
+          'SQLSTATE XX000 remains visible',
+        ].join('\n');
         const executor = (args: string[], options: { timeoutMs?: number; operation?: string }) => {
           calls.push(args);
           return superviseSupabaseCommand(args, {
@@ -288,6 +310,7 @@ describe('staging migration control packet', () => {
 
         const result = preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
         child.stdout.emit('data', stdout);
+        child.stderr.emit('data', stderr);
         expect(timers.timers[0].ms).toBe(MIGRATION_HISTORY_TIMEOUT_MS);
         timers.timers[0].fn();
         child.emit('close', null, 'SIGTERM');
@@ -312,7 +335,39 @@ describe('staging migration control packet', () => {
         expect(receipt.error_metadata.termination_confirmed).toBe(true);
         expect(receipt.error_metadata.signals_attempted).toEqual(['SIGTERM']);
         expect(receipt.error_metadata.signal).toBe('SIGTERM');
-        expect(receipt.error_metadata.stdout).toEqual({ present: true, length: stdout.length, truncated: false });
+        expect(receipt.error_metadata.stdout).toMatchObject({
+          present: true,
+          length: Buffer.byteLength(stdout),
+          original_byte_length: Buffer.byteLength(stdout),
+          captured_byte_length: Buffer.byteLength(stdout),
+          truncated: false,
+        });
+        expect(receipt.error_metadata.stderr).toMatchObject({
+          present: true,
+          length: Buffer.byteLength(stderr),
+          original_byte_length: Buffer.byteLength(stderr),
+          captured_byte_length: Buffer.byteLength(stderr),
+          truncated: false,
+        });
+
+        const stdoutArtifact = expectArtifact(
+          receipt.error_metadata.stdout.artifact_path,
+          receipt.error_metadata.stdout.artifact_sha256,
+        );
+        const stderrArtifact = expectArtifact(
+          receipt.error_metadata.stderr.artifact_path,
+          receipt.error_metadata.stderr.artifact_sha256,
+        );
+        expect(stdoutArtifact).toBe(stdout);
+        expect(stderrArtifact).toContain('aws-0-us-west-1.pooler.supabase.com');
+        expect(stderrArtifact).toContain('SQLSTATE XX000 remains visible');
+        expect(stderrArtifact).toContain('[REDACTED]');
+        expect(stderrArtifact).toContain('[REDACTED_JWT]');
+        expect(stderrArtifact).toContain('[REDACTED_SUPABASE_TOKEN]');
+        expect(stderrArtifact).not.toContain('super-secret-password');
+        expect(stderrArtifact).not.toContain('another-secret');
+        expect(stderrArtifact).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789');
+        expect(stderrArtifact).not.toContain('zxywvutsrqponmlkjihgfedcba9876543210');
       });
     });
   });
@@ -396,12 +451,20 @@ describe('staging migration control packet', () => {
         expect(receipt.error_metadata.output_limit_exceeded).toBe(true);
         expect(receipt.error_metadata.output_limit_stream).toBe('stdout');
         expect(receipt.error_metadata.termination_confirmed).toBe(true);
-        expect(receipt.error_metadata.stdout).toEqual({
+        expect(receipt.error_metadata.stdout).toMatchObject({
           present: true,
           length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
+          original_byte_length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1024,
+          captured_byte_length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
           truncated: true,
         });
         expect(receipt.error_metadata.stdout.length).not.toBe(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1024);
+        const artifact = expectArtifact(
+          receipt.error_metadata.stdout.artifact_path,
+          receipt.error_metadata.stdout.artifact_sha256,
+        );
+        expect(artifact).toContain('[fortress-output-truncated: captured first 65536 bytes; additional output omitted]');
+        expect(artifact).not.toContain('x'.repeat(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1));
       });
     });
   });
@@ -441,12 +504,20 @@ describe('staging migration control packet', () => {
         expect(receipt.error_metadata.output_capture_limit_bytes).toBe(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES);
         expect(receipt.error_metadata.output_limit_exceeded).toBe(true);
         expect(receipt.error_metadata.output_limit_stream).toBe('stderr');
-        expect(receipt.error_metadata.stderr).toEqual({
+        expect(receipt.error_metadata.stderr).toMatchObject({
           present: true,
           length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
+          original_byte_length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1,
+          captured_byte_length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
           truncated: true,
         });
         expect(receipt.error_metadata.stderr.length).not.toBe(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1);
+        const artifact = expectArtifact(
+          receipt.error_metadata.stderr.artifact_path,
+          receipt.error_metadata.stderr.artifact_sha256,
+        );
+        expect(artifact).toContain('[fortress-output-truncated: captured first 65536 bytes; additional output omitted]');
+        expect(artifact).not.toContain('e'.repeat(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1));
       });
     });
   });
@@ -471,6 +542,16 @@ describe('staging migration control packet', () => {
         const result = await resultPromise;
 
         expect(result.receipt.result).toBe('preflight_passed');
+        expect(result.attemptReceipt.migration_history_read_artifacts.stdout).toMatchObject({
+          present: true,
+          original_byte_length: Buffer.byteLength(validHistory()),
+          captured_byte_length: Buffer.byteLength(validHistory()),
+          truncated: false,
+        });
+        expectArtifact(
+          result.attemptReceipt.migration_history_read_artifacts.stdout.artifact_path,
+          result.attemptReceipt.migration_history_read_artifacts.stdout.artifact_sha256,
+        );
         expect(result.receipt.remote_history_before).toEqual({
           local_versions: ['20260601000000', '20260701090000'],
           remote_versions: ['20260601000000'],
