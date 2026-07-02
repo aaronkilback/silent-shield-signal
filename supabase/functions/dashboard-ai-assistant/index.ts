@@ -206,6 +206,7 @@ When a user asks about recent signals, signal activity, signal quality, or what 
 
 Use each signal's evidence_grade and temporal_context fields:
 • Do NOT present an undated, unparseable-date, dated, or historical signal as current.
+• Do NOT present a future-dated signal as current or as proof that an event already occurred. Use scheduled/planned-event framing.
 • Do NOT present a missing-source or unsafe-source signal as verified fact.
 • Treat evidence_grade.support_label="not_decision_grade" or recommended_framing="hold_or_uncertain" as uncertainty/HOLD framing unless another cited record supports escalation.
 • The Evidence section must cite signal_id and the safe source_url when source_url is present. If source_url is null, say source unavailable.

@@ -68,6 +68,20 @@ describe("Aegis evidence-grade recent signal summary contract", () => {
     expect(historical.evidence.not_decision_grade_reasons).toContain("historical_event_requires_temporal_context");
   });
 
+  it("frames future-dated signals as scheduled/planned rather than current or completed", () => {
+    const { temporal, evidence } = grade(baseSignal({ event_date: "2026-07-05T00:00:00.000Z" }));
+
+    expect(temporal.age_category).toBe("future");
+    expect(temporal.age_description).toBe("3 days in the future");
+    expect(temporal.age_description).not.toContain("ago");
+    expect(temporal.age_description).not.toMatch(/-\d/);
+    expect(temporal.warning).toContain("FUTURE-DATED");
+    expect(temporal.warning).toContain("Do NOT present as current or as proof that the event already occurred");
+    expect(evidence.support_label).toBe("not_decision_grade");
+    expect(evidence.recommended_framing).toBe("hold_or_uncertain");
+    expect(evidence.not_decision_grade_reasons).toContain("future_event_date_requires_context");
+  });
+
   it("frames low-confidence or weakly supported items as HOLD/uncertain using existing UI thresholds", () => {
     const lowConfidence = grade(baseSignal({ confidence: 0.29 }));
     const lowRelevance = grade(baseSignal({ relevance_score: 0.39 }));
@@ -123,5 +137,6 @@ describe("Aegis evidence-grade recent signal summary contract", () => {
     expect(dashboard).toContain("4. Evidence");
     expect(dashboard).toContain("Never expose raw raw_json, reasoning_log");
     expect(dashboard).toContain("Do NOT present an undated, unparseable-date, dated, or historical signal as current");
+    expect(dashboard).toContain("Do NOT present a future-dated signal as current or as proof that an event already occurred");
   });
 });

@@ -24,7 +24,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 type SignalTemporalContext = {
   event_date: string | null;
   ingested_at: string | null;
-  age_category: "current" | "recent" | "dated" | "historical" | "undated" | "unknown";
+  age_category: "future" | "current" | "recent" | "dated" | "historical" | "undated" | "unknown";
   age_description: string;
   is_historical: boolean;
   warning: string | null;
@@ -90,7 +90,11 @@ export function buildSignalTemporalContext(signal: { event_date?: string | null;
   let ageCategory: SignalTemporalContext["age_category"] = "current";
   let ageDescription = "";
 
-  if (ageDays <= 7) {
+  if (ageDays < 0) {
+    ageCategory = "future";
+    const futureDays = Math.abs(ageDays);
+    ageDescription = futureDays === 1 ? "1 day in the future" : `${futureDays} days in the future`;
+  } else if (ageDays <= 7) {
     ageCategory = "current";
     ageDescription = ageDays === 0 ? "Today" : ageDays === 1 ? "Yesterday" : `${ageDays} days ago`;
   } else if (ageDays <= 30) {
@@ -116,7 +120,9 @@ export function buildSignalTemporalContext(signal: { event_date?: string | null;
         ? `HISTORICAL: This event occurred ${ageDescription}. Do NOT present as current threat.`
         : ageCategory === "dated"
           ? `DATED: This event occurred ${ageDescription}. Provide temporal context when reporting.`
-          : null,
+          : ageCategory === "future"
+            ? `FUTURE-DATED: This record is dated ${ageDescription}. Do NOT present as current or as proof that the event already occurred; use scheduled/planned-event framing.`
+            : null,
   };
 }
 
@@ -137,6 +143,7 @@ export function buildSignalEvidenceGrade(signal: any, temporalContext: SignalTem
 
   const reasons: string[] = [];
   if (!safeSourceUrl) reasons.push(sourceLabel === "unsafe_source_omitted" ? "unsafe_source_url_omitted" : "missing_source_url");
+  if (temporalContext.age_category === "future") reasons.push("future_event_date_requires_context");
   if (temporalContext.age_category === "undated") reasons.push("missing_event_date_cannot_be_current");
   if (temporalContext.age_category === "unknown") reasons.push("unparseable_event_date_cannot_be_current");
   if (temporalContext.is_historical) reasons.push(`${temporalContext.age_category}_event_requires_temporal_context`);
