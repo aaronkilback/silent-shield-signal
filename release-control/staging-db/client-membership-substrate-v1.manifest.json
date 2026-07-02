@@ -1,0 +1,43 @@
+{
+  "release_id": "client-membership-substrate-v1",
+  "description": "Staging-only controlled apply packet for public.client_memberships substrate migration.",
+  "target": {
+    "environment": "staging",
+    "project_name": "fortress-staging",
+    "project_ref": "lkvyrvuakzguszbpwnfz",
+    "source_of_truth": "docs/PROD_BASELINE.md"
+  },
+  "disallowed_targets": [
+    {
+      "environment": "production",
+      "project_ref": "kpuqukppbmwebiptqmog"
+    }
+  ],
+  "migration": {
+    "version": "20260701090000",
+    "path": "supabase/migrations/20260701090000_client_membership_substrate_v1.sql",
+    "sha256": "84f30c728f59fbf7ed044f003474f6606d000ae95d9929c95db764925a7c6afa"
+  },
+  "expected_preflight_state": {
+    "target_version_remote_state": "absent",
+    "required_pending_versions": ["20260701090000"],
+    "maximum_pending_migrations": 1
+  },
+  "permitted_mutation_command": [
+    "supabase",
+    "migration",
+    "up",
+    "--linked"
+  ],
+  "receipt_requirements": [
+    "target identity",
+    "manifest hash",
+    "source commit",
+    "migration path",
+    "migration sha256",
+    "remote history before",
+    "remote history after",
+    "UTC timestamps",
+    "result"
+  ]
+}
