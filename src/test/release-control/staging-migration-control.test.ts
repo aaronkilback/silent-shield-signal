@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   FIXED_MANIFEST_PATH,
+  MIGRATION_HISTORY_TIMEOUT_MS,
   PERMITTED_MUTATION_COMMAND,
   PRODUCTION_PROJECT_REF,
   STAGING_PROJECT_REF,
@@ -11,10 +12,47 @@ import {
   assertLinkedToStaging,
   assertPreflightHistory,
   loadManifest,
+  preflight,
   parseMigrationList,
   pendingVersions,
   validateManifest,
 } from '../../../scripts/release-control/staging-migration-control.mjs';
+
+
+function cleanProof() {
+  return {
+    clean: true,
+    allowed_receipt_paths: [],
+    ignored_receipt_directory: 'release-control/staging-db/receipts',
+  };
+}
+
+function receiptFiles() {
+  const dir = 'release-control/staging-db/receipts';
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).map((name) => `${dir}/${name}`).sort();
+}
+
+function removeReceiptFiles(paths: string[]) {
+  for (const path of paths) rmSync(path, { force: true });
+}
+
+function withReceiptCapture(fn: () => void) {
+  const before = new Set(receiptFiles());
+  try {
+    fn();
+  } finally {
+    const created = receiptFiles().filter((path) => !before.has(path));
+    removeReceiptFiles(created);
+  }
+}
+
+function validHistory() {
+  return JSON.stringify({
+    local_versions: ['20260601000000', '20260701090000'],
+    remote_versions: ['20260601000000'],
+  });
+}
 
 function withProjectRef(value: string | null, fn: (path: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'staging-link-'));
@@ -169,6 +207,102 @@ describe('staging migration control packet', () => {
     expect(runner).toContain("receipt_type: 'staging_migration_apply_attempt'");
     expect(runner).toContain('finally');
     expect(runner).toContain('error,');
+  });
+
+
+  it('writes a failed preflight-attempt receipt when migration-history read times out', () => {
+    withProjectRef(STAGING_PROJECT_REF, (projectRefPath) => {
+      withReceiptCapture(() => {
+        const calls: string[][] = [];
+        const stdout = 'partial history output that must not be trusted';
+        const executor = (args: string[], options: { timeoutMs?: number }) => {
+          calls.push(args);
+          return {
+            status: null,
+            signal: 'SIGTERM',
+            stdout,
+            stderr: '',
+            error: { code: 'ETIMEDOUT' },
+          };
+        };
+
+        expect(() => preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof })).toThrow(/timed out/);
+        expect(calls).toEqual([['migration', 'list', '--linked', '--output', 'json']]);
+        expect(calls.flat().join(' ')).not.toContain('up --linked');
+
+        const created = receiptFiles().filter((path) => path.includes('preflight-attempt'));
+        expect(created.length).toBe(1);
+        const receipt = JSON.parse(readFileSync(created[0], 'utf8'));
+        expect(receipt.receipt_type).toBe('staging_migration_preflight_attempt');
+        expect(receipt.target_ref).toBe(STAGING_PROJECT_REF);
+        expect(receipt.phase).toBe('migration_history_read');
+        expect(receipt.remote_history).toBeNull();
+        expect(receipt.result).toBe('failed');
+        expect(receipt.error_metadata.operation).toBe('migration_history_read');
+        expect(receipt.error_metadata.timeout_ms).toBe(MIGRATION_HISTORY_TIMEOUT_MS);
+        expect(receipt.error_metadata.signal).toBe('SIGTERM');
+        expect(receipt.error_metadata.stdout).toEqual({ present: true, length: stdout.length });
+      });
+    });
+  });
+
+  it('valid simulated migration history writes both attempt and reviewed preflight receipts', () => {
+    withProjectRef(STAGING_PROJECT_REF, (projectRefPath) => {
+      withReceiptCapture(() => {
+        const executor = () => ({ status: 0, signal: null, stdout: validHistory(), stderr: '' });
+        const result = preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
+
+        expect(result.receipt.result).toBe('preflight_passed');
+        expect(result.attemptReceipt.result).toBe('preflight_passed');
+        expect(result.receipt.remote_history_before).toEqual({
+          local_versions: ['20260601000000', '20260701090000'],
+          remote_versions: ['20260601000000'],
+        });
+        expect(result.receiptPath).toContain('preflight');
+        expect(result.attemptReceiptPath).toContain('preflight-attempt');
+        expect(existsSync(result.receiptPath!)).toBe(true);
+        expect(existsSync(result.attemptReceiptPath!)).toBe(true);
+      });
+    });
+  });
+
+  it('unknown output, non-zero exit, and signal interruption fail closed with failed attempt receipts', () => {
+    const cases = [
+      {
+        name: 'unknown output',
+        executor: () => ({ status: 0, signal: null, stdout: JSON.stringify({ migrations: [{ version: '20260701090000' }] }), stderr: '' }),
+        message: /local_versions and remote_versions/,
+      },
+      {
+        name: 'non-zero exit',
+        executor: () => ({ status: 1, signal: null, stdout: '', stderr: 'remote refused' }),
+        message: /migration_history_read failed/,
+      },
+      {
+        name: 'signal interruption',
+        executor: () => ({ status: null, signal: 'SIGINT', stdout: '', stderr: 'interrupted' }),
+        message: /migration_history_read failed/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      withProjectRef(STAGING_PROJECT_REF, (projectRefPath) => {
+        withReceiptCapture(() => {
+          expect(() => preflight({
+            projectRefPath,
+            executor: testCase.executor,
+            cleanWorktreeProvider: cleanProof,
+          })).toThrow(testCase.message);
+
+          const created = receiptFiles().filter((path) => path.includes('preflight-attempt'));
+          expect(created.length, testCase.name).toBe(1);
+          const receipt = JSON.parse(readFileSync(created[0], 'utf8'));
+          expect(receipt.result).toBe('failed');
+          expect(receipt.phase).toBe('migration_history_read');
+          expect(receipt.remote_history).toBeNull();
+        });
+      });
+    }
   });
 
   it('does not add a GitHub workflow capable of applying this migration on push', () => {

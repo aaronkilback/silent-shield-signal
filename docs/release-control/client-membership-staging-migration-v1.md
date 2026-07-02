@@ -54,10 +54,13 @@ The runner fails closed unless:
 5. Local-versus-remote history shows exactly one pending migration, `20260701090000`.
 6. The only mutation command executed is `supabase migration up --linked`.
 7. `preflight` writes a local JSON preflight receipt under `release-control/staging-db/receipts/`.
-8. `apply` is given the reviewed preflight receipt path and re-runs preflight before mutation.
-9. Current source commit, clean-worktree proof, manifest hash, migration hash, target ref, and remote preflight history must match the reviewed preflight receipt.
-10. After apply, remote version-state includes `20260701090000` and no unexpected migration version moved.
-11. Every apply attempt writes a local JSON apply-attempt receipt, including failed attempts and any available before/after history.
+8. The remote migration-history read has a fixed `60000` ms timeout.
+9. `preflight` writes a `staging_migration_preflight_attempt` receipt on success and failure.
+10. Timeout, non-zero exit, signal interruption, or unrecognized migration-history output records only safe command metadata: operation, timeout, exit status, signal, and bounded stdout/stderr presence and length.
+11. `apply` is given the reviewed preflight receipt path and re-runs preflight before mutation.
+12. Current source commit, clean-worktree proof, manifest hash, migration hash, target ref, and remote preflight history must match the reviewed preflight receipt.
+13. After apply, remote version-state includes `20260701090000` and no unexpected migration version moved.
+14. Every apply attempt writes a local JSON apply-attempt receipt, including failed attempts and any available before/after history.
 
 Remote migration history proves version-state only. The manifest proves reviewed local file-byte binding only. This packet does not prove remote historical SQL byte equivalence, full schema equivalence, or live data integrity.
 
