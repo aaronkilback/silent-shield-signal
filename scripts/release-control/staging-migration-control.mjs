@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -14,6 +14,9 @@ export const PRODUCTION_PROJECT_REF = 'kpuqukppbmwebiptqmog';
 export const PERMITTED_MUTATION_COMMAND = ['supabase', 'migration', 'up', '--linked'];
 export const DEFAULT_LINKED_PROJECT_REF_PATH = 'supabase/.temp/project-ref';
 export const RECEIPT_DIR = 'release-control/staging-db/receipts';
+export const MIGRATION_HISTORY_TIMEOUT_MS = 60000;
+export const MIGRATION_HISTORY_GRACE_MS = 5000;
+export const MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES = 65536;
 
 function readText(path) {
   return readFileSync(resolve(repoRoot, path), 'utf8');
@@ -115,10 +118,222 @@ export function assertLinkedToStaging(projectRefPath = DEFAULT_LINKED_PROJECT_RE
   return linkedRef;
 }
 
-function runSupabase(args) {
-  const result = spawnSync('supabase', args, { cwd: repoRoot, encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(`supabase ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
-  return result.stdout;
+function safeTextMetadata(value) {
+  const text = typeof value === 'string' ? value : value == null ? '' : String(value);
+  return {
+    present: text.length > 0,
+    length: text.length,
+  };
+}
+
+function capturedOutputMetadata(capturedLength, truncated) {
+  return {
+    present: capturedLength > 0,
+    length: capturedLength,
+    truncated,
+  };
+}
+
+export class SupabaseCommandError extends Error {
+  constructor(message, metadata) {
+    super(message);
+    this.name = 'SupabaseCommandError';
+    this.metadata = metadata;
+  }
+}
+
+function defaultSupabaseExecutor(args) {
+  return spawnSync('supabase', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+}
+
+export function runSupabase(args, { operation = 'supabase_command', executor = defaultSupabaseExecutor } = {}) {
+  const result = executor(args, { operation });
+  const metadata = {
+    operation,
+    timeout_ms: null,
+    exit_status: typeof result?.status === 'number' ? result.status : null,
+    signal: result?.signal ?? null,
+    stdout: safeTextMetadata(result?.stdout),
+    stderr: safeTextMetadata(result?.stderr),
+  };
+
+  if (result?.error) {
+    throw new SupabaseCommandError(`${operation} failed`, metadata);
+  }
+  if (result?.status !== 0) {
+    throw new SupabaseCommandError(`${operation} failed`, metadata);
+  }
+
+  return { stdout: result.stdout || '', metadata };
+}
+
+export function superviseSupabaseCommand(
+  args,
+  {
+    operation = 'migration_history_read',
+    timeoutMs = MIGRATION_HISTORY_TIMEOUT_MS,
+    graceMs = MIGRATION_HISTORY_GRACE_MS,
+    outputCaptureLimitBytes = MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
+    spawnChild = spawn,
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
+  } = {},
+) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutCapturedLength = 0;
+    let stderrCapturedLength = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    let exitStatus = null;
+    let signal = null;
+    let timedOut = false;
+    let outputLimitExceeded = false;
+    let outputLimitStream = null;
+    let terminationConfirmed = false;
+    let settled = false;
+    const signalsAttempted = [];
+    let deadlineTimer = null;
+    let graceTimer = null;
+
+    const child = spawnChild('supabase', args, {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+    });
+
+    function metadata() {
+      return {
+        operation,
+        timeout_ms: timeoutMs,
+        grace_ms: graceMs,
+        output_capture_limit_bytes: outputCaptureLimitBytes,
+        output_limit_exceeded: outputLimitExceeded,
+        output_limit_stream: outputLimitStream,
+        timed_out: timedOut,
+        signals_attempted: [...signalsAttempted],
+        termination_confirmed: terminationConfirmed,
+        exit_status: exitStatus,
+        signal,
+        stdout: capturedOutputMetadata(stdoutCapturedLength, stdoutTruncated),
+        stderr: capturedOutputMetadata(stderrCapturedLength, stderrTruncated),
+      };
+    }
+
+    function cleanupChildHandles() {
+      child.stdout?.removeAllListeners?.('data');
+      child.stderr?.removeAllListeners?.('data');
+      child.removeAllListeners?.('close');
+      child.removeAllListeners?.('error');
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
+      child.unref?.();
+      child.stdout?.unref?.();
+      child.stderr?.unref?.();
+    }
+
+    function settle(kind, value) {
+      if (settled) return;
+      settled = true;
+      if (deadlineTimer) clearTimer(deadlineTimer);
+      if (graceTimer) clearTimer(graceTimer);
+      cleanupChildHandles();
+      if (kind === 'resolve') resolvePromise(value);
+      else rejectPromise(value);
+    }
+
+    function timeoutError(confirmed) {
+      terminationConfirmed = confirmed;
+      return new SupabaseCommandError(
+        `${operation} timed out after ${timeoutMs} ms; termination ${confirmed ? 'confirmed' : 'unconfirmed'}`,
+        metadata(),
+      );
+    }
+
+    function outputLimitError(confirmed) {
+      terminationConfirmed = confirmed;
+      return new SupabaseCommandError(
+        `${operation} output limit exceeded on ${outputLimitStream}; termination ${confirmed ? 'confirmed' : 'unconfirmed'}`,
+        metadata(),
+      );
+    }
+
+    function requestTermination(reason) {
+      if (signalsAttempted.length === 0) {
+        signalsAttempted.push('SIGTERM');
+        child.kill?.('SIGTERM');
+      }
+      if (graceTimer) return;
+      graceTimer = setTimer(() => {
+        if (settled) return;
+        if (!signalsAttempted.includes('SIGKILL')) signalsAttempted.push('SIGKILL');
+        child.kill?.('SIGKILL');
+        settle('reject', reason === 'timeout' ? timeoutError(false) : outputLimitError(false));
+      }, graceMs);
+      graceTimer?.unref?.();
+    }
+
+    function captureOutput(streamName, chunk) {
+      if (settled) return;
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const isStdout = streamName === 'stdout';
+      const capturedLength = isStdout ? stdoutCapturedLength : stderrCapturedLength;
+      const remaining = outputCaptureLimitBytes - capturedLength;
+      if (remaining > 0) {
+        const captured = bytes.subarray(0, Math.min(remaining, bytes.length));
+        if (isStdout) {
+          stdoutChunks.push(captured);
+          stdoutCapturedLength += captured.length;
+        } else {
+          stderrChunks.push(captured);
+          stderrCapturedLength += captured.length;
+        }
+      }
+      if (bytes.length > Math.max(remaining, 0)) {
+        if (isStdout) stdoutTruncated = true;
+        else stderrTruncated = true;
+        outputLimitExceeded = true;
+        outputLimitStream ||= streamName;
+        requestTermination('output_limit');
+      }
+    }
+
+    child.stdout?.on?.('data', (chunk) => captureOutput('stdout', chunk));
+    child.stderr?.on?.('data', (chunk) => captureOutput('stderr', chunk));
+    child.on?.('error', (error) => {
+      if (settled) return;
+      settle('reject', new SupabaseCommandError(`${operation} failed`, { ...metadata(), error_name: error?.name ?? null }));
+    });
+    child.on?.('close', (code, closeSignal) => {
+      if (settled) return;
+      exitStatus = typeof code === 'number' ? code : null;
+      signal = closeSignal ?? null;
+      if (outputLimitExceeded) {
+        settle('reject', outputLimitError(true));
+        return;
+      }
+      if (timedOut) {
+        settle('reject', timeoutError(true));
+        return;
+      }
+      if (exitStatus !== 0) {
+        settle('reject', new SupabaseCommandError(`${operation} failed`, metadata()));
+        return;
+      }
+      settle('resolve', { stdout: Buffer.concat(stdoutChunks).toString('utf8'), metadata: metadata() });
+    });
+
+    deadlineTimer = setTimer(() => {
+      if (settled) return;
+      timedOut = true;
+      requestTermination('timeout');
+    }, timeoutMs);
+    deadlineTimer?.unref?.();
+  });
 }
 
 function assertVersionArray(value, field) {
@@ -170,8 +385,19 @@ export function assertAfterHistory(manifest, beforeHistory, afterHistory) {
   assert(pendingVersions(afterHistory).length === 0, 'local pending migrations remain after apply');
 }
 
-export function readRemoteHistory() {
-  return parseMigrationList(runSupabase(['migration', 'list', '--linked', '--output', 'json']));
+export async function readRemoteHistory({ executor = superviseSupabaseCommand } = {}) {
+  const result = await executor(['migration', 'list', '--linked', '--output', 'json'], {
+    operation: 'migration_history_read',
+    timeoutMs: MIGRATION_HISTORY_TIMEOUT_MS,
+  });
+  try {
+    return parseMigrationList(result.stdout);
+  } catch (caught) {
+    throw new SupabaseCommandError(
+      caught instanceof Error ? caught.message : 'migration_history_read output could not be parsed',
+      result.metadata,
+    );
+  }
 }
 
 function historyForReceipt(history) {
@@ -196,15 +422,78 @@ export function validateOnly() {
   return validateManifest(loadManifest());
 }
 
-export function preflight({ writeReceiptFile = true, projectRefPath = DEFAULT_LINKED_PROJECT_REF_PATH } = {}) {
+function preflightAttemptBase({ manifest, manifestProof, source_commit, clean_worktree, linkedProjectRef, startedAt }) {
+  return {
+    receipt_type: 'staging_migration_preflight_attempt',
+    release_id: manifest.release_id,
+    target_ref: linkedProjectRef,
+    target: manifest.target,
+    source_commit,
+    clean_worktree,
+    manifest_path: FIXED_MANIFEST_PATH,
+    manifest_sha256: manifestProof.manifestHash,
+    migration_path: manifest.migration.path,
+    migration_version: manifest.migration.version,
+    migration_sha256: manifestProof.migrationHash,
+    phase: 'migration_history_read',
+    remote_history: null,
+    started_at_utc: startedAt,
+  };
+}
+
+export async function preflight({
+  writeReceiptFile = true,
+  projectRefPath = DEFAULT_LINKED_PROJECT_REF_PATH,
+  executor = superviseSupabaseCommand,
+  cleanWorktreeProvider = cleanWorktreeProof,
+} = {}) {
   const checkedAt = new Date().toISOString();
   const manifest = loadManifest();
   const manifestProof = validateManifest(manifest);
   const source_commit = sourceCommit();
-  const clean_worktree = cleanWorktreeProof();
+  const clean_worktree = cleanWorktreeProvider();
   const linkedProjectRef = assertLinkedToStaging(projectRefPath);
-  const beforeHistory = readRemoteHistory();
-  assertPreflightHistory(manifest, beforeHistory);
+  const attemptBase = preflightAttemptBase({ manifest, manifestProof, source_commit, clean_worktree, linkedProjectRef, startedAt: checkedAt });
+
+  let beforeHistory = null;
+  try {
+    beforeHistory = await readRemoteHistory({ executor });
+    assertPreflightHistory(manifest, beforeHistory);
+  } catch (caught) {
+    const failedAt = new Date().toISOString();
+    const errorMetadata = caught instanceof SupabaseCommandError
+      ? caught.metadata
+      : {
+          operation: 'migration_history_read',
+          timeout_ms: MIGRATION_HISTORY_TIMEOUT_MS,
+          exit_status: null,
+          signal: null,
+          stdout: { present: false, length: 0 },
+          stderr: { present: false, length: 0 },
+        };
+    const attemptReceipt = {
+      ...attemptBase,
+      remote_history: beforeHistory ? historyForReceipt(beforeHistory) : null,
+      finished_at_utc: failedAt,
+      result: 'failed',
+      error: caught instanceof Error ? caught.message : String(caught),
+      error_metadata: errorMetadata,
+    };
+    if (writeReceiptFile) writeReceipt('preflight-attempt', manifest.release_id, failedAt, attemptReceipt);
+    throw caught;
+  }
+
+  const passedAt = new Date().toISOString();
+  const attemptReceipt = {
+    ...attemptBase,
+    remote_history: historyForReceipt(beforeHistory),
+    finished_at_utc: passedAt,
+    result: 'preflight_passed',
+    error: null,
+    error_metadata: null,
+  };
+  const attemptPath = writeReceiptFile ? writeReceipt('preflight-attempt', manifest.release_id, passedAt, attemptReceipt) : null;
+
   const receipt = {
     receipt_type: 'staging_migration_preflight',
     release_id: manifest.release_id,
@@ -218,11 +507,12 @@ export function preflight({ writeReceiptFile = true, projectRefPath = DEFAULT_LI
     migration_version: manifest.migration.version,
     migration_sha256: manifestProof.migrationHash,
     remote_history_before: historyForReceipt(beforeHistory),
-    checked_at_utc: checkedAt,
+    checked_at_utc: passedAt,
     result: 'preflight_passed',
+    preflight_attempt_receipt_path: attemptPath,
   };
-  const path = writeReceiptFile ? writeReceipt('preflight', manifest.release_id, checkedAt, receipt) : null;
-  return { manifest, manifestProof, beforeHistory, receipt, receiptPath: path };
+  const path = writeReceiptFile ? writeReceipt('preflight', manifest.release_id, passedAt, receipt) : null;
+  return { manifest, manifestProof, beforeHistory, receipt, receiptPath: path, attemptReceipt, attemptReceiptPath: attemptPath };
 }
 
 function readReceipt(path) {
@@ -243,7 +533,7 @@ function assertPreflightReceiptMatches(current, reviewedReceipt) {
   assert(JSON.stringify(reviewedReceipt.remote_history_before) === JSON.stringify(current.receipt.remote_history_before), 'remote preflight history does not match reviewed preflight');
 }
 
-export function apply(reviewedPreflightReceiptPath) {
+export async function apply(reviewedPreflightReceiptPath) {
   const startedAt = new Date().toISOString();
   let manifest;
   let currentPreflight;
@@ -254,12 +544,12 @@ export function apply(reviewedPreflightReceiptPath) {
 
   try {
     const reviewedReceipt = readReceipt(reviewedPreflightReceiptPath);
-    currentPreflight = preflight({ writeReceiptFile: false, projectRefPath: DEFAULT_LINKED_PROJECT_REF_PATH });
+    currentPreflight = await preflight({ writeReceiptFile: false, projectRefPath: DEFAULT_LINKED_PROJECT_REF_PATH });
     manifest = currentPreflight.manifest;
     beforeHistory = currentPreflight.beforeHistory;
     assertPreflightReceiptMatches(currentPreflight, reviewedReceipt);
     runSupabase(PERMITTED_MUTATION_COMMAND.slice(1));
-    afterHistory = readRemoteHistory();
+    afterHistory = await readRemoteHistory();
     assertAfterHistory(manifest, beforeHistory, afterHistory);
     result = 'applied';
   } catch (caught) {
@@ -291,20 +581,20 @@ export function apply(reviewedPreflightReceiptPath) {
   }
 }
 
-function main() {
+async function main() {
   const command = process.argv[2] || 'validate';
   if (command === 'validate') {
     console.log(JSON.stringify(validateOnly(), null, 2));
     return;
   }
   if (command === 'preflight') {
-    const result = preflight();
+    const result = await preflight();
     console.log(JSON.stringify({ receipt_path: result.receiptPath, ...result.receipt }, null, 2));
     return;
   }
   if (command === 'apply') {
     const reviewedPreflightReceiptPath = process.argv[3];
-    apply(reviewedPreflightReceiptPath);
+    await apply(reviewedPreflightReceiptPath);
     console.log(JSON.stringify({ result: 'applied' }, null, 2));
     return;
   }
@@ -313,7 +603,7 @@ function main() {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    main();
+    await main();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
