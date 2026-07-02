@@ -58,11 +58,13 @@ The runner fails closed unless:
 9. `preflight` writes a `staging_migration_preflight_attempt` receipt on success and failure.
 10. On timeout, the runner requests termination, escalates once after the grace period, and returns a failed preflight-attempt receipt without waiting forever for child close.
 11. Timeout receipts distinguish termination confirmed from termination unconfirmed. They do not claim that the external process was successfully terminated unless close was observed.
-12. Timeout, non-zero exit, signal interruption, or unrecognized migration-history output records only safe command metadata: operation, timeout, attempted signals, termination confirmation, exit status, signal, and bounded stdout/stderr presence and length.
-13. `apply` is given the reviewed preflight receipt path and re-runs preflight before mutation.
-14. Current source commit, clean-worktree proof, manifest hash, migration hash, target ref, and remote preflight history must match the reviewed preflight receipt.
-15. After apply, remote version-state includes `20260701090000` and no unexpected migration version moved.
-16. Every apply attempt writes a local JSON apply-attempt receipt, including failed attempts and any available before/after history.
+12. Migration-history stdout and stderr capture is capped at `65536` bytes per stream. Output beyond that cap is not retained.
+13. If stdout or stderr exceeds the cap, the runner fails closed, requests termination, and writes a failed preflight-attempt receipt before any migration-history parsing or apply path.
+14. Timeout, output-limit overflow, non-zero exit, signal interruption, or unrecognized migration-history output records only safe command metadata: operation, timeout, attempted signals, termination confirmation, output-limit state, exit status, signal, and capped stdout/stderr presence, length, and truncation state.
+15. `apply` is given the reviewed preflight receipt path and re-runs preflight before mutation.
+16. Current source commit, clean-worktree proof, manifest hash, migration hash, target ref, and remote preflight history must match the reviewed preflight receipt.
+17. After apply, remote version-state includes `20260701090000` and no unexpected migration version moved.
+18. Every apply attempt writes a local JSON apply-attempt receipt, including failed attempts and any available before/after history.
 
 Remote migration history proves version-state only. The manifest proves reviewed local file-byte binding only. This packet does not prove remote historical SQL byte equivalence, full schema equivalence, or live data integrity.
 

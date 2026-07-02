@@ -16,6 +16,7 @@ export const DEFAULT_LINKED_PROJECT_REF_PATH = 'supabase/.temp/project-ref';
 export const RECEIPT_DIR = 'release-control/staging-db/receipts';
 export const MIGRATION_HISTORY_TIMEOUT_MS = 60000;
 export const MIGRATION_HISTORY_GRACE_MS = 5000;
+export const MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES = 65536;
 
 function readText(path) {
   return readFileSync(resolve(repoRoot, path), 'utf8');
@@ -125,6 +126,14 @@ function safeTextMetadata(value) {
   };
 }
 
+function capturedOutputMetadata(capturedLength, truncated) {
+  return {
+    present: capturedLength > 0,
+    length: capturedLength,
+    truncated,
+  };
+}
+
 export class SupabaseCommandError extends Error {
   constructor(message, metadata) {
     super(message);
@@ -167,17 +176,24 @@ export function superviseSupabaseCommand(
     operation = 'migration_history_read',
     timeoutMs = MIGRATION_HISTORY_TIMEOUT_MS,
     graceMs = MIGRATION_HISTORY_GRACE_MS,
+    outputCaptureLimitBytes = MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
     spawnChild = spawn,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
   } = {},
 ) {
   return new Promise((resolvePromise, rejectPromise) => {
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutCapturedLength = 0;
+    let stderrCapturedLength = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let exitStatus = null;
     let signal = null;
     let timedOut = false;
+    let outputLimitExceeded = false;
+    let outputLimitStream = null;
     let terminationConfirmed = false;
     let settled = false;
     const signalsAttempted = [];
@@ -195,13 +211,16 @@ export function superviseSupabaseCommand(
         operation,
         timeout_ms: timeoutMs,
         grace_ms: graceMs,
+        output_capture_limit_bytes: outputCaptureLimitBytes,
+        output_limit_exceeded: outputLimitExceeded,
+        output_limit_stream: outputLimitStream,
         timed_out: timedOut,
         signals_attempted: [...signalsAttempted],
         termination_confirmed: terminationConfirmed,
         exit_status: exitStatus,
         signal,
-        stdout: safeTextMetadata(stdout),
-        stderr: safeTextMetadata(stderr),
+        stdout: capturedOutputMetadata(stdoutCapturedLength, stdoutTruncated),
+        stderr: capturedOutputMetadata(stderrCapturedLength, stderrTruncated),
       };
     }
 
@@ -235,12 +254,56 @@ export function superviseSupabaseCommand(
       );
     }
 
-    child.stdout?.on?.('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on?.('data', (chunk) => {
-      stderr += chunk.toString();
-    });
+    function outputLimitError(confirmed) {
+      terminationConfirmed = confirmed;
+      return new SupabaseCommandError(
+        `${operation} output limit exceeded on ${outputLimitStream}; termination ${confirmed ? 'confirmed' : 'unconfirmed'}`,
+        metadata(),
+      );
+    }
+
+    function requestTermination(reason) {
+      if (signalsAttempted.length === 0) {
+        signalsAttempted.push('SIGTERM');
+        child.kill?.('SIGTERM');
+      }
+      if (graceTimer) return;
+      graceTimer = setTimer(() => {
+        if (settled) return;
+        if (!signalsAttempted.includes('SIGKILL')) signalsAttempted.push('SIGKILL');
+        child.kill?.('SIGKILL');
+        settle('reject', reason === 'timeout' ? timeoutError(false) : outputLimitError(false));
+      }, graceMs);
+      graceTimer?.unref?.();
+    }
+
+    function captureOutput(streamName, chunk) {
+      if (settled) return;
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const isStdout = streamName === 'stdout';
+      const capturedLength = isStdout ? stdoutCapturedLength : stderrCapturedLength;
+      const remaining = outputCaptureLimitBytes - capturedLength;
+      if (remaining > 0) {
+        const captured = bytes.subarray(0, Math.min(remaining, bytes.length));
+        if (isStdout) {
+          stdoutChunks.push(captured);
+          stdoutCapturedLength += captured.length;
+        } else {
+          stderrChunks.push(captured);
+          stderrCapturedLength += captured.length;
+        }
+      }
+      if (bytes.length > Math.max(remaining, 0)) {
+        if (isStdout) stdoutTruncated = true;
+        else stderrTruncated = true;
+        outputLimitExceeded = true;
+        outputLimitStream ||= streamName;
+        requestTermination('output_limit');
+      }
+    }
+
+    child.stdout?.on?.('data', (chunk) => captureOutput('stdout', chunk));
+    child.stderr?.on?.('data', (chunk) => captureOutput('stderr', chunk));
     child.on?.('error', (error) => {
       if (settled) return;
       settle('reject', new SupabaseCommandError(`${operation} failed`, { ...metadata(), error_name: error?.name ?? null }));
@@ -249,6 +312,10 @@ export function superviseSupabaseCommand(
       if (settled) return;
       exitStatus = typeof code === 'number' ? code : null;
       signal = closeSignal ?? null;
+      if (outputLimitExceeded) {
+        settle('reject', outputLimitError(true));
+        return;
+      }
       if (timedOut) {
         settle('reject', timeoutError(true));
         return;
@@ -257,21 +324,13 @@ export function superviseSupabaseCommand(
         settle('reject', new SupabaseCommandError(`${operation} failed`, metadata()));
         return;
       }
-      settle('resolve', { stdout, metadata: metadata() });
+      settle('resolve', { stdout: Buffer.concat(stdoutChunks).toString('utf8'), metadata: metadata() });
     });
 
     deadlineTimer = setTimer(() => {
       if (settled) return;
       timedOut = true;
-      signalsAttempted.push('SIGTERM');
-      child.kill?.('SIGTERM');
-      graceTimer = setTimer(() => {
-        if (settled) return;
-        signalsAttempted.push('SIGKILL');
-        child.kill?.('SIGKILL');
-        settle('reject', timeoutError(false));
-      }, graceMs);
-      graceTimer?.unref?.();
+      requestTermination('timeout');
     }, timeoutMs);
     deadlineTimer?.unref?.();
   });

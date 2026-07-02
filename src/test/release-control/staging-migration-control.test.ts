@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import {
   FIXED_MANIFEST_PATH,
   MIGRATION_HISTORY_GRACE_MS,
+  MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
   MIGRATION_HISTORY_TIMEOUT_MS,
   PERMITTED_MUTATION_COMMAND,
   PRODUCTION_PROJECT_REF,
@@ -167,6 +168,7 @@ describe('staging migration control packet', () => {
     expect(manifest.permitted_mutation_command.join(' ')).toBe('supabase migration up --linked');
     expect(runner).toContain("spawnChild('supabase', args");
     expect(runner).toContain("spawnSync('supabase', args");
+    expect(runner).toContain('MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES = 65536');
     expect(runner).not.toContain('STAGING_MIGRATION_SUPABASE_BIN');
     expect(runner).not.toMatch(/process\.env\.[A-Z0-9_]*SUPABASE_BIN/);
     expect(runner).not.toMatch(/supabase\s+db\s+query/);
@@ -310,7 +312,7 @@ describe('staging migration control packet', () => {
         expect(receipt.error_metadata.termination_confirmed).toBe(true);
         expect(receipt.error_metadata.signals_attempted).toEqual(['SIGTERM']);
         expect(receipt.error_metadata.signal).toBe('SIGTERM');
-        expect(receipt.error_metadata.stdout).toEqual({ present: true, length: stdout.length });
+        expect(receipt.error_metadata.stdout).toEqual({ present: true, length: stdout.length, truncated: false });
       });
     });
   });
@@ -354,6 +356,126 @@ describe('staging migration control packet', () => {
         expect(receipt.error_metadata.signals_attempted).toEqual(['SIGTERM', 'SIGKILL']);
         expect(receipt.error_metadata.exit_status).toBeNull();
         expect(receipt.error_metadata.signal).toBeNull();
+      });
+    });
+  });
+
+  it('stdout overflow fails closed, caps retained output, and never reaches apply', async () => {
+    await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
+      await withReceiptCapture(async () => {
+        const calls: string[][] = [];
+        const child = new FakeChild();
+        const timers = makeTimerHarness();
+        const executor = (args: string[], options: { timeoutMs?: number; operation?: string }) => {
+          calls.push(args);
+          return superviseSupabaseCommand(args, {
+            operation: options.operation,
+            timeoutMs: options.timeoutMs,
+            graceMs: MIGRATION_HISTORY_GRACE_MS,
+            spawnChild: () => child,
+            setTimer: timers.setTimer,
+            clearTimer: timers.clearTimer,
+          });
+        };
+
+        const result = preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
+        child.stdout.emit('data', Buffer.alloc(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1024, 'x'));
+        child.emit('close', null, 'SIGTERM');
+
+        await expect(result).rejects.toThrow(/output limit exceeded on stdout/);
+        expect(calls).toEqual([['migration', 'list', '--linked', '--output', 'json']]);
+        expect(calls.flat().join(' ')).not.toContain('up --linked');
+        expect(child.killedSignals).toEqual(['SIGTERM']);
+
+        const created = receiptFiles().filter((path) => path.includes('preflight-attempt'));
+        expect(created.length).toBe(1);
+        const receipt = JSON.parse(readFileSync(created[0], 'utf8'));
+        expect(receipt.result).toBe('failed');
+        expect(receipt.remote_history).toBeNull();
+        expect(receipt.error_metadata.output_capture_limit_bytes).toBe(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES);
+        expect(receipt.error_metadata.output_limit_exceeded).toBe(true);
+        expect(receipt.error_metadata.output_limit_stream).toBe('stdout');
+        expect(receipt.error_metadata.termination_confirmed).toBe(true);
+        expect(receipt.error_metadata.stdout).toEqual({
+          present: true,
+          length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
+          truncated: true,
+        });
+        expect(receipt.error_metadata.stdout.length).not.toBe(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1024);
+      });
+    });
+  });
+
+  it('stderr overflow fails closed, caps retained output, and never reaches apply', async () => {
+    await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
+      await withReceiptCapture(async () => {
+        const calls: string[][] = [];
+        const child = new FakeChild();
+        const timers = makeTimerHarness();
+        const executor = (args: string[], options: { timeoutMs?: number; operation?: string }) => {
+          calls.push(args);
+          return superviseSupabaseCommand(args, {
+            operation: options.operation,
+            timeoutMs: options.timeoutMs,
+            graceMs: MIGRATION_HISTORY_GRACE_MS,
+            spawnChild: () => child,
+            setTimer: timers.setTimer,
+            clearTimer: timers.clearTimer,
+          });
+        };
+
+        const result = preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
+        child.stderr.emit('data', Buffer.alloc(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1, 'e'));
+        child.emit('close', null, 'SIGTERM');
+
+        await expect(result).rejects.toThrow(/output limit exceeded on stderr/);
+        expect(calls).toEqual([['migration', 'list', '--linked', '--output', 'json']]);
+        expect(calls.flat().join(' ')).not.toContain('up --linked');
+        expect(child.killedSignals).toEqual(['SIGTERM']);
+
+        const created = receiptFiles().filter((path) => path.includes('preflight-attempt'));
+        expect(created.length).toBe(1);
+        const receipt = JSON.parse(readFileSync(created[0], 'utf8'));
+        expect(receipt.result).toBe('failed');
+        expect(receipt.remote_history).toBeNull();
+        expect(receipt.error_metadata.output_capture_limit_bytes).toBe(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES);
+        expect(receipt.error_metadata.output_limit_exceeded).toBe(true);
+        expect(receipt.error_metadata.output_limit_stream).toBe('stderr');
+        expect(receipt.error_metadata.stderr).toEqual({
+          present: true,
+          length: MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES,
+          truncated: true,
+        });
+        expect(receipt.error_metadata.stderr.length).not.toBe(MIGRATION_HISTORY_OUTPUT_CAPTURE_LIMIT_BYTES + 1);
+      });
+    });
+  });
+
+  it('valid migration-history JSON below the output cap passes through the supervisor', async () => {
+    await withProjectRef(STAGING_PROJECT_REF, async (projectRefPath) => {
+      await withReceiptCapture(async () => {
+        const child = new FakeChild();
+        const timers = makeTimerHarness();
+        const executor = (args: string[], options: { timeoutMs?: number; operation?: string }) => superviseSupabaseCommand(args, {
+          operation: options.operation,
+          timeoutMs: options.timeoutMs,
+          graceMs: MIGRATION_HISTORY_GRACE_MS,
+          spawnChild: () => child,
+          setTimer: timers.setTimer,
+          clearTimer: timers.clearTimer,
+        });
+
+        const resultPromise = preflight({ projectRefPath, executor, cleanWorktreeProvider: cleanProof });
+        child.stdout.emit('data', validHistory());
+        child.emit('close', 0, null);
+        const result = await resultPromise;
+
+        expect(result.receipt.result).toBe('preflight_passed');
+        expect(result.receipt.remote_history_before).toEqual({
+          local_versions: ['20260601000000', '20260701090000'],
+          remote_versions: ['20260601000000'],
+        });
+        expect(result.attemptReceipt.error_metadata).toBeNull();
       });
     });
   });
