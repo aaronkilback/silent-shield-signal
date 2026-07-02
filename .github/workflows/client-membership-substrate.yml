@@ -1,0 +1,65 @@
+name: Client Membership Substrate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/client-membership-substrate.yml
+      - docs/reliability/client-membership-substrate-v1.md
+      - scripts/client-membership-substrate/**
+      - src/test/security/client-membership-substrate.test.ts
+      - supabase/migrations/20260701090000_client_membership_substrate_v1.sql
+  push:
+    branches:
+      - reliability/client-membership-substrate-v1
+    paths:
+      - .github/workflows/client-membership-substrate.yml
+      - docs/reliability/client-membership-substrate-v1.md
+      - scripts/client-membership-substrate/**
+      - src/test/security/client-membership-substrate.test.ts
+      - supabase/migrations/20260701090000_client_membership_substrate_v1.sql
+
+permissions:
+  contents: read
+
+jobs:
+  behavioral-postgres:
+    name: client-membership-substrate-postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_DB: substrate_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d substrate_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGDATABASE: substrate_test
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Prove ephemeral PostgreSQL service
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "select version();"
+          psql -v ON_ERROR_STOP=1 -c "select current_database(), current_user, inet_server_addr(), inet_server_port();"
+
+      - name: Run membership substrate behavioral assertions
+        run: |
+          psql -v ON_ERROR_STOP=1 -f scripts/client-membership-substrate/behavioral-test.sql
