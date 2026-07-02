@@ -42,6 +42,25 @@ export type AegisActivity = {
   voice: "off" | "connecting" | "connected" | "listening" | "speaking" | "idle";
 };
 
+type AegisStatusState = "history" | "uploading" | "responding";
+
+const AEGIS_STATUS_LABELS: Record<AegisStatusState, string> = {
+  history: "Loading conversation history…",
+  uploading: "Uploading attachment…",
+  responding: "Aegis is responding…",
+};
+
+export const AegisStatusLine = ({ state, className }: { state: AegisStatusState; className?: string }) => (
+  <div
+    role="status"
+    aria-live="polite"
+    className={cn("flex items-center gap-2 text-sm text-muted-foreground", className)}
+  >
+    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+    <span>{AEGIS_STATUS_LABELS[state]}</span>
+  </div>
+);
+
 export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, onActivity }: { fullScreen?: boolean; canvasMode?: boolean; onActivity?: (a: AegisActivity) => void }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1751,7 +1770,7 @@ How can I help you now?`,
               <div className="p-4 space-y-4 min-h-full">
                 {isLoadingHistory ? (
                   <div className="flex items-center justify-center h-full min-h-[380px]">
-                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                    <AegisStatusLine state="history" />
                   </div>
                 ) : (
                   <>
@@ -1892,7 +1911,7 @@ How can I help you now?`,
                     {isLoading && !streamingContent && messages[messages.length - 1]?.role === "user" && (
                       <div className="flex justify-start animate-fade-in">
                         <div className="bg-muted rounded-lg p-3 min-h-[40px] flex items-center">
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <AegisStatusLine state="responding" />
                         </div>
                       </div>
                     )}
@@ -1916,6 +1935,10 @@ How can I help you now?`,
                   </div>
                 ))}
               </div>
+            )}
+
+            {isUploading && (
+              <AegisStatusLine state="uploading" className="px-1" />
             )}
 
             <form ref={formRef} onSubmit={handleSubmit} className={cn("flex gap-2", canvasMode && "items-center rounded-full border border-primary/40 bg-background/60 backdrop-blur-md px-3 py-2.5 shadow-2xl shadow-primary/20")}>
