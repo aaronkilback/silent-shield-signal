@@ -12,17 +12,23 @@ export const FIXED_MANIFEST_PATH = 'release-control/staging-db/client-membership
 export const STAGING_PROJECT_REF = 'lkvyrvuakzguszbpwnfz';
 export const PRODUCTION_PROJECT_REF = 'kpuqukppbmwebiptqmog';
 export const PERMITTED_MUTATION_COMMAND = ['supabase', 'migration', 'up', '--linked'];
+export const DEFAULT_LINKED_PROJECT_REF_PATH = 'supabase/.temp/project-ref';
+export const RECEIPT_DIR = 'release-control/staging-db/receipts';
 
 function readText(path) {
   return readFileSync(resolve(repoRoot, path), 'utf8');
 }
 
+function sha256Bytes(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
 function sha256File(path) {
-  return createHash('sha256').update(readFileSync(resolve(repoRoot, path))).digest('hex');
+  return sha256Bytes(readFileSync(resolve(repoRoot, path)));
 }
 
 function sha256Text(text) {
-  return createHash('sha256').update(text).digest('hex');
+  return sha256Bytes(text);
 }
 
 function assert(condition, message) {
@@ -84,28 +90,43 @@ export function sourceCommit() {
   return git(['rev-parse', 'HEAD']);
 }
 
-export function assertLinkedToStaging() {
-  const projectRefPath = resolve(repoRoot, 'supabase/.temp/project-ref');
-  assert(existsSync(projectRefPath), 'Supabase CLI linked project ref is missing; link must be established before execution');
-  const linkedRef = readFileSync(projectRefPath, 'utf8').trim();
-  assert(linkedRef === STAGING_PROJECT_REF, 'Supabase CLI is not linked to approved staging project ref');
-  assert(linkedRef !== PRODUCTION_PROJECT_REF, 'Supabase CLI is linked to production; refusing');
+export function cleanWorktreeProof(allowedPaths = []) {
+  const allowed = new Set(allowedPaths.filter(Boolean).map((path) => path.replace(/^\.\//, '')));
+  const lines = git(['status', '--porcelain']).split('\n').filter(Boolean);
+  const unexpected = lines.filter((line) => {
+    const path = line.slice(3).trim().replace(/^\.\//, '');
+    if (path.startsWith(`${RECEIPT_DIR}/`)) return false;
+    return !allowed.has(path);
+  });
+  assert(unexpected.length === 0, `working tree is not clean: ${unexpected.join('; ')}`);
+  return {
+    clean: true,
+    allowed_receipt_paths: [...allowed].sort(),
+    ignored_receipt_directory: RECEIPT_DIR,
+  };
 }
 
-function supabaseBin() {
-  return process.env.STAGING_MIGRATION_SUPABASE_BIN || 'supabase';
+export function assertLinkedToStaging(projectRefPath = DEFAULT_LINKED_PROJECT_REF_PATH) {
+  const absolutePath = resolve(repoRoot, projectRefPath);
+  assert(existsSync(absolutePath), 'Supabase CLI linked project ref is missing; link must be established before execution');
+  const linkedRef = readFileSync(absolutePath, 'utf8').trim();
+  assert(linkedRef !== PRODUCTION_PROJECT_REF, 'Supabase CLI is linked to production; refusing');
+  assert(linkedRef === STAGING_PROJECT_REF, 'Supabase CLI is not linked to approved staging project ref');
+  return linkedRef;
 }
 
 function runSupabase(args) {
-  const result = spawnSync(supabaseBin(), args, { cwd: repoRoot, encoding: 'utf8' });
+  const result = spawnSync('supabase', args, { cwd: repoRoot, encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`supabase ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
   return result.stdout;
 }
 
-function extractVersion(value) {
-  if (typeof value !== 'string') return null;
-  const match = value.match(/(20\d{12})/);
-  return match ? match[1] : null;
+function assertVersionArray(value, field) {
+  assert(Array.isArray(value), `migration history field ${field} must be an array`);
+  for (const version of value) {
+    assert(typeof version === 'string' && /^20\d{12}$/.test(version), `migration history field ${field} contains invalid version`);
+  }
+  return new Set(value);
 }
 
 export function parseMigrationList(text) {
@@ -116,31 +137,16 @@ export function parseMigrationList(text) {
     throw new Error('supabase migration list output must be JSON');
   }
 
-  if (Array.isArray(parsed?.local) || Array.isArray(parsed?.remote)) {
-    return {
-      local: new Set((parsed.local || []).map(extractVersion).filter(Boolean)),
-      remote: new Set((parsed.remote || []).map(extractVersion).filter(Boolean)),
-    };
-  }
+  const keys = Object.keys(parsed || {}).sort();
+  assert(
+    keys.length === 2 && keys[0] === 'local_versions' && keys[1] === 'remote_versions',
+    'migration history JSON must contain only local_versions and remote_versions arrays',
+  );
 
-  const rows = Array.isArray(parsed) ? parsed : parsed.migrations;
-  assert(Array.isArray(rows), 'unrecognized migration list JSON shape');
-  const local = new Set();
-  const remote = new Set();
-
-  for (const row of rows) {
-    const localVersion = extractVersion(row.local || row.local_version || row.version || row.name);
-    const remoteVersion = extractVersion(row.remote || row.remote_version || row.version || row.name);
-    const status = String(row.status || row.state || '').toLowerCase();
-
-    if (row.local === true || row.is_local === true || localVersion) local.add(localVersion || remoteVersion);
-    if (row.remote === true || row.is_remote === true || status === 'applied' || remoteVersion) remote.add(remoteVersion || localVersion);
-    if (status === 'pending' && (localVersion || remoteVersion)) local.add(localVersion || remoteVersion);
-  }
-
-  local.delete(null);
-  remote.delete(null);
-  return { local, remote };
+  return {
+    local: assertVersionArray(parsed.local_versions, 'local_versions'),
+    remote: assertVersionArray(parsed.remote_versions, 'remote_versions'),
+  };
 }
 
 export function pendingVersions(history) {
@@ -168,52 +174,121 @@ export function readRemoteHistory() {
   return parseMigrationList(runSupabase(['migration', 'list', '--linked', '--output', 'json']));
 }
 
+function historyForReceipt(history) {
+  return {
+    local_versions: [...history.local].sort(),
+    remote_versions: [...history.remote].sort(),
+  };
+}
+
+function receiptPath(kind, releaseId, timestamp) {
+  return `${RECEIPT_DIR}/${releaseId}-${kind}-${timestamp.replace(/[:.]/g, '-')}.json`;
+}
+
+function writeReceipt(kind, releaseId, timestamp, body) {
+  const path = receiptPath(kind, releaseId, timestamp);
+  mkdirSync(resolve(repoRoot, RECEIPT_DIR), { recursive: true });
+  writeFileSync(resolve(repoRoot, path), JSON.stringify(body, null, 2) + '\n');
+  return path;
+}
+
 export function validateOnly() {
   return validateManifest(loadManifest());
 }
 
-export function preflight() {
+export function preflight({ writeReceiptFile = true, projectRefPath = DEFAULT_LINKED_PROJECT_REF_PATH } = {}) {
+  const checkedAt = new Date().toISOString();
   const manifest = loadManifest();
   const manifestProof = validateManifest(manifest);
-  assertLinkedToStaging();
+  const source_commit = sourceCommit();
+  const clean_worktree = cleanWorktreeProof();
+  const linkedProjectRef = assertLinkedToStaging(projectRefPath);
   const beforeHistory = readRemoteHistory();
   assertPreflightHistory(manifest, beforeHistory);
-  return { manifest, manifestProof, beforeHistory };
-}
-
-export function apply() {
-  const startedAt = new Date().toISOString();
-  const { manifest, manifestProof, beforeHistory } = preflight();
-  const command = PERMITTED_MUTATION_COMMAND.slice(1);
-  runSupabase(command);
-  const afterHistory = readRemoteHistory();
-  assertAfterHistory(manifest, beforeHistory, afterHistory);
-  const finishedAt = new Date().toISOString();
   const receipt = {
+    receipt_type: 'staging_migration_preflight',
     release_id: manifest.release_id,
+    target_ref: linkedProjectRef,
     target: manifest.target,
-    source_commit: sourceCommit(),
+    source_commit,
+    clean_worktree,
     manifest_path: FIXED_MANIFEST_PATH,
     manifest_sha256: manifestProof.manifestHash,
-    migration: manifest.migration,
-    permitted_mutation_command: PERMITTED_MUTATION_COMMAND,
-    remote_history_before: {
-      local: [...beforeHistory.local].sort(),
-      remote: [...beforeHistory.remote].sort(),
-    },
-    remote_history_after: {
-      local: [...afterHistory.local].sort(),
-      remote: [...afterHistory.remote].sort(),
-    },
-    started_at_utc: startedAt,
-    finished_at_utc: finishedAt,
-    result: 'applied',
-    statement: 'Receipt records source-controlled pre-upload evidence and Supabase remote version-state only; it does not prove SQL byte equivalence in remote history.',
+    migration_path: manifest.migration.path,
+    migration_version: manifest.migration.version,
+    migration_sha256: manifestProof.migrationHash,
+    remote_history_before: historyForReceipt(beforeHistory),
+    checked_at_utc: checkedAt,
+    result: 'preflight_passed',
   };
-  const receiptPath = `release-control/staging-db/receipts/${manifest.release_id}-${finishedAt.replace(/[:.]/g, '-')}.json`;
-  mkdirSync(resolve(repoRoot, dirname(receiptPath)), { recursive: true });
-  writeFileSync(resolve(repoRoot, receiptPath), JSON.stringify(receipt, null, 2) + '\n');
-  return receipt;
+  const path = writeReceiptFile ? writeReceipt('preflight', manifest.release_id, checkedAt, receipt) : null;
+  return { manifest, manifestProof, beforeHistory, receipt, receiptPath: path };
+}
+
+function readReceipt(path) {
+  assert(path, 'apply requires reviewed preflight receipt path');
+  assert(!path.includes('..') && path.startsWith(`${RECEIPT_DIR}/`) && path.endsWith('.json'), 'invalid receipt path');
+  assert(existsSync(resolve(repoRoot, path)), `preflight receipt not found: ${path}`);
+  return JSON.parse(readText(path));
+}
+
+function assertPreflightReceiptMatches(current, reviewedReceipt) {
+  assert(reviewedReceipt.receipt_type === 'staging_migration_preflight', 'reviewed receipt is not a preflight receipt');
+  assert(reviewedReceipt.result === 'preflight_passed', 'reviewed preflight did not pass');
+  assert(reviewedReceipt.source_commit === current.receipt.source_commit, 'source commit does not match reviewed preflight');
+  assert(JSON.stringify(reviewedReceipt.clean_worktree) === JSON.stringify(current.receipt.clean_worktree), 'clean-worktree proof does not match reviewed preflight');
+  assert(reviewedReceipt.manifest_sha256 === current.receipt.manifest_sha256, 'manifest hash does not match reviewed preflight');
+  assert(reviewedReceipt.migration_sha256 === current.receipt.migration_sha256, 'migration hash does not match reviewed preflight');
+  assert(reviewedReceipt.target_ref === current.receipt.target_ref, 'target ref does not match reviewed preflight');
+  assert(JSON.stringify(reviewedReceipt.remote_history_before) === JSON.stringify(current.receipt.remote_history_before), 'remote preflight history does not match reviewed preflight');
+}
+
+export function apply(reviewedPreflightReceiptPath) {
+  const startedAt = new Date().toISOString();
+  let manifest;
+  let currentPreflight;
+  let beforeHistory = null;
+  let afterHistory = null;
+  let result = 'failed';
+  let error = null;
+
+  try {
+    const reviewedReceipt = readReceipt(reviewedPreflightReceiptPath);
+    currentPreflight = preflight({ writeReceiptFile: false, projectRefPath: DEFAULT_LINKED_PROJECT_REF_PATH });
+    manifest = currentPreflight.manifest;
+    beforeHistory = currentPreflight.beforeHistory;
+    assertPreflightReceiptMatches(currentPreflight, reviewedReceipt);
+    runSupabase(PERMITTED_MUTATION_COMMAND.slice(1));
+    afterHistory = readRemoteHistory();
+    assertAfterHistory(manifest, beforeHistory, afterHistory);
+    result = 'applied';
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+    throw caught;
+  } finally {
+    const finishedAt = new Date().toISOString();
+    const fallbackManifest = manifest || loadManifest();
+    const manifestProof = validateManifest(fallbackManifest);
+    const receipt = {
+      receipt_type: 'staging_migration_apply_attempt',
+      release_id: fallbackManifest.release_id,
+      target: fallbackManifest.target,
+      source_commit: sourceCommit(),
+      manifest_path: FIXED_MANIFEST_PATH,
+      manifest_sha256: manifestProof.manifestHash,
+      migration: fallbackManifest.migration,
+      reviewed_preflight_receipt_path: reviewedPreflightReceiptPath || null,
+      permitted_mutation_command: PERMITTED_MUTATION_COMMAND,
+      remote_history_before: beforeHistory ? historyForReceipt(beforeHistory) : null,
+      remote_history_after: afterHistory ? historyForReceipt(afterHistory) : null,
+      started_at_utc: startedAt,
+      finished_at_utc: finishedAt,
+      result,
+      error,
+      statement: 'Receipt records Supabase remote version-state only; it does not prove SQL byte equivalence in remote history.',
+    };
+    writeReceipt('apply-attempt', fallbackManifest.release_id, finishedAt, receipt);
+  }
 }
 
 function main() {
@@ -224,16 +299,13 @@ function main() {
   }
   if (command === 'preflight') {
     const result = preflight();
-    console.log(JSON.stringify({
-      target: result.manifest.target,
-      migration: result.manifest.migration,
-      pending_versions: pendingVersions(result.beforeHistory),
-      remote_versions_before: [...result.beforeHistory.remote].sort(),
-    }, null, 2));
+    console.log(JSON.stringify({ receipt_path: result.receiptPath, ...result.receipt }, null, 2));
     return;
   }
   if (command === 'apply') {
-    console.log(JSON.stringify(apply(), null, 2));
+    const reviewedPreflightReceiptPath = process.argv[3];
+    apply(reviewedPreflightReceiptPath);
+    console.log(JSON.stringify({ result: 'applied' }, null, 2));
     return;
   }
   throw new Error(`unknown command: ${command}`);
