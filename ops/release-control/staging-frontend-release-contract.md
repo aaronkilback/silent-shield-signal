@@ -30,6 +30,8 @@ The no-deploy staging preflight may build the frontend and write:
 
 The artifact manifest hash is non-circular: it hashes `dist/**/*` after the build while excluding `dist/version.json`, then writes `dist/version.json` only after the artifact hash is known.
 
+`dist/version.json` is immutable build-identity and artifact-hash evidence. `release/staging-frontend-preflight-record.json` is preflight execution and status evidence. Neither file is a deployment receipt or release authorization.
+
 ## Explicit Boundary
 
 No deployment is authorized by this PR or its preflight. No live Cloudflare version ID, traffic allocation, served-artifact verification, rollback proof, or release is created or proven by this source packet.
