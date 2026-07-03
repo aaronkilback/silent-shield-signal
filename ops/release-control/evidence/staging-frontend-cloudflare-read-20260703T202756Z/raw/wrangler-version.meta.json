@@ -1,0 +1,7 @@
+{
+  "name": "wrangler-version",
+  "command": "wrangler --version",
+  "start_utc": "2026-07-03T20:27:56Z",
+  "end_utc": "2026-07-03T20:27:57Z",
+  "exit_code": 0
+}

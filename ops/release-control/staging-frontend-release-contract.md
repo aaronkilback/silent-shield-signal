@@ -32,6 +32,12 @@ The artifact manifest hash is non-circular: it hashes `dist/**/*` after the buil
 
 `dist/version.json` is immutable build-identity and artifact-hash evidence. `release/staging-frontend-preflight-record.json` is preflight execution and status evidence. Neither file is a deployment receipt or release authorization.
 
+## Cloudflare Evidence Blocker
+
+The blocked read attempt is recorded at `ops/release-control/evidence/staging-frontend-cloudflare-read-20260703T202756Z/`. It did not close the evidence gap: authentication failed before Cloudflare provider metadata returned, so externally claimed Cloudflare observations remain unsupported by source-controlled provider evidence.
+
+The next step requires an explicit authorization decision on whether an existing, approved, read-only, target-specific Cloudflare credential can be made available through the governed runner. No release decision, rollback claim, staging-readiness claim, or deployment-provenance claim is supported by the blocked attempt.
+
 ## Explicit Boundary
 
 No deployment is authorized by this PR or its preflight. No live Cloudflare version ID, traffic allocation, served-artifact verification, rollback proof, or release is created or proven by this source packet.

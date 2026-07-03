@@ -1,0 +1,2 @@
+wrangler --version
+wrangler deployments status --env staging --name silent-shield-signal-staging --json

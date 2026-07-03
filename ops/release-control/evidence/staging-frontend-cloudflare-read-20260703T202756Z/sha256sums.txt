@@ -1,0 +1,8 @@
+c0bcbf334040086a41c0c2eaf6e8b95087ee680b760388c824b0fa1f047b5472  ./commands.txt
+33d779bf3e317e288a92166937c04e430ff310d4d3c22837ee450402466d51c0  ./manifest.md
+78b799f9db1b87ed6f1945474ddd7aadb90ae8b4500378bc837c0061f1fe437a  ./raw/deployments-status.meta.json
+4c84a915301612e20cdfc48c09fbcc83cb804655e68e979cf7409a4cb1d44758  ./raw/deployments-status.stderr.txt
+01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b  ./raw/deployments-status.stdout.txt
+1152b403c516716ff155985a44976580dd4aeb229d3b4cf70e06be2d376c4fe5  ./raw/wrangler-version.meta.json
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./raw/wrangler-version.stderr.txt
+38bae246034240991c1c4153d2694347e4c2c87cc114d333a63cc3e9ba58a97b  ./raw/wrangler-version.stdout.txt

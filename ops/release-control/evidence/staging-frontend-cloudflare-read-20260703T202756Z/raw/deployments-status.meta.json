@@ -1,0 +1,7 @@
+{
+  "name": "deployments-status",
+  "command": "wrangler deployments status --env staging --name silent-shield-signal-staging --json",
+  "start_utc": "2026-07-03T20:27:57Z",
+  "end_utc": "2026-07-03T20:27:58Z",
+  "exit_code": 1
+}
