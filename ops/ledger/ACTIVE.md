@@ -4,7 +4,7 @@ Last reconciled: 2026-07-03
 
 ## WIP slots
 
-- Class A active: Frontend delivery-lane certification (P0).
+- Class A active: none.
 - Class B active: none.
 - Class C active: none. PR #94 is ready in source, but not released.
 - Blocked and parked lanes do not occupy a slot.
@@ -13,11 +13,18 @@ Last reconciled: 2026-07-03
 
 ### Frontend delivery-lane certification
 
-- Class/state: A / ACTIVE
-- Proof: the main-to-deployment relationship is not sufficiently proven for routine release.
-- Planned observation: merging ledger-only PR #95 may trigger the current `main`-connected build path. After merge, record whether a provider build occurred, its target, and whether any served application artifact changed. This is an observation for delivery-lane certification, not release authorization.
-- Next gate: reconcile the exact trigger, target, artifact receipt, served-route verification, and rollback pointer.
+- Class/state: A / SOURCE CONTAINMENT READY — deployment implementation blocked
+- Proof: source-side containment removes automatic GitHub Actions production frontend deployment from `main` and leaves only a manual, non-deploy preflight that checks exact-source CI evidence and writes a version/preflight artifact.
+- Deployment status: not deployed, not certified, and no deployment is authorized. Direct/manual Wrangler paths outside this workflow remain unproven and uncontrolled by this PR.
+- Next gate: GitHub production Environment protection, Cloudflare rollback/provider Evidence Operation, then a separately reviewed manual release implementation.
 - Priority: P0.
+
+### Browser signal filter boundary — PR #96
+
+- Class/state: B / READY — source-only, release-blocked
+- Proof: source diff reviewed; focused tests, Critical File Guard, and TypeScript passed in the PR #96 lane.
+- Next gate: delivery-lane certification, then a separate release decision.
+- Priority: P1.
 
 ### Client-membership foundation
 

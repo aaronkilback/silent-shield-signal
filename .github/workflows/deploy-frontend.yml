@@ -1,29 +1,114 @@
-name: Deploy Frontend (Cloudflare Worker)
+name: Frontend Release Preflight (No Deploy)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'public/**'
-      - 'index.html'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.config.ts'
-      - 'wrangler.toml'
-      - 'tailwind.config.ts'
-      - 'tsconfig*.json'
-      - 'postcss.config.js'
-      - '.env'
-      - '.github/workflows/deploy-frontend.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      approved_commit_sha:
+        description: Exact main commit SHA approved for frontend release preflight.
+        required: true
+        type: string
+      confirm_frontend_preflight:
+        description: Type RUN_FRONTEND_RELEASE_PREFLIGHT to run the non-deploy release preflight.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
 
 jobs:
-  deploy:
-    name: Build and Deploy
+  preflight:
+    name: Frontend Release Preflight — No Deploy
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.confirm_frontend_preflight == 'RUN_FRONTEND_RELEASE_PREFLIGHT'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Verify approved main commit
+        id: approved-source
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$HEAD_SHA" != "${{ inputs.approved_commit_sha }}" ]; then
+            echo "Approved SHA does not match checked-out main."
+            echo "approved=${{ inputs.approved_commit_sha }}"
+            echo "head=$HEAD_SHA"
+            exit 1
+          fi
+          echo "source_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Require exact CI success
+        uses: actions/github-script@v7
+        env:
+          APPROVED_SHA: ${{ steps.approved-source.outputs.source_sha }}
+        with:
+          script: |
+            const requiredSuccess = [
+              'TypeScript & Build',
+              'ESLint',
+              'Critical File Guard',
+              'Shared Imports Consistency (_shared/*)',
+              'Workstream D — confidence + provenance suite',
+              'Workstream D — no autonomous execution on score',
+              'Playwright E2E',
+              'Unit Tests (Vitest)',
+              'a1-guard',
+            ];
+
+            const allowedSkipped = [
+              'Live Production Reads — Manual Only / Loop Activity',
+              'Live Production Reads — Manual Only / Cron Alignment',
+              'Live Production Reads — Manual Only / DB Types Drift',
+              'Live Operational Checks — Manual Only / Health Gate',
+              'Live Operational Checks — Manual Only / Pipeline Smoke',
+            ];
+
+            const sha = process.env.APPROVED_SHA;
+            const runs = await github.paginate(github.rest.checks.listForRef, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+              per_page: 100,
+            });
+
+            const latestByName = new Map();
+            for (const run of runs) {
+              const existing = latestByName.get(run.name);
+              if (!existing || Date.parse(run.started_at || run.created_at) > Date.parse(existing.started_at || existing.created_at)) {
+                latestByName.set(run.name, run);
+              }
+            }
+
+            const failures = [];
+            for (const name of requiredSuccess) {
+              const run = latestByName.get(name);
+              if (!run) {
+                failures.push(`${name}: missing`);
+              } else if (run.status !== 'completed' || run.conclusion !== 'success') {
+                failures.push(`${name}: status=${run.status} conclusion=${run.conclusion}`);
+              }
+            }
+
+            for (const name of allowedSkipped) {
+              const run = latestByName.get(name);
+              if (!run) {
+                failures.push(`${name}: missing`);
+              } else if (run.status !== 'completed' || run.conclusion !== 'skipped') {
+                failures.push(`${name}: expected skipped, status=${run.status} conclusion=${run.conclusion}`);
+              }
+            }
+
+            if (failures.length > 0) {
+              core.setFailed(`Frontend release preflight blocked by CI evidence for ${sha}:\n${failures.join('\n')}`);
+            } else {
+              core.info(`Frontend release preflight CI evidence passed for ${sha}`);
+            }
 
       - uses: actions/setup-node@v4
         with:
@@ -36,10 +121,34 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
+      - name: Write served version artifact
+        run: >-
+          node scripts/release-control/frontend-release-control.mjs write-version
+          --dist dist
+          --source-sha "${{ steps.approved-source.outputs.source_sha }}"
+          --run-id "${{ github.run_id }}"
+          --target-route "fortress.silentshieldsecurity.com/*"
+          --target-environment "production"
+
+      - name: Write frontend release preflight record
+        run: >-
+          node scripts/release-control/frontend-release-control.mjs write-preflight-record
+          --version dist/version.json
+          --out release/frontend-release-preflight-record.json
+          --source-sha "${{ steps.approved-source.outputs.source_sha }}"
+          --run-id "${{ github.run_id }}"
+          --actor "${{ github.actor }}"
+          --target-route "fortress.silentshieldsecurity.com/*"
+          --target-environment "production"
+          --deployment-status "not_run"
+          --served-verification-status "not_run"
+          --rollback-status "not_run"
+
+      - name: Upload frontend release preflight record
+        uses: actions/upload-artifact@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # No `command:` — uses the default `wrangler deploy` which reads
-          # the root wrangler.toml ([assets] dist/, route to fortress.silentshieldsecurity.com).
+          name: frontend-release-preflight-record
+          path: |
+            release/frontend-release-preflight-record.json
+            dist/version.json
+          retention-days: 30
