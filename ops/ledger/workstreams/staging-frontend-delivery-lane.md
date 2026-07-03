@@ -40,7 +40,7 @@ Source-side containment for the staging frontend release path on the `staging` b
 ## Remaining gates
 
 1. Decide on protected staging Environment settings and staging-scoped credentials.
-2. Revalidate externally captured provider-read evidence during any future deployment authorization. Existing provider-read evidence established the current Worker's static-assets model, route, version-history/rollback-candidate availability, and absence of dashboard-listed bindings; it is not deployment proof, rollback proof, credential-scope proof, or release authorization.
+2. Revalidate externally captured provider-read evidence during any future deployment authorization. Existing provider-read evidence established the current Worker's static-assets model, route, version-history/rollback-candidate availability, and absence of dashboard-listed bindings; it is not deployment proof, rollback proof, credential-scope proof, or release authorization. This card does not yet record a source-controlled immutable artifact/reference, collector/source, or timestamp for that external evidence; that provenance gap must be closed before relying on it for a deployment decision.
 3. Implement a separate governed manual staging release workflow only after provider, credential, approval, receipt, rollback, and served-artifact verification controls exist.
 4. Perform one controlled staging release verification before treating the lane as certified.
 
