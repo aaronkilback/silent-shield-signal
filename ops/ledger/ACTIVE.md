@@ -13,10 +13,10 @@ Last reconciled: 2026-07-03
 
 ### Frontend delivery-lane certification
 
-- Class/state: A / SOURCE REMEDIATION READY
-- Proof: source-side remediation packet removes automatic production frontend deployment from `main`, requires manual release confirmation, exact-source CI evidence, GitHub `production` Environment reference, version artifact generation, and release receipt schema before a future governed deploy.
-- Deployment status: not deployed, not certified, and not authorized for use until the remaining external gates are complete.
-- Next gate: GitHub production Environment protection, Cloudflare rollback/provider Evidence Operation, and controlled release verification.
+- Class/state: A / SOURCE CONTAINMENT READY — deployment implementation blocked
+- Proof: source-side containment removes automatic GitHub Actions production frontend deployment from `main` and leaves only a manual, non-deploy preflight that checks exact-source CI evidence and writes a version/preflight artifact.
+- Deployment status: not deployed, not certified, and no deployment is authorized. Direct/manual Wrangler paths outside this workflow remain unproven and uncontrolled by this PR.
+- Next gate: GitHub production Environment protection, Cloudflare rollback/provider Evidence Operation, then a separately reviewed manual release implementation.
 - Priority: P0.
 
 ### Browser signal filter boundary — PR #96

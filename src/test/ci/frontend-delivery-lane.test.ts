@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  RECEIPT_SCHEMA,
+  PREFLIGHT_RECORD_SCHEMA,
   VERSION_SCHEMA,
   buildArtifactManifest,
   writeReleaseReceipt,
+  writePreflightRecord,
   writeVersionArtifact,
 } from '../../../scripts/release-control/frontend-release-control.mjs';
 
@@ -51,8 +52,8 @@ function evalCondition(condition: string, ctx: Record<string, any>): boolean {
   });
 }
 
-const deployJob = jobBlock(workflow, 'deploy');
-const deployCondition = extractIf(deployJob);
+const preflightJob = jobBlock(workflow, 'preflight');
+const preflightCondition = extractIf(preflightJob);
 
 describe('frontend production delivery lane', () => {
   it('has no automatic production deployment trigger', () => {
@@ -61,7 +62,7 @@ describe('frontend production delivery lane', () => {
     expect(workflow).not.toMatch(/\n\s+pull_request:\n/);
   });
 
-  it('requires manual release confirmation from main before Wrangler is reachable', () => {
+  it('requires manual preflight confirmation from main before the preflight can run', () => {
     const contexts = {
       pushToMain: {
         github: { event_name: 'push', ref: 'refs/heads/main', event: { inputs: {} } },
@@ -76,40 +77,47 @@ describe('frontend production delivery lane', () => {
         github: {
           event_name: 'workflow_dispatch',
           ref: 'refs/heads/main',
-          event: { inputs: { confirm_frontend_release: 'RUN_LIVE_SYSTEM_OPS' } },
+          event: { inputs: { confirm_frontend_preflight: 'RELEASE_FRONTEND_PRODUCTION' } },
         },
       },
       dispatchWrongBranch: {
         github: {
           event_name: 'workflow_dispatch',
           ref: 'refs/heads/release/example',
-          event: { inputs: { confirm_frontend_release: 'RELEASE_FRONTEND_PRODUCTION' } },
+          event: { inputs: { confirm_frontend_preflight: 'RUN_FRONTEND_RELEASE_PREFLIGHT' } },
         },
       },
       dispatchApproved: {
         github: {
           event_name: 'workflow_dispatch',
           ref: 'refs/heads/main',
-          event: { inputs: { confirm_frontend_release: 'RELEASE_FRONTEND_PRODUCTION' } },
+          event: { inputs: { confirm_frontend_preflight: 'RUN_FRONTEND_RELEASE_PREFLIGHT' } },
         },
       },
     };
 
-    expect(evalCondition(deployCondition, contexts.pushToMain)).toBe(false);
-    expect(evalCondition(deployCondition, contexts.pullRequest)).toBe(false);
-    expect(evalCondition(deployCondition, contexts.dispatchMissingConfirm)).toBe(false);
-    expect(evalCondition(deployCondition, contexts.dispatchWrongConfirm)).toBe(false);
-    expect(evalCondition(deployCondition, contexts.dispatchWrongBranch)).toBe(false);
-    expect(evalCondition(deployCondition, contexts.dispatchApproved)).toBe(true);
-    expect(deployJob).toContain('cloudflare/wrangler-action@v3');
+    expect(evalCondition(preflightCondition, contexts.pushToMain)).toBe(false);
+    expect(evalCondition(preflightCondition, contexts.pullRequest)).toBe(false);
+    expect(evalCondition(preflightCondition, contexts.dispatchMissingConfirm)).toBe(false);
+    expect(evalCondition(preflightCondition, contexts.dispatchWrongConfirm)).toBe(false);
+    expect(evalCondition(preflightCondition, contexts.dispatchWrongBranch)).toBe(false);
+    expect(evalCondition(preflightCondition, contexts.dispatchApproved)).toBe(true);
   });
 
-  it('requires exact approved SHA, production environment, and explicit CI evidence', () => {
+  it('contains no executable Cloudflare deployment path', () => {
+    expect(workflow).not.toContain('cloudflare/wrangler-action');
+    expect(workflow).not.toContain('wrangler');
+    expect(workflow).not.toContain('CLOUDFLARE_API_TOKEN');
+    expect(workflow).not.toContain('CLOUDFLARE_ACCOUNT_ID');
+    expect(workflow).not.toContain('environment: production');
+  });
+
+  it('requires exact approved SHA, Checks API permission, and explicit CI evidence', () => {
     expect(workflow).toContain('approved_commit_sha:');
-    expect(workflow).toContain('rollback_version_id:');
-    expect(deployJob).toContain('environment: production');
-    expect(deployJob).toContain('Verify approved main commit');
-    expect(deployJob).toContain('Require exact CI success');
+    expect(workflow).toContain('confirm_frontend_preflight:');
+    expect(workflow).toContain('checks: read');
+    expect(preflightJob).toContain('Verify approved main commit');
+    expect(preflightJob).toContain('Require exact CI success');
 
     for (const checkName of [
       'TypeScript & Build',
@@ -122,7 +130,7 @@ describe('frontend production delivery lane', () => {
       'Unit Tests (Vitest)',
       'a1-guard',
     ]) {
-      expect(deployJob).toContain(checkName);
+      expect(preflightJob).toContain(checkName);
     }
   });
 
@@ -134,11 +142,11 @@ describe('frontend production delivery lane', () => {
       'Live Operational Checks — Manual Only / Health Gate',
       'Live Operational Checks — Manual Only / Pipeline Smoke',
     ]) {
-      expect(deployJob).toContain(checkName);
+      expect(preflightJob).toContain(checkName);
     }
   });
 
-  it('writes a non-circular served version artifact and release receipt schema', () => {
+  it('writes a non-circular served version artifact and preflight record schema', () => {
     const root = mkdtempSync(join(tmpdir(), 'frontend-release-'));
     const dist = join(root, 'dist');
     mkdirSync(join(dist, 'assets'), { recursive: true });
@@ -161,27 +169,29 @@ describe('frontend production delivery lane', () => {
     expect(secondManifest).toEqual(firstManifest);
     expect(secondManifest.files.map((file) => file.path)).not.toContain('version.json');
 
-    const receiptPath = join(root, 'release', 'receipt.json');
-    const receiptResult = writeReleaseReceipt({
+    const recordPath = join(root, 'release', 'preflight.json');
+    const recordResult = writePreflightRecord({
       versionPath: join(dist, 'version.json'),
-      outPath: receiptPath,
+      outPath: recordPath,
       sourceSha: 'abc123',
       runId: '456',
       actor: 'aaron',
       targetRoute: 'fortress.silentshieldsecurity.com/*',
       targetEnvironment: 'production',
-      deploymentVersionId: 'deployment-version-1',
-      rollbackVersionId: '751f2626',
-      servedVerificationResult: 'not_run',
+      deploymentStatus: 'not_run',
+      servedVerificationStatus: 'not_run',
+      rollbackStatus: 'not_run',
     });
 
-    expect(receiptResult.receipt.schema).toBe(RECEIPT_SCHEMA);
-    expect(receiptResult.receipt.artifact_manifest_hash).toBe(versionResult.version.artifact_manifest_hash);
-    expect(receiptResult.receipt.deployment_version_id).toBe('deployment-version-1');
-    expect(receiptResult.receipt.rollback_pointer.version_id).toBe('751f2626');
+    expect(recordResult.record.schema).toBe(PREFLIGHT_RECORD_SCHEMA);
+    expect(recordResult.record.artifact_manifest_hash).toBe(versionResult.version.artifact_manifest_hash);
+    expect(recordResult.record.deployment_status).toBe('not_run');
+    expect(recordResult.record.served_version_verification_status).toBe('not_run');
+    expect(recordResult.record.rollback_status).toBe('not_run');
+    expect(recordResult.record.release_status).toBe('not_released');
   });
 
-  it('fails closed when deployment metadata or rollback pointer is missing', () => {
+  it('does not allow a production release receipt with not_run served verification', () => {
     const root = mkdtempSync(join(tmpdir(), 'frontend-release-missing-'));
     const dist = join(root, 'dist');
     mkdirSync(dist, { recursive: true });
@@ -205,7 +215,7 @@ describe('frontend production delivery lane', () => {
         targetEnvironment: 'production',
         deploymentVersionId: '',
         rollbackVersionId: '751f2626',
-        servedVerificationResult: 'not_run',
+        servedVerificationResult: 'verified',
       }),
     ).toThrow(/deploymentVersionId/);
 
@@ -220,8 +230,23 @@ describe('frontend production delivery lane', () => {
         targetEnvironment: 'production',
         deploymentVersionId: 'deployment-version-1',
         rollbackVersionId: '',
-        servedVerificationResult: 'not_run',
+        servedVerificationResult: 'verified',
       }),
     ).toThrow(/rollbackVersionId/);
+
+    expect(() =>
+      writeReleaseReceipt({
+        versionPath: join(dist, 'version.json'),
+        outPath: join(root, 'receipt.json'),
+        sourceSha: 'abc123',
+        runId: '456',
+        actor: 'aaron',
+        targetRoute: 'fortress.silentshieldsecurity.com/*',
+        targetEnvironment: 'production',
+        deploymentVersionId: 'deployment-version-1',
+        rollbackVersionId: '751f2626',
+        servedVerificationResult: 'not_run',
+      }),
+    ).toThrow(/not_run served verification/);
   });
 });

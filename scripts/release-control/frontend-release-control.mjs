@@ -6,13 +6,15 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 
 export const VERSION_FILE_NAME = 'version.json';
 export const VERSION_SCHEMA = 'fortress.frontend.version.v1';
-export const RECEIPT_SCHEMA = 'fortress.frontend.production-release-receipt.v1';
+export const PREFLIGHT_RECORD_SCHEMA = 'fortress.frontend.release-preflight-record.v1';
+export const RELEASE_RECEIPT_SCHEMA = 'fortress.frontend.production-release-receipt.v1';
 
 function usage() {
   return [
     'Usage:',
     '  frontend-release-control.mjs write-version --dist <dir> --source-sha <sha> --run-id <id> --target-route <route> --target-environment <env>',
-    '  frontend-release-control.mjs write-receipt --version <file> --out <file> --source-sha <sha> --run-id <id> --actor <actor> --target-route <route> --target-environment <env> --deployment-version-id <id> --rollback-version-id <id> --served-verification-result <result>',
+    '  frontend-release-control.mjs write-preflight-record --version <file> --out <file> --source-sha <sha> --run-id <id> --actor <actor> --target-route <route> --target-environment <env> --deployment-status <status> --served-verification-status <status> --rollback-status <status>',
+    '  frontend-release-control.mjs write-release-receipt --version <file> --out <file> --source-sha <sha> --run-id <id> --actor <actor> --target-route <route> --target-environment <env> --deployment-version-id <id> --rollback-version-id <id> --served-verification-result <result>',
   ].join('\n');
 }
 
@@ -98,7 +100,14 @@ export function writeVersionArtifact(options) {
   return { versionPath, version, manifest };
 }
 
-export function writeReleaseReceipt(options) {
+function requireOptionSet(options, fields, label) {
+  for (const field of fields) {
+    if (!options[field]) throw new Error(`${label} missing ${field}`);
+  }
+}
+
+function readAndValidateVersionArtifact(options) {
+  requireOptionSet(options, ['sourceSha', 'runId', 'targetRoute', 'targetEnvironment'], 'Version validation');
   const version = JSON.parse(readFileSync(resolve(options.versionPath), 'utf8'));
   const requiredVersionFields = [
     'source_commit_sha',
@@ -111,20 +120,6 @@ export function writeReleaseReceipt(options) {
     if (!version[field]) throw new Error(`Version artifact missing ${field}`);
   }
 
-  const requiredOptions = [
-    'sourceSha',
-    'runId',
-    'actor',
-    'targetRoute',
-    'targetEnvironment',
-    'deploymentVersionId',
-    'rollbackVersionId',
-    'servedVerificationResult',
-  ];
-  for (const field of requiredOptions) {
-    if (!options[field]) throw new Error(`Release receipt missing ${field}`);
-  }
-
   if (version.source_commit_sha !== options.sourceSha) {
     throw new Error('Version artifact source SHA does not match approved source SHA');
   }
@@ -134,9 +129,62 @@ export function writeReleaseReceipt(options) {
   if (version.target_route !== options.targetRoute || version.target_environment !== options.targetEnvironment) {
     throw new Error('Version artifact target does not match release target');
   }
+  return version;
+}
+
+export function writePreflightRecord(options) {
+  const version = readAndValidateVersionArtifact(options);
+  requireOptionSet(options, [
+    'sourceSha',
+    'runId',
+    'actor',
+    'targetRoute',
+    'targetEnvironment',
+    'deploymentStatus',
+    'servedVerificationStatus',
+    'rollbackStatus',
+  ], 'Release preflight record');
+
+  const record = {
+    schema: PREFLIGHT_RECORD_SCHEMA,
+    source_commit_sha: options.sourceSha,
+    workflow_run_id: options.runId,
+    actor: options.actor,
+    target_route: options.targetRoute,
+    target_environment: options.targetEnvironment,
+    artifact_manifest_hash: version.artifact_manifest_hash,
+    preflight_timestamp_utc: new Date().toISOString(),
+    deployment_status: options.deploymentStatus,
+    served_version_verification_status: options.servedVerificationStatus,
+    rollback_status: options.rollbackStatus,
+    release_status: 'not_released',
+  };
+
+  const outPath = resolve(options.outPath);
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, `${JSON.stringify(record, null, 2)}\n`);
+  return { recordPath: outPath, record };
+}
+
+export function writeReleaseReceipt(options) {
+  const version = readAndValidateVersionArtifact(options);
+  requireOptionSet(options, [
+    'sourceSha',
+    'runId',
+    'actor',
+    'targetRoute',
+    'targetEnvironment',
+    'deploymentVersionId',
+    'rollbackVersionId',
+    'servedVerificationResult',
+  ], 'Release receipt');
+
+  if (options.servedVerificationResult === 'not_run') {
+    throw new Error('Production release receipt cannot use not_run served verification');
+  }
 
   const receipt = {
-    schema: RECEIPT_SCHEMA,
+    schema: RELEASE_RECEIPT_SCHEMA,
     source_commit_sha: options.sourceSha,
     workflow_run_id: options.runId,
     actor: options.actor,
@@ -172,7 +220,24 @@ function main() {
     return;
   }
 
-  if (command === 'write-receipt') {
+  if (command === 'write-preflight-record') {
+    const result = writePreflightRecord({
+      versionPath: requireArg(args, 'version'),
+      outPath: requireArg(args, 'out'),
+      sourceSha: requireArg(args, 'source-sha'),
+      runId: requireArg(args, 'run-id'),
+      actor: requireArg(args, 'actor'),
+      targetRoute: requireArg(args, 'target-route'),
+      targetEnvironment: requireArg(args, 'target-environment'),
+      deploymentStatus: requireArg(args, 'deployment-status'),
+      servedVerificationStatus: requireArg(args, 'served-verification-status'),
+      rollbackStatus: requireArg(args, 'rollback-status'),
+    });
+    process.stdout.write(`${JSON.stringify({ preflight_record_path: result.recordPath })}\n`);
+    return;
+  }
+
+  if (command === 'write-release-receipt') {
     const result = writeReleaseReceipt({
       versionPath: requireArg(args, 'version'),
       outPath: requireArg(args, 'out'),

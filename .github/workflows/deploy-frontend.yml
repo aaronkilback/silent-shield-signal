@@ -1,34 +1,30 @@
-name: Deploy Frontend (Cloudflare Worker)
+name: Frontend Release Preflight (No Deploy)
 
 on:
   workflow_dispatch:
     inputs:
       approved_commit_sha:
-        description: Exact main commit SHA approved for production frontend release.
+        description: Exact main commit SHA approved for frontend release preflight.
         required: true
         type: string
-      confirm_frontend_release:
-        description: Type RELEASE_FRONTEND_PRODUCTION to confirm the production release.
-        required: true
-        type: string
-      rollback_version_id:
-        description: Cloudflare Worker version ID currently serving production and approved as the rollback pointer.
+      confirm_frontend_preflight:
+        description: Type RUN_FRONTEND_RELEASE_PREFLIGHT to run the non-deploy release preflight.
         required: true
         type: string
 
 permissions:
   contents: read
   actions: read
+  checks: read
 
 jobs:
-  deploy:
-    name: Governed Production Frontend Release
+  preflight:
+    name: Frontend Release Preflight — No Deploy
     runs-on: ubuntu-latest
-    environment: production
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
-      github.event.inputs.confirm_frontend_release == 'RELEASE_FRONTEND_PRODUCTION'
+      github.event.inputs.confirm_frontend_preflight == 'RUN_FRONTEND_RELEASE_PREFLIGHT'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,9 +105,9 @@ jobs:
             }
 
             if (failures.length > 0) {
-              core.setFailed(`Frontend release blocked by CI evidence for ${sha}:\n${failures.join('\n')}`);
+              core.setFailed(`Frontend release preflight blocked by CI evidence for ${sha}:\n${failures.join('\n')}`);
             } else {
-              core.info(`Frontend release CI evidence passed for ${sha}`);
+              core.info(`Frontend release preflight CI evidence passed for ${sha}`);
             }
 
       - uses: actions/setup-node@v4
@@ -134,33 +130,25 @@ jobs:
           --target-route "fortress.silentshieldsecurity.com/*"
           --target-environment "production"
 
-      - name: Deploy to Cloudflare Workers
-        id: deploy-cloudflare
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
-
-      - name: Write frontend release receipt
+      - name: Write frontend release preflight record
         run: >-
-          node scripts/release-control/frontend-release-control.mjs write-receipt
+          node scripts/release-control/frontend-release-control.mjs write-preflight-record
           --version dist/version.json
-          --out release/frontend-production-release-receipt.json
+          --out release/frontend-release-preflight-record.json
           --source-sha "${{ steps.approved-source.outputs.source_sha }}"
           --run-id "${{ github.run_id }}"
           --actor "${{ github.actor }}"
           --target-route "fortress.silentshieldsecurity.com/*"
           --target-environment "production"
-          --deployment-version-id "${{ steps.deploy-cloudflare.outputs.deployment-id }}"
-          --rollback-version-id "${{ inputs.rollback_version_id }}"
-          --served-verification-result "not_run"
+          --deployment-status "not_run"
+          --served-verification-status "not_run"
+          --rollback-status "not_run"
 
-      - name: Upload frontend release receipt
+      - name: Upload frontend release preflight record
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-production-release-receipt
+          name: frontend-release-preflight-record
           path: |
-            release/frontend-production-release-receipt.json
+            release/frontend-release-preflight-record.json
             dist/version.json
           retention-days: 30

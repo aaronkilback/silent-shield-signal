@@ -1,7 +1,7 @@
 # Frontend Delivery Lane
 
 **Class:** A
-**State:** SOURCE REMEDIATION READY
+**State:** SOURCE CONTAINMENT READY — deployment implementation blocked
 **Priority:** P0
 **Owner:** Aaron
 
@@ -11,17 +11,15 @@ Source-side containment for the production frontend release path. This lane cont
 
 ## What changed in source
 
-- Production frontend deploy is no longer triggered by `push` to `main`.
-- Production deploy is `workflow_dispatch` only.
-- Manual release requires:
+- Automatic GitHub Actions production frontend deploy is no longer triggered by `push` to `main`.
+- The workflow contains no Cloudflare action, Wrangler command, Cloudflare secret reference, or GitHub `production` Environment reference.
+- The remaining manual workflow is preflight-only and requires:
   - `approved_commit_sha`;
-  - `confirm_frontend_release: RELEASE_FRONTEND_PRODUCTION`;
-  - `rollback_version_id`.
-- The deploy job references GitHub Environment `production`.
-- The workflow checks required CI conclusions for the exact approved SHA before Wrangler can run.
+  - `confirm_frontend_preflight: RUN_FRONTEND_RELEASE_PREFLIGHT`.
+- The preflight checks required CI conclusions for the exact approved SHA.
 - The build emits a non-secret `dist/version.json`.
-- The release receipt schema records source SHA, run ID, actor, target, artifact hash, deployment version, timestamp, served-version verification result, and rollback pointer.
-- Static tests guard against reintroducing automatic production Wrangler deployment.
+- The preflight record states deployment, served verification, and rollback were not run.
+- Static tests guard against reintroducing automatic production deployment or Cloudflare/Wrangler references.
 
 ## What this does not prove
 
@@ -30,6 +28,8 @@ Source-side containment for the production frontend release path. This lane cont
 - No Cloudflare secret placement has been changed or verified.
 - No Cloudflare rollback command or provider metadata shape has been proven.
 - No served artifact has been verified against a live route.
+- Direct/manual Wrangler paths outside this workflow remain unproven and uncontrolled by this PR.
+- No actual manual release implementation exists in this workflow.
 - No application, authorization, Supabase, RLS, migration, staging, or production runtime behavior changed.
 
 ## Remaining gates
@@ -39,7 +39,8 @@ Source-side containment for the production frontend release path. This lane cont
 3. Restrict the environment to `main`.
 4. Move or scope Cloudflare deployment secrets to that protected environment.
 5. Run a read-only Cloudflare Evidence Operation to prove deployment/version metadata and rollback-to-version behavior.
-6. Perform one controlled release verification before treating the lane as certified.
+6. Implement a separate governed manual release workflow only after the provider and GitHub settings evidence exists.
+7. Perform one controlled release verification before treating the lane as certified.
 
 ## Stale-proof triggers
 
