@@ -1,7 +1,7 @@
 name: Frontend Staging Preflight (No Deploy)
 
 # Staging frontend release-control containment. This workflow intentionally
-# does not deploy, invoke Wrangler, or reference Cloudflare credentials.
+# does not deploy, invoke provider tooling, or reference deployment credentials.
 
 on:
   workflow_dispatch:
@@ -62,23 +62,12 @@ jobs:
       - name: Build staging artifact only
         run: npm run build
 
-      - name: Write staging frontend preflight record
-        run: |
-          set -euo pipefail
-          mkdir -p release
-          cat > release/staging-frontend-preflight-record.json <<JSON
-          {
-            "schema": "fortress.frontend.staging-preflight-record.v1",
-            "source_commit_sha": "${{ steps.approved-source.outputs.source_sha }}",
-            "workflow_run_id": "${{ github.run_id }}",
-            "actor": "${{ github.actor }}",
-            "target_environment": "staging",
-            "deployment_status": "not_run",
-            "served_version_verification_status": "not_run",
-            "rollback_status": "not_run",
-            "release_status": "not_released"
-          }
-          JSON
+      - name: Write staging frontend preflight evidence
+        run: node scripts/release-control/staging-frontend-preflight.mjs
+        env:
+          PREFLIGHT_SOURCE_COMMIT_SHA: ${{ steps.approved-source.outputs.source_sha }}
+          PREFLIGHT_GITHUB_RUN_ID: ${{ github.run_id }}
+          PREFLIGHT_ACTOR: ${{ github.actor }}
 
       - name: Upload staging frontend preflight artifact
         uses: actions/upload-artifact@v4
@@ -86,5 +75,6 @@ jobs:
           name: staging-frontend-preflight-artifact
           path: |
             release/staging-frontend-preflight-record.json
+            dist/version.json
             dist/
           retention-days: 7

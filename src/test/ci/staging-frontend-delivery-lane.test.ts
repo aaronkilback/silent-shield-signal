@@ -6,6 +6,10 @@ const workflow = readFileSync(
   resolve(process.cwd(), '.github/workflows/deploy-frontend-staging.yml'),
   'utf8',
 );
+const preflightScript = readFileSync(
+  resolve(process.cwd(), 'scripts/release-control/staging-frontend-preflight.mjs'),
+  'utf8',
+);
 
 function jobBlock(source: string, jobKey: string): string {
   const lines = source.split('\n');
@@ -99,20 +103,28 @@ describe('staging frontend delivery lane', () => {
   });
 
   it('contains no executable Cloudflare deployment path or Cloudflare credential reference', () => {
+    expect(workflow).not.toContain('environment:');
     expect(workflow).not.toContain('cloudflare/wrangler-action');
+    expect(workflow).not.toMatch(/\bwrangler\b/i);
     expect(workflow).not.toContain('wrangler');
     expect(workflow).not.toContain('CLOUDFLARE_API_TOKEN');
     expect(workflow).not.toContain('CLOUDFLARE_ACCOUNT_ID');
     expect(workflow).not.toContain('STAGING_CLOUDFLARE_API_TOKEN');
+    expect(workflow).not.toContain('Cloudflare');
   });
 
-  it('is explicitly non-deploy and writes only a preflight record', () => {
+  it('is explicitly non-deploy and writes preflight evidence only', () => {
     expect(workflow).toContain('Frontend Staging Preflight (No Deploy)');
     expect(preflightJob).toContain('Staging Frontend Preflight — No Deploy');
-    expect(preflightJob).toContain('"deployment_status": "not_run"');
-    expect(preflightJob).toContain('"served_version_verification_status": "not_run"');
-    expect(preflightJob).toContain('"rollback_status": "not_run"');
-    expect(preflightJob).toContain('"release_status": "not_released"');
+    expect(preflightJob).toContain('node scripts/release-control/staging-frontend-preflight.mjs');
+    expect(workflow).toContain('release/staging-frontend-preflight-record.json');
+    expect(workflow).toContain('dist/version.json');
+    expect(preflightScript).toContain("deployment: 'not_run'");
+    expect(preflightScript).toContain("cloudflare_version: 'not_observed'");
+    expect(preflightScript).toContain("traffic_allocation: 'not_observed'");
+    expect(preflightScript).toContain("served_artifact_verification: 'not_run'");
+    expect(preflightScript).toContain("rollback: 'not_run'");
+    expect(preflightScript).toContain("release: 'not_released'");
   });
 
   it('keeps staging build variables limited to the intended staging Vite variables', () => {
@@ -130,5 +142,17 @@ describe('staging frontend delivery lane', () => {
     expect(preflightJob).toContain('Verify approved staging commit');
     expect(preflightJob).toContain('git rev-parse HEAD');
     expect(preflightJob).toContain('inputs.approved_commit_sha');
+  });
+
+  it('uses a non-circular artifact hash contract for version and preflight evidence', () => {
+    expect(preflightScript).toContain("const VERSION_PATH = path.join(DIST_DIR, 'version.json')");
+    expect(preflightScript).toContain("if (relative === 'version.json') continue");
+    expect(preflightScript).toContain("const HASH_SCOPE = 'dist/**/* excluding dist/version.json'");
+    expect(preflightScript).toContain('artifact_manifest_hash');
+    expect(preflightScript).toContain('artifact_hash_method');
+    expect(preflightScript).toContain('await writeFile(VERSION_PATH');
+    expect(preflightScript.indexOf('const artifact = await buildArtifactManifest()')).toBeLessThan(
+      preflightScript.indexOf('await writeFile(VERSION_PATH'),
+    );
   });
 });

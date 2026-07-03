@@ -1,7 +1,7 @@
 # Staging Frontend Delivery Lane
 
 **Class:** A
-**State:** SOURCE CONTAINMENT READY — deployment implementation blocked
+**State:** SOURCE PREPARATION READY — runtime deployment implementation blocked
 **Priority:** P0
 **Owner:** Aaron
 
@@ -21,7 +21,10 @@ Source-side containment for the staging frontend release path on the `staging` b
 - The build may use only the existing staging Vite variables:
   - `STAGING_VITE_SUPABASE_URL`;
   - `STAGING_VITE_SUPABASE_PUBLISHABLE_KEY`.
-- The preflight record states deployment, served verification, rollback, and release were not run.
+- The preflight can write `dist/version.json` and `release/staging-frontend-preflight-record.json`.
+- The preflight binds the staged build to a deterministic SHA-256 artifact-manifest hash.
+- The artifact-manifest hash is non-circular: `dist/version.json` is excluded from the hash scope and written only after the artifact hash is known.
+- The preflight record states deployment, Cloudflare version observation, traffic allocation observation, served verification, rollback, and release were not run.
 - Static tests guard against reintroducing automatic staging deployment or Cloudflare/Wrangler credential references.
 
 ## What this does not prove
@@ -31,16 +34,15 @@ Source-side containment for the staging frontend release path on the `staging` b
 - Direct/manual Wrangler paths outside this workflow remain unproven and uncontrolled by this PR.
 - Shared repository Cloudflare credentials still exist.
 - Staging Cloudflare credential scope has not been proven.
-- No deployment receipt, rollback mechanism, or served-artifact proof exists for staging.
+- No workflow execution, Cloudflare deployment, version receipt, served verification, rollback proof, credential scope, or release authorization is proven.
 - No application, authorization, Supabase, RLS, migration, staging runtime, or production runtime behavior changed.
 
 ## Remaining gates
 
-1. Decide whether staging needs its own protected release path or remains disabled until production release controls are complete.
-2. Replace or scope Cloudflare credentials before any staging deploy implementation.
-3. Run a read-only Cloudflare Evidence Operation to prove staging Worker deployment/version metadata and rollback-to-version behavior.
-4. Implement a separate governed manual staging release workflow only after provider and credential evidence exists.
-5. Perform one controlled staging release verification before treating the lane as certified.
+1. Decide on protected staging Environment settings and staging-scoped credentials.
+2. Run a read-only Cloudflare Evidence Operation to prove staging Worker deployment/version metadata and rollback-to-version behavior.
+3. Implement a separate governed manual staging release workflow only after provider, credential, approval, receipt, rollback, and served-artifact verification controls exist.
+4. Perform one controlled staging release verification before treating the lane as certified.
 
 ## Stale-proof triggers
 
