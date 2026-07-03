@@ -33,6 +33,13 @@ Last reconciled: 2026-07-03
 - Next gate: certified delivery lane, then planned release decision and preview or live verification.
 - Priority: P3.
 
+### Browser signal filter boundary — PR #96
+
+- Class/state: B / READY — source-only, release-blocked
+- Proof: source diff reviewed; focused tests, Critical File Guard, and TypeScript passed.
+- Next gate: delivery-lane certification, then a separate release decision.
+- Priority: P1.
+
 ### Wider authorization: reports, exports, Aegis, realtime
 
 - Class/state: A / QUEUED

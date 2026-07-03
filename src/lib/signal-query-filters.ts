@@ -35,7 +35,7 @@
  * so future static-grep audits can distinguish intentional unfiltered
  * queries from new defects.
  *
- * Server/service-role flows must use server-only helpers outside `src/`.
+ * Privileged server-only flows must use helpers outside `src/`.
  */
 
 export type SignalAccessRole = 'analyst' | 'operator';
