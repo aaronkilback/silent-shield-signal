@@ -1,6 +1,6 @@
 # Active Control Board
 
-Last reconciled: 2026-07-02
+Last reconciled: 2026-07-03
 
 ## WIP slots
 
@@ -15,6 +15,7 @@ Last reconciled: 2026-07-02
 
 - Class/state: A / ACTIVE
 - Proof: the main-to-deployment relationship is not sufficiently proven for routine release.
+- Planned observation: merging ledger-only PR #95 may trigger the current `main`-connected build path. After merge, record whether a provider build occurred, its target, and whether any served application artifact changed. This is an observation for delivery-lane certification, not release authorization.
 - Next gate: reconcile the exact trigger, target, artifact receipt, served-route verification, and rollback pointer.
 - Priority: P0.
 
