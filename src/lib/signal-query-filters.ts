@@ -35,10 +35,10 @@
  * so future static-grep audits can distinguish intentional unfiltered
  * queries from new defects.
  *
- * EDGE FUNCTIONS: mirror at supabase/functions/_shared/signal-query-filters.ts.
+ * Server/service-role flows must use server-only helpers outside `src/`.
  */
 
-export type SignalAccessRole = 'analyst' | 'operator' | 'service_role';
+export type SignalAccessRole = 'analyst' | 'operator';
 
 /**
  * ALWAYS-FILTER. Use in analyst-only frontend components / hooks.
@@ -53,12 +53,11 @@ export function applyAnalystSignalFilter<
 }
 
 /**
- * ROLE-AWARE FILTER. Use in mixed-role components and edge functions
+ * ROLE-AWARE FILTER. Use in mixed-role browser components
  * where the caller's role is determined at runtime.
  *
  * - role='analyst'   → filters out quarantined rows
  * - role='operator'  → returns query unchanged (full visibility)
- * - role='service_role' → returns query unchanged (internal pipeline)
  *
  * The caller MUST source `role` from an authoritative origin (JWT claims,
  * authenticated session role lookup, server-side role gate). Do NOT pass
