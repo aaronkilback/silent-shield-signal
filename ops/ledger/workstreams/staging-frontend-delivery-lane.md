@@ -40,7 +40,7 @@ Source-side containment for the staging frontend release path on the `staging` b
 ## Remaining gates
 
 1. Decide on protected staging Environment settings and staging-scoped credentials.
-2. Resolve the Cloudflare provider-evidence blocker recorded at `ops/release-control/evidence/staging-frontend-cloudflare-read-20260703T202756Z/`. The authorized target-specific read did not close the evidence gap: authentication failed before provider metadata returned, so externally claimed Cloudflare observations remain unsupported by source-controlled provider evidence. The next step requires an explicit authorization decision on whether an existing, approved, read-only, target-specific Cloudflare credential can be made available through the governed runner.
+2. Resolve the Cloudflare provider-evidence blocker recorded at `ops/release-control/evidence/staging-frontend-cloudflare-read-20260703T202756Z/`. The authorized target-specific read did not close the evidence gap: authentication failed before provider metadata returned, so externally claimed Cloudflare observations remain unsupported by source-controlled provider evidence. The next action is the authorization decision recorded in `ops/release-control/decisions/staging-cloudflare-read-access-decision.md`, not a technical retry.
 3. Implement a separate governed manual staging release workflow only after provider, credential, approval, receipt, rollback, and served-artifact verification controls exist.
 4. Perform one controlled staging release verification before treating the lane as certified.
 

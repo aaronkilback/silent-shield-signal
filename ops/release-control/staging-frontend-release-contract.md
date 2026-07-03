@@ -36,7 +36,7 @@ The artifact manifest hash is non-circular: it hashes `dist/**/*` after the buil
 
 The blocked read attempt is recorded at `ops/release-control/evidence/staging-frontend-cloudflare-read-20260703T202756Z/`. It did not close the evidence gap: authentication failed before Cloudflare provider metadata returned, so externally claimed Cloudflare observations remain unsupported by source-controlled provider evidence.
 
-The next step requires an explicit authorization decision on whether an existing, approved, read-only, target-specific Cloudflare credential can be made available through the governed runner. No release decision, rollback claim, staging-readiness claim, or deployment-provenance claim is supported by the blocked attempt.
+The next action is the authorization decision recorded in `ops/release-control/decisions/staging-cloudflare-read-access-decision.md`, not a technical retry. No release decision, rollback claim, staging-readiness claim, or deployment-provenance claim is supported by the blocked attempt.
 
 ## Explicit Boundary
 
