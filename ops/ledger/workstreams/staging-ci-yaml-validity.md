@@ -1,0 +1,21 @@
+# Staging CI YAML Validity
+
+- Class: B
+- State: READY — source-only, awaiting separate merge decision
+- Scope: repair the malformed `.github/workflows/ci.yml` on `staging` that produced failed zero-job `Fortress CI` runs before normal trigger or job evaluation.
+- What changed:
+  - Removed the duplicate second `env:` key from the `unit-tests` / `Run Vitest unit tests` step.
+  - Preserved the first `env:` block and all existing invariant-test variables.
+  - Left workflow triggers, workflow name, jobs, dependencies, job-level conditions, secrets, live checks, deployment behavior, and branch behavior unchanged.
+- Evidence:
+  - Focused static Vitest test verifies the `unit-tests` step has exactly one `env:` block.
+  - Focused static Vitest test verifies all required invariant-test variables remain in that block.
+  - `git diff --check` passed locally.
+- What it does not prove:
+  - No GitHub Actions run, job execution, or CI recovery is proven.
+  - The exact internal GitHub workflow-validation error remains unproven.
+  - No release capability, deployment approval, staging certification, or PR #96 release decision follows from this repair.
+- Release gate:
+  - PR remains unmerged until a separate merge decision.
+- Stale-proof triggers:
+  - Changes to `.github/workflows/ci.yml`, staging CI triggers, job names, invariant-test inputs, or GitHub Actions registration behavior.

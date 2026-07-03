@@ -12,6 +12,14 @@ Last reconciled: 2026-07-03
 - Next gate: staging credential-scope decision, Cloudflare provider Evidence Operation, deployment receipt design, rollback proof, and served-artifact verification before any staging release implementation.
 - Priority: P0.
 
+### Staging CI YAML Validity
+
+- Class/state: B / READY — source-only, awaiting separate merge decision
+- Proof: duplicate `env:` key removed from the staging `unit-tests` step; focused static test verifies exactly one `env:` block with all required invariant-test variables.
+- Caveat: no GitHub Actions run, job execution, or CI recovery is proven. The exact internal GitHub workflow-validation error remains unproven.
+- Next gate: separate merge decision; this repair grants no release capability, deployment approval, or PR #96 release decision.
+- Priority: P1.
+
 ### Browser signal filter boundary — PR #96
 
 - Class/state: B / READY — source-only, release-blocked

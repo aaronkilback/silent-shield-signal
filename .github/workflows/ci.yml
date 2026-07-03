@@ -253,5 +253,3 @@ jobs:
           TEST_INVARIANT_USER_A_PASSWORD: ${{ secrets.TEST_INVARIANT_USER_A_PASSWORD }}
           TEST_INVARIANT_USER_B_EMAIL: ${{ secrets.TEST_INVARIANT_USER_B_EMAIL }}
           TEST_INVARIANT_USER_B_PASSWORD: ${{ secrets.TEST_INVARIANT_USER_B_PASSWORD }}
-        env:
-          CI: true
