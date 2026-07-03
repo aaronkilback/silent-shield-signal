@@ -1,65 +1,90 @@
-name: Deploy Frontend Staging (Cloudflare Worker)
+name: Frontend Staging Preflight (No Deploy)
 
-# Staging counterpart of deploy-frontend.yml. Triggered on `staging`
-# branch pushes. Builds with staging Vite env vars (pointing at staging
-# Supabase) and deploys to the silent-shield-signal-staging worker
-# bound to aegis-staging.silentshieldsecurity.com.
-#
-# Required GitHub Secrets (operator must add):
-#   STAGING_VITE_SUPABASE_URL              https://<staging-ref>.supabase.co
-#   STAGING_VITE_SUPABASE_PUBLISHABLE_KEY  staging publishable (anon) key
-# Reused:
-#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+# Staging frontend release-control containment. This workflow intentionally
+# does not deploy, invoke Wrangler, or reference Cloudflare credentials.
 
 on:
-  push:
-    branches: [staging]
-    paths:
-      - 'src/**'
-      - 'public/**'
-      - 'index.html'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.config.ts'
-      - 'wrangler.toml'
-      - 'tailwind.config.ts'
-      - 'tsconfig*.json'
-      - 'postcss.config.js'
-      - '.env'
-      - '.github/workflows/deploy-frontend-staging.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      approved_commit_sha:
+        description: Exact staging commit SHA approved for staging frontend preflight.
+        required: true
+        type: string
+      confirm_staging_preflight:
+        description: Type RUN_STAGING_FRONTEND_PREFLIGHT to run the non-deploy staging frontend preflight.
+        required: true
+        type: string
 
 jobs:
-  deploy:
-    name: Build and Deploy (Staging)
+  preflight:
+    name: Staging Frontend Preflight — No Deploy
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/staging' &&
+      github.event.inputs.confirm_staging_preflight == 'RUN_STAGING_FRONTEND_PREFLIGHT'
     env:
       VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.STAGING_VITE_SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          ref: staging
 
-      - name: Guard — require staging secrets
+      - name: Verify approved staging commit
+        id: approved-source
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$HEAD_SHA" != "${{ inputs.approved_commit_sha }}" ]; then
+            echo "Approved SHA does not match checked-out staging."
+            echo "approved=${{ inputs.approved_commit_sha }}"
+            echo "head=$HEAD_SHA"
+            exit 1
+          fi
+          echo "source_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Guard — require staging Vite variables
         run: |
           if [[ -z "$VITE_SUPABASE_URL" || -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]]; then
             echo "::error::Missing STAGING_VITE_SUPABASE_URL or STAGING_VITE_SUPABASE_PUBLISHABLE_KEY"
             exit 1
           fi
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Build (staging vars)
+      - name: Build staging artifact only
         run: npm run build
 
-      - name: Deploy to Cloudflare Workers (staging env)
-        uses: cloudflare/wrangler-action@v3
+      - name: Write staging frontend preflight record
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cat > release/staging-frontend-preflight-record.json <<JSON
+          {
+            "schema": "fortress.frontend.staging-preflight-record.v1",
+            "source_commit_sha": "${{ steps.approved-source.outputs.source_sha }}",
+            "workflow_run_id": "${{ github.run_id }}",
+            "actor": "${{ github.actor }}",
+            "target_environment": "staging",
+            "deployment_status": "not_run",
+            "served_version_verification_status": "not_run",
+            "rollback_status": "not_run",
+            "release_status": "not_released"
+          }
+          JSON
+
+      - name: Upload staging frontend preflight artifact
+        uses: actions/upload-artifact@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --env staging
+          name: staging-frontend-preflight-artifact
+          path: |
+            release/staging-frontend-preflight-record.json
+            dist/
+          retention-days: 7

@@ -19,6 +19,14 @@ Last reconciled: 2026-07-03
 - Next gate: GitHub production Environment protection, Cloudflare rollback/provider Evidence Operation, then a separately reviewed manual release implementation.
 - Priority: P0.
 
+### Staging frontend delivery-lane containment
+
+- Class/state: A / SOURCE CONTAINMENT READY — deployment implementation blocked
+- Proof: source-side containment removes automatic GitHub Actions staging frontend deployment from `staging` and leaves only a manual, non-deploy preflight that builds with staging Vite variables and writes a preflight artifact.
+- Deployment status: not deployed, not certified, and no staging deployment is authorized. Direct/manual Wrangler paths outside this workflow remain unproven and uncontrolled by this PR.
+- Next gate: staging credential-scope decision, Cloudflare provider Evidence Operation, deployment receipt design, rollback proof, and served-artifact verification before any staging release implementation.
+- Priority: P0.
+
 ### Browser signal filter boundary — PR #96
 
 - Class/state: B / READY — source-only, release-blocked
