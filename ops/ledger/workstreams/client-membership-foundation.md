@@ -33,22 +33,37 @@ A tenant user may access a client's intelligence only through an explicit active
 - The governed staging preflight from source commit `8edf95be120dde886a3954d4f9fcd49352fb41c9` proved target and migration hash, then failed closed at `migration_history_read`; no apply ran.
 - The known staging topology has one observed user, one tenant, and one client. It cannot demonstrate sibling-client isolation without controlled synthetic fixtures.
 
-## Before-state evidence: observed direct `signals` policy
+## Before-state evidence: direct `signals` policy and helper body
 
-This is the before half of the future closure evidence. It records an existing authenticated-dashboard observation from 2026-07-02; **no new remote read was performed for this ledger update**.
+This is the before half of the future closure evidence. The policy and function body were observed through the authenticated Supabase Dashboard on 2026-07-02 and 2026-07-03 respectively. No SQL editor, CLI, or mutation was used for this capture.
 
-Observed policy capture, canonical form:
+Canonical capture:
 
 ```text
 policy_name: signals_tenant_select
 command: SELECT
 roles: public
 using: client_id IN (SELECT client_id FROM get_user_accessible_client_ids())
+
+function_signature: public.get_user_accessible_client_ids()
+arguments: none
+return_type: TABLE(client_id uuid)
+security_mode: SECURITY DEFINER (observed in Functions list)
+dashboard_sql_body:
+SELECT c.id
+FROM public.clients c
+INNER JOIN public.tenant_users tu ON tu.tenant_id = c.tenant_id
+WHERE tu.user_id = auth.uid()
+
+owner: not displayed in Supabase Dashboard function editor
+execute_roles_or_grants: not displayed in Supabase Dashboard function editor
+capture_method: authenticated Supabase Dashboard function list and function editor
+capture_date: 2026-07-03
 ```
 
-Canonical capture SHA-256: `c83fee1e6f42f3ff08a57c091ad0a13064bbccec2e9f6683d0e93d9e045e72d8`
+Canonical capture SHA-256: `c60a6087b17a59319ad2a078e8f406058c6d55458cd53fe58419db4960097455`
 
-The observed no-argument helper joins `clients` to `tenant_users` for `auth.uid()`. Therefore the policy is tenant-scoped rather than explicitly client-membership-scoped. The hash is an integrity check for this sanitized ledger capture, not a provider-signed artifact.
+This capture proves the observed behavior: for the signed-in user, the helper returns each client whose tenant has a matching row in `tenant_users`. The resulting direct `signals` policy is therefore tenant-scoped rather than explicitly client-membership-scoped. It does not establish function owner or execute grants because this Dashboard view did not display them. The hash is an integrity check for the sanitized ledger capture, not a provider-signed artifact.
 
 ## Required sequence
 
