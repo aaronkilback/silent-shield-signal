@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
     if (explicitClientId) {
       const { data: clientCheck, error: clientCheckError } = await supabase
         .from('clients')
-        .select('id, name, status')
+        .select('id, name, status, is_test')
         .eq('id', explicitClientId)
         .single();
 
@@ -252,6 +252,69 @@ Deno.serve(async (req) => {
             error: 'forbidden: client_id outside accessible scope',
           }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // --- Synthetic-client write-seam guard (WO-B, 2026-07-04) -------------
+      // REJECT-not-write: a LIVE signal (is_test !== true) must never be written
+      // to an is_test client (synthetic / benchmark / QA fixture). This is the
+      // single write seam — every signal carries an explicit client_id (required
+      // since #256; there is no keyword→client fallback), so guarding HERE catches
+      // misroutes from ALL ~73 client-fetching callers, present and future,
+      // without touching each monitor. (The client-fetch layer is fragmented:
+      // the shared pickActiveClients helper — which already excludes inactive +
+      // '_'-prefixed fixtures — has only 3 adopters; ~13 signal-routing monitors
+      // fetch clients directly and bypass it. Consolidating them onto the helper
+      // is the WO-A follow-on; this guard is the stopgap.)
+      //
+      // Root cause of the misroute is that benchmark clients carry real
+      // keywords/geography and win a routing match (e.g. BCWS wildfire 17a006a2
+      // → _benchmark_petronas). Correct re-resolution to the RIGHT real client is
+      // WO-A canonical routing — non-trivial, NOT built here. This guard only
+      // makes the misroute VISIBLE (misrouted_signals) instead of silently
+      // absorbed onto the synthetic client OR silently dropped (the deleter class).
+      //
+      // Scope note — this is the MISMATCH, not a blanket block: intentional QA
+      // writes (is_test === true → inactive test client) are the DESIGNED fixture
+      // path enforced by the guard just below, and remain allowed. We reject only
+      // a live signal landing on a test client. Monitors never send is_test=true,
+      // so this stops 100% of monitor drift while preserving the QA/CIPHER path.
+      //
+      // Returns 200 (not 4xx/5xx): the caller (monitor / job-worker) acted in
+      // good faith and must not 500-and-poison-retry — same poison-queue
+      // discipline as the deleter quarantine. The signal is logged-and-not-
+      // written, never swallowed. `supabase` here is service-role (line ~152),
+      // so the misrouted_signals insert bypasses RLS and always records.
+      if (clientCheck.is_test === true && is_test !== true) {
+        console.error(`⚠ MISROUTE BLOCKED: live signal routed to is_test client ${clientCheck.name} (${clientCheck.id}) — logging to misrouted_signals, NOT writing`);
+        try {
+          const { error: logError } = await supabase.from('misrouted_signals').insert({
+            intended_client_id: clientCheck.id,
+            intended_client_name: clientCheck.name,
+            intended_client_is_test: true,
+            source_key: source_key ?? null,
+            source_url: source_url ?? null,
+            signal_text: typeof text === 'string' ? text.slice(0, 4000) : null,
+            reason: 'live_signal_to_is_test_client',
+            caller_kind: caller.kind ?? null,
+            raw_payload: { source_key, source_url, url, location, event, platform, is_test_input, raw_json, explicitClientId },
+          });
+          if (logError) {
+            console.error(`⚠ misrouted_signals LOG FAILED (signal still not written): ${logError.message}`);
+          }
+        } catch (logErr: any) {
+          console.error(`⚠ misrouted_signals LOG THREW (signal still not written): ${logErr?.message}`);
+        }
+        return new Response(
+          JSON.stringify({
+            status: 'rejected_misrouted',
+            written: false,
+            logged: true,
+            reason: 'live_signal_to_is_test_client',
+            intended_client: clientCheck.id,
+            message: `Signal not written: client ${clientCheck.name} is a test/synthetic fixture (is_test=true). Recorded in misrouted_signals. Re-resolution to a real client is handled by canonical routing (WO-A).`,
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
