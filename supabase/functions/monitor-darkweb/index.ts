@@ -10,8 +10,41 @@ import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/hea
  *   1. /breaches?domain= — all known breaches containing accounts for that domain (no key required)
  *   2. /pasteaccount/{email} — paste mentions of contact email (API key required)
  *
- * Dedup: routes through ingest-signal with source_key = hibp-{breach.Name}-{domain}
+ * Attribution: every signal passes source_key = DARKWEB_SOURCE_KEY so ingest-signal
+ * resolves a real sources.source_id (the sources row must exist first).
+ *
+ * Paste URL resolution (HIBP Pastes API): `Id` is a Pastebin *key* ONLY when
+ * `Source === 'Pastebin'`. For `AdHocUrl` (and other URL-bearing sources) `Id`
+ * is a full URL. Blind-prefixing `https://pastebin.com/${Id}` produced malformed
+ * source_urls like `https://pastebin.com/http://142.44.253.104/...` (signal
+ * 349bcb29). Resolve per Source; never fabricate a host for an unknown source.
  */
+
+const DARKWEB_SOURCE_KEY = 'HIBP Exposure Monitor (email/paste)';
+
+/**
+ * Build a citation URL for a HIBP paste per its `Source`.
+ * - Id already a full URL (AdHocUrl and any URL-bearing source) → verbatim.
+ * - Source === 'Pastebin' → https://pastebin.com/{Id} (documented key form).
+ * - Any other source → return the raw Id with NO prefix (source is noted in the
+ *   signal text). We do not hardcode unverified per-site URL templates, because
+ *   a wrong-but-plausible URL is the same false-provenance class as the original bug.
+ */
+function resolveHibpPasteUrl(paste: { Source?: string; Id?: string }): string | undefined {
+  const id = typeof paste?.Id === 'string' ? paste.Id.trim() : '';
+  if (!id) return undefined;
+  if (/^https?:\/\//i.test(id)) return id;
+  if ((paste?.Source || '').trim() === 'Pastebin') return `https://pastebin.com/${id}`;
+  return id;
+}
+
+/** Best-effort date for a paste: paste.Date, else a date parsed from the Id/URL, else 'undated'. */
+function resolvePasteDate(paste: { Date?: string; Id?: string }): string {
+  if (typeof paste?.Date === 'string' && paste.Date.trim()) return paste.Date.trim();
+  const id = typeof paste?.Id === 'string' ? paste.Id : '';
+  const m = id.match(/(20\d{2})[-/]?(\d{2})[-/]?(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : 'undated';
+}
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -90,8 +123,16 @@ Deno.serve(async (req) => {
                 body: {
                   text: `Data Breach Detected: ${breach.Title || breach.Name}\n\nDomain: ${domain} | Breach date: ${breach.BreachDate || 'Unknown'} | Affected accounts: ${breach.PwnCount?.toLocaleString() || 'Unknown'}\n\nData exposed: ${(breach.DataClasses || []).join(', ')}\n\n${breach.Description ? breach.Description.replace(/<[^>]+>/g, '') : ''}`,
                   source_url: `https://haveibeenpwned.com/PwnedWebsites#${breach.Name}`,
+                  source_key: DARKWEB_SOURCE_KEY,
                   location: 'Dark Web / Breach Database',
                   clientId: client.id,
+                  raw_json: {
+                    signal_origin: 'monitor-darkweb',
+                    monitor_name: 'monitor-darkweb',
+                    hibp_breach: true,
+                    breach_name: breach.Name ?? null,
+                    domain,
+                  },
                 }
               });
               if (!ingestError) signalsCreated++;
@@ -128,12 +169,47 @@ Deno.serve(async (req) => {
             console.log(`[DarkWeb] ${client.contact_email}: found in ${pastes.length} pastes`);
 
             for (const paste of pastes.slice(0, 3)) {
+              const pasteId = typeof paste.Id === 'string' ? paste.Id.trim() : '';
+
+              // Dedup by (client_email, paste.Id): skip if a signal already exists
+              // for this exact paste + email. paste.Id is stamped into raw_json so
+              // this is stable across re-runs (the citation URL is not a reliable
+              // key — the same paste can surface under different Source/Id forms).
+              if (pasteId) {
+                const { data: existingPaste } = await supabase
+                  .from('signals')
+                  .select('id')
+                  .eq('client_id', client.id)
+                  .eq('raw_json->>paste_id', pasteId)
+                  .eq('raw_json->>paste_email', client.contact_email)
+                  .limit(1)
+                  .maybeSingle();
+                if (existingPaste) {
+                  console.log(`[DarkWeb] Duplicate paste ${pasteId} for ${client.contact_email} — skipping`);
+                  continue;
+                }
+              }
+
+              const pasteUrl = resolveHibpPasteUrl(paste);
+              const pasteDate = resolvePasteDate(paste);
+
               const { error: ingestError } = await supabase.functions.invoke('ingest-signal', {
                 body: {
-                  text: `Paste Site Exposure: Contact email ${client.contact_email} found in paste.\n\nSource: ${paste.Source || 'Unknown'} | Date: ${paste.Date || 'Unknown'}\nTitle: ${paste.Title || 'Untitled'} | Email count: ${paste.EmailCount || 'Unknown'}`,
-                  source_url: paste.Id ? `https://pastebin.com/${paste.Id}` : undefined,
+                  text: `Paste Site Exposure: Contact email ${client.contact_email} found in paste.\n\nSource: ${paste.Source || 'Unknown'} | Date: ${pasteDate}\nTitle: ${paste.Title || 'Untitled'} | Email count: ${paste.EmailCount || 'Unknown'}`,
+                  source_url: pasteUrl,
+                  source_key: DARKWEB_SOURCE_KEY,
                   location: 'Paste Site',
                   clientId: client.id,
+                  raw_json: {
+                    signal_origin: 'monitor-darkweb',
+                    monitor_name: 'monitor-darkweb',
+                    hibp_paste: true,
+                    paste_source: paste.Source ?? null,
+                    paste_id: pasteId || null,
+                    paste_email: client.contact_email,
+                    paste_date: pasteDate,
+                    email_count: paste.EmailCount ?? null,
+                  },
                 }
               });
               if (!ingestError) signalsCreated++;
