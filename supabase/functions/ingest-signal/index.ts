@@ -1160,6 +1160,7 @@ Respond ONLY with valid JSON.`
         .from('signals')
         .select('id')
         .eq('source_url', source_url)
+        .eq('client_id', clientId)   // Finding-1.2: client-scope the dedup — a URL for client A must not suppress client B's copy
         .gte('created_at', thirtyDaysAgo)
         .limit(1)
         .maybeSingle();
@@ -1184,6 +1185,7 @@ Respond ONLY with valid JSON.`
           .from('signals')
           .select('id')
           .ilike('title', `%${titleLine.substring(0, 80)}%`)
+          .eq('client_id', clientId)   // Finding-1.2: client-scope the dedup — a title for client A must not suppress client B's copy
           .gte('created_at', oneDayAgo)
           .limit(1)
           .maybeSingle();
@@ -2401,69 +2403,30 @@ Score this signal's relevance and classify the connection.`
     // The result was already only used inside `if (false && ...)` dead code, so
     // there's nothing to lose by not awaiting. EdgeRuntime.waitUntil keeps the
     // runtime alive after the HTTP response so the analysis completes.
-    console.log('Invoking AI decision engine for signal categorization (async)...');
+    // WO-TRIGGER (2026-07-05): DURABLE escalation. This was a fire-and-forget
+    // `supabase.functions.invoke('ai-decision-engine')` + EdgeRuntime.waitUntil.
+    // That silently died ~06-19: edge teardown dropped the async call, and because
+    // the only error handling was console.error, it produced NO incident, NO
+    // incident_creation_failures row, NO surfaced error — the PRIMARY real-incident
+    // path was dead for 2+ weeks, invisibly (WO-TRIGGER). Replaced with a durable
+    // job: job-worker invokes ai-decision-engine reliably (retries + failure lands
+    // visibly in function_jobs.error_message), and the incident flows through the
+    // WO-A create_incident door (owned/stamped/deduped). Silent-loss call -> observable queue.
+    // idempotencyKey = one escalation job per signal (re-ingest can't double-enqueue).
     try {
-      const aiDecisionPromise = supabase.functions.invoke('ai-decision-engine', {
-        body: {
+      const enq = await enqueueJob(supabase, {
+        type: 'ai-decision-engine',
+        payload: {
           signal_id: signal.id,
-          force_ai: rulesResult.priority === 'p1' || rulesResult.priority === 'p2'
-        }
-      }).then((aiDecisionResult: any) => {
-        if (aiDecisionResult?.error) {
-          console.error('AI decision engine error:', aiDecisionResult.error);
-        } else {
-          console.log('AI decision engine result:', aiDecisionResult?.data);
-        }
-      }).catch((e: unknown) => {
-        console.error('AI decision engine async error:', e);
+          force_ai: rulesResult.priority === 'p1' || rulesResult.priority === 'p2',
+        },
+        idempotencyKey: `ai-decision-engine:${signal.id}`,
       });
-
-      // Edge-runtime extension: keep the worker alive until the analysis
-      // finishes, even after this function's response is sent.
-      try {
-        // @ts-ignore — EdgeRuntime is a Supabase Deno extension
-        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime?.waitUntil) {
-          // @ts-ignore
-          EdgeRuntime.waitUntil(aiDecisionPromise);
-        }
-      } catch {}
-
-      // Dead-code legacy incident-creation block kept structurally to keep
-      // git diff minimal. The aiDecisionResult is never available here under
-      // the fire-and-forget pattern; the `if (false && ...)` guard means the
-      // body never executes anyway.
-      const aiDecisionResult: any = null;
-      if (false && !isCyberAdvisory && !isQaTest && !isHistorical && aiDecisionResult?.data?.decision?.should_create_incident) {
-          const { error: incidentError } = await supabase
-            .from('incidents')
-            .insert({
-              signal_id: signal.id,
-              client_id: signal.client_id,
-              priority: aiDecisionResult.data.decision.incident_priority || rulesResult.priority,
-              status: 'open',
-              is_test: signal.is_test || false,
-              title: generateIncidentTitle(signal, classification),
-              summary: aiDecisionResult.data.decision.reasoning,
-              sla_targets_json: { 
-                mttd: 10, 
-                mttr: aiDecisionResult.data.decision.incident_priority === 'p1' ? 60 : 120 
-              },
-              timeline_json: [{
-                timestamp: new Date().toISOString(),
-                action: 'incident_opened',
-                details: `Auto-opened by AI Decision Engine: ${aiDecisionResult.data.decision.threat_level} threat`
-              }]
-            });
-          
-          if (incidentError) {
-            console.error('Error creating incident:', incidentError);
-          } else {
-            console.log('Incident auto-opened by AI decision for signal:', signal.id);
-          }
-        }
+      console.log(`[ingest-signal] ai-decision-engine job ${enq.deduped ? 'already queued' : 'enqueued'} for signal ${signal.id} (${enq.jobId})`);
     } catch (error) {
-      console.error('Failed to invoke AI decision engine:', error);
-      // Don't fail the main request if AI decision fails
+      // enqueueJob throws loudly on DB error. Log but don't fail the ingest —
+      // the failure is at least surfaced here (not silently dropped like before).
+      console.error('[ingest-signal] failed to enqueue ai-decision-engine job:', error);
     }
     
     // Auto-open incident based on rules — P1 ONLY (active shooter, bomb, weapon, kidnap, credible threat).

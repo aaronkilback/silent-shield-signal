@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck, Globe, AlertTriangle, ShieldOff } from "lucide-react";
+import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck, Globe, AlertTriangle, ShieldOff, HelpCircle } from "lucide-react";
 import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
@@ -536,9 +536,12 @@ export const SignalHistory = () => {
 
   // Helper to categorize signals by recency
   const categorizeByRecency = (signal: Signal) => {
-    const signalDate = new Date(signal.event_date || signal.created_at);
+    // Honest event_time: an UNDATED signal never borrows created_at (ingestion) to look current.
+    // No event_date → 'undated' third state (neither asserted-recent nor buried-historical).
+    if (!signal.event_date) return 'undated';
+    const signalDate = new Date(signal.event_date);
     const daysDiff = differenceInDays(new Date(), signalDate);
-    
+
     if (isToday(signalDate)) return 'today';
     if (isThisWeek(signalDate)) return 'thisWeek';
     if (isThisMonth(signalDate)) return 'thisMonth';
@@ -547,7 +550,7 @@ export const SignalHistory = () => {
   };
 
   // Classify each signal into a primary bucket
-  const classifySignal = (signal: Signal): 'international' | 'low-confidence' | 'older-intel' | 'recent' => {
+  const classifySignal = (signal: Signal): 'international' | 'low-confidence' | 'older-intel' | 'undated' | 'recent' => {
     // Manual override takes precedence
     if (signal.triage_override) {
       const override = signal.triage_override;
@@ -558,6 +561,7 @@ export const SignalHistory = () => {
     if (isInternationalSignal(signal)) return 'international';
     if (isQuestionableSignal(signal)) return 'low-confidence';
     const recency = categorizeByRecency(signal);
+    if (recency === 'undated') return 'undated';   // third state — recency unknown, never asserted-current
     if (recency === 'historical') return 'older-intel';
     return 'recent';
   };
@@ -583,6 +587,8 @@ export const SignalHistory = () => {
       return classification === 'recent';
     } else if (activeTab === 'older-intel') {
       return classification === 'older-intel';
+    } else if (activeTab === 'undated') {
+      return classification === 'undated';
     } else if (activeTab === 'international') {
       return classification === 'international';
     } else if (activeTab === 'low-confidence') {
@@ -599,12 +605,14 @@ export const SignalHistory = () => {
     thisMonth: filteredSignals.filter(s => categorizeByRecency(s) === 'thisMonth'),
     recent: filteredSignals.filter(s => categorizeByRecency(s) === 'recent'),
     historical: filteredSignals.filter(s => categorizeByRecency(s) === 'historical'),
+    undated: filteredSignals.filter(s => categorizeByRecency(s) === 'undated'),
   };
 
   // Counts for tabs (based on classification, excluding auto-hidden and cyber advisory filter)
   const visibleSignals = signals.filter(s => !isAutoHidden(s) && (showCyberAdvisories || !isCyberAdvisory(s)));
   const recentCount = visibleSignals.filter(s => classifySignal(s) === 'recent').length;
   const olderIntelCount = visibleSignals.filter(s => classifySignal(s) === 'older-intel').length;
+  const undatedCount = visibleSignals.filter(s => classifySignal(s) === 'undated').length;
   const internationalCount = visibleSignals.filter(s => classifySignal(s) === 'international').length;
   const lowConfidenceCount = visibleSignals.filter(s => classifySignal(s) === 'low-confidence').length;
 
@@ -650,7 +658,7 @@ export const SignalHistory = () => {
         </div>
         {/* Tabs for Recent vs Historical */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="recent" className="flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5" />
               Recent
@@ -663,6 +671,13 @@ export const SignalHistory = () => {
               Older Intel
               {olderIntelCount > 0 && (
                 <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{olderIntelCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="undated" className="flex items-center gap-1.5">
+              <HelpCircle className="w-3.5 h-3.5" />
+              Undated
+              {undatedCount > 0 && (
+                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs">{undatedCount}</Badge>
               )}
             </TabsTrigger>
             <TabsTrigger value="international" className="flex items-center gap-1.5">
@@ -799,7 +814,7 @@ export const SignalHistory = () => {
               )}
 
               {/* Today's signals - highlighted */}
-              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.today.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.today.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="default" className="bg-green-600">Today</Badge>
@@ -812,7 +827,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This week's signals */}
-              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.thisWeek.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.thisWeek.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="secondary">This Week</Badge>
@@ -825,7 +840,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This month's signals */}
-              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.thisMonth.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.thisMonth.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline">This Month</Badge>
@@ -838,7 +853,7 @@ export const SignalHistory = () => {
               )}
 
               {/* Older but not historical (Last 90 Days) */}
-              {!['older-intel', 'international', 'low-confidence'].includes(activeTab) && groupedSignals.recent.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.recent.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="opacity-70">Last 90 Days</Badge>
@@ -862,6 +877,22 @@ export const SignalHistory = () => {
                   </div>
                   <div className="space-y-2 pl-2 border-l-2 border-amber-500/30 opacity-70">
                     {groupedSignals.historical.map((signal) => renderSignalCard(signal, false))}
+                  </div>
+                </div>
+              )}
+
+              {/* Undated / Needs Review — recency unknown, never asserted-current (honest third state) */}
+              {['all', 'undated'].includes(activeTab) && groupedSignals.undated.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="outline" className="opacity-70 border-slate-400 text-slate-500">
+                      <HelpCircle className="w-3 h-3 mr-1" />
+                      Undated / Needs Review
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{groupedSignals.undated.length} signals (recency unknown — shown, not asserted current)</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-slate-400/30 opacity-80">
+                    {groupedSignals.undated.map((signal) => renderSignalCard(signal, false))}
                   </div>
                 </div>
               )}
