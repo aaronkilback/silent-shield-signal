@@ -90,6 +90,7 @@ interface Signal {
   quality_score?: number | null;
   feedback_score?: number | null;
   triage_override?: string | null;
+  gate3?: { R: number; tier: 'top'|'verify'|'low'|'excluded'; rank_score: number | null; confidence: 'anchored'|'source_unverified_body_only'|'n/a'; engine?: string; at?: string } | null;
   sources?: {
     name: string;
     type: string;
@@ -265,6 +266,7 @@ export const SignalHistory = () => {
           source_url,
           feedback_score,
           triage_override,
+          gate3,
           clients (
             name
           ),
@@ -566,8 +568,18 @@ export const SignalHistory = () => {
     return 'recent';
   };
 
+  // Gate 3: rank by client-relevance (rank_score desc). Null gate3 (unscored) sorts after scored, preserving prior order (backward-compat).
+  const byRelevance = (a: Signal, b: Signal) => {
+    const ra = a.gate3?.rank_score ?? -1, rb = b.gate3?.rank_score ?? -1;
+    return rb - ra;
+  };
+
   // Apply filters including date range
   const filteredSignals = signals.filter(signal => {
+    // Gate 3: keep excluded (non-signals: [PATTERN]/job postings) out of every
+    // tab except the dedicated 'excluded' audit tab.
+    if (signal.gate3?.tier === 'excluded' && activeTab !== 'excluded') return false;
+
     // Auto-hide zero-relevance signals from all tabs
     if (isAutoHidden(signal)) return false;
 
@@ -582,8 +594,11 @@ export const SignalHistory = () => {
     }
     
     const classification = classifySignal(signal);
-    
-    if (activeTab === 'recent') {
+
+    if (activeTab === 'excluded') {
+      // Excluded audit tab — only Gate 3 excluded-tier (non-signals).
+      return signal.gate3?.tier === 'excluded';
+    } else if (activeTab === 'recent') {
       return classification === 'recent';
     } else if (activeTab === 'older-intel') {
       return classification === 'older-intel';
@@ -596,16 +611,18 @@ export const SignalHistory = () => {
     }
     // 'all' tab shows everything
     return true;
-  });
+  }).sort(byRelevance); // Gate 3: highest client-relevance first within the feed.
 
-  // Group signals for display
+  // Group signals for display. Each group is sorted by relevance so the
+  // most operations-relevant signal leads every recency band (backward-compat:
+  // null gate3 sorts last, preserving prior created_at order).
   const groupedSignals = {
-    today: filteredSignals.filter(s => categorizeByRecency(s) === 'today'),
-    thisWeek: filteredSignals.filter(s => categorizeByRecency(s) === 'thisWeek'),
-    thisMonth: filteredSignals.filter(s => categorizeByRecency(s) === 'thisMonth'),
-    recent: filteredSignals.filter(s => categorizeByRecency(s) === 'recent'),
-    historical: filteredSignals.filter(s => categorizeByRecency(s) === 'historical'),
-    undated: filteredSignals.filter(s => categorizeByRecency(s) === 'undated'),
+    today: [...filteredSignals.filter(s => categorizeByRecency(s) === 'today')].sort(byRelevance),
+    thisWeek: [...filteredSignals.filter(s => categorizeByRecency(s) === 'thisWeek')].sort(byRelevance),
+    thisMonth: [...filteredSignals.filter(s => categorizeByRecency(s) === 'thisMonth')].sort(byRelevance),
+    recent: [...filteredSignals.filter(s => categorizeByRecency(s) === 'recent')].sort(byRelevance),
+    historical: [...filteredSignals.filter(s => categorizeByRecency(s) === 'historical')].sort(byRelevance),
+    undated: [...filteredSignals.filter(s => categorizeByRecency(s) === 'undated')].sort(byRelevance),
   };
 
   // Counts for tabs (based on classification, excluding auto-hidden and cyber advisory filter)
@@ -658,7 +675,7 @@ export const SignalHistory = () => {
         </div>
         {/* Tabs for Recent vs Historical */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="recent" className="flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5" />
               Recent
@@ -692,6 +709,13 @@ export const SignalHistory = () => {
               Low Confidence
               {lowConfidenceCount > 0 && (
                 <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs text-amber-500 border-amber-500/30">{lowConfidenceCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="excluded" className="flex items-center gap-1.5">
+              <ShieldOff className="w-3.5 h-3.5" />
+              Excluded
+              {signals.filter(s => s.gate3?.tier === 'excluded').length > 0 && (
+                <Badge variant="outline" className="ml-1 h-5 px-1.5 text-xs text-muted-foreground border-muted-foreground/30">{signals.filter(s => s.gate3?.tier === 'excluded').length}</Badge>
               )}
             </TabsTrigger>
             <TabsTrigger value="all" className="flex items-center gap-1.5">
@@ -813,8 +837,24 @@ export const SignalHistory = () => {
                 </div>
               )}
 
+              {/* Excluded audit tab - flat list of Gate 3 excluded-tier non-signals */}
+              {activeTab === 'excluded' && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
+                    <Badge variant="outline" className="text-muted-foreground border-muted-foreground/30">
+                      <ShieldOff className="w-3 h-3 mr-1" />
+                      Excluded
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{filteredSignals.length} signals — Gate 3 excluded as non-signals (audit view)</span>
+                  </div>
+                  <div className="space-y-2 pl-2 border-l-2 border-muted-foreground/30 opacity-80">
+                    {filteredSignals.map((signal) => renderSignalCard(signal, false))}
+                  </div>
+                </div>
+              )}
+
               {/* Today's signals - highlighted */}
-              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.today.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated', 'excluded'].includes(activeTab) && groupedSignals.today.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="default" className="bg-green-600">Today</Badge>
@@ -827,7 +867,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This week's signals */}
-              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.thisWeek.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated', 'excluded'].includes(activeTab) && groupedSignals.thisWeek.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="secondary">This Week</Badge>
@@ -840,7 +880,7 @@ export const SignalHistory = () => {
               )}
 
               {/* This month's signals */}
-              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.thisMonth.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated', 'excluded'].includes(activeTab) && groupedSignals.thisMonth.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline">This Month</Badge>
@@ -853,7 +893,7 @@ export const SignalHistory = () => {
               )}
 
               {/* Older but not historical (Last 90 Days) */}
-              {!['older-intel', 'international', 'low-confidence', 'undated'].includes(activeTab) && groupedSignals.recent.length > 0 && (
+              {!['older-intel', 'international', 'low-confidence', 'undated', 'excluded'].includes(activeTab) && groupedSignals.recent.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2 sticky top-0 bg-card py-1 z-10">
                     <Badge variant="outline" className="opacity-70">Last 90 Days</Badge>
@@ -957,6 +997,23 @@ export const SignalHistory = () => {
                 {signal.quality_score != null && signal.quality_score < 0.4 && (
                   <Badge variant="outline" className="h-5 px-2 text-xs text-orange-500 border-orange-500/30" title={getQualityInfo(signal.quality_score).tooltip}>
                     ⚠ Low Quality
+                  </Badge>
+                )}
+                {/* Gate 3: relevant-but-source-unconfirmed caveat (VERIFY tier). */}
+                {signal.gate3?.confidence === 'source_unverified_body_only' && (
+                  <Badge
+                    variant="outline"
+                    className="h-5 px-2 text-xs text-amber-600 border-amber-500/40"
+                    title="Matches your risk profile — the source couldn't be fully corroborated. Worth a look."
+                  >
+                    Relevant · source unconfirmed
+                  </Badge>
+                )}
+                {/* Gate 3: excluded-tier reason (non-signal). Reason lives in the
+                    engine, not on gate3 here — show a plain "Excluded" marker. */}
+                {signal.gate3?.tier === 'excluded' && (
+                  <Badge variant="outline" className="h-5 px-2 text-xs text-muted-foreground border-muted-foreground/30">
+                    Excluded
                   </Badge>
                 )}
               </div>
