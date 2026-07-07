@@ -1018,6 +1018,34 @@ export const SignalHistory = () => {
                 )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Gate 3 relevance = the number that DRIVES the in-band sort.
+                    Shown as the prominent, tier-colored figure so the visible
+                    score MATCHES the ordering. SignalScoreExplainer (next to it)
+                    is the legacy quality proxy — kept as secondary detail, but it
+                    does NOT drive ordering, so it must not be the primary number
+                    (a 0.54-quality signal can correctly rank above a 0.65 one). */}
+                {signal.gate3?.rank_score != null && (
+                  <span
+                    className={
+                      "inline-flex items-center gap-1 rounded-md px-2 h-6 text-xs font-semibold " +
+                      (signal.gate3.tier === 'top'
+                        ? "text-emerald-600 bg-emerald-500/10 border border-emerald-500/30"
+                        : signal.gate3.tier === 'verify'
+                        ? "text-amber-600 bg-amber-500/10 border border-amber-500/30"
+                        : "text-muted-foreground bg-muted border border-muted-foreground/20")
+                    }
+                    title={
+                      "Relevance to your operations — the client-tuned score that orders this feed. " +
+                      (signal.gate3.tier === 'top'
+                        ? "TOP: matches your risk profile with a corroborated anchor."
+                        : signal.gate3.tier === 'verify'
+                        ? "WORTH A LOOK: matches your profile but the source couldn't be fully corroborated."
+                        : "LOW: weak match to your risk profile.")
+                    }
+                  >
+                    Relevance {Math.round(signal.gate3.rank_score * 100)}%
+                  </span>
+                )}
                 <SignalScoreExplainer signalId={signal.id} score={signal.relevance_score} />
                 <span className="text-xs text-muted-foreground font-medium">
                   {/* normalizeConfidence handles legacy 0-100 values
