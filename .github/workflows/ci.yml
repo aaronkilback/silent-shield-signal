@@ -307,12 +307,14 @@ jobs:
         run: npx playwright test
         env:
           CI: true
+          # E2E authenticates + renders against STAGING (aegis-staging + staging
+          # Supabase), never prod. TEST_USER_* = the staging _aegis_test_super
+          # account; VITE_SUPABASE_* point at the staging project so the auth
+          # fixture's password grant hits the project where that user lives. (#57)
           TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
           TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
-          TEST_ADMIN_EMAIL: ${{ secrets.TEST_ADMIN_EMAIL }}
-          TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.STAGING_VITE_SUPABASE_PUBLISHABLE_KEY }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

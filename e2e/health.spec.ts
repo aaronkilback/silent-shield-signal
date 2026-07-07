@@ -1,9 +1,12 @@
 import { test, expect } from './fixtures/auth';
 
 test.describe('Platform Health Indicators', () => {
-  test('PRODUCTION badge is visible on dashboard', async ({ authedPage: page }) => {
+  test('environment badge is visible on dashboard', async ({ authedPage: page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText('PRODUCTION').first()).toBeVisible({ timeout: 10_000 });
+    // EnvironmentBadge label comes from environment_config.environment_name —
+    // PRODUCTION on prod, STAGING on staging (where E2E runs). Assert the badge
+    // renders regardless of env rather than hardcoding PRODUCTION. (#57)
+    await expect(page.getByText(/PRODUCTION|STAGING|TEST/).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('threat level badge shows a known level', async ({ authedPage: page }) => {
