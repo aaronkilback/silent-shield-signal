@@ -65,7 +65,16 @@ Deno.serve(async (req) => {
   });
   if (claimErr) { console.error("[alert-delivery v2] claim failed:", claimErr.message); return json({ error: "claim_failed" }, 500); }
 
-  const { data: allowRows } = await supabase.from("alert_delivery_allowed_recipients").select("email");
+  // Send-time re-verify (defense-in-depth vs a stale / TOCTOU claim) — SINGLE SOURCE OF TRUTH
+  // (#71 B): the active + VERIFIED per-client recipient set (client_alert_recipients). Claim-time
+  // already enforced per-client membership; a recipient deactivated between claim and send drops
+  // from this set, so the alert finalizes recipient_blocked and is never sent. This replaces the
+  // retired flat alert_delivery_allowed_recipients gate.
+  const { data: allowRows } = await supabase
+    .from("client_alert_recipients")
+    .select("email")
+    .eq("active", true)
+    .not("verified_at", "is", null);
   const allow = new Set((allowRows ?? []).map((r: any) => String(r.email).trim().toLowerCase()));
 
   const resend = new Resend(Deno.env.get("RESEND_API_KEY") as string); // initialized AFTER auth + claim
