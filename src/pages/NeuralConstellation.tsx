@@ -471,6 +471,9 @@ const NeuralConstellation = () => {
   // data-conditional) THREE.js `.length`-of-undefined fault — letting us pin
   // the source line from the real prod occurrence instead of guessing.
   const sceneInputsRef = useRef<Record<string, unknown>>({});
+  // Intentional render-phase ref write: an idempotent diagnostic snapshot,
+  // never read during render (only lazily on error). Concurrent-mode safe
+  // for this use — a discarded/re-run render just overwrites it identically.
   sceneInputsRef.current = {
     agents: agentNodes.length,
     commLinks: commLinks.length,
@@ -558,6 +561,7 @@ const NeuralConstellation = () => {
         <ErrorBoundary
           context="Neural Constellation — 3D scene"
           getDiagnostics={getSceneDiagnostics}
+          reportSeverity="medium"
           fallback={<SceneUnavailable />}
         >
         <div className="absolute inset-0">

@@ -20,6 +20,14 @@ interface Props {
    * cheap and side-effect free; throwing here is caught and noted.
    */
   getDiagnostics?: () => Record<string, unknown>;
+  /**
+   * Severity written to the auto-filed bug_report. Defaults to 'high'
+   * (root/whole-app boundaries). A boundary that only contains a
+   * non-fatal subtree — e.g. the 3D scene, where the rest of the page
+   * survives — should pass 'medium' so triage can tell a contained
+   * degradation apart from an app-level crash.
+   */
+  reportSeverity?: 'low' | 'medium' | 'high' | 'critical';
 }
 
 interface State {
@@ -138,7 +146,7 @@ export class ErrorBoundary extends Component<Props, State> {
         user_id: user?.id || null,
         title: `[Auto] ${error.name}: ${error.message.substring(0, 100)}`,
         description: `**Error:** ${error.message}\n\n**Stack:**\n\`\`\`\n${error.stack || 'Not available'}\n\`\`\`\n\n**Component Stack:**\n\`\`\`\n${componentStack}\n\`\`\`\n\n**Context:** ${context}${diagnosticsBlock}`,
-        severity: 'high',
+        severity: this.props.reportSeverity ?? 'high',
         page_url: window.location.href,
         browser_info: navigator.userAgent,
         screenshots: screenshotUrl ? [screenshotUrl] : null,
