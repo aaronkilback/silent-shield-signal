@@ -4,6 +4,7 @@ import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance-scorer.ts';
 import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
+import { fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from '../_shared/alert-tier.ts';
 import { enqueueJob } from '../_shared/queue.ts';
 import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
 import { getCallerIdentity, getAccessibleClientIds } from '../_shared/supabase-client.ts';
@@ -2271,11 +2272,19 @@ Score this signal's relevance and classify the connection.`
             
             // Create immediate alert for delivery
             if (newIncident) {
-              // Insert email alert
+              // C-1 (#76): P1 fast-path = CRITICAL -> 'interruption' tier. Recipients come ONLY from
+              // client_alert_recipients (active+verified) for this client (NOT a hardcoded address);
+              // zero verified -> one alert to an unroutable sentinel (never claimable/sent) surfaced via
+              // the #69 operator-alert-bridge. SMS/oncall interruption transport deferred per AV.3 —
+              // email stands in for now.
+              const __fpVerified = await fetchVerifiedRecipientEmails(supabase, clientId);
+              const __fpTargets = __fpVerified.length > 0 ? __fpVerified : [UNROUTED_RECIPIENT];
+              for (const __fpRecipient of __fpTargets) {
               await supabase.from('alerts').insert({
                 incident_id: newIncident.id,
                 channel: 'email',
-                recipient: 'critical-alerts@fortress.ai', // Configurable
+                recipient: __fpRecipient,
+                tier: 'interruption',
                 status: 'pending',
                 response_json: {
                   subject: `🚨 P1 CRITICAL: ${signal.normalized_text?.substring(0, 50)}`,
@@ -2291,7 +2300,8 @@ Score this signal's relevance and classify the connection.`
                   priority: 'immediate'
                 }
               });
-              
+              } // C-1: end fan-out over verified recipients / sentinel
+
               // Trigger email alert delivery immediately
               supabase.functions.invoke('alert-delivery', {
                 body: { priority: 'immediate' }

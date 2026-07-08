@@ -5,6 +5,7 @@ import { classifyUserSafeError } from "../_shared/user-safe-errors.ts";
 import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
 import { classifySignalIntoStoryline } from "../_shared/storyline-engine.ts";
 import { computeComposite } from "../_shared/signal-scores.ts";
+import { mapThreatLevelToTier, isDeliveryTier, fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from "../_shared/alert-tier.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1203,13 +1204,23 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       }
     }
 
-    // Automatically send alerts
-    if (decision.alert_recipients && decision.alert_recipients.length > 0) {
-      for (const recipient of decision.alert_recipients) {
+    // C-1 (#76): tier the alert from the writer's OWN threat_level per the four-tier Protect-Attention
+    // doctrine, and materialize an EMAIL alert ONLY for delivery tiers (notification/interruption).
+    // low->log (awareness) and medium->finding (operator-pull) are non-email by doctrine -> no alert
+    // row is created for them (the incident + operator-pull surfaces carry them). Recipients come ONLY
+    // from client_alert_recipients (active+verified) — NEVER from AI-supplied decision.alert_recipients.
+    // Zero verified recipients -> one alert to an unroutable sentinel (never claimable/sent) that the
+    // #69 operator-alert-bridge digest surfaces. See _shared/alert-tier.ts.
+    const __alertTier = mapThreatLevelToTier(decision.threat_level);
+    if (isDeliveryTier(__alertTier)) {
+      const __verified = await fetchVerifiedRecipientEmails(supabase, signal.client_id);
+      const __targets = __verified.length > 0 ? __verified : [UNROUTED_RECIPIENT];
+      for (const recipient of __targets) {
         await supabase.from('alerts').insert({
           incident_id: incident_id,
           recipient: recipient,
           channel: 'email',
+          tier: __alertTier,
           status: 'pending',
           response_json: {
             subject: `[${decision.threat_level.toUpperCase()}] ${signal.category} Alert - Strategic Intelligence`,
