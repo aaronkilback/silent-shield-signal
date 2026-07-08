@@ -19,8 +19,7 @@ import { test, expect } from './fixtures/auth';
  */
 
 test.describe('Super_admin bootstrap with no tenant selection', () => {
-  // staging↔main lineage drift, tracked in #53 sub-item — do not remove without re-running against converged staging
-  test.fixme('renders platform-admin mode within 5s when tenant scope is unset', async ({
+  test('renders platform-admin mode within 5s when tenant scope is unset', async ({
     authedPage: page,
   }) => {
     // Clear the two localStorage keys that useTenant rehydrates from.
