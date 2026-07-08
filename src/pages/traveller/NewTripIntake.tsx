@@ -351,7 +351,7 @@ export default function NewTripIntake() {
           {(phase === "trip_name" || phase === "destination") && (
             <div className="flex items-center gap-2">
               <input autoFocus value={draftInput} onChange={(e) => setDraftInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") (phase === "trip_name" ? submitName() : submitDestination()); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { if (phase === "trip_name") submitName(); else submitDestination(); } }}
                 placeholder={phase === "trip_name" ? "e.g. Europe with friends" : "e.g. London, Paris, Rome, Tuscany, Barcelona"}
                 className="flex-1 h-12 rounded-[32px] bg-[#0b1424] border border-[#28406f] px-4 text-sm text-[#e8eef2] placeholder:text-[#5e6c86] focus:outline-none focus:border-[#5e9bff]" />
               <button onClick={() => (phase === "trip_name" ? submitName() : submitDestination())} disabled={!draftInput.trim() || intake.isPending}
