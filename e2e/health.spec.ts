@@ -32,9 +32,11 @@ test.describe('Platform Health Indicators', () => {
     await expect(page.getByRole('button', { name: /Pages/i })).toBeVisible({ timeout: 10_000 });
   });
 
-  test('LIVE realtime indicator on incidents page', async ({ authedPage: page }) => {
-    await page.goto('/incidents', { waitUntil: 'domcontentloaded' });
-    // Supabase realtime subscription badge - allows up to 15s to connect
-    await expect(page.getByText('LIVE')).toBeVisible({ timeout: 15_000 });
+  test('realtime LIVE indicator on dashboard', async ({ authedPage: page }) => {
+    // The LIVE realtime pulse renders in ThreatStatusBar, which is mounted on the
+    // dashboard (/), NOT on /incidents. Repointed from /incidents to match reality;
+    // an incidents-page realtime badge is separate product backlog, not #111. (#58)
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('LIVE').first()).toBeVisible({ timeout: 15_000 });
   });
 });

@@ -13,7 +13,9 @@ test.describe('Signals & Intelligence', () => {
   test('signal history sub-tabs render', async ({ authedPage: page }) => {
     // Use role=tab to avoid matching text in paragraph/description elements
     await expect(page.getByRole('tab', { name: 'Recent' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'Historical' })).toBeVisible();
+    // The recency work labels this band "Older Intel" (value older-intel);
+    // "Historical" only survives in a code comment. (#58 stale-selector fix)
+    await expect(page.getByRole('tab', { name: 'Older Intel' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'All' })).toBeVisible();
   });
 
