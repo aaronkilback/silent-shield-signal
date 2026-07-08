@@ -3,9 +3,12 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { processClaimedAlert } from "./processor.ts";
 
-const allow = new Set(["approved@test.example"]);
+// Send-time allowlist is PER-CLIENT PAIR keys `${client_id}|${lower(email)}` (#71 B).
+const CID = "11111111-1111-4111-8111-111111111111";
+const CID_OTHER = "22222222-2222-4222-8222-222222222222";
+const allow = new Set([`${CID}|approved@test.example`]);
 const base = (over: Record<string, unknown> = {}) =>
-  ({ id: "a1", channel: "email", recipient: "approved@test.example", delivery_key: "dk_1", response_json: { subject: "s", body: "b" }, ...over });
+  ({ id: "a1", channel: "email", recipient: "approved@test.example", __client_id: CID, delivery_key: "dk_1", response_json: { subject: "s", body: "b" }, ...over });
 
 function recorder() {
   const calls: any[] = [];
@@ -73,5 +76,38 @@ Deno.test("unsupported channel + blocked recipient -> never send, never 'sent'",
   const f2 = recorder();
   const r2 = await processClaimedAlert(base({ recipient: "real@client.com" }), { fromEmail: "f", allow, send, finalize: f2.fn });
   assertEquals(r2.outcome, "recipient_blocked"); assertEquals(r2.send_calls, 0); assertEquals(f2.calls[0].error_class, "recipient_not_allowed");
+  assertEquals(sendCalled, 0);
+});
+
+Deno.test("cross-client: email verified for client A but alert on client B -> blocked, no send", async () => {
+  let sendCalled = 0;
+  const send = async () => { sendCalled++; return { data: { id: "x" } }; };
+  const f = recorder();
+  // Same recipient that IS verified for CID, but this alert belongs to a DIFFERENT client.
+  const r = await processClaimedAlert(base({ __client_id: CID_OTHER }), { fromEmail: "f", allow, send, finalize: f.fn });
+  assertEquals(r.outcome, "recipient_blocked");
+  assertEquals(r.send_calls, 0);
+  assertEquals(sendCalled, 0);                                  // the cross-client hole stays closed at send-time
+  assertEquals(f.calls[0].error_class, "recipient_not_allowed");
+});
+
+Deno.test("TOCTOU: pair absent at send-time (recipient deactivated after claim) -> blocked, no send", async () => {
+  let sendCalled = 0;
+  const send = async () => { sendCalled++; return { data: { id: "x" } }; };
+  const f = recorder();
+  // allow is EMPTY: the verified row was moved/deactivated between claim and send.
+  const r = await processClaimedAlert(base(), { fromEmail: "f", allow: new Set<string>(), send, finalize: f.fn });
+  assertEquals(r.outcome, "recipient_blocked");
+  assertEquals(r.send_calls, 0);
+  assertEquals(sendCalled, 0);
+});
+
+Deno.test("clientless alert (no resolved __client_id) -> blocked, no send", async () => {
+  let sendCalled = 0;
+  const send = async () => { sendCalled++; return { data: { id: "x" } }; };
+  const f = recorder();
+  const r = await processClaimedAlert(base({ __client_id: null }), { fromEmail: "f", allow, send, finalize: f.fn });
+  assertEquals(r.outcome, "recipient_blocked");
+  assertEquals(r.send_calls, 0);
   assertEquals(sendCalled, 0);
 });

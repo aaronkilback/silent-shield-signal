@@ -39,6 +39,21 @@ export function isRecipientAllowed(recipient: string | null | undefined, allow: 
   return allow.has(String(recipient).trim().toLowerCase());
 }
 
+/**
+ * Send-time re-verify (#71 B) — PER-CLIENT PAIR check. `allow` holds `${client_id}|${lower(email)}`
+ * keys (active+verified rows of client_alert_recipients). An email verified for client A must NOT
+ * pass for client B's alert, so the CLIENT is part of the key. Missing client (clientless alert)
+ * or missing recipient => blocked. This is the send-time twin of the claim-time per-client EXISTS.
+ */
+export function isRecipientAllowedForClient(
+  clientId: string | null | undefined,
+  recipient: string | null | undefined,
+  allow: Set<string>,
+): boolean {
+  if (!clientId || !recipient) return false;
+  return allow.has(`${String(clientId).trim().toLowerCase()}|${String(recipient).trim().toLowerCase()}`);
+}
+
 export interface ClassifiedError { error_class: string; error_message_safe: string; retryable: boolean; }
 
 /**

@@ -4,6 +4,15 @@ Run order: apply migrations → provision secret (env + vault) → set verified 
 run the verifications below → create the controlled fixture → THEN (separate approval) enable the
 staging cron / replace deny-all. None of these queries print, log, or return the secret value.
 
+> **⚠ SUPERSEDED BY #71 B (2026-07-08).** The delivery gate no longer uses
+> `alert_delivery_allowed_recipients` + `delivery_test_mode`. It now claims by **per-client
+> recipient-membership** and re-verifies at send-time against **`client_alert_recipients`**
+> (active + verified). The fixture below is retained for historical context; the current
+> rollout procedure (verify a recipient, then enable per client) lives in the **#72** rollout
+> runbook. To exercise delivery now: add an active+verified `client_alert_recipients` row for a
+> client, and create a `finding`/`notification`/`interruption`-tier alert on that client's incident
+> addressed to that recipient.
+
 ## A. Controlled synthetic acceptance fixture (staging only; run at provision time)
 `<APPROVED_TEST_MAILBOX>` is the single operator-approved controlled mailbox.
 ```sql
