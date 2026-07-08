@@ -1,7 +1,7 @@
 // Alert Delivery v2 — per-alert processing with injectable provider/DB dependencies, so the
 // provider-failure and post-provider-DB-finalization paths are testable with mocks (no live
 // provider/DB, no shared-credential disturbance).
-import { buildSendParams, classifyError, isRecipientAllowed, isSupportedChannel, nextState } from "./lib.ts";
+import { buildSendParams, classifyError, isRecipientAllowedForClient, isSupportedChannel, nextState } from "./lib.ts";
 
 export interface ProviderSendResult { data?: { id?: string } | null; error?: unknown }
 export type ProviderSend = (params: ReturnType<typeof buildSendParams>) => Promise<ProviderSendResult>;
@@ -30,7 +30,11 @@ export async function processClaimedAlert(alert: any, deps: ProcessDeps): Promis
     await deps.finalize(alert, nextState({ kind: "unsupported_channel" }));
     return { outcome: "unsupported_channel", send_calls };
   }
-  if (!isRecipientAllowed(alert.recipient, deps.allow)) {
+  // Send-time re-verify is a PER-CLIENT PAIR check: the alert's resolved client (__client_id, set
+  // by the handler from incident_id -> incidents.client_id) AND the recipient must both match an
+  // active+verified client_alert_recipients row. Blocks the cross-client hole (email verified for
+  // client A must not send client B's alert) and any TOCTOU deactivation between claim and send.
+  if (!isRecipientAllowedForClient(alert.__client_id, alert.recipient, deps.allow)) {
     await deps.finalize(alert, nextState({ kind: "recipient_blocked" }));
     return { outcome: "recipient_blocked", send_calls };
   }

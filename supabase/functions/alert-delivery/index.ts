@@ -65,29 +65,45 @@ Deno.serve(async (req) => {
   });
   if (claimErr) { console.error("[alert-delivery v2] claim failed:", claimErr.message); return json({ error: "claim_failed" }, 500); }
 
-  // Send-time re-verify (defense-in-depth vs a stale / TOCTOU claim) — SINGLE SOURCE OF TRUTH
-  // (#71 B): the active + VERIFIED per-client recipient set (client_alert_recipients). Claim-time
-  // already enforced per-client membership; a recipient deactivated between claim and send drops
-  // from this set, so the alert finalizes recipient_blocked and is never sent. This replaces the
-  // retired flat alert_delivery_allowed_recipients gate.
-  const { data: allowRows } = await supabase
-    .from("client_alert_recipients")
-    .select("email")
-    .eq("active", true)
-    .not("verified_at", "is", null);
-  const allow = new Set((allowRows ?? []).map((r: any) => String(r.email).trim().toLowerCase()));
+  // Send-time re-verify (#71 B) — PER-CLIENT PAIR gate, SINGLE SOURCE OF TRUTH = client_alert_recipients.
+  // Retires the flat alert_delivery_allowed_recipients gate. Two batch queries, no claim-RPC change:
+  //   (1) resolve each claimed alert's client via incident_id -> incidents.client_id;
+  //   (2) load the active+verified recipients of exactly those clients as `${client_id}|${lower(email)}`
+  //       pair keys. The processor then blocks unless the alert's (client, recipient) pair matches —
+  //       closing the cross-client hole (email verified for client A must not send client B's alert)
+  //       and any TOCTOU deactivation between claim and send.
+  const claimedAlerts = (claimed ?? []) as any[];
+
+  const incidentIds = [...new Set(claimedAlerts.map((a) => a.incident_id).filter(Boolean))];
+  const incidentToClient = new Map<string, string>();
+  if (incidentIds.length) {
+    const { data: incRows } = await supabase.from("incidents").select("id, client_id").in("id", incidentIds);
+    for (const r of (incRows ?? [])) if (r.client_id) incidentToClient.set(r.id, r.client_id);
+  }
+  for (const a of claimedAlerts) a.__client_id = a.incident_id ? (incidentToClient.get(a.incident_id) ?? null) : null;
+
+  const clientIds = [...new Set([...incidentToClient.values()])];
+  const allow = new Set<string>();
+  if (clientIds.length) {
+    const { data: recipRows } = await supabase
+      .from("client_alert_recipients").select("client_id, email")
+      .eq("active", true).not("verified_at", "is", null).in("client_id", clientIds);
+    for (const r of (recipRows ?? [])) {
+      allow.add(`${String(r.client_id).trim().toLowerCase()}|${String(r.email).trim().toLowerCase()}`);
+    }
+  }
 
   const resend = new Resend(Deno.env.get("RESEND_API_KEY") as string); // initialized AFTER auth + claim
   const send = (p: any) => resend.emails.send(p as any);
   const finalizeDep = (alert: any, ns: any, classified?: any) => finalize(supabase, alert, ns, classified);
   const results: any[] = [];
 
-  for (const a of (claimed ?? [])) {
+  for (const a of claimedAlerts) {
     const r = await processClaimedAlert(a, { fromEmail, allow, send, finalize: finalizeDep });
     results.push({ id: a.id, outcome: r.outcome, ...(r.error_class ? { error_class: r.error_class } : {}) });
   }
 
-  return json({ worker, claimed: (claimed ?? []).length, results });
+  return json({ worker, claimed: claimedAlerts.length, results });
 });
 
 async function finalize(supabase: any, a: any, ns: any, classified?: { error_message_safe: string; retryable: boolean }) {
