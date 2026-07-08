@@ -11,7 +11,11 @@ test.describe('Platform Health Indicators', () => {
 
   test('threat level badge shows a known level', async ({ authedPage: page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText('THREAT')).toBeVisible({ timeout: 10_000 });
+    // #59: getByText('THREAT') (case-insensitive substring) matched 3 elements —
+    // the ThreatStatusBar label, the "Threat Radar" nav button, and the assistant
+    // intro text — a strict-mode violation. Scope to the exact status-bar label:
+    // the DOM text is "Threat" (CSS-uppercased), so exact+case-sensitive isolates it.
+    await expect(page.getByText('Threat', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(
       page.getByText('LOW').or(page.getByText('MEDIUM')).or(page.getByText('HIGH')).or(page.getByText('CRITICAL')).first()
     ).toBeVisible({ timeout: 10_000 });
