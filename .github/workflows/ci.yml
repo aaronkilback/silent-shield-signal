@@ -351,6 +351,9 @@ jobs:
           # fixture, which also auths against the same staging project. (#57 / #58 Option A)
           TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
           TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+          # TOTP secret for the real UI-login MFA challenge (auth.spec.ts). Enrolled
+          # once via scripts/setup-e2e-totp.mjs; MFA stays enforced, test stays honest. (#58)
+          E2E_TOTP_SECRET: ${{ secrets.E2E_TOTP_SECRET }}
           VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.STAGING_VITE_SUPABASE_PUBLISHABLE_KEY }}
       - uses: actions/upload-artifact@v4

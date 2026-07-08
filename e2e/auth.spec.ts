@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { authenticator } from 'otplib';
 
 /**
  * Auth spec — UI login flows only.
@@ -45,10 +46,22 @@ test.describe('Authentication UI', () => {
     ).toBeVisible({ timeout: 8_000 });
   });
 
-  test('valid credentials redirect away from /auth', async ({ page }) => {
+  test('valid credentials + TOTP redirect away from /auth', async ({ page }) => {
     await page.locator('#email').fill(process.env.TEST_USER_EMAIL!);
     await page.locator('#password').fill(process.env.TEST_USER_PASSWORD!);
     await page.locator('button[type="submit"]').filter({ hasText: 'Sign In' }).first().click();
+
+    // Main-lineage login ENFORCES MFA (Auth.tsx). _aegis_test_super has a verified
+    // TOTP factor (enrolled once via scripts/setup-e2e-totp.mjs); complete the real
+    // challenge with a code derived from E2E_TOTP_SECRET. This keeps MFA enforced and
+    // the test honest to what real users do — rather than exempting the user (a security
+    // exception). NOTE: covers the TOTP branch only; the SMS-MFA branch is impractical to
+    // automate in CI (needs a phone/SMS receiver) — documented coverage gap. (#57 / #58)
+    const otp = page.getByPlaceholder('000000');
+    await otp.waitFor({ state: 'visible', timeout: 15_000 });
+    await otp.fill(authenticator.generate(process.env.E2E_TOTP_SECRET!));
+    await page.getByRole('button', { name: /^Verify$/ }).click();
+
     await page.waitForURL(url => !url.pathname.includes('/auth'), { timeout: 15_000 });
     // Confirm the dashboard nav is present
     await expect(page.getByText('Fortress AI').first()).toBeVisible({ timeout: 10_000 });
