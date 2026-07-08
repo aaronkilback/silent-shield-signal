@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuthContext } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { Shield, FlaskConical, Server } from "lucide-react";
 
@@ -36,7 +37,18 @@ const environmentStyles: Record<EnvironmentName, {
 };
 
 export const EnvironmentBadge = () => {
-  const { data: envConfig, isLoading } = useQuery({
+  // environment_config is readable ONLY by the `authenticated` role
+  // (RLS policy environment_config_global_read, roles=authenticated). If this
+  // query fires before the Supabase session is attached, it runs as `anon`,
+  // RLS returns zero rows, `.maybeSingle()` yields data=null with no error,
+  // and react-query caches that null as a SUCCESS — with staleTime it then
+  // never refetches, so the badge stays absent even after auth completes.
+  // The redesigned home (MinimalHeader) mounts early enough to lose that race.
+  // Gate the query on an established session so it only ever runs authenticated
+  // and never caches an anon-null (#66).
+  const { session } = useAuthContext();
+
+  const { data: envConfig } = useQuery({
     queryKey: ['environment-config'],
     queryFn: async () => {
       // Cast to any until types are regenerated for new table
@@ -45,19 +57,20 @@ export const EnvironmentBadge = () => {
         .select('*')
         .eq('is_active', true)
         .maybeSingle();
-      
+
       if (error) {
         // Silently handle - RLS may block unauthenticated users
         return null;
       }
-      
+
       return data as EnvironmentConfig | null;
     },
+    enabled: !!session,
     retry: false,
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  if (isLoading || !envConfig) {
+  if (!envConfig) {
     return null;
   }
 
