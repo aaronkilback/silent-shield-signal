@@ -10,6 +10,24 @@ interface Props {
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
   showReportButton?: boolean;
   context?: string;
+  /**
+   * Optional lazy diagnostics collector. Called only when an error is
+   * caught; its return value is serialized into the auto-filed bug_report
+   * (and dev console) alongside the stack. Lets a boundary attach a
+   * snapshot of the inputs that triggered the fault — e.g. the scene-data
+   * fingerprint that lets us pin an intermittent, data-conditional crash
+   * from the real occurrence instead of trying to reproduce it. Must be
+   * cheap and side-effect free; throwing here is caught and noted.
+   */
+  getDiagnostics?: () => Record<string, unknown>;
+  /**
+   * Severity written to the auto-filed bug_report. Defaults to 'high'
+   * (root/whole-app boundaries). A boundary that only contains a
+   * non-fatal subtree — e.g. the 3D scene, where the rest of the page
+   * survives — should pass 'medium' so triage can tell a contained
+   * degradation apart from an app-level crash.
+   */
+  reportSeverity?: 'low' | 'medium' | 'high' | 'critical';
 }
 
 interface State {
@@ -43,7 +61,21 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo);
-    
+
+    // Dev-mode instrument: surface the failing inputs immediately in the
+    // console so a reproduction can be pinned to an exact source line
+    // (the minified prod stack alone can't be demangled without maps).
+    if (process.env.NODE_ENV === 'development' && this.props.getDiagnostics) {
+      try {
+        console.error(
+          `[ErrorBoundary diagnostics] ${this.props.context ?? ''}`,
+          this.props.getDiagnostics(),
+        );
+      } catch (diagErr) {
+        console.error('[ErrorBoundary diagnostics] collector threw:', diagErr);
+      }
+    }
+
     this.setState({ errorInfo });
 
     // Automatically report error to database
@@ -63,6 +95,19 @@ export class ErrorBoundary extends Component<Props, State> {
 
       const componentStack = errorInfo?.componentStack || 'Not available';
       const context = this.props.context || window.location.pathname;
+
+      // Optional diagnostics fingerprint — attached to the report so an
+      // intermittent, data-conditional fault can be pinned from the real
+      // occurrence (prod, where the crash actually happens) without needing
+      // to reproduce it locally.
+      let diagnosticsBlock = '';
+      if (this.props.getDiagnostics) {
+        try {
+          diagnosticsBlock = `\n\n**Diagnostics:**\n\`\`\`json\n${JSON.stringify(this.props.getDiagnostics(), null, 2)}\n\`\`\``;
+        } catch (diagErr) {
+          diagnosticsBlock = `\n\n**Diagnostics:** (collector threw: ${String(diagErr)})`;
+        }
+      }
 
       // Capture screenshot for automatic error reports
       let screenshotUrl: string | null = null;
@@ -100,8 +145,8 @@ export class ErrorBoundary extends Component<Props, State> {
       await supabase.from('bug_reports').insert({
         user_id: user?.id || null,
         title: `[Auto] ${error.name}: ${error.message.substring(0, 100)}`,
-        description: `**Error:** ${error.message}\n\n**Stack:**\n\`\`\`\n${error.stack || 'Not available'}\n\`\`\`\n\n**Component Stack:**\n\`\`\`\n${componentStack}\n\`\`\`\n\n**Context:** ${context}`,
-        severity: 'high',
+        description: `**Error:** ${error.message}\n\n**Stack:**\n\`\`\`\n${error.stack || 'Not available'}\n\`\`\`\n\n**Component Stack:**\n\`\`\`\n${componentStack}\n\`\`\`\n\n**Context:** ${context}${diagnosticsBlock}`,
+        severity: this.props.reportSeverity ?? 'high',
         page_url: window.location.href,
         browser_info: navigator.userAgent,
         screenshots: screenshotUrl ? [screenshotUrl] : null,

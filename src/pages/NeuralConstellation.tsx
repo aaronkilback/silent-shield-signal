@@ -17,6 +17,7 @@ import { GodsEyeOverlay } from "@/components/neural-constellation/GodsEyeOverlay
 import { AgentListPanel } from "@/components/neural-constellation/AgentListPanel";
 import { ActivityFeedPanel } from "@/components/neural-constellation/ActivityFeedPanel";
 import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -209,6 +210,42 @@ function assignEntityPositions(
       ] as [number, number, number],
     };
   });
+}
+
+/**
+ * Visible degraded state for the 3D scene ErrorBoundary. The WebGL
+ * constellation is decorative-adjacent — a data-conditional THREE.js
+ * fault must NOT white-screen the whole app (it did: #60, "crashes at
+ * Application Root"). When the scene errors, it's contained here and the
+ * rest of the diagnostic page (panels, health, findings — the actual
+ * operator value) keeps working. We render a labelled state, not an empty
+ * void, so an operator knows the visualization dropped and can mention
+ * it. The error itself is auto-reported by the boundary (bug_reports,
+ * tagged with the scene context + a scene-data fingerprint).
+ */
+function SceneUnavailable() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-[#020408]">
+      <div className="text-center px-6 max-w-sm">
+        <div
+          className="text-[11px] tracking-[0.3em] uppercase text-amber-400/80 mb-2"
+          style={{ fontFamily: "Orbitron, sans-serif" }}
+        >
+          Visualization Unavailable
+        </div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          The 3D constellation failed to render and has been reported
+          automatically. The diagnostic panels remain fully operational.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-3 text-[10px] tracking-widest uppercase text-cyan-400/80 border border-cyan-500/30 rounded px-3 py-1.5 hover:bg-cyan-500/10 transition-colors"
+        >
+          Reload
+        </button>
+      </div>
+    </div>
+  );
 }
 
 const NeuralConstellation = () => {
@@ -427,6 +464,43 @@ const NeuralConstellation = () => {
     return realLinks + structural;
   }, [agentNodes, commLinks]);
 
+  // Scene-input fingerprint, refreshed each render and read lazily by the
+  // 3D scene ErrorBoundary only if the scene throws. Counts + null-flags of
+  // every array/object fed into <ConstellationScene>, so the auto-filed
+  // bug_report carries the exact data shape that triggered the (intermittent,
+  // data-conditional) THREE.js `.length`-of-undefined fault — letting us pin
+  // the source line from the real prod occurrence instead of guessing.
+  const sceneInputsRef = useRef<Record<string, unknown>>({});
+  // Intentional render-phase ref write: an idempotent diagnostic snapshot,
+  // never read during render (only lazily on error). Concurrent-mode safe
+  // for this use — a discarded/re-run render just overwrites it identically.
+  sceneInputsRef.current = {
+    agents: agentNodes.length,
+    commLinks: commLinks.length,
+    activeDebates: activeDebates.length,
+    scanPulses: scanPulses.length,
+    activityMetrics: activityMetrics.length,
+    knowledgeGraphEdges: knowledgeGraphEdges.length,
+    operatorDevices: operatorDevices.length,
+    signalLocations: signalLocations.length,
+    godsEyePins: godsEyeData?.pins?.length ?? null,
+    godsEyeClusters: godsEyeData?.clusters?.length ?? null,
+    entityNodes: entityPositionedNodes.length,
+    entityRelationships: entityData?.relationships?.length ?? null,
+    knowledgeGrowth: knowledgeGrowth ? "present" : null,
+    knowledgeGrowthLearningAgents: knowledgeGrowth?.activelyLearningAgents?.length ?? null,
+    operatorMessageActivity: operatorMessageActivity ? "present" : null,
+    fortressHealthLoops: fortressHealth?.loops?.length ?? null,
+    recentEscalations: recentEscalations ? recentEscalations.size : null,
+    agentHealth: agentHealth?.size ?? null,
+    agentFindings: agentFindings?.size ?? null,
+    agentOpenLoops: agentOpenLoops?.size ?? null,
+    agentSilence: agentSilence?.size ?? null,
+    isExecutiveMode,
+    showBattle,
+  };
+  const getSceneDiagnostics = useCallback(() => sceneInputsRef.current, []);
+
   if (authLoading || isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -477,7 +551,19 @@ const NeuralConstellation = () => {
           </label>
         </div>
 
-        {/* 3D Scene — lazy loaded so it doesn't block the initial React render */}
+        {/* 3D Scene — lazy loaded so it doesn't block the initial React render.
+            Wrapped in its own ErrorBoundary (#60): a data-conditional THREE.js
+            fault in the WebGL subtree used to bubble to the App-Root boundary
+            and white-screen the entire app. Now it's contained to the scene —
+            the boundary reports to bug_reports (tagged with the scene context +
+            a scene-data fingerprint via getDiagnostics) and degrades visibly to
+            <SceneUnavailable>, while the rest of the diagnostic page survives. */}
+        <ErrorBoundary
+          context="Neural Constellation — 3D scene"
+          getDiagnostics={getSceneDiagnostics}
+          reportSeverity="medium"
+          fallback={<SceneUnavailable />}
+        >
         <div className="absolute inset-0">
           <Suspense fallback={
             <div className="w-full h-full flex items-center justify-center bg-[#020408]">
@@ -521,6 +607,7 @@ const NeuralConstellation = () => {
           />
           </Suspense>
         </div>
+        </ErrorBoundary>
 
         {/* God's Eye Overlay — visible when Earth camera is active */}
         <GodsEyeOverlay
