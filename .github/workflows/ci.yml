@@ -330,7 +330,7 @@ jobs:
           API="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/pages/projects/silent-shield-signal/deployments"
           echo "Waiting for the staging-env preview deployment of $HEAD_SHA ..."
           for i in $(seq 1 30); do   # ~5 min (30 x 10s); Pages build is ~1-3 min
-            RESP=$(curl -sS -H "Authorization: Bearer $CF_API_TOKEN" "$API?per_page=50")
+            RESP=$(curl -sS -H "Authorization: Bearer $CF_API_TOKEN" "$API?per_page=20")   # CF Pages deployments API max per_page is 25; the newest (this PR) sorts first
             if [ "$(echo "$RESP" | jq -r '.success // false')" != "true" ]; then
               echo "  attempt $i/30 — CF API not OK: $(echo "$RESP" | jq -c '.errors // .messages // .' | head -c 300)"
               sleep 10; continue
