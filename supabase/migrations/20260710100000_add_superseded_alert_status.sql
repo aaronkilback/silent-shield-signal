@@ -1,0 +1,13 @@
+-- #70 (Step-3 C) — add terminal `superseded` value to alert_status.
+--
+-- WHY a new terminal state: `failed` must mean "a genuine delivery attempt was made and
+-- it failed." Today `failed` is polluted by 13,996 rows the LEGACY `alert-delivery`
+-- processor swept there without ever attempting delivery (see the relabel migration +
+-- ledger for full provenance). `superseded` = terminal, obsolete / never-genuinely-attempted
+-- — distinct from a real failure. This lets #71 B's real claim path produce honest `failed`
+-- rows that are not conflated with the legacy junk.
+--
+-- IMPORTANT: `ALTER TYPE ... ADD VALUE` cannot be *consumed* in the same transaction that
+-- adds it. The relabel that USES 'superseded' is therefore a SEPARATE migration
+-- (20260710100100). Do not merge these two.
+ALTER TYPE public.alert_status ADD VALUE IF NOT EXISTS 'superseded';
