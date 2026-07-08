@@ -2,8 +2,12 @@ import { test as base, expect, Page } from '@playwright/test';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY!;
-// Hardcoded — derived from the Supabase project ref (never changes)
-const STORAGE_KEY = 'sb-kpuqukppbmwebiptqmog-auth-token';
+// supabase-js persists the session under `sb-<project-ref>-auth-token`. Derive
+// the ref from SUPABASE_URL so the fixture targets whatever env it's pointed at
+// (staging/prod) instead of a hardcoded prod ref. A hardcoded ref SILENTLY fails
+// on staging: the session lands under the wrong localStorage key, the app never
+// sees it, and every authedPage test dies at the /auth redirect. (#57)
+const STORAGE_KEY = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
 
 export type AuthFixtures = { authedPage: Page };
 

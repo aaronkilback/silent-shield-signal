@@ -10,7 +10,8 @@ test.describe('Signals & Intelligence', () => {
     await expect(page.getByRole('tab', { name: 'Signal Feed' })).toBeVisible();
   });
 
-  test('signal history sub-tabs render', async ({ authedPage: page }) => {
+  // staging↔main lineage drift, tracked in #53 sub-item — do not remove without re-running against converged staging
+  test.fixme('signal history sub-tabs render', async ({ authedPage: page }) => {
     // Use role=tab to avoid matching text in paragraph/description elements
     await expect(page.getByRole('tab', { name: 'Recent' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Historical' })).toBeVisible();
