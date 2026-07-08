@@ -62,13 +62,15 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-  // Watermark: only alerts created AFTER the last notified boundary. First run -> last 20 min.
+  // Composite watermark (created_at, id): resume strictly after the last notified row. A LIMIT-capped
+  // window can never permanently skip overflow. First run -> last 20 min, zero-uuid.
   const { data: st } = await supabase
-    .from("operator_alert_bridge_state").select("last_notified_created_at").eq("id", true).maybeSingle();
+    .from("operator_alert_bridge_state").select("last_notified_created_at, last_notified_id").eq("id", true).maybeSingle();
   const since = st?.last_notified_created_at ?? new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const sinceId = st?.last_notified_id ?? "00000000-0000-0000-0000-000000000000";
 
-  // Fresh pending alerts for ACTIVE non-fixture clients (all channels), priority-ordered.
-  const { data: rows, error } = await supabase.rpc("operator_bridge_pending_alerts", { p_since: since });
+  // NEW pending alerts for ACTIVE non-fixture clients (all channels), returned (created_at, id) ASC.
+  const { data: rows, error } = await supabase.rpc("operator_bridge_pending_alerts", { p_since: since, p_since_id: sinceId });
   if (error) { console.error("[operator-bridge] query failed:", error.message); return json({ error: "query_failed" }, 500); }
   const alerts = (rows ?? []) as Array<{
     alert_id: string; created_at: string; recipient: string; channel: string;
@@ -76,8 +78,12 @@ Deno.serve(async (req) => {
   }>;
   if (alerts.length === 0) return json({ notified: 0, since });
 
-  // Build the priority-tagged digest.
-  const lines = alerts.map((a) => {
+  // Build the priority-tagged digest. Rows arrive chronological (for the watermark); sort a COPY
+  // by priority (P1 first) for DISPLAY only — the watermark is unaffected.
+  const priRank = (p: string | null) => (({ P1: 1, P2: 2, P3: 3 } as Record<string, number>)[p ?? ""] ?? 4);
+  const display = [...alerts].sort((a, b) =>
+    priRank(a.severity_level) - priRank(b.severity_level) || a.created_at.localeCompare(b.created_at));
+  const lines = display.map((a) => {
     const pri = a.severity_level ?? "P?";
     return `<tr>
       <td style="padding:4px 10px;font-weight:700">${esc(pri)}</td>
@@ -115,9 +121,12 @@ Deno.serve(async (req) => {
     return json({ error: "send_failed" }, 502); // do NOT advance the watermark -> retried next run
   }
 
-  // Advance the watermark ONLY after a successful send, so nothing is dropped on a send failure.
-  const maxCreated = alerts.reduce((m, a) => (a.created_at > m ? a.created_at : m), alerts[0].created_at);
-  await supabase.from("operator_alert_bridge_state").update({ last_notified_created_at: maxCreated }).eq("id", true);
+  // Advance the composite watermark ONLY after a successful send (nothing dropped on send failure).
+  // Rows are (created_at, id) ASC, so the LAST row is the exact resume boundary.
+  const boundary = alerts[alerts.length - 1];
+  await supabase.from("operator_alert_bridge_state")
+    .update({ last_notified_created_at: boundary.created_at, last_notified_id: boundary.alert_id })
+    .eq("id", true);
 
-  return json({ notified: alerts.length, watermark_advanced_to: maxCreated });
+  return json({ notified: alerts.length, watermark_advanced_to: boundary.created_at });
 });

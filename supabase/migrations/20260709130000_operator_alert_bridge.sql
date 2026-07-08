@@ -2,18 +2,22 @@
 -- State watermark + the pending-alert query RPC + a prod-only cron that drives the digest.
 -- SUNSET: drop these + the function when the production recipient model ships.
 
--- ── single-row watermark state ──
+-- ── single-row watermark state. COMPOSITE (created_at, id) so a LIMIT-capped window can never
+--    permanently skip overflow: the watermark advances by (created_at, id) tuple, and the next
+--    query resumes strictly after it — no leapfrog, no tie-skip. ──
 CREATE TABLE IF NOT EXISTS public.operator_alert_bridge_state (
   id                        boolean PRIMARY KEY DEFAULT true CHECK (id),  -- exactly one row
-  last_notified_created_at  timestamptz NOT NULL DEFAULT now()
+  last_notified_created_at  timestamptz NOT NULL DEFAULT now(),
+  last_notified_id          uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'
 );
 ALTER TABLE public.operator_alert_bridge_state ENABLE ROW LEVEL SECURITY;  -- service-role only (no policy)
 INSERT INTO public.operator_alert_bridge_state (id) VALUES (true) ON CONFLICT DO NOTHING;
 
--- ── query: NEW pending alerts for ACTIVE, non-fixture clients, priority-ordered (P1 first).
---    ALL priorities included (priority-TAGGED, not filtered). Joined to the owning client via the
---    incident. SECURITY DEFINER, service_role-only. ──
-CREATE OR REPLACE FUNCTION public.operator_bridge_pending_alerts(p_since timestamptz)
+-- ── query: NEW pending alerts for ACTIVE, non-fixture clients. ALL priorities (priority-TAGGED,
+--    not filtered) — display sort happens caller-side. ORDER BY (created_at, id) ASC so the
+--    LIMITed page is chronological and the composite watermark can resume exactly. The cap-aware
+--    resume predicate is a TUPLE comparison: (created_at, id) > (p_since, p_since_id). ──
+CREATE OR REPLACE FUNCTION public.operator_bridge_pending_alerts(p_since timestamptz, p_since_id uuid)
 RETURNS TABLE (alert_id uuid, created_at timestamptz, recipient text, channel text,
                title text, severity_level text, client_name text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
@@ -22,14 +26,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   JOIN public.incidents i ON i.id = a.incident_id
   JOIN public.clients   cl ON cl.id = i.client_id
   WHERE a.status = 'pending' AND a.sent_at IS NULL
-    AND a.created_at > p_since
+    AND (a.created_at, a.id) > (p_since, p_since_id)   -- composite resume: no leapfrog, no tie-skip
     AND cl.status = 'active' AND cl.name NOT LIKE '\_%'
-  ORDER BY (CASE i.severity_level WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END),
-           a.created_at ASC
+  ORDER BY a.created_at ASC, a.id ASC
   LIMIT 100;
 $$;
-REVOKE ALL ON FUNCTION public.operator_bridge_pending_alerts(timestamptz) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.operator_bridge_pending_alerts(timestamptz) TO service_role;
+REVOKE ALL ON FUNCTION public.operator_bridge_pending_alerts(timestamptz, uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.operator_bridge_pending_alerts(timestamptz, uuid) TO service_role;
 
 -- ── PRODUCTION-ONLY cron (self-guards to skip on staging; reuses the alert-delivery vault reader
 --    for the internal header; fail-closed to 401 if the secret is unset). Staggered off the
