@@ -19,8 +19,7 @@ import { test, expect } from './fixtures/auth';
  */
 
 test.describe('Super_admin bootstrap with no tenant selection', () => {
-  // staging↔main lineage drift, tracked in #53 sub-item — do not remove without re-running against converged staging
-  test.fixme('renders platform-admin mode within 5s when tenant scope is unset', async ({
+  test('renders platform-admin mode within 5s when tenant scope is unset', async ({
     authedPage: page,
   }) => {
     // Clear the two localStorage keys that useTenant rehydrates from.
@@ -42,18 +41,20 @@ test.describe('Super_admin bootstrap with no tenant selection', () => {
     ).toBeVisible({ timeout: 5_000 });
 
     // The env badge is a stable platform-rendered element that proves the app
-    // exited the loader-state. Label is env-dependent (STAGING on staging where
-    // E2E runs, PRODUCTION on prod) — match any. (#57)
+    // exited the loader-state. Label is env-dependent (STAGING on staging, PRODUCTION
+    // on prod) — match any. (#57) Its label comes from a DB useQuery (environment_config),
+    // so give it the suite's standard 10s DB-backed timeout (not 5s) — a cold-preview
+    // query settle must not manufacture a red. RLS confirms authenticated read (qual=true). (#58)
     await expect(page.getByText(/PRODUCTION|STAGING|TEST/).first()).toBeVisible({
-      timeout: 5_000,
+      timeout: 10_000,
     });
 
-    // Negative assertion: there must not be a full-screen spinner
-    // covering the page after 5 seconds. We check by ensuring the
-    // dashboard AEGIS textarea (visible in normal render) is reachable.
-    // If the OnboardingChecks loader is showing, no chat input exists.
+    // Negative assertion: prove the AEGIS composer rendered (i.e. NOT stuck in the
+    // OnboardingChecks loader — the #147 intent). The composer input is now a shadcn
+    // <Input> (typeless <input>), no longer a <textarea>/input[type=text] — match its
+    // stable placeholder instead. Fast, no-DB element → keep 5s. (#58 selector update)
     await expect(
-      page.locator('textarea, input[type="text"]').first()
+      page.getByPlaceholder(/Ask AEGIS anything/i)
     ).toBeVisible({ timeout: 5_000 });
   });
 
@@ -74,8 +75,9 @@ test.describe('Super_admin bootstrap with no tenant selection', () => {
       );
     });
     await page.goto('/', { waitUntil: 'domcontentloaded' });
+    // DB-backed env badge → 10s (see :22 above). (#58)
     await expect(page.getByText(/PRODUCTION|STAGING|TEST/).first()).toBeVisible({
-      timeout: 5_000,
+      timeout: 10_000,
     });
   });
 });

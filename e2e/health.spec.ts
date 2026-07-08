@@ -11,7 +11,11 @@ test.describe('Platform Health Indicators', () => {
 
   test('threat level badge shows a known level', async ({ authedPage: page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText('THREAT')).toBeVisible({ timeout: 10_000 });
+    // #59: getByText('THREAT') (case-insensitive substring) matched 3 elements —
+    // the ThreatStatusBar label, the "Threat Radar" nav button, and the assistant
+    // intro text — a strict-mode violation. Scope to the exact status-bar label:
+    // the DOM text is "Threat" (CSS-uppercased), so exact+case-sensitive isolates it.
+    await expect(page.getByText('Threat', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(
       page.getByText('LOW').or(page.getByText('MEDIUM')).or(page.getByText('HIGH')).or(page.getByText('CRITICAL')).first()
     ).toBeVisible({ timeout: 10_000 });
@@ -28,10 +32,11 @@ test.describe('Platform Health Indicators', () => {
     await expect(page.getByRole('button', { name: /Pages/i })).toBeVisible({ timeout: 10_000 });
   });
 
-  // staging↔main lineage drift, tracked in #53 sub-item — do not remove without re-running against converged staging
-  test.fixme('LIVE realtime indicator on incidents page', async ({ authedPage: page }) => {
-    await page.goto('/incidents', { waitUntil: 'domcontentloaded' });
-    // Supabase realtime subscription badge - allows up to 15s to connect
-    await expect(page.getByText('LIVE')).toBeVisible({ timeout: 15_000 });
+  test('realtime LIVE indicator on dashboard', async ({ authedPage: page }) => {
+    // The LIVE realtime pulse renders in ThreatStatusBar, which is mounted on the
+    // dashboard (/), NOT on /incidents. Repointed from /incidents to match reality;
+    // an incidents-page realtime badge is separate product backlog, not #111. (#58)
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('LIVE').first()).toBeVisible({ timeout: 15_000 });
   });
 });
