@@ -761,3 +761,5 @@ const NeuralConstellation = () => {
 };
 
 export default NeuralConstellation;
+
+// release-verify: exact-tree E2E evidence for 821e534a (throwaway, discard after)
