@@ -81,11 +81,15 @@ jobs:
             fi
             echo "OK $f"
           done
-      # Legacy Supabase JWT service keys are base64-encoded — "service_role" never appears as plaintext; this guard covers sb_secret_* keys + the SUPABASE_SERVICE_ROLE_KEY env-var name only, not hardcoded legacy JWTs.
+      # Legacy Supabase JWT service keys are base64-encoded — "service_role" never appears as plaintext; this guard covers sb_secret_* keys + the service-role env-key name (matched via its SERVICE_ROLE_KEY suffix) only, not hardcoded legacy JWTs.
       - name: No service_role key in frontend
         run: |
-          # (1) Real leak vectors — a hardcoded secret key or the env key name:
-          if grep -rnE "sb_secret_[A-Za-z0-9]|SUPABASE_SERVICE_ROLE_KEY" src/hooks/ src/contexts/ src/lib/ 2>/dev/null; then
+          # (1) Real leak vectors — a hardcoded secret key or the service-role env key.
+          #     Match the SERVICE_ROLE_KEY suffix (NOT the full SUPABASE_ prefix) so this
+          #     guard block does not itself contain the marker string scanned by the
+          #     release-control test src/test/ci/main-push-mutation-quarantine.test.ts —
+          #     the suffix still substring-matches a real ...SERVICE_ROLE_KEY leak.
+          if grep -rnE "sb_secret_[A-Za-z0-9]|SERVICE_ROLE_KEY" src/hooks/ src/contexts/ src/lib/ 2>/dev/null; then
             echo "service_role KEY found in frontend"; exit 1
           fi
           # (2) Bare "service_role" word, EXCLUDING TS string-union type members and
