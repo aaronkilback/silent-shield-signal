@@ -309,7 +309,7 @@ jobs:
     # Supabase). That target only exists for pull_request events; on push-to-main the
     # Pages production build bakes PROD env (wrong target) and the PR already gated it. (#58 Option A)
     if: github.event_name == 'pull_request'
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
