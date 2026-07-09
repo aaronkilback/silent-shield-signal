@@ -1596,6 +1596,7 @@ Only extract genuinely valuable intelligence insights. Skip boilerplate and gene
 
           const { error: sigErr } = await supabase.functions.invoke('ingest-signal', {
             body: {
+              origin: 'process-stored-document',   // #79 signal_origin
               text: signalText,
               client_id: document.client_id,
               sourceType: 'document_upload',

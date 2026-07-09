@@ -434,6 +434,7 @@ Deno.serve(async (req) => {
         try {
           await supabase.functions.invoke('ingest-signal', {
             body: {
+              origin: 'investigate-poi',   // #79 signal_origin
               text: `${candidate.title}\n\n${candidate.snippet}\n\nSource: ${candidate.url}`,
               source_url: candidate.url,
               source_name: hostname(candidate.url),
