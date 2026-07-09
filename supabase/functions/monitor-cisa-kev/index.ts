@@ -123,7 +123,18 @@ Deno.serve(async (req) => {
     }
 
     let signalsCreated = 0;
+    // #90 (2026-07-09) — ingest-signal returns HTTP 200 with a body `status`
+    // of 'suppressed' | 'filed_as_update' | 'rejected' for dedup/same-story/
+    // prior-reject outcomes. functions.invoke() only flags NON-2xx as `error`,
+    // so those 200s were previously counted as CREATED — inflating the metric
+    // and hiding that a signal never actually landed. Count them separately.
+    let signalsSuppressed = 0;
     let signalsFailed = 0;
+    // #82 (2026-07-09) — per-client failure detail (bounded) so a real ingest
+    // rejection is VISIBLE in the heartbeat with its exact status + body,
+    // instead of a generic "non-2xx" that erases which client failed and why.
+    const failureDetails: Array<{ cve: string; client: string; http: number | null; retryable: boolean; body: string }> = [];
+    const SUPPRESSED_STATUSES = new Set(['suppressed', 'filed_as_update', 'rejected', 'duplicate', 'duplicate_url', 'duplicate_title']);
     let clientsSkippedEmptyTechStack = 0;
 
     for (const v of recent) {
@@ -174,7 +185,7 @@ Deno.serve(async (req) => {
           continue;
         }
         try {
-          const { error: ingestError } = await supabase.functions.invoke("ingest-signal", {
+          const { data: ingestData, error: ingestError } = await supabase.functions.invoke("ingest-signal", {
             body: {
               text,
               source_url: cveDetailUrl,
@@ -199,25 +210,54 @@ Deno.serve(async (req) => {
               },
             },
           });
-          if (!ingestError) {
-            signalsCreated++;
-          } else {
+          if (ingestError) {
+            // Non-2xx. #82 — pull the actual response body + status out of the
+            // FunctionsHttpError context so the failure is diagnosable per client
+            // (a 503 client_validation_unavailable is retryable; a 400 is not).
             signalsFailed++;
-            console.warn(`[CISA-KEV] ingest-signal error for ${v.cveID} → ${client.name}:`, ingestError.message);
+            let http: number | null = null;
+            let body = ingestError.message ?? String(ingestError);
+            const ctx = (ingestError as any).context;
+            if (ctx && typeof ctx.status === 'number') http = ctx.status;
+            try {
+              if (ctx && typeof ctx.json === 'function') body = JSON.stringify(await ctx.json());
+            } catch (_) { /* keep .message fallback */ }
+            const retryable = http === 503 || http === 429 || (http !== null && http >= 500);
+            if (failureDetails.length < 50) failureDetails.push({ cve: v.cveID, client: client.name, http, retryable, body: body.slice(0, 500) });
+            console.warn(`[CISA-KEV] ingest FAILED ${v.cveID} → ${client.name} (http=${http ?? '?'}, retryable=${retryable}): ${body.slice(0, 300)}`);
+          } else {
+            // 2xx. Classify created vs suppressed (#90) — a 200 that did NOT
+            // land a signal comes in TWO shapes from ingest-signal:
+            //   • { status: 'suppressed' | 'rejected' | 'filed_as_update' }  (url/title/prior-reject/same-story)
+            //   • { filtered: true, reason: 'duplicate_cve' | ... }          (cve-dedup / relevance filters)
+            // Both mean no row for this client — count either as suppressed,
+            // never as created.
+            const d = ingestData as any;
+            const st = (d && typeof d.status === 'string') ? d.status : null;
+            const isSuppressed = !!d && (d.filtered === true || (st !== null && SUPPRESSED_STATUSES.has(st)));
+            if (isSuppressed) {
+              signalsSuppressed++;
+              console.log(`[CISA-KEV] ingest SUPPRESSED ${v.cveID} → ${client.name}: ${d.reason ?? st ?? 'unknown'}`);
+            } else {
+              signalsCreated++;
+            }
           }
         } catch (err: any) {
           signalsFailed++;
+          if (failureDetails.length < 50) failureDetails.push({ cve: v.cveID, client: client.name, http: null, retryable: true, body: (err?.message || String(err)).slice(0, 500) });
           console.error(`[CISA-KEV] ingest-signal threw for ${v.cveID} → ${client.name}:`, err?.message || err);
         }
       }
     }
 
-    console.log(`[CISA-KEV] Complete. Created ${signalsCreated} / failed ${signalsFailed} / scanned ${recent.length} recent entries. Skipped (empty tech_stack, #256 Phase 4): ${clientsSkippedEmptyTechStack}`);
+    console.log(`[CISA-KEV] Complete. Created ${signalsCreated} / suppressed ${signalsSuppressed} / failed ${signalsFailed} / scanned ${recent.length} recent entries. Skipped (empty tech_stack, #256 Phase 4): ${clientsSkippedEmptyTechStack}`);
 
     await completeHeartbeat(supabase, hb, {
       signals_created: signalsCreated,
+      signals_suppressed: signalsSuppressed,
       signals_failed: signalsFailed,
       clients_skipped_empty_tech_stack: clientsSkippedEmptyTechStack,
+      failure_details: failureDetails,
       catalog_version: feed.catalogVersion,
       recent_kev_entries: recent.length,
       lookback_days: DAYS_LOOKBACK,
@@ -226,8 +266,10 @@ Deno.serve(async (req) => {
     return successResponse({
       success: true,
       signals_created: signalsCreated,
+      signals_suppressed: signalsSuppressed,
       signals_failed: signalsFailed,
       clients_skipped_empty_tech_stack: clientsSkippedEmptyTechStack,
+      failure_details: failureDetails,
       recent_kev_entries: recent.length,
       catalog_version: feed.catalogVersion,
     });
