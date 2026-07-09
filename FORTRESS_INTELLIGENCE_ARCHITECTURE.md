@@ -393,4 +393,30 @@ Current open incidents for demo:
 
 ---
 
+## PHASE 3.5 — SYNTHETIC INTELLIGENCE LOOP (north star, do not build yet)
+
+> **STATUS: NORTH STAR — NOT IN THE BUILD QUEUE.** Recorded for direction only. Current priorities are unchanged: (1) Governance & data-handling one-pager, (2) WO-DATA-INTEGRITY, (3) Model failover map (see FORTRESS_VISION_UPDATE_2026-07-09.md). Standing rules (STANDING_RULES.md) apply to anything this phase would ever propose, machine-generated or not. Do not begin until the Phase 3 outcome feedback loop is live and accumulating.
+
+Premise: Fortress currently learns at the speed of reality. Gate 3 calibration required five manual shadow-validation passes. The order-of-magnitude improvement is a simulation loop that lets AEGIS learn faster than reality.
+
+Architecture, three components:
+
+1. SYNTHETIC THREAT GENERATOR. Produces realistic labeled scenarios from real operational memory: SPIN incident patterns (302 incidents, repeat-hit sites, recurring plates), real client taxonomies (client_risk_categories), real geography (PostGIS assets and corridors), real signal shapes from the 940-signal backfill. Every synthetic scenario carries ground truth: the correct score, severity, and escalation are known because we generated it.
+
+2. OVERNIGHT CALIBRATION LOOP. AEGIS scores thousands of synthetic scenarios per night. Misses and false alarms are graded instantly against ground truth. A proposer suggests rubric adjustments, tests against the synthetic stream, retains winners. Manual shadow passes become continuous automated shadow passes.
+
+3. ADVERSARY MODEL. A red-team model whose objective is to construct synthetic threats that evade Gate 3. Detector and adversary co-evolve in-house, ahead of the real arms race.
+
+Hard constraints, non-negotiable:
+
+- Reality corrects the simulator, never the reverse. Real outcomes (Phase 3 feedback loop) continuously recalibrate the generator. A miscalibrated simulator produces a confidently wrong detector.
+- Nothing the loop proposes goes live without a shadow pass against real signals. Standing rules apply to machine-proposed changes exactly as to human ones.
+- Interpretability tax is paid: any detector the loop discovers must emit a human-readable signal trail. If AEGIS cannot show its work, it does not ship, regardless of benchmark performance.
+
+Dependencies: Phase 3 outcome feedback loop must be live and accumulating first. The simulator is only as good as the operational memory calibrating it.
+
+Moat statement: the generator is calibrated on proprietary incident-to-asset-to-outcome data that compounds monthly. The code is replicable; the calibration data is not.
+
+---
+
 *This document is the authoritative reference for Fortress AI architecture decisions. Update it when the architecture changes. The build plan is a living document — update status as phases complete.*
