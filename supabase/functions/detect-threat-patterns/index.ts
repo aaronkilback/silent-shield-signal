@@ -18,6 +18,31 @@ import { enqueueJob } from "../_shared/queue.ts";
 
 const THREAT_SIGNAL_TYPES = new Set(['sabotage', 'protest', 'threat', 'violence', 'theft']);
 
+// #83 (2026-07-09) — SEVERITY RECALIBRATION for [PATTERN] meta-signals.
+// A pattern signal (entity escalation / geo cluster / frequency spike / type cluster)
+// is an ANALYST-ATTENTION nudge, not a direct threat event — it never auto-creates an
+// incident (check-incident-escalation is intentionally not invoked for patterns).
+// Previously severity was derived from maxScore+N and could reach 'high'/'critical',
+// flooding the feed with meta-signals that read as real threats (~35/wk at high/crit on
+// common nouns). Cap pattern severity at MEDIUM: strong → medium, weak → low; never
+// high/critical. (severity_score is still recorded for ranking.)
+const patternSeverity = (score: number): 'medium' | 'low' => (score >= 50 ? 'medium' : 'low');
+
+// #83 (2026-07-09) — COMMON-NOUN / ecosystem-term suppression (rarity-over-commonality).
+// "LNG", "pipeline", "Toronto", "Switzerland" appear in many signals BECAUSE they are
+// common words/geographies, not because an actor is escalating. Entity-escalation
+// patterns on these are pure noise. Skip them. Starter list — TUNABLE; extend as the
+// feed reveals more ecosystem nouns (operator-reviewable).
+const COMMON_NOUN_STOPLIST = new Set([
+  'lng', 'pipeline', 'oil', 'gas', 'natural gas', 'energy', 'crude', 'refinery', 'fuel', 'petroleum', 'coal',
+  'canada', 'bc', 'british columbia', 'alberta', 'ontario', 'toronto', 'vancouver', 'calgary', 'ottawa',
+  'montreal', 'edmonton', 'winnipeg', 'halifax', 'switzerland', 'usa', 'us', 'united states', 'uk',
+  'china', 'russia', 'india', 'europe', 'asia', 'america', 'north america',
+  'security', 'threat', 'attack', 'protest', 'protests', 'activism', 'government', 'police', 'military',
+  'company', 'corporation', 'project', 'news', 'report', 'update', 'statement', 'community', 'industry',
+  'market', 'economy', 'climate', 'environment', 'indigenous', 'first nations',
+]);
+
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
@@ -135,6 +160,13 @@ Deno.serve(async (req) => {
         const isResolvedEntity = entityKey.startsWith('entity:');
         const entityId = isResolvedEntity ? entityKey.replace('entity:', '') : null;
 
+        // #83 — suppress common-noun / ecosystem-term escalations (rarity-over-commonality):
+        // these cluster because the word is common, not because an actor is escalating.
+        if (COMMON_NOUN_STOPLIST.has(displayName.trim().toLowerCase())) {
+          console.log(`[PatternDetect] SKIP entity_escalation for common-noun "${displayName}" — ecosystem term, not an actor (#83)`);
+          continue;
+        }
+
         const alreadyDetected = await supabase.rpc('pattern_already_detected', {
           p_client_id: client.id,
           p_pattern_type: 'entity_escalation',
@@ -146,7 +178,7 @@ Deno.serve(async (req) => {
         }
 
         const escalatedScore = Math.min(100, data.maxScore + 20);
-        const severity = escalatedScore >= 80 ? 'critical' : escalatedScore >= 50 ? 'high' : escalatedScore >= 20 ? 'medium' : 'low';
+        const severity = patternSeverity(escalatedScore); // #83: [PATTERN] capped at medium
 
         const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
           client_id: client.id,
@@ -215,7 +247,7 @@ Deno.serve(async (req) => {
         if (alreadyDetected.data) break;
 
         const escalatedScore = Math.min(100, data.maxScore + 15);
-        const severity = escalatedScore >= 80 ? 'critical' : escalatedScore >= 50 ? 'high' : escalatedScore >= 20 ? 'medium' : 'low';
+        const severity = patternSeverity(escalatedScore); // #83: [PATTERN] capped at medium
         const uniqueIds = [...new Set(data.ids)];
 
         const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
@@ -279,7 +311,7 @@ Deno.serve(async (req) => {
         if (!alreadyDetected.data) {
           const avgScore = recentSignals.reduce((sum, s) => sum + (s.severity_score || 0), 0) / recentSignals.length;
           const escalatedScore = Math.min(100, Math.round(avgScore + 20));
-          const severity = escalatedScore >= 80 ? 'critical' : escalatedScore >= 50 ? 'high' : escalatedScore >= 20 ? 'medium' : 'low';
+          const severity = patternSeverity(escalatedScore); // #83: [PATTERN] capped at medium
           const uniqueIds = recentSignals.map(s => s.id);
 
           const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
@@ -342,7 +374,7 @@ Deno.serve(async (req) => {
           const dominantType = Object.entries(typeCount).sort((a, b) => b[1] - a[1])[0][0];
           const maxScore = Math.max(...typeClusterSignals.map(s => s.severity_score || 0));
           const escalatedScore = Math.min(100, maxScore + 25);
-          const severity = escalatedScore >= 80 ? 'critical' : escalatedScore >= 50 ? 'high' : escalatedScore >= 20 ? 'medium' : 'low';
+          const severity = patternSeverity(escalatedScore); // #83: [PATTERN] capped at medium
           const uniqueIds = [...new Set(typeClusterSignals.map(s => s.id))];
 
           const { data: patternSignal, error: psErr } = await supabase.from('signals').insert({
