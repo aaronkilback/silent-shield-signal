@@ -209,9 +209,38 @@ Deno.serve(async (req) => {
         .from('clients')
         .select('id, name, status, is_test')
         .eq('id', explicitClientId)
-        .single();
+        .maybeSingle();
 
-      if (clientCheckError || !clientCheck) {
+      // #82 (2026-07-09) — HARDEN the client-check: distinguish a TRANSIENT
+      // query error from a GENUINE not-found.
+      //
+      // Prior code used .single() (which surfaces BOTH "0 rows" AND a real
+      // DB/network error as an error) and hard-400'd on either. A transient
+      // DB hiccup mid-run therefore looked identical to "invalid client_id"
+      // and permanently rejected that client for the whole cycle — silently
+      // starving it (the monitor's counter, #90, booked the 400 as failed or
+      // even as "created"). Root cause of the cisa-kev → single-client
+      // delivery: a per-client validation error that read as "not found."
+      //
+      // .maybeSingle() separates the two cases:
+      //   • genuine 0 rows        → { data: null, error: null }  → permanent 400
+      //   • real DB/network error → { error: <set> }             → transient 503
+      // A transient failure MUST degrade to "this client fails THIS cycle"
+      // (retryable), NEVER a permanent 400. The monitor retries next cycle.
+      if (clientCheckError) {
+        console.error(`⚠ CLIENT_ID VALIDATION TRANSIENT ERROR for ${explicitClientId}: ${clientCheckError.message ?? clientCheckError}`);
+        return new Response(
+          JSON.stringify({
+            status: 'error',
+            reason: 'client_validation_unavailable',
+            message: 'Client validation could not be completed (transient). Safe to retry.',
+            retryable: true,
+          }),
+          { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (!clientCheck) {
         console.error(`⚠ INVALID CLIENT_ID: Provided client_id ${explicitClientId} does not exist`);
         return new Response(
           JSON.stringify({
@@ -1127,18 +1156,35 @@ Respond ONLY with valid JSON.`
 
     // CVE dedup: if the signal text contains a CVE ID, check if we already have a signal
     // for that CVE today. This prevents the same advisory being filed every 15 minutes.
+    //
+    // #82 (2026-07-09) — CLIENT-SCOPED. This dedup was previously GLOBAL (no
+    // client_id filter): the FIRST client to receive a KEV CVE on a given day
+    // won it, and every OTHER client with the same CVE was `duplicate_cve`-
+    // filtered — the exact root cause of monitor-cisa-kev delivering each CVE to
+    // only ONE tenant (Petronas, processed after BC Place/Cascade, got 0). A CVE
+    // relevant to N clients is N legitimate client-scoped signals. This is the
+    // sibling of the Finding-1.2 URL/title client-scoping, which missed this
+    // fourth (cve_id) dedup layer.
+    //
+    // NULL-client semantics (explicit): clientless signals dedup only within the
+    // clientless bucket (client_id IS NULL), never against client-scoped rows.
+    // `.eq('client_id', null)` matches NOTHING in Postgres, so we branch to
+    // `.is('client_id', null)` — otherwise orphan dedup silently breaks. (Per
+    // #256, clientId is normally non-null here; the NULL branch is a defensive
+    // floor for any future clientless path.)
     if (!isQaTest) {
       const cveMatch = signalText.match(/CVE-\d{4}-\d+/gi);
       const cveIds = cveMatch ? [...new Set(cveMatch.map((c: string) => c.toUpperCase()))] : [];
       if (cveIds.length > 0) {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
-        const { data: existingCve } = await supabase
+        let cveDedupQuery = supabase
           .from('signals')
           .select('id, title')
           .gte('created_at', todayStart.toISOString())
-          .or(cveIds.map((cve: string) => `title.ilike.%${cve}%,normalized_text.ilike.%${cve}%`).join(','))
-          .limit(1);
+          .or(cveIds.map((cve: string) => `title.ilike.%${cve}%,normalized_text.ilike.%${cve}%`).join(','));
+        cveDedupQuery = clientId ? cveDedupQuery.eq('client_id', clientId) : cveDedupQuery.is('client_id', null);
+        const { data: existingCve } = await cveDedupQuery.limit(1);
         if (existingCve && existingCve.length > 0) {
           console.log(`[CVE-dedup] Duplicate CVE advisory blocked: ${cveIds.join(', ')} already filed as signal ${existingCve[0].id}`);
           return new Response(
