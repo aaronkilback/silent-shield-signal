@@ -116,7 +116,13 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Pattern signals include \`entity_id\` and \`resolved_from_graph: true\` when matched via entity graph
 - Cooldown guard: \`pattern_already_detected()\` prevents duplicate patterns within 24h per client
 - WATCHDOG MONITORS: \`signals\` with \`signal_type = pattern\` accumulating = healthy. Zero pattern signals after a high-signal week = detector not running or no qualifying clusters
-- EXPECTED: Pattern signals appear in dashboard as high-severity signals. \`resolved_from_graph: true\` on entity escalation patterns confirms 4A/4B/4C chain is working end-to-end
+- EXPECTED (updated #83, 2026-07-09): Pattern signals are ANALYST-ATTENTION meta-signals, now capped at MEDIUM severity (strong → medium, weak → low; never high/critical) and common-noun/ecosystem-term escalations (LNG, pipeline, Toronto, …) are SUPPRESSED. They never auto-create incidents. \`resolved_from_graph: true\` still confirms the 4A/4B/4C chain. A pattern signal at high/critical now = a regression (see the #83 behavioral probe).
+
+### #83 SEVERITY RECALIBRATION (2026-07-09) — current state
+- **monitor-domains**: emits severity='low' ONLY. Its "legitimate_domain" is FABRICATED from client.organization/client.name, so a resolving typosquat of that guess is low-confidence noise, not a justified high (it was the #1 inflation source, ~465/wk). Real MEDIUM/HIGH bands are rebuilt on the approved rubric AFTER clients.monitored_domains is populated (WO-DATA-INTEGRITY; currently 1/10 active clients).
+- **detect-threat-patterns**: [PATTERN] meta-signals capped at MEDIUM (patternSeverity helper) + common-noun stoplist suppression.
+- BEHAVIORAL PROBE added: flags if monitor-domains / detect-threat-patterns / signal_type=pattern emit ANY high/crit in 48h (regression), and if last-48h high/crit share > 40% (distribution-ceiling early warning; provisional target ≤~18%).
+- Note (rule-7 backfill): the 2026-07-09 prod deploys of ingest-signal v192 (#82 client-scoped cve-dedup + honest counters) and monitor-cisa-kev v61 (created/suppressed/failed + per-client failure_details) and system-watchdog v160 (orphan-quarantine, fail-closed) are the current prod behavior — treat cisa-kev's high/crit as BY-DESIGN (KEV = actively exploited), not inflation.
 
 ### Phase 4A Entity Graph — Core Entities Seeded (April 2026) — COMPLETE
 - 5 missing entities inserted: Houston BC (critical), Wedzin Kwa/Morice River (critical), Peace River Region (medium), First Nations LNG Coalition (low), PETRONAS Canada (medium)
@@ -2868,6 +2874,49 @@ Deno.serve(async (req) => {
             analysis: `This social monitor has run ${runs.length} times in the last 24h but created 0 signals.`,
             plainEnglish: `Social media monitoring for ${jobName} is running but finding nothing. Either there is no relevant activity, or the search queries/API access is broken.`,
             action: `Check ${jobName} logs for API errors or empty CSE responses. Verify search queries match current client keywords.`,
+          });
+        }
+      }
+
+      // 3. #83 SEVERITY RECALIBRATION regression probe (rule 7 — scans must reflect current state).
+      // Post-#83: monitor-domains emits ONLY 'low' (its "legitimate domain" is fabricated from
+      // client name/org, so typosquats of it are not a justified high), and detect-threat-patterns
+      // caps [PATTERN] meta-signals at 'medium'. Neither may emit high/critical again until the
+      // approved rubric is rebuilt on real data (clients.monitored_domains — WO-DATA-INTEGRITY).
+      const since48h = new Date(Date.now() - 48 * 3600000).toISOString();
+      const { data: recentSev } = await supabase
+        .from('signals')
+        .select('severity, signal_origin, signal_type')
+        .gte('created_at', since48h)
+        .eq('is_test', false)
+        .limit(2000);
+      if (recentSev && recentSev.length >= 20) {
+        const hc = recentSev.filter((s: any) => s.severity === 'high' || s.severity === 'critical');
+        const hcPct = Math.round((hc.length / recentSev.length) * 100);
+        // 3a. the two recalibrated firehoses must NOT emit high/crit
+        const regressed = hc.filter((s: any) =>
+          s.signal_origin === 'monitor-domains' ||
+          s.signal_origin === 'detect-threat-patterns' ||
+          s.signal_type === 'pattern');
+        if (regressed.length > 0) {
+          behavioralFindings.push({
+            category: 'behavioral_health',
+            severity: 'high',
+            title: `#83 recalibration REGRESSED: ${regressed.length} high/crit from recalibrated producers (48h)`,
+            analysis: `Post-#83, monitor-domains must emit only 'low' and detect-threat-patterns/[PATTERN] must cap at 'medium'. Found ${regressed.length} high/critical from these producers in 48h — the recalibration has regressed (stale redeploy or a new direct-insert writer).`,
+            plainEnglish: `The severity fix for the two noise firehoses came undone — they're producing high/critical alerts again, re-inflating the feed.`,
+            action: `Confirm the deployed monitor-domains (severity:'low') and detect-threat-patterns (patternSeverity cap) bundles; check for a new writer emitting high/crit patterns.`,
+          });
+        }
+        // 3b. distribution-ceiling early warning (#83 provisional target ≤~18% high/crit)
+        if (hcPct > 40) {
+          behavioralFindings.push({
+            category: 'behavioral_health',
+            severity: 'medium',
+            title: `Severity distribution high: ${hcPct}% high/crit in last 48h (target ≤~18%, #83)`,
+            analysis: `${hc.length}/${recentSev.length} recent non-test signals are high/critical. #83 provisional ceiling is ≤15% high + ≤3% critical; >40% indicates the recalibration is not holding or a new inflation source appeared.`,
+            plainEnglish: `Most recent signals are still high/critical — severity is not discriminating, so operators can't triage by it.`,
+            action: `Break down high/crit by signal_origin (30d) to find the inflation source; re-check the #83 ceilings at the 30-day review.`,
           });
         }
       }

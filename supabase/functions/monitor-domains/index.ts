@@ -91,7 +91,17 @@ Deno.serve(async (req) => {
                     client_id: client.id,
                     normalized_text: signalText,
                     category: 'phishing',
-                    severity: 'high',
+                    // #83 (2026-07-09) — Option A downgrade to LOW. The "legitimate_domain"
+                    // this variant is compared against is FABRICATED from client.organization/
+                    // client.name (line ~63: "Petronas Canada" -> petronascanada.com, not the
+                    // real petronas.ca), so a registered typosquat of that guess is NOT a
+                    // justified high — it was the platform's single biggest severity-inflation
+                    // source (~465/wk at hardcoded high). A resolving lookalike of an UNVERIFIED
+                    // name-guess is low-confidence noise. Real MEDIUM/HIGH bands (resolving +
+                    // active MX targeting a REAL client-owned domain) are rebuilt on the approved
+                    // rubric ONLY AFTER clients.monitored_domains is populated (WO-DATA-INTEGRITY;
+                    // currently 1/10 active clients). Do not restore high without that data.
+                    severity: 'low',
                     location: 'Domain Registration',
                     raw_json: {
                       platform: 'dns',
