@@ -43,6 +43,30 @@ export const GLOBAL_NEWS_BASELINE: ReadonlyArray<string> = Object.freeze([
   'apnews.com',
 ]);
 
+/**
+ * Curated regional / Indigenous / advocacy / major-news tier (#80, 2026-07-09).
+ *
+ * Amends the original baseline's "NOT advocacy" rule: the intelligence-quality audit + the newly
+ * measurable `signal_origin` rejection data proved these outlets carry genuinely client-relevant
+ * protective intelligence (Wet'suwet'en/CGL, PRGT/LNG, injunctions, energy-activism) that a
+ * 5-domain baseline was silently dropping on the Google-News path. Selection is DATA-DRIVEN — the
+ * top plausibly-relevant `source_domain_not_allowlisted` rejects (monitor-news-google, 30d) +
+ * audit-named sources — NOT a blanket advocacy allow. Social/jobs/tickets/content-farms stay OUT.
+ * The durable fix is relevance-gating (separate, sequenced after); this widening is measured by the
+ * before/after query in the PR (news-google filtered-vs-admitted, 7d each side) and subject to the
+ * same keep-or-kill discipline via signal_origin.
+ */
+export const CURATED_REGIONAL_ADVOCACY: ReadonlyArray<string> = Object.freeze([
+  // Environmental / Indigenous / energy-activism journalism (the audit's core recovered bucket)
+  'thenarwhal.ca', 'tworowtimes.com', 'thedeepdive.ca', 'dogwoodbc.ca',
+  'aptnnews.ca', 'thetyee.ca', 'nationalobserver.com', 'ricochet.media',
+  // Major reputable news the 5-domain baseline oddly excluded
+  'nytimes.com', 'bbc.com', 'theguardian.com', 'nationalpost.com', 'ctvnews.ca', 'thestar.com',
+  // Canadian BC / Alberta regional (NE-BC energy corridor + client geographies)
+  'citynews.ca', 'vancouversun.com', 'timescolonist.com', 'calgaryherald.com',
+  'edmontonjournal.com', 'energeticcity.ca', 'alaskahighwaynews.ca', 'thenorthernview.com',
+]);
+
 export interface AllowlistResolutionResult {
   /** Effective allowlist (baseline ∪ overlay if available, baseline only on failure). */
   allowlist: Set<string>;
@@ -66,7 +90,9 @@ export async function getTenantNewsAllowlist(
   supabase: SupabaseClient,
   tenantId: string,
 ): Promise<AllowlistResolutionResult> {
-  const baseline = new Set<string>(GLOBAL_NEWS_BASELINE.map(d => d.toLowerCase()));
+  const baseline = new Set<string>(
+    [...GLOBAL_NEWS_BASELINE, ...CURATED_REGIONAL_ADVOCACY].map(d => d.toLowerCase()),
+  );
 
   try {
     const { data, error } = await supabase
