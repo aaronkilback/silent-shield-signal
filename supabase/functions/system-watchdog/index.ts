@@ -1758,15 +1758,37 @@ async function executeRemediation(
       }
 
       case 'fix_orphaned_signals': {
-        const { data: defaultClient } = await supabase.from('clients').select('id').limit(1).single();
-        if (!defaultClient) return { action, finding, success: false, details: 'No default client found to assign orphaned signals' };
-
-        const { data: orphaned } = await supabase.from('signals').select('id').is('client_id', null).not('category', 'eq', 'global').limit(50);
-        if (!orphaned || orphaned.length === 0) return { action, finding, success: true, details: 'No orphaned signals found (already clean)' };
+        // 2026-07-09 — QUARANTINE (fail-closed), do NOT assign to a random client.
+        //
+        // Prior logic picked ONE arbitrary client (`.limit(1).single()`, no
+        // ORDER BY) and bulk-UPDATE'd every ownerless signal's client_id to it,
+        // ignoring the signal's tenant. That (a) FAILED the tenant-client
+        // consistency trigger every run whenever an orphan's tenant differed
+        // from the chosen client's (the daily "Fix failed" the operator saw),
+        // and (b) violated the Provenance Doctrine — a signal whose real owner
+        // is unknown must NOT be fabricated onto a random client (cross-tenant
+        // write). It also never excluded already-quarantined orphans, so it
+        // re-attempted the same rows forever.
+        //
+        // Correct behavior (2026-06-07 intent + Provenance/Quarantine doctrine):
+        // unknown provenance → quarantine. Mark ownerless signals quarantined so
+        // analysts never retrieve them; correct owner re-resolution is WO-A's job
+        // (misrouted_signals → re-resolve by asset/geography), not a random guess.
+        // Already-quarantined orphans are excluded, so once clean this is a
+        // no-op SUCCESS instead of a daily public failure.
+        const { data: orphaned, error: selErr } = await supabase
+          .from('signals')
+          .select('id')
+          .is('client_id', null)
+          .not('category', 'eq', 'global')
+          .or('quality_status.is.null,quality_status.neq.quarantined')
+          .limit(200);
+        if (selErr) return { action, finding, success: false, details: `Orphan lookup failed: ${selErr.message}` };
+        if (!orphaned || orphaned.length === 0) return { action, finding, success: true, details: 'No un-quarantined ownerless signals (already clean / fail-closed)' };
 
         const ids = orphaned.map((s: any) => s.id);
-        const { error } = await supabase.from('signals').update({ client_id: defaultClient.id }).in('id', ids);
-        return { action, finding, success: !error, details: error ? `Fix failed: ${error.message}` : `Assigned ${ids.length} orphaned signals to default client` };
+        const { error } = await supabase.from('signals').update({ quality_status: 'quarantined' }).in('id', ids);
+        return { action, finding, success: !error, details: error ? `Quarantine failed: ${error.message}` : `Quarantined ${ids.length} ownerless signal(s) (fail-closed; owner unknown, pending WO-A re-resolution)` };
       }
 
       case 'fix_orphaned_entities': {
