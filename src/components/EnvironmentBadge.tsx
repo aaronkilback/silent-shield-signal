@@ -58,16 +58,31 @@ export const EnvironmentBadge = () => {
         .eq('is_active', true)
         .maybeSingle();
 
-      if (error) {
-        // Silently handle - RLS may block unauthenticated users
-        return null;
-      }
+      // #66 residual (2026-07-09): do NOT cache null/error as a SUCCESS.
+      // enabled:!!session gates on React session STATE, which can flip true a
+      // beat before the supabase client attaches the Authorization header to
+      // its next request. That first request then goes out as `anon`, RLS
+      // (environment_config authenticated-only) returns 0 rows, .maybeSingle()
+      // yields data=null with no error, and — under the old `retry:false` +
+      // `return null` — react-query cached that null as SUCCESS and staleTime
+      // pinned the badge absent. This is DETERMINISTIC in platform-admin-no-
+      // tenant mode after a hard reload (super-admin-bootstrap.spec.ts:48),
+      // where the render/hydration ordering reliably loses that race, while the
+      // normal path (health.spec.ts:4) wins it. Throw on both error AND null so
+      // react-query RETRIES until the authenticated read returns the row, then
+      // caches the real value.
+      if (error) throw error;
+      if (!data) throw new Error('environment_config not readable yet (auth header not attached)');
 
-      return data as EnvironmentConfig | null;
+      return data as EnvironmentConfig;
     },
     enabled: !!session,
-    retry: false,
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    // Bounded retry to ride out the auth-attach race. Max wall-clock
+    // ~300+600+900+1200+1500+1500 ≈ 6s — comfortably under the spec's 10s
+    // DB-backed badge timeout, and it stops as soon as the row reads.
+    retry: 6,
+    retryDelay: (attempt) => Math.min(300 * (attempt + 1), 1500),
+    staleTime: 5 * 60 * 1000, // Cache the REAL value for 5 minutes
   });
 
   if (!envConfig) {
