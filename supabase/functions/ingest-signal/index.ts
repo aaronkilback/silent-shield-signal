@@ -5,6 +5,7 @@ import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance
 import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
 import { fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from '../_shared/alert-tier.ts';
+import { coerceOrigin, deriveOrigin } from '../_shared/signal-origins.ts';
 import { enqueueJob } from '../_shared/queue.ts';
 import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
 import { getCallerIdentity, getAccessibleClientIds } from '../_shared/supabase-client.ts';
@@ -38,6 +39,7 @@ const SignalInputSchema = z.object({
   // outage doesn't collapse the entire feed to category=unknown / sev=medium.
   fallback_category: z.string().optional(),
   fallback_severity: z.enum(['critical', 'high', 'medium', 'low']).optional(),
+  origin: z.string().optional(),           // #79 signal_origin — producer identity (coerced to vocab)
   // F-CRT (2026-05-15) — source platform tag. Used by downstream
   // attribution (hostile_handles uniqueness, dispatch guardrails,
   // platform-scoped analysis). Optional; when present, written to
@@ -190,7 +192,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity, platform, tenant_broadcast } = validationResult.data;
+    const { source_key, event, text, url, source_url, image_url, location, raw_json, is_test: is_test_input, client_id, clientId: clientIdCamel, skip_relevance_gate, fallback_category, fallback_severity, platform, tenant_broadcast, origin } = validationResult.data;
     // Auto-flag any signal whose source URL points at example.com / qa.test / localhost
     // as is_test=true, regardless of caller. These domains are always test fixtures and
     // must never appear in the production live feed (operators have mistaken them for
@@ -1662,6 +1664,7 @@ Score this signal's relevance and classify the connection.`
               source_name: source_key || signalRaw?.source_name || null,
               client_id: clientId,
               filter_reason: 'ai_relevance_gate',
+              signal_origin: coerceOrigin(origin ?? deriveOrigin({ sourceKey: source_key, isTest: is_test, rawSource: signalRaw?.source })),
               relevance_score: gateScore,
               relevance_reason: gateReason,
               primary_connection: primaryConnection,
@@ -1880,6 +1883,8 @@ Score this signal's relevance and classify the connection.`
       .from('signals')
       .insert({
         source_id: sourceId,
+        // #79: explicit producer stamp wins; null lets the BEFORE INSERT trigger derive (non-bypassable floor).
+        signal_origin: origin ? coerceOrigin(origin) : null,
         client_id: clientId,
         title: signalTitle,
         foreign_alignment_score: fa.score > 0 ? fa.score : null,
