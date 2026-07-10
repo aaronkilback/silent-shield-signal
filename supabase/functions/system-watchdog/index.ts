@@ -444,7 +444,7 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Database triggers auto-generate signal titles
 - Feedback events should only reference existing signals (cascade trigger handles new deletes, but legacy orphans may exist)
 - OSINT sources should have recent ingestion timestamps
-- Archival documents must be client-owned (WO-DATA-INTEGRITY, 2026-07-09): create-archival-record + process-archival-documents now hard-reject null client_id and the two upload UIs require a client. `dataIntegrity.newOrphanArchivalDocs` = archival_documents created in the last 24h with client_id NULL. EXPECTED: 0. Any nonzero = the writer guard regressed or a new bypassing writer appeared → surface as a data-integrity defect. (The 40 historical orphans predate the fix and are handled by separate operator-review disposition; do NOT flag those as new.)
+- Archival documents must be client-owned (WO-DATA-INTEGRITY, 2026-07-09): create-archival-record + process-archival-documents now hard-reject null client_id and the two upload UIs require a client. dataIntegrity.newOrphanArchivalDocs = archival_documents created in the last 24h with client_id NULL. EXPECTED: 0. Any nonzero = the writer guard regressed or a new bypassing writer appeared, surface as a data-integrity defect. (The 40 historical orphans predate the fix and are handled by separate operator-review disposition; do NOT flag those as new.)
 - EXPECTED: Zero orphaned records, zero orphaned feedback, zero NEW null-client archival docs
 - REMEDIATION: fix_orphaned_signals, fix_orphaned_entities, fix_orphaned_feedback, fix_stale_source_timestamps
 
