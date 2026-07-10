@@ -34,6 +34,18 @@ Deno.serve(async (req) => {
       );
     }
 
+    // WO-DATA-INTEGRITY (2026-07-09): Provenance hard-reject. This writer is the client-scoped
+    // archival upload path (called only by ArchivalDocumentUpload + UnifiedDocumentUpload; the
+    // user-owned travel-security path uses parse-travel-security-report, a different writer).
+    // 40 orphan archival_documents (client_id NULL, 'unassigned/' paths) were created here via
+    // `clientId || null`. Mirror ingest-signal #256 hard-reject: no client → no record.
+    if (!clientId || typeof clientId !== 'string' || clientId.trim().length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'client_id is required — select a client before uploading. Ownerless archival records are rejected (Provenance Doctrine).' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     console.log(`Creating archival record for: ${filename}`);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -85,7 +97,7 @@ Deno.serve(async (req) => {
         content_text: text,
         content_hash: contentHash,
         tags: tags || ['archival', 'large-file'],
-        client_id: clientId || null,
+        client_id: clientId,
         uploaded_by: userId || null,
         date_of_document: dateOfDocument || null,
         is_archival: true,

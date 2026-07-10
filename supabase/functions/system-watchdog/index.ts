@@ -444,7 +444,8 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Database triggers auto-generate signal titles
 - Feedback events should only reference existing signals (cascade trigger handles new deletes, but legacy orphans may exist)
 - OSINT sources should have recent ingestion timestamps
-- EXPECTED: Zero orphaned records, zero orphaned feedback
+- Archival documents must be client-owned (WO-DATA-INTEGRITY, 2026-07-09): create-archival-record + process-archival-documents now hard-reject null client_id and the two upload UIs require a client. `dataIntegrity.newOrphanArchivalDocs` = archival_documents created in the last 24h with client_id NULL. EXPECTED: 0. Any nonzero = the writer guard regressed or a new bypassing writer appeared → surface as a data-integrity defect. (The 40 historical orphans predate the fix and are handled by separate operator-review disposition; do NOT flag those as new.)
+- EXPECTED: Zero orphaned records, zero orphaned feedback, zero NEW null-client archival docs
 - REMEDIATION: fix_orphaned_signals, fix_orphaned_entities, fix_orphaned_feedback, fix_stale_source_timestamps
 
 ### Communications Infrastructure (HIGH)
@@ -667,7 +668,7 @@ interface TelemetryData {
     last24hCategories: Record<string, number>;
   };
   dailyBriefing: { sentToday: boolean; suppressionLikely: boolean; recipientCount: number };
-  dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number };
+  dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number; newOrphanArchivalDocs: number };
   bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number; recurringPatterns: string[] };
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
@@ -1219,6 +1220,17 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     oldestContradictionDays = Math.floor((now.getTime() - new Date(oldestContradictionResult.data[0].detected_at).getTime()) / 86400000);
   }
 
+  // WO-DATA-INTEGRITY (2026-07-09) Rule-7 self-validation probe: after the create-archival-record /
+  // process-archival-documents hard-reject + UI required-client fix, ZERO new archival_documents may
+  // be created with a NULL client_id. A recent NULL-client archival doc means the writer guard
+  // regressed or a new bypassing writer appeared. EXPECTED: 0. (Historical orphans are handled
+  // separately by operator-review disposition; this probe watches for NEW ones only.)
+  const { count: newOrphanArchivalDocsCount } = await supabase
+    .from('archival_documents')
+    .select('id', { count: 'exact', head: true })
+    .is('client_id', null)
+    .gte('created_at', twentyFourHoursAgo);
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -1229,7 +1241,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
       last24hCategories: categoryBreakdown,
     },
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
-    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0 },
+    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0, newOrphanArchivalDocs: newOrphanArchivalDocsCount || 0 },
     bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
     database: { connected: dbConnected, responseTimeMs: dbResponseTimeMs },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
