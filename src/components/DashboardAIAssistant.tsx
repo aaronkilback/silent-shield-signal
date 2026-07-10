@@ -47,7 +47,7 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
   const { isAdmin, isSuperAdmin } = useUserRole();
-  const { currentTenant, isAllTenantsView } = useTenant();
+  const { currentTenant, isAllTenantsView, isHydrating: tenantHydrating } = useTenant();
   // PROD-AA (2026-05-24) — derive explicit tenant_id for chat tool dispatch.
   // Super_admin users can be owner of multiple tenants; the backend lottery
   // (tenant_users.limit(1).single()) is non-deterministic. The frontend already
@@ -868,8 +868,23 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
     // scope (selectedClientId), not a picker — if the assistant isn't scoped to a client, refuse
     // the upload rather than write an ownerless archival doc. Mirrors the create-archival-record /
     // process-archival-documents hard-reject.
-    if (!selectedClientId) {
-      toast.error("Select a client for the assistant before uploading documents — uploads must be client-scoped");
+    //
+    // WO-DATA-INTEGRITY silent-context fix (2026-07-10 addendum): the prior guard checked
+    // selectedClientId alone, but selectedClientId is hydrated from localStorage independent of
+    // useTenant's context state. That let uploads land under a stale hydrated client while the
+    // UI banner asserted "No active context. Select a tenant to begin." Reproduced on staging
+    // (docs 0057bdc3, d2774082 misfiled into Petronas Canada while UI showed no context). Gate
+    // on the SAME condition that renders the banner in src/pages/Index.tsx:46, in addition to
+    // selectedClientId. The isAllTenantsView + hydrated-client case is deliberately not covered
+    // here — that's the first follow-on per project_silent_context_defect.md.
+    const tenantUnavailable = !tenantHydrating && !currentTenant && !isAllTenantsView;
+
+    if (!selectedClientId || tenantUnavailable) {
+      toast.error(
+        tenantUnavailable
+          ? "No active tenant context. Open the Client Filter (Signals page) and select a client before uploading."
+          : "Select a client for the assistant before uploading documents — uploads must be client-scoped"
+      );
       return { urls: [], documentIds: [] };
     }
 

@@ -10364,10 +10364,20 @@ Deno.serve(async (req) => {
         //   • 0 memberships → no tenant (tenant tools fail closed via the gate).
         // The client is SERVICE_ROLE so `.eq("user_id", user.id)` is the only scope —
         // a hostile/spoofed tenant_id cannot grant access; it merely fails closed.
+        //
+        // WO-DATA-INTEGRITY addendum (2026-07-10): exclude test/legacy tenants
+        // from this enumeration. This is the SECOND tenant-enum surface — PR
+        // #137 patched get-user-tenants (both super-admin and analyst paths)
+        // with .eq('is_test', false), but this inline query in the AEGIS chat's
+        // org-disambiguation path was missed. Rule-3 browser check on
+        // 2026-07-10 found _legacy_test_tenant_2026_03_12 surfacing in the
+        // ambiguous org message. Mirrors get-user-tenants:83,95 pattern via a
+        // PostgREST inner-embed filter on the joined tenants row.
         const { data: memberships } = await supabaseClient
           .from("tenant_users")
-          .select("tenant_id, tenants(name)")
-          .eq("user_id", user.id);
+          .select("tenant_id, tenants!inner(name, is_test)")
+          .eq("user_id", user.id)
+          .eq("tenants.is_test", false);
         const memberRows = (memberships ?? []) as Array<{ tenant_id: string; tenants: any }>;
         const tenantNameOf = (r: { tenants: any }) => (r?.tenants as any)?.name || "Unknown Tenant";
 
