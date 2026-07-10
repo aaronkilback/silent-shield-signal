@@ -1629,10 +1629,20 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
 </html>`;
 
     // Store report with enhanced metadata
+    // WO-DATA-INTEGRITY (2026-07-10): reports must be tenant-owned (AEGIS reads reports by
+    // tenant_id). Previously client_id lived ONLY in meta_json and tenant_id was never set →
+    // every executive report was an invisible orphan. Set BOTH columns from the (required,
+    // access-checked) client. client.tenant_id is guaranteed for a real client.
+    const reportTenantId = (client as { tenant_id?: string | null }).tenant_id ?? null;
+    if (!reportTenantId) {
+      return new Response(JSON.stringify({ error: 'PROVENANCE: client has no tenant_id; cannot write a tenant-owned report.' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     const { data: report, error: reportError } = await supabase
       .from('reports')
       .insert({
         type: 'executive_intelligence',
+        client_id,
+        tenant_id: reportTenantId,
         period_start: periodStart.toISOString(),
         period_end: periodEnd.toISOString(),
         meta_json: {

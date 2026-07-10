@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
     // narrative pipeline.
     const { data: realClients } = await supabaseClient
       .from('clients')
-      .select('id, name, status, locations, high_value_assets, monitoring_keywords')
+      .select('id, name, status, tenant_id, locations, high_value_assets, monitoring_keywords')
       .eq('status', 'active')
       .not('name', 'like', '\\_%');
     const realClientIds = (realClients ?? []).map((c: any) => c.id);
@@ -445,30 +445,65 @@ RULES — enforced (a violation auto-flags the report for review):
       console.warn('[generate-report] Structured synthesis failed, falling back to summary-only prose:', synthErr instanceof Error ? synthErr.message : String(synthErr));
     }
 
-    // Create report record
-    const { data: report, error: reportError } = await supabase
-      .from('reports')
-      .insert({
-        type: report_type,
-        period_start: periodStart.toISOString(),
-        period_end: periodEnd.toISOString(),
-        // Wave 2: record the authoritative client scope of this report's source set.
-        client_id: requestedClientId ?? null,
-        meta_json: {
-          total_signals: signals?.length || 0,
-          critical_signals: criticalSignals,
-          high_signals: highSignals,
-          open_incidents: openIncidents,
-          resolved_incidents: resolvedIncidents,
-          executive_summary: executiveSummary,
-          scoped_client_ids: allowedClientIds,
-          scope_mode: requestedClientId ? 'single_client' : 'all_clients_admin'
-        }
-      })
-      .select()
-      .single();
+    // Create report record.
+    // WO-DATA-INTEGRITY (2026-07-10): reports must be tenant-owned — AEGIS reads reports by
+    // tenant_id, so a tenant-less report is an invisible orphan. Derive the owning tenant from
+    // the scoped clients: a single-tenant scope (single-client, or same-tenant cross-client) is
+    // tenant-owned and persisted with client_id + tenant_id. A GENUINELY multi-tenant cross-all-
+    // client admin report has no single owner — it is NOT persisted here (it was previously an
+    // invisible orphan). Its ownership model (own by Silent Shield Operations / asset_class=system)
+    // is a pending platform decision (see PR); the report content is still returned to the caller.
+    const scopedTenantIds = [...new Set(
+      (realClients ?? [])
+        .filter((c: any) => allowedClientIds.includes(c.id))
+        .map((c: any) => c.tenant_id)
+        .filter(Boolean)
+    )];
+    const reportTenantId = scopedTenantIds.length === 1 ? scopedTenantIds[0] : null;
 
-    if (reportError) console.error('Report record insert failed (non-fatal):', reportError.message);
+    // Owning tenant: single-tenant scope → that tenant. Genuinely multi-tenant cross-all-client
+    // admin report → the Silent Shield Operations platform tenant (operator decision 2026-07-10:
+    // platform reports are SS artifacts, tenant-owned with client_id=null; consistent with the
+    // disposition of the 33 historical cross-all snapshots). Every persisted report has a tenant.
+    let owningTenantId = reportTenantId;
+    let owningClientId: string | null = requestedClientId ?? null;
+    if (!owningTenantId) {
+      const { data: ssOps } = await supabase
+        .from('tenants').select('id').eq('name', 'Silent Shield Operations').eq('is_test', false).maybeSingle();
+      owningTenantId = ssOps?.id ?? null;
+      owningClientId = null; // cross-all platform report is tenant-owned, not client-scoped
+    }
+
+    let report: Record<string, unknown> | null = null;
+    if (owningTenantId) {
+      const { data: inserted, error: reportError } = await supabase
+        .from('reports')
+        .insert({
+          type: report_type,
+          // Wave 2: record the authoritative client scope of this report's source set.
+          client_id: owningClientId,
+          tenant_id: owningTenantId,
+          period_start: periodStart.toISOString(),
+          period_end: periodEnd.toISOString(),
+          meta_json: {
+            total_signals: signals?.length || 0,
+            critical_signals: criticalSignals,
+            high_signals: highSignals,
+            open_incidents: openIncidents,
+            resolved_incidents: resolvedIncidents,
+            executive_summary: executiveSummary,
+            scoped_client_ids: allowedClientIds,
+            scope_mode: requestedClientId ? 'single_client' : 'all_clients_admin'
+          }
+        })
+        .select()
+        .single();
+      if (reportError) console.error('Report record insert failed (non-fatal):', reportError.message);
+      else report = inserted as Record<string, unknown>;
+    } else {
+      // Provenance fail-closed: no owning tenant derivable AND the platform tenant is missing.
+      console.warn('[generate-report] WO-DATA-INTEGRITY: no owning tenant (and Silent Shield Operations tenant not found) — report NOT persisted; returned to caller only.');
+    }
 
     // Calculate additional analytics
     const signalsByCategory = signals?.reduce((acc: any, s) => {
