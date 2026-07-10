@@ -1251,11 +1251,18 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   //     which would then leak into production enumeration. EXPECTED 0. (PostgREST has no regex
   //     filter, so match in JS over the small tenants/clients sets.)
   const reTest = /(^_)|legacy|test|_qa|_dryrun|_benchmark|_invariant|smoketest|fixture|sandbox/i;
+  // Allowlist: real internal-ops entities whose name matches the ^_ heuristic but are NOT test.
+  // __platform_security__ is the WRAITH security-findings sentinel client (active writer,
+  // provisioned via migration 20260524040000); flagging it is_test would hide security findings.
+  // Verified 2026-07-10 by functional evidence (active code writer + breakage-if-excluded), not name.
+  const INTERNAL_OPS_ALLOWLIST = new Set(['__platform_security__']);
+  const isUnflaggedTest = (e: { name: string; is_test: boolean }) =>
+    reTest.test(e.name) && e.is_test !== true && !INTERNAL_OPS_ALLOWLIST.has(e.name);
   const { data: allTenantsForCheck } = await supabase.from('tenants').select('name, is_test');
   const { data: allClientsForCheck } = await supabase.from('clients').select('name, is_test');
   const unflaggedTestEntities =
-    (allTenantsForCheck || []).filter((t: { name: string; is_test: boolean }) => reTest.test(t.name) && t.is_test !== true).length +
-    (allClientsForCheck || []).filter((c: { name: string; is_test: boolean }) => reTest.test(c.name) && c.is_test !== true).length;
+    (allTenantsForCheck || []).filter(isUnflaggedTest).length +
+    (allClientsForCheck || []).filter(isUnflaggedTest).length;
 
   return {
     timestamp: now.toISOString(),
