@@ -445,7 +445,8 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - Feedback events should only reference existing signals (cascade trigger handles new deletes, but legacy orphans may exist)
 - OSINT sources should have recent ingestion timestamps
 - Archival documents must be client-owned (WO-DATA-INTEGRITY, 2026-07-09): create-archival-record + process-archival-documents now hard-reject null client_id and the two upload UIs require a client. dataIntegrity.newOrphanArchivalDocs = archival_documents created in the last 24h with client_id NULL. EXPECTED: 0. Any nonzero = the writer guard regressed or a new bypassing writer appeared, surface as a data-integrity defect. (The 40 historical orphans predate the fix and are handled by separate operator-review disposition; do NOT flag those as new.)
-- EXPECTED: Zero orphaned records, zero orphaned feedback, zero NEW null-client archival docs
+- Contamination invariants (WO-DATA-INTEGRITY, 2026-07-10, mirroring the Cascade + legacy-tenant finding chain): dataIntegrity.unflaggedTestBeliefs = agent_investigation_memory rows whose owning client is is_test but the row is not is_test-flagged (backfill drift / bypassing writer). dataIntegrity.unflaggedTestEntities = tenants/clients whose name matches the test/legacy pattern but are not is_test-flagged (flag-completeness; an unflagged test tenant/client leaks into production enumeration, e.g. the AEGIS org list). BOTH EXPECTED 0. Any nonzero = a test/legacy entity is not properly flagged and may surface in retrieval or enumeration; surface as a data-integrity defect.
+- EXPECTED: Zero orphaned records, zero orphaned feedback, zero NEW null-client archival docs, zero unflagged test beliefs/entities
 - REMEDIATION: fix_orphaned_signals, fix_orphaned_entities, fix_orphaned_feedback, fix_stale_source_timestamps
 
 ### Communications Infrastructure (HIGH)
@@ -668,7 +669,7 @@ interface TelemetryData {
     last24hCategories: Record<string, number>;
   };
   dailyBriefing: { sentToday: boolean; suppressionLikely: boolean; recipientCount: number };
-  dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number; newOrphanArchivalDocs: number };
+  dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number; newOrphanArchivalDocs: number; unflaggedTestBeliefs: number; unflaggedTestEntities: number };
   bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number; recurringPatterns: string[] };
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
@@ -1231,6 +1232,31 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     .is('client_id', null)
     .gte('created_at', twentyFourHoursAgo);
 
+  // WO-DATA-INTEGRITY (2026-07-10) contamination invariants, mirroring newOrphanArchivalDocs.
+  // (a) beliefs whose owning client is is_test but the belief row is NOT flagged is_test —
+  //     catches backfill drift or a new writer bypassing the flag. EXPECTED 0.
+  let unflaggedTestBeliefs = 0;
+  const { data: testClientRows } = await supabase.from('clients').select('id').eq('is_test', true);
+  const testClientIds = (testClientRows || []).map((c: { id: string }) => c.id);
+  if (testClientIds.length > 0) {
+    const { count } = await supabase.from('agent_investigation_memory')
+      .select('id', { count: 'exact', head: true })
+      .in('client_id', testClientIds)
+      .neq('is_test', true);
+    unflaggedTestBeliefs = count || 0;
+  }
+
+  // (b) tenants/clients whose name matches the test/legacy pattern but are NOT is_test-flagged —
+  //     flag-completeness. Catches a new _legacy_test_tenant-style row created without the flag,
+  //     which would then leak into production enumeration. EXPECTED 0. (PostgREST has no regex
+  //     filter, so match in JS over the small tenants/clients sets.)
+  const reTest = /(^_)|legacy|test|_qa|_dryrun|_benchmark|_invariant|smoketest|fixture|sandbox/i;
+  const { data: allTenantsForCheck } = await supabase.from('tenants').select('name, is_test');
+  const { data: allClientsForCheck } = await supabase.from('clients').select('name, is_test');
+  const unflaggedTestEntities =
+    (allTenantsForCheck || []).filter((t: { name: string; is_test: boolean }) => reTest.test(t.name) && t.is_test !== true).length +
+    (allClientsForCheck || []).filter((c: { name: string; is_test: boolean }) => reTest.test(c.name) && c.is_test !== true).length;
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -1241,7 +1267,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
       last24hCategories: categoryBreakdown,
     },
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
-    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0, newOrphanArchivalDocs: newOrphanArchivalDocsCount || 0 },
+    dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0, newOrphanArchivalDocs: newOrphanArchivalDocsCount || 0, unflaggedTestBeliefs, unflaggedTestEntities },
     bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
     database: { connected: dbConnected, responseTimeMs: dbResponseTimeMs },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },

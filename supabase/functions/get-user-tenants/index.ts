@@ -71,11 +71,16 @@ Deno.serve(async (req) => {
     type TenantRow = { id: string; name: string; status: string; settings: unknown; created_at: string };
     let candidates: TenantRow[] = [];
 
+    // WO-DATA-INTEGRITY (2026-07-10): exclude test/legacy tenants from enumeration. These
+    // surfaced in the super_admin AEGIS org list (_legacy_test_tenant_2026_03_12) — same class
+    // as the Cascade is_test client leak, one level up. is_test is the durable flag (migration
+    // 20260710122347); no runtime name-matching.
     if (isSuperAdmin) {
       const { data, error } = await adminClient
         .from('tenants')
         .select('id, name, status, settings, created_at')
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .eq('is_test', false);
       if (error) {
         console.error('Tenants fetch error (super_admin path):', error);
         return errorResponse('Failed to fetch tenants', 500);
@@ -86,7 +91,8 @@ Deno.serve(async (req) => {
         .from('tenants')
         .select('id, name, status, settings, created_at')
         .in('id', [...explicit.keys()])
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .eq('is_test', false);
       if (error) {
         console.error('Tenants fetch error (membership path):', error);
         return errorResponse('Failed to fetch tenants', 500);
