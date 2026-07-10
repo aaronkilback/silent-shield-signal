@@ -1251,11 +1251,27 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
   //     which would then leak into production enumeration. EXPECTED 0. (PostgREST has no regex
   //     filter, so match in JS over the small tenants/clients sets.)
   const reTest = /(^_)|legacy|test|_qa|_dryrun|_benchmark|_invariant|smoketest|fixture|sandbox/i;
+  // Allowlist: entities whose name matches the ^_ heuristic but are legitimately enumerable
+  // (ruled by functional evidence — active consumer/writer — not by name). Flagging any of these
+  // is_test would break their consumer:
+  //   __platform_security__            : WRAITH security-findings sentinel client (active writer,
+  //                                      migration 20260524040000); is_test would hide findings.
+  //   _invariant_tenant_a/b, _client_a/b : tenant-isolation TEST HARNESS — the fixture users must
+  //                                      see their own tenant/client or tenant-isolation.invariant.
+  //                                      test.ts fails its positive assertions (active consumer).
+  // Verified 2026-07-10 by functional evidence (active consumer + breakage-if-excluded).
+  const INTERNAL_OPS_ALLOWLIST = new Set([
+    '__platform_security__',
+    '_invariant_tenant_a', '_invariant_tenant_b',
+    '_invariant_client_a', '_invariant_client_b',
+  ]);
+  const isUnflaggedTest = (e: { name: string; is_test: boolean }) =>
+    reTest.test(e.name) && e.is_test !== true && !INTERNAL_OPS_ALLOWLIST.has(e.name);
   const { data: allTenantsForCheck } = await supabase.from('tenants').select('name, is_test');
   const { data: allClientsForCheck } = await supabase.from('clients').select('name, is_test');
   const unflaggedTestEntities =
-    (allTenantsForCheck || []).filter((t: { name: string; is_test: boolean }) => reTest.test(t.name) && t.is_test !== true).length +
-    (allClientsForCheck || []).filter((c: { name: string; is_test: boolean }) => reTest.test(c.name) && c.is_test !== true).length;
+    (allTenantsForCheck || []).filter(isUnflaggedTest).length +
+    (allClientsForCheck || []).filter(isUnflaggedTest).length;
 
   return {
     timestamp: now.toISOString(),
