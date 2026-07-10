@@ -89,6 +89,14 @@ Deno.serve(async (req) => {
                   .from('signals')
                   .insert({
                     client_id: client.id,
+                    // WO-COVERAGE (2026-07-10): stamp signal_origin so this
+                    // producer is visible to the watchdog + attribution reports.
+                    // Without this the row falls through the BEFORE INSERT
+                    // trigger's deriveOrigin heuristic to 'unknown-legacy',
+                    // which hid ~85-90/day of Kilbacks typosquat signals from
+                    // the system-watchdog:2966 probe that gates on
+                    // signal_origin === 'monitor-domains'.
+                    signal_origin: 'monitor-domains',
                     normalized_text: signalText,
                     category: 'phishing',
                     // #83 (2026-07-09) — Option A downgrade to LOW. The "legitimate_domain"
