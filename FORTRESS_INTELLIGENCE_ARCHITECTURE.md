@@ -449,6 +449,26 @@ Every learned artifact — source reliability score, pattern prior, knowledge ba
 
 Immediate corollary — CONTAMINATION AUDIT: determine which learning loops and knowledge writers consumed Cascade Energy signals while it was mislabeled active, what they wrote, and reverse or flag those beliefs. The 595 orphaned agent_investigation_memory rows are the same debt in the memory layer; they enter WO-DATA-INTEGRITY's adjacent scope.
 
+### 2b. Two-Layer Beliefs — Collective Learning Without Cross-Tenant Leakage
+
+The rule: patterns may generalize, facts may not.
+
+Beliefs exist in exactly two layers:
+
+- CLIENT-SCOPED beliefs — everything learned ABOUT a client: risk category weights, asset relevance, entity relationships, signal-to-outcome history. Written to that tenant's knowledge partition, readable only by agents operating in that tenant's context. Never crosses. This is the default layer for all learning-loop writes.
+- GLOBAL beliefs — facts about the world, not about a client: source reliability scores, detection tradecraft, signal-class base rates, injection patterns. Readable by all tenants' agents. Every client benefits; no client's facts are present.
+
+Promotion gate (client-scoped → global) is an explicit operation, never automatic. The test: could a competitor of the contributing client read this belief and learn anything about that client? Two enforcement rules:
+
+1. ABSTRACTION — promoted beliefs are stripped of entities, assets, locations, and identifiers; generalized to pattern level. "Decommissioned sites see recurring theft at elevated rates" promotes; "site B-089-J was hit twelve times" does not, regardless of phrasing.
+2. CORROBORATION — prefer promotion only for patterns observed independently across multiple tenants or corroborated by public data. Single-tenant observations are presumptively client facts.
+
+Enforcement rides on Belief Provenance (§2): every belief row carries tenant_scope and its evidence trail, so a global belief citing single-tenant evidence is a detectable invariant violation — a watchdog probe, not a policy hope. Promotion proposals are an operator worklist initially; a rules-gated pipeline only after safe-promotion patterns are established.
+
+Commercial statement of this architecture: network effects without data commingling. Each client makes the collective tradecraft smarter; no client's data touches another's. The learning loop is owned per-client at the fact layer and owned by Silent Shield at the pattern layer — by architecture, not by promise.
+
+> First enforcement action (2026-07-10): the Cascade belief containment (80 synthetic beliefs quarantined out of Petronas tenant retrieval) is this doctrine's first application — a single-tenant (indeed synthetic-tenant) fact set that had leaked into another tenant's retrieval scope, detected and contained. The WO-DATA-INTEGRITY contamination-audit brief is framed against this doctrine.
+
 ### 3. Tradecraft as Versioned Artifacts
 
 One tradecraft document per production agent, in-repo, KB-registered: persona, specialty, mission scope, permissions, model assignment, golden set. Changes ship as reviewed diffs gated by the agent's golden set at the agent level (model + knowledge + prompt together), not the bare model. Phase 3.5's synthetic loop, when built, proposes diffs to these documents — reviewable, testable, revertible.
