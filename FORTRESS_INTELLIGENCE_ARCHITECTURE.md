@@ -419,4 +419,49 @@ Moat statement: the generator is calibrated on proprietary incident-to-asset-to-
 
 ---
 
+## COGNITION LAYER — AGENT REGISTRY, BELIEFS, AND TRADECRAFT (doctrine; work orders to follow)
+
+> **NOT IN THE BUILD QUEUE.** Doctrine of record for how the cognition layer is governed. Nothing here enters the current build queue; the active sequence (WO-DATA-INTEGRITY, then Gate-3 per-producer, then #83 slice 2) is unchanged. Work orders below are ordered for when this is taken up.
+
+Premise: Fortress's durable asset is not models but the cognition layer above them — the agent roster, the knowledge bank, learned beliefs (source reliability, pattern priors), and investigative tradecraft. This layer gets the same discipline as data: provenance, scoping, versioning, verification.
+
+### 1. Agent Registry (upgrade the roster from cast list to control surface)
+
+Each roster entry becomes the single source of truth with enforced fields:
+
+- persona — voice and narration only. Editing persona is a brand decision.
+- specialty — what the agent is authoritative on; governs which knowledge partitions it may WRITE.
+- mission_scope — what it may touch; enforced, not descriptive. Editing scope is a security decision. Persona edits and scope edits must be separate operations.
+- data_classes (read) and tool_permissions (act) — split the current input_sources field; they are governed differently.
+- consult_graph — which agents it may consult_agent. Effective scope is the closure over this graph; the graph is mapped, reviewed, and minimal.
+- tenant_scope — enforced join to tenant IDs (formalizes the Client badge).
+- task_class + model assignment — from the model-routing WO.
+- knowledge_partitions — read/write partitions in the knowledge bank.
+- golden_set — the eval cases that gate changes to this agent.
+- status — production | experiment | fixture | retired. No unmarked entries.
+- version — tradecraft doc version currently deployed.
+
+First work item: ROSTER AUDIT. Inventory all agents; identify duplicates (multiple Oracle/Sentinel/Guardian/Wraith/Jack Ryan variants observed); classify status for every entry; retire or mark accordingly. Same doctrine as the Cascade finding: production registries contain only marked, verified entries.
+
+### 2. Belief Provenance
+
+Every learned artifact — source reliability score, pattern prior, knowledge bank entry, agent_investigation_memory row — must answer: what evidence produced you, which agent wrote you, under which tenant scope, when. Writes without provenance are prohibited (extends the Provenance Doctrine to cognition).
+
+Immediate corollary — CONTAMINATION AUDIT: determine which learning loops and knowledge writers consumed Cascade Energy signals while it was mislabeled active, what they wrote, and reverse or flag those beliefs. The 595 orphaned agent_investigation_memory rows are the same debt in the memory layer; they enter WO-DATA-INTEGRITY's adjacent scope.
+
+### 3. Tradecraft as Versioned Artifacts
+
+One tradecraft document per production agent, in-repo, KB-registered: persona, specialty, mission scope, permissions, model assignment, golden set. Changes ship as reviewed diffs gated by the agent's golden set at the agent level (model + knowledge + prompt together), not the bare model. Phase 3.5's synthetic loop, when built, proposes diffs to these documents — reviewable, testable, revertible.
+
+### Sequencing
+
+Nothing here enters the current build queue. Order when taken up:
+1. roster audit — cheap, high-yield, Cascade-pattern hygiene;
+2. contamination audit + agent memory orphans — inside WO-DATA-INTEGRITY adjacent scope;
+3. registry schema + enforcement — after WO-DATA-INTEGRITY completes;
+4. tradecraft extraction to versioned docs — incremental, production agents first;
+5. agent-level golden sets — prerequisite for the model-routing WO's swap testing.
+
+---
+
 *This document is the authoritative reference for Fortress AI architecture decisions. Update it when the architecture changes. The build plan is a living document — update status as phases complete.*
