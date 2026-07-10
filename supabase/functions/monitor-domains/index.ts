@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
 
     const { data: clients, error: clientsError } = await supabase
       .from('clients')
-      .select('id, name, organization, industry');
+      .select('id, name, organization, industry, monitored_domains');
 
     if (clientsError) throw clientsError;
 
@@ -58,12 +58,35 @@ Deno.serve(async (req) => {
 
     let signalsCreated = 0;
 
+    let clientsSkippedNoDomains = 0;
+
     for (const client of clients || []) {
       try {
+        // WO-COVERAGE (2026-07-10): fail-closed on empty monitored_domains.
+        // The prior behavior fabricated a baseDomain from client.organization/name
+        // (e.g. Kilbacks org="Personal" → typosquats of "personal") which produced
+        // ~85 low-severity noise signals/day with no relationship to any real
+        // client-owned domain. Doctrine: populated data before rubric — no scan
+        // when there's nothing real to compare against. Supersedes the interim
+        // Option A severity downgrade from #83 for unconfigured clients: they now
+        // produce nothing rather than low-severity noise. Petronas Canada + BC
+        // Place (the two clients with real monitored_domains) continue producing.
+        // Real MEDIUM/HIGH bands (resolving + active MX targeting a REAL client-
+        // owned domain) still awaits the approved rubric rebuild per
+        // WO-DATA-INTEGRITY.
+        const configuredDomains = Array.isArray(client.monitored_domains)
+          ? client.monitored_domains.filter((d: unknown): d is string => typeof d === 'string' && d.trim().length > 0)
+          : [];
+        if (configuredDomains.length === 0) {
+          clientsSkippedNoDomains++;
+          console.log(`Skipping ${client.name} — no monitored_domains configured (fail-closed per WO-COVERAGE 2026-07-10)`);
+          continue;
+        }
+
         const baseDomain = client.organization?.toLowerCase().replace(/\s+/g, '') || client.name.toLowerCase().replace(/\s+/g, '');
         const variants = generateTyposquatVariants(baseDomain);
-        
-        console.log(`Checking ${variants.length} domain variants for ${client.name}`);
+
+        console.log(`Checking ${variants.length} domain variants for ${client.name} (${configuredDomains.length} monitored domains configured)`);
 
         for (const variant of variants) {
           try {
@@ -153,7 +176,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Domain monitoring complete. Created ${signalsCreated} signals.`);
+    console.log(`Domain monitoring complete. Created ${signalsCreated} signals (${clientsSkippedNoDomains} clients skipped — no monitored_domains).`);
 
     if (historyEntry) {
       await supabase
