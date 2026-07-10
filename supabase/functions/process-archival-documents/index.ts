@@ -11,6 +11,13 @@ Deno.serve(async (req) => {
       return errorResponse('Files array is required', 400);
     }
 
+    // WO-DATA-INTEGRITY (2026-07-09): Provenance hard-reject (mirror ingest-signal #256).
+    // Archival documents must be client-owned; `clientId || null` + 'unassigned/' paths were the
+    // source of the 40 orphan rows. No client → no records written.
+    if (!clientId || typeof clientId !== 'string' || clientId.trim().length === 0) {
+      return errorResponse('client_id is required — archival documents must be client-owned. Ownerless uploads are rejected (Provenance Doctrine).', 400);
+    }
+
     console.log(`Processing ${files.length} archival documents`);
 
     const supabase = createServiceClient();
@@ -94,7 +101,7 @@ Deno.serve(async (req) => {
         // Upload file to storage
         console.log(`Uploading ${filename} to storage...`);
         const timestamp = Date.now();
-        const storagePath = `${clientId || 'unassigned'}/${timestamp}_${filename}`;
+        const storagePath = `${clientId}/${timestamp}_${filename}`;
         
         const { error: uploadError } = await supabase
           .storage
@@ -122,7 +129,7 @@ Deno.serve(async (req) => {
             content_text: text,
             content_hash: contentHash,
             tags: tags || ['archival'],
-            client_id: clientId || null,
+            client_id: clientId,
             uploaded_by: userId || null,
             date_of_document: dateOfDocument || null,
             is_archival: true,

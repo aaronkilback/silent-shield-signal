@@ -163,6 +163,12 @@ export const UnifiedDocumentUpload = () => {
       return;
     }
 
+    // WO-DATA-INTEGRITY (2026-07-09): archival documents must be client-owned (see the 40-orphan finding).
+    if (!clientId.trim()) {
+      toast.error("Select a client before uploading — archival documents must be client-owned");
+      return;
+    }
+
     setUploading(true);
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
     let successCount = 0;
@@ -178,7 +184,7 @@ export const UnifiedDocumentUpload = () => {
 
       try {
         const timestamp = Date.now();
-        const storagePath = `${clientId || 'unassigned'}/${timestamp}_${file.file.name}`;
+        const storagePath = `${clientId.trim()}/${timestamp}_${file.file.name}`;
         
         const { error: uploadError } = await supabase
           .storage
@@ -201,7 +207,7 @@ export const UnifiedDocumentUpload = () => {
               fileSize: file.file.size,
               mimeType: file.file.type,
               tags: tagArray,
-              clientId: clientId || null,
+              clientId: clientId.trim(),
               userId: user?.id || null,
               dateOfDocument: null
             }
@@ -345,12 +351,12 @@ export const UnifiedDocumentUpload = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="archive-client">Client ID (Optional)</Label>
+                <Label htmlFor="archive-client">Client ID <span className="text-destructive">(required)</span></Label>
                 <Input
                   id="archive-client"
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
-                  placeholder="Link to specific client"
+                  placeholder="Client this document belongs to (required)"
                 />
               </div>
 
@@ -420,7 +426,7 @@ export const UnifiedDocumentUpload = () => {
 
                 <Button
                   onClick={handleArchiveUpload}
-                  disabled={uploading || files.length === 0}
+                  disabled={uploading || files.length === 0 || !clientId.trim()}
                   className="flex-1"
                 >
                   <ArchiveIcon className="w-4 h-4 mr-2" />

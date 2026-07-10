@@ -93,6 +93,13 @@ export const ArchivalDocumentUpload = () => {
       return;
     }
 
+    // WO-DATA-INTEGRITY (2026-07-09): archival documents must be client-owned. Uploading with no
+    // client selected produced the 40 orphan rows (client_id NULL, 'unassigned/' paths).
+    if (!clientId.trim()) {
+      toast.error("Select a client before uploading — archival documents must be client-owned");
+      return;
+    }
+
     setUploading(true);
     cancelRef.current = false;
     const tagArray = tags.split(',').map(t => t.trim()).filter(t => t);
@@ -122,7 +129,7 @@ export const ArchivalDocumentUpload = () => {
       try {
         // Direct storage upload for ALL files
         const timestamp = Date.now();
-        const storagePath = `${clientId || 'unassigned'}/${timestamp}_${file.file.name}`;
+        const storagePath = `${clientId.trim()}/${timestamp}_${file.file.name}`;
         
         // Upload directly to storage
         const { error: uploadError } = await supabase
@@ -149,7 +156,7 @@ export const ArchivalDocumentUpload = () => {
               fileSize: file.file.size,
               mimeType: file.file.type,
               tags: tagArray,
-              clientId: clientId || null,
+              clientId: clientId.trim(),
               userId: user?.id || null,
               dateOfDocument: null
             }
@@ -275,12 +282,12 @@ export const ArchivalDocumentUpload = () => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="clientId">Client ID (Optional)</Label>
+            <Label htmlFor="clientId">Client ID <span className="text-destructive">(required)</span></Label>
             <Input
               id="clientId"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
-              placeholder="Link documents to specific client"
+              placeholder="Client this document belongs to (required)"
             />
           </div>
 
@@ -372,7 +379,7 @@ export const ArchivalDocumentUpload = () => {
 
             <Button
               onClick={handleBulkUpload}
-              disabled={uploading || files.length === 0}
+              disabled={uploading || files.length === 0 || !clientId.trim()}
               className="flex-1"
             >
               <Archive className="w-4 h-4 mr-2" />
