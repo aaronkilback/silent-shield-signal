@@ -862,7 +862,17 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
 
   const uploadFiles = async (): Promise<{ urls: string[], documentIds: string[] }> => {
     if (attachments.length === 0) return { urls: [], documentIds: [] };
-    
+
+    // WO-DATA-INTEGRITY (2026-07-10): the AI-chat upload path was the third writer producing
+    // NULL-client archival_documents (tag 'ai-chat-upload'). Client comes from the chat's own
+    // scope (selectedClientId), not a picker — if the assistant isn't scoped to a client, refuse
+    // the upload rather than write an ownerless archival doc. Mirrors the create-archival-record /
+    // process-archival-documents hard-reject.
+    if (!selectedClientId) {
+      toast.error("Select a client for the assistant before uploading documents — uploads must be client-scoped");
+      return { urls: [], documentIds: [] };
+    }
+
     setIsUploading(true);
     const uploadedUrls: string[] = [];
     const documentIds: string[] = [];
@@ -925,6 +935,7 @@ export const DashboardAIAssistant = ({ fullScreen = false, canvasMode = false, o
               file_type: file.type || 'application/octet-stream',
               file_size: file.size,
               storage_path: storageData.path,
+              client_id: selectedClientId,
               uploaded_by: user?.id,
               tags: ['ai-chat-upload'],
               content_text: `Processing document: ${file.name} (${fileSizeMB.toFixed(1)}MB)...`,
