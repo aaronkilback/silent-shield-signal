@@ -4,58 +4,90 @@
 
 ---
 
-## The Vision
+FORTRESS VISION v2 (2026-07-11, supersedes 2026-04-07 vision section)
 
-Fortress is not a dashboard. It is a **compounding intelligence organism**.
+CORE THESIS
 
-### What That Means in Practice
+Fortress is a compounding intelligence organism. An autonomous
+signal-to-incident pipeline where human feedback is training signal,
+not approval gate. The asset is not the agent framework, which is
+replicable. The asset is accumulated operational memory, the
+signal-to-decision-to-outcome flywheel, which is not.
 
-It is 3:47am. A Wet'suwet'en hereditary chief posts a video announcing a surprise blockade of the Coastal GasLink access road near Houston, BC. Within four minutes — before any human at PETRONAS is awake — Fortress has:
+THREE PILLARS (unchanged, ratified)
 
-- Detected the post through social monitoring
-- Cross-referenced the location against the asset registry (12km from active CGL construction)
-- Pulled the chief's historical activity from the entity graph — three prior blockades, escalation pattern, average 72h duration
-- Checked weather: -18°C overnight (historically accelerates resolution)
-- Scanned for corroborating signals — two other social accounts reposting, a CBC journalist following the account
-- Computed confidence score: 0.84 → threshold exceeded → incident created automatically with full provenance chain
+1. Immutable event chain. Nothing deleted, everything traceable.
+2. Bayesian confidence scoring. Signals earn incident status.
+3. Outcome feedback loop. Every closed incident improves the next
+   decision.
 
-The duty officer's phone at 3:51am shows not an alert but a **briefing**:
+EMERGENT PROPERTIES (new, these are consequences of the pillars,
+not features to build)
 
-> *"Confirmed blockade, CGL access road km 42 near Houston. High confidence. Estimated 40-60 personnel. LOCUS-INTEL recommends liaison contact with CGL site manager within 2 hours. Historical pattern suggests 48-72h duration. Weather forecast favors resolution. No credible escalation indicators."*
+Retroactive intelligence. Because nothing is deleted and everything
+is re-scorable, new signals rewrite the meaning of old ones.
+Dismissed does not mean dead, it means dormant. The archive
+appreciates. Data collected in January is worth more in July and
+more again next year. Every new client and feed makes existing
+history smarter.
 
-The duty officer types one word: "Acknowledged."
+Absence detection. A calibrated system with baselines treats
+silence as data. A quiet actor, a stopped pattern, a dead feed are
+signals. WO-CANARY is the inward-facing primitive. The outward-
+facing version, baselining expected normal per entity and per site
+and alerting on deviation toward quiet, is a roadmap item.
 
-That single feedback event writes back. The source reliability score for that social monitoring channel goes up fractionally. The confidence threshold calibration improves. The pattern for Wet'suwet'en blockades gets stronger.
+Synthetic experience. Phase 3.5 decouples system experience from
+history. The system trains on ten thousand campaigns that never
+happened and carries the pattern memory into the one world that
+exists. Detection capability is no longer capped by the incident
+rate of reality.
 
-Six months later, Fortress detects the **precursor** — not the blockade, but the pattern that precedes one. A cluster of private messages between known activists, a spike in searches for CGL site locations, a land defenders forum post asking about road conditions. Confidence: 0.61 — below the incident threshold. Signal enters monitored queue. Agents watch it. Three days later the blockade happens and the confidence score retrospectively recalibrates. Next time the precursor appears, confidence will be 0.74. One day it exceeds 0.70 and Fortress creates an incident **before the blockade begins**.
+Behavioral identity. With sufficient sensor density, actors who
+never show a face or plate are bound in the entity graph by how
+they move. Gait, dwell time, approach angles, timing rhythms,
+driving style. Identity made of behaviour. You can mask your face,
+you cannot mask your habits.
 
-That is early cancer detection. That is compounding intelligence.
+BUILD SEQUENCE (extended)
 
----
+Phase 1  Foundation. Complete.
+Phase 2  Confidence. Complete.
+Phase 3  Feedback loop.
+Phase 3.5  Synthetic Intelligence Loop. Committed.
+Phase 4  Entity graph.
+Phase 5  Nervous system. Connected sensing in. Sensors, vehicles,
+         cameras, wearables, drone feeds become graph inputs.
+         Physical objects gain object permanence, the household
+         becomes one entity with one combined threat surface.
+Phase 6  Actuation. Connected response out. Confidence thresholds
+         trigger physical and digital actions, gates, cameras,
+         lighting, routing, pre-positioning. The best intervention
+         is invisible to the principal.
 
-## Three Pillars
+Each phase verified before the next begins. No exceptions.
 
-### 1. Immutable Event Chain
-Nothing is ever deleted. Everything is traceable. Every signal ingested, every dedup decision, every relevance gate score, every incident created, every agent dispatched, every feedback submitted — permanently recorded. You can always answer: what signal created this incident, what was in that signal, where did it come from, what did the agent conclude, was the conclusion right.
+DOCTRINE PREREQUISITES (must exist before code)
 
-### 2. Bayesian Confidence Scoring
-Signals earn their way to incidents. No single AI boolean decides. Confidence is computed from multiple independent factors — source reliability history, corroboration count, relevance gate score, entity proximity to known assets — and only signals exceeding a threshold automatically create incidents. Below threshold: monitored queue. Agents watch for corroborating signals. Confidence updates as new evidence arrives.
+Consent architecture. Monitoring a principal's body, family, or
+household is a privacy regime, not a feature. Explicit consent
+schema and contract language precede any Phase 5 ingestion of
+personal telemetry. Done right this is a moat competitors cannot
+retrofit. Done casually it is a lawsuit.
 
-### 3. Outcome Feedback Loop
-Every closed incident teaches the system. When an incident closes, the outcome — legitimate, false positive, duplicate, escalated — writes back to the signal that created it, adjusting source reliability scores and relevance gate thresholds. Human feedback is the training signal, not the approval gate. The loop runs nightly. The system gets measurably more accurate every week.
+Actuation ruling. A section 2b level doctrine decision defining
+which actions may fire without a human, at what confidence, with
+what rollback, before any Phase 6 code exists.
 
----
+COMMERCIAL ENDGAME
 
-## Core Principles
-
-| Principle | What It Means |
-|---|---|
-| **Autonomous by default** | Humans provide feedback, not approvals. The system acts; humans calibrate. |
-| **Human feedback = training signal** | Every analyst action (acknowledge, close, flag) is a data point that improves future decisions. |
-| **No hard deletes** | Soft deletes only. Evidence is never destroyed. Root cause diagnosis must always be possible. |
-| **Provenance required** | Every incident traces to a real source. No orphaned incidents. |
-| **Confidence before action** | Below threshold = monitored, not ignored. Above threshold = acted on. |
-| **Early detection over false precision** | Catch weak signals early. Let confidence build. Better a monitored signal that becomes an incident than a missed threat. |
+The feedback loop run long enough produces calibrated probabilities
+with a verifiable track record. Site, window, likelihood, proven
+honest over time. That is actuarial data. It reframes physical
+security from cost centre to priceable risk and expands the buyer
+pool beyond protective intelligence consolidators to underwriters.
+Exit thesis remains 4 to 7x ARR, 10M ARR target, 25 principal hard
+cap, but the actuarial layer is the multiple expander.
 
 ---
 
