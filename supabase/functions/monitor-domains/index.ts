@@ -4,8 +4,8 @@ import { correlateSignalEntities } from '../_shared/correlate-signal-entities.ts
 // Common typosquatting patterns
 function generateTyposquatVariants(domain: string): string[] {
   const variants: string[] = [];
-  const baseDomain = domain.replace(/\.(com|net|org|io)$/, '');
-  
+  const baseDomain = domain.replace(/\.(com|net|org|io|ca)$/, '');
+
   // Character substitution
   const substitutions: Record<string, string[]> = {
     'o': ['0'],
@@ -14,7 +14,7 @@ function generateTyposquatVariants(domain: string): string[] {
     's': ['5'],
     'a': ['@']
   };
-  
+
   for (const [char, subs] of Object.entries(substitutions)) {
     if (baseDomain.includes(char)) {
       for (const sub of subs) {
@@ -22,12 +22,26 @@ function generateTyposquatVariants(domain: string): string[] {
       }
     }
   }
-  
+
   // Common prefixes/suffixes
   variants.push(`${baseDomain}-secure`, `${baseDomain}-login`, `${baseDomain}-support`);
   variants.push(`secure-${baseDomain}`, `login-${baseDomain}`, `verify-${baseDomain}`);
-  
+
   return variants.slice(0, 10);
+}
+
+// WO-COVERAGE priority 1c (2026-07-11): parse a real client-owned domain like
+// "petronas.ca" or "coastalgaslink.com" into { label, tld } so we can typosquat
+// the LABEL and reattach the ORIGINAL TLD. Prior behavior fabricated a base
+// string from client.organization ("Petronas Canada Ltd." → "petronascanadaltd")
+// and hardcoded .com — the sensor was aimed at fiction. Now we typosquat the
+// actual monitored domains, TLD-preserving, so pretronas.ca / petr0nas.ca get
+// checked instead of petronascanadaltd.com variants.
+function splitLabelTld(domain: string): { label: string; tld: string } | null {
+  const clean = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  const lastDot = clean.lastIndexOf('.');
+  if (lastDot <= 0 || lastDot === clean.length - 1) return null;
+  return { label: clean.substring(0, lastDot), tld: clean.substring(lastDot + 1) };
 }
 
 Deno.serve(async (req) => {
@@ -83,87 +97,98 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        const baseDomain = client.organization?.toLowerCase().replace(/\s+/g, '') || client.name.toLowerCase().replace(/\s+/g, '');
-        const variants = generateTyposquatVariants(baseDomain);
+        console.log(`Checking typosquat variants of ${configuredDomains.length} real monitored_domains for ${client.name}`);
 
-        console.log(`Checking ${variants.length} domain variants for ${client.name} (${configuredDomains.length} monitored domains configured)`);
+        // WO-COVERAGE priority 1c (2026-07-11): typosquat each REAL monitored
+        // domain, not the fabricated client.organization/name string. The prior
+        // shape passed the fail-closed gate but still typosquatted fiction
+        // (Petronas's org "Petronas Canada Ltd." → "petronascanadaltd" variants
+        // in .com when the real domains are petronas.ca, petronas.com,
+        // progressenergy.com, lngcanada.ca, coastalgaslink.com). Zero false
+        // positives, but also zero true positives possible. Now: for each real
+        // monitored domain, split into label+TLD, typosquat the label, keep
+        // the original TLD. petronas.ca → petr0nas.ca / petrona5.ca / etc.
+        for (const realDomain of configuredDomains) {
+          const parsed = splitLabelTld(realDomain);
+          if (!parsed) {
+            console.warn(`Skipping malformed monitored_domain "${realDomain}" for ${client.name}`);
+            continue;
+          }
+          const { label, tld } = parsed;
+          const labelVariants = generateTyposquatVariants(label);
 
-        for (const variant of variants) {
-          try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 5000);
-            
-            // Check if domain is registered via DNS lookup (using Google DNS over HTTPS)
-            const response = await fetch(
-              `https://dns.google/resolve?name=${variant}.com&type=A`,
-              {
-                signal: controller.signal
-              }
-            ).finally(() => clearTimeout(timeout));
+          console.log(`  → ${realDomain}: ${labelVariants.length} label variants`);
 
-            if (response.ok) {
-              const data = await response.json();
-              
-              // If domain has DNS records, it's registered
-              if (data.Answer && data.Answer.length > 0) {
-                const signalText = `Suspicious Domain Detected: ${variant}.com - Potential typosquatting or phishing domain`;
-                
-                const { error: signalError } = await supabase
-                  .from('signals')
-                  .insert({
-                    client_id: client.id,
-                    // WO-COVERAGE (2026-07-10): stamp signal_origin so this
-                    // producer is visible to the watchdog + attribution reports.
-                    // Without this the row falls through the BEFORE INSERT
-                    // trigger's deriveOrigin heuristic to 'unknown-legacy',
-                    // which hid ~85-90/day of Kilbacks typosquat signals from
-                    // the system-watchdog:2966 probe that gates on
-                    // signal_origin === 'monitor-domains'.
-                    signal_origin: 'monitor-domains',
-                    normalized_text: signalText,
-                    category: 'phishing',
-                    // #83 (2026-07-09) — Option A downgrade to LOW. The "legitimate_domain"
-                    // this variant is compared against is FABRICATED from client.organization/
-                    // client.name (line ~63: "Petronas Canada" -> petronascanada.com, not the
-                    // real petronas.ca), so a registered typosquat of that guess is NOT a
-                    // justified high — it was the platform's single biggest severity-inflation
-                    // source (~465/wk at hardcoded high). A resolving lookalike of an UNVERIFIED
-                    // name-guess is low-confidence noise. Real MEDIUM/HIGH bands (resolving +
-                    // active MX targeting a REAL client-owned domain) are rebuilt on the approved
-                    // rubric ONLY AFTER clients.monitored_domains is populated (WO-DATA-INTEGRITY;
-                    // currently 1/10 active clients). Do not restore high without that data.
-                    severity: 'low',
-                    location: 'Domain Registration',
-                    raw_json: {
-                      platform: 'dns',
-                      suspicious_domain: `${variant}.com`,
-                      legitimate_domain: `${baseDomain}.com`,
-                      dns_records: data.Answer
-                    },
-                    status: 'new',
-                    confidence: 0.75
-                  });
+          for (const variant of labelVariants) {
+            const suspiciousDomain = `${variant}.${tld}`;
+            // Skip the exact legitimate domain (a variant might reproduce it
+            // in edge cases — e.g. label already contained numerics).
+            if (suspiciousDomain === realDomain) continue;
 
-                if (!signalError) {
-                  signalsCreated++;
-                  console.log(`Created domain signal for ${client.name}: ${variant}.com`);
-                  
-                  await correlateSignalEntities({
-                    supabase,
-                    signalText,
-                    clientId: client.id,
-                    additionalContext: `Suspicious domain: ${variant}.com, Legitimate: ${baseDomain}.com`
-                  });
+            try {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 5000);
+
+              const response = await fetch(
+                `https://dns.google/resolve?name=${suspiciousDomain}&type=A`,
+                { signal: controller.signal }
+              ).finally(() => clearTimeout(timeout));
+
+              if (response.ok) {
+                const data = await response.json();
+
+                if (data.Answer && data.Answer.length > 0) {
+                  const signalText = `Suspicious Domain Detected: ${suspiciousDomain} - Potential typosquatting of ${realDomain}`;
+
+                  const { error: signalError } = await supabase
+                    .from('signals')
+                    .insert({
+                      client_id: client.id,
+                      // WO-COVERAGE (2026-07-10): stamp signal_origin so this
+                      // producer is visible to the watchdog + attribution reports.
+                      signal_origin: 'monitor-domains',
+                      normalized_text: signalText,
+                      category: 'phishing',
+                      // #83 severity guidance retained: 'low' until the MEDIUM/HIGH
+                      // rubric (resolving + active MX targeting a REAL client-owned
+                      // domain) ships. But now — post priority 1c — the
+                      // "legitimate_domain" comparison IS a real client-owned
+                      // domain, not a fabricated org string. When the rubric
+                      // arrives, these signals can honestly graduate to
+                      // MEDIUM/HIGH on the MX + activity evidence.
+                      severity: 'low',
+                      location: 'Domain Registration',
+                      raw_json: {
+                        platform: 'dns',
+                        suspicious_domain: suspiciousDomain,
+                        legitimate_domain: realDomain,
+                        dns_records: data.Answer,
+                      },
+                      status: 'new',
+                      confidence: 0.75,
+                    });
+
+                  if (!signalError) {
+                    signalsCreated++;
+                    console.log(`Created domain signal for ${client.name}: ${suspiciousDomain} vs ${realDomain}`);
+
+                    await correlateSignalEntities({
+                      supabase,
+                      signalText,
+                      clientId: client.id,
+                      additionalContext: `Suspicious domain: ${suspiciousDomain}, Legitimate: ${realDomain}`
+                    });
+                  }
                 }
               }
-            }
 
-            // Rate limiting between checks
-            await new Promise(resolve => setTimeout(resolve, 500));
+              // Rate limiting between checks
+              await new Promise(resolve => setTimeout(resolve, 500));
 
-          } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-              console.log(`DNS check timeout for ${variant}.com`);
+            } catch (error) {
+              if (error instanceof Error && error.name === 'AbortError') {
+                console.log(`DNS check timeout for ${suspiciousDomain}`);
+              }
             }
           }
         }
