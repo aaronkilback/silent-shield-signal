@@ -32,24 +32,32 @@ BEGIN
   -- Petronas SAR docs → vendor='3si', kind='periodic', period derived from
   --   filename date parsing. Failed parses fall back to kind='oneoff' with
   --   subject='review_period_undetermined' so the composite CHECK passes.
+  -- v2 (corrected): format-tagged CASE, not COALESCE. COALESCE-across-formats
+  -- fails because TO_TIMESTAMP with a non-matching format RAISES rather than
+  -- returning NULL, so the first mis-match aborts the whole COALESCE. First
+  -- attempt against prod correctly aborted with zero changes committed
+  -- ('invalid value "2023-07-14" for "Mon"'); this v2 pre-tags the format
+  -- so TO_TIMESTAMP is only called with the format we know matches. Comma-
+  -- stripping is done in the parsed CTE so 'Mon DD YYYY' handles both
+  -- "Oct 23 2020" and "Oct 23, 2020" filename variants.
   WITH parsed AS (
     SELECT
       ad.id,
       ad.filename,
-      -- Try to extract a date from the filename. Patterns handled:
-      --   "May 8 2026" / "Sep 2 2022" / "Oct 23, 2020"
-      --   "01 27 2023" (MM DD YYYY)
-      --   "03 31 2023" (MM DD YYYY)
-      -- Return NULL if no parse succeeds.
+      -- Format hint per row
       CASE
-        -- "Mon D YYYY" or "Mon D, YYYY"
+        WHEN ad.filename ~ '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}' THEN 'mon_dd_yyyy'
+        WHEN ad.filename ~ '\s\d{2}\s\d{2}\s\d{4}' THEN 'mm_dd_yyyy_numeric'
+        ELSE NULL
+      END AS date_format,
+      -- Extracted date string
+      CASE
         WHEN ad.filename ~ '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}' THEN
-          (regexp_match(ad.filename, '((Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4})'))[1]::text
-        -- "MM DD YYYY" (numeric)
+          REPLACE((regexp_match(ad.filename, '((Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4})'))[1], ',', '')
         WHEN ad.filename ~ '\s\d{2}\s\d{2}\s\d{4}' THEN
-          (regexp_match(ad.filename, '(\d{2})\s(\d{2})\s(\d{4})'))[3]::text || '-' ||
-          (regexp_match(ad.filename, '(\d{2})\s(\d{2})\s(\d{4})'))[1]::text || '-' ||
-          (regexp_match(ad.filename, '(\d{2})\s(\d{2})\s(\d{4})'))[2]::text
+          (regexp_match(ad.filename, '(\d{2})\s(\d{2})\s(\d{4})'))[3] || '-' ||
+          (regexp_match(ad.filename, '(\d{2})\s(\d{2})\s(\d{4})'))[1] || '-' ||
+          (regexp_match(ad.filename, '(\d{2})\s(\d{2})\s(\d{4})'))[2]
         ELSE NULL
       END AS date_str
     FROM public.archival_documents ad
@@ -65,20 +73,13 @@ BEGIN
     SELECT
       p.id,
       p.filename,
-      -- SPIN docs get 'other' vendor
       CASE WHEN p.filename ILIKE '%SPIN%' THEN 'other' ELSE '3si' END AS vendor,
-      -- Attempt to parse date_str into a timestamp; NULL on failure
+      -- Format-tagged parse: TO_TIMESTAMP only called with the format we know matches.
       CASE
         WHEN p.filename ILIKE '%SPIN%' THEN NULL
-        WHEN p.date_str IS NULL THEN NULL
-        ELSE (
-          -- Robust parse: try named-month first, then numeric fallback
-          COALESCE(
-            (SELECT TO_TIMESTAMP(p.date_str, 'Mon DD YYYY') AT TIME ZONE 'UTC'),
-            (SELECT TO_TIMESTAMP(p.date_str, 'Mon DD, YYYY') AT TIME ZONE 'UTC'),
-            (SELECT TO_TIMESTAMP(p.date_str, 'YYYY-MM-DD') AT TIME ZONE 'UTC')
-          )
-        )
+        WHEN p.date_format = 'mon_dd_yyyy' THEN TO_TIMESTAMP(p.date_str, 'Mon DD YYYY') AT TIME ZONE 'UTC'
+        WHEN p.date_format = 'mm_dd_yyyy_numeric' THEN TO_TIMESTAMP(p.date_str, 'YYYY-MM-DD') AT TIME ZONE 'UTC'
+        ELSE NULL
       END AS parsed_date
     FROM parsed p
   )
