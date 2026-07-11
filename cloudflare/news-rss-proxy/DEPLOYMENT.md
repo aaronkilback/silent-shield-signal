@@ -67,9 +67,17 @@ FROM src LEFT JOIN last_signal ls ON ls.source_id = src.id
 ORDER BY ls.last_signal_at DESC NULLS LAST;
 ```
 
-## Telemetry blindness — motivating case for the source health registry
+## Telemetry blindness — motivating cases for the source health registry
 
-`cron_heartbeat` for `monitor-rss-sources` over the 14-day window shows **355 runs, all `completed`, zero failures**. But per-source outcome tracking (this file's Query 1) shows 6-of-6 per-source failures on the same window. **Job-level heartbeat "succeeded" cannot substitute for per-source outcome tracking.** This is the motivating case to reference in `docs/platform-operations/wo-coverage-source-health-registry-spec.md` when WO-COVERAGE Phase 2 is scheduled.
+**Consolidate into `docs/platform-operations/wo-coverage-source-health-registry-spec.md` when WO-COVERAGE Phase 2 is scheduled.** Two independent cases observed during this triage session, both structurally the same defect: job-level heartbeat "succeeded" cannot substitute for per-outcome tracking.
+
+**Motivating case #1 — job-level succeeded vs per-source failure (2026-06-27 → 2026-07-11).**
+`cron_heartbeat` for `monitor-rss-sources` over the 14-day window shows **355 runs, all `completed`, zero failures**. But per-source outcome tracking (this file's Query 1) shows **6-of-6 per-source failures** on the same window. If a source health registry existed, each of the 6 sources would have flipped RED on its first 503 and stayed RED until it produced a signal again. Instead, the pipeline reported "healthy" for two weeks while 6 sources produced nothing.
+
+**Motivating case #2 — heartbeat counter vs signal persistence (2026-07-11T20:23:01–20:24:35).**
+`cron_heartbeat` for `monitor-rss-sources` in the 20:23 cycle reported `result_summary.signals_created = 2`. But querying `public.signals` for `created_at ∈ [20:23:00, 20:35:00]` returns **0 rows**. Counter reported 2, persistence shows 0. Same class as the 2026-05-23/24 social-monitor dry-up (`project_social_monitor_dryup.md`): heartbeat `signals_created` counts something (candidate? scanned? attempted?) that doesn't equal what actually persisted. If a source health registry tracked (a) per-source fetch outcome, (b) per-source items scanned, (c) per-source items persisted, this divergence would surface as a signal-loss triangle (scan > candidate > persist) instead of a phantom "we generated 2 signals" claim.
+
+**Shape both cases share:** the writer counts an intermediate optimistic value (job-completed / signals-created-counter) that survives even when the terminal outcome (per-source fetch / actual persisted row) failed. The registry design must count terminal outcomes, not intermediate optimism.
 
 ## One-feed test plan (per operator ruling 2026-07-11)
 
