@@ -3884,6 +3884,105 @@ Deno.serve(async (req) => {
         console.warn('[Watchdog] W-MISSION P1.4 check failed:', p14Err);
       }
 
+      // ──── P1.4-PAGEABLE — tier-aware undispatched alarm ─────────────
+      // Load-bearing catch for the INNER-JOIN-on-nullable-FK doctrine
+      // (feedback_inner_join_nullable_fk_doctrine.md, ratified 2026-07-11).
+      // Any tier='interruption' or tier='notification' alert that fails
+      // to dispatch — for ANY reason (JOIN drop, routing failure at
+      // generation, delivery worker failure) — fires here. The catch is
+      // the class, not any specific mechanism. Complements P1.4 (which
+      // is tier-agnostic and over-fires on log-tier accumulation).
+      //
+      // Ratified by operator 2026-07-11 after INC-ALERTS-BRIDGE forensic
+      // proved a critical NAAD Amber Alert (2026-07-10) sat undispatched
+      // because it routed to a fixture. Enforcement token:
+      // INC_ALERTS_BRIDGE_PAGEABLE_UNDISPATCHED_PROBE_2026_07_11.
+      try {
+        const nowMs = Date.now();
+        const intrCutoff = new Date(nowMs - 15 * 60000).toISOString();
+        const notifCutoff = new Date(nowMs - 60 * 60000).toISOString();
+
+        // Q1 — tier=interruption stuck past 15 min window (real routing).
+        const { data: intrStuck } = await supabase
+          .from('alerts')
+          .select('id, tier, created_at, recipient, incident_id')
+          .eq('tier', 'interruption')
+          .is('sent_at', null)
+          .lt('created_at', intrCutoff)
+          .not('recipient', 'like', 'unrouted:%')
+          .order('created_at', { ascending: true });
+
+        // Q2 — tier=notification stuck past 60 min window (real routing).
+        const { data: notifStuck } = await supabase
+          .from('alerts')
+          .select('id, tier, created_at, recipient, incident_id')
+          .eq('tier', 'notification')
+          .is('sent_at', null)
+          .lt('created_at', notifCutoff)
+          .not('recipient', 'like', 'unrouted:%')
+          .order('created_at', { ascending: true });
+
+        // Q3 — pageable-tier alerts whose recipient is a routing-failure
+        //      placeholder ('unrouted:*'). Generator-time failure — the
+        //      alert was minted with no routable recipient. Age-agnostic
+        //      because the failure is at generation, not delivery.
+        const { data: routingFail } = await supabase
+          .from('alerts')
+          .select('id, tier, created_at, recipient, incident_id')
+          .in('tier', ['interruption', 'notification'])
+          .is('sent_at', null)
+          .like('recipient', 'unrouted:%')
+          .order('created_at', { ascending: true });
+
+        const intrCount = (intrStuck ?? []).length;
+        const notifCount = (notifStuck ?? []).length;
+        const routingCount = (routingFail ?? []).length;
+
+        if (intrCount > 0) {
+          const oldestMin = Math.floor(
+            (nowMs - new Date(intrStuck![0].created_at).getTime()) / 60000,
+          );
+          missionFindings.push({
+            category: 'mission_health',
+            severity: 'critical',
+            title: `alert-delivery PAGEABLE: ${intrCount} tier=interruption alert(s) undispatched >15min (oldest ${oldestMin}min)`,
+            analysis: `${intrCount} row(s) with tier='interruption' have sent_at IS NULL and were created over 15 minutes ago (excluding 'unrouted:*' placeholder recipients — separate finding). A pageable interruption-tier alert that fails to dispatch is the failure mode INC-ALERTS-BRIDGE was elevated over. Doctrine: feedback_inner_join_nullable_fk_doctrine.md. Enforcement token: INC_ALERTS_BRIDGE_PAGEABLE_UNDISPATCHED_PROBE_2026_07_11.`,
+            plainEnglish: `${intrCount} interruption-tier alert(s) should have paged a human by now and did not. This is the exact class the Amber Alert incident proved could exist silently.`,
+            action: `Check the alert row(s), the client_alert_recipients allowlist, and alert-delivery worker logs. Do NOT bulk-dispatch aged rows; individual triage per row.`,
+          });
+        }
+
+        if (notifCount > 0) {
+          const oldestMin = Math.floor(
+            (nowMs - new Date(notifStuck![0].created_at).getTime()) / 60000,
+          );
+          missionFindings.push({
+            category: 'mission_health',
+            severity: 'high',
+            title: `alert-delivery PAGEABLE: ${notifCount} tier=notification alert(s) undispatched >60min (oldest ${oldestMin}min)`,
+            analysis: `${notifCount} row(s) with tier='notification' have sent_at IS NULL and were created over 60 minutes ago (excluding 'unrouted:*' placeholder recipients — separate finding). Notification-tier is the digest transport (email today); silent failure of the digest hides real signal from the operator. Enforcement token: INC_ALERTS_BRIDGE_PAGEABLE_UNDISPATCHED_PROBE_2026_07_11.`,
+            plainEnglish: `${notifCount} notification-tier alert(s) should have been delivered by now and were not.`,
+            action: `Check alert-delivery worker logs + operator-alert-bridge cron. Individual triage per row; do NOT bulk-dispatch aged rows.`,
+          });
+        }
+
+        if (routingCount > 0) {
+          const oldestMin = Math.floor(
+            (nowMs - new Date(routingFail![0].created_at).getTime()) / 60000,
+          );
+          missionFindings.push({
+            category: 'mission_health',
+            severity: 'critical',
+            title: `alert-delivery ROUTING-FAIL: ${routingCount} pageable alert(s) with 'unrouted:*' placeholder recipient (oldest ${oldestMin}min)`,
+            analysis: `${routingCount} row(s) with tier IN ('interruption','notification') carry recipient LIKE 'unrouted:*' — the generator minted a pageable alert but the routing lookup failed at emit time. The alert cannot be dispatched from this state; the client_alert_recipients allowlist must be reconciled OR the generator must refuse-to-emit when no verified recipient exists. Doctrine: three-resources — no verified recipient = attention debt at source. Enforcement token: INC_ALERTS_BRIDGE_PAGEABLE_UNDISPATCHED_PROBE_2026_07_11.`,
+            plainEnglish: `${routingCount} pageable alert(s) were generated with no routable recipient — the platform tried to page someone but no verified person existed to page. The 2026-07-10 NAAD Amber Alert to _benchmark_bcch fixture is the exemplar.`,
+            action: `Reconcile client_alert_recipients for any client whose alerts land here. Patch the alert generator to REFUSE-TO-EMIT pageable-tier alerts when no verified recipient exists (per generators-must-consume-adjacent-evidence).`,
+          });
+        }
+      } catch (p14pgErr) {
+        console.warn('[Watchdog] W-MISSION P1.4-PAGEABLE check failed:', p14pgErr);
+      }
+
       // ──── P1.5 — Quarantine rate spike ──────────────────────────────
       try {
         const { count: total24h } = await supabase
