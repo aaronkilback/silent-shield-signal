@@ -32,7 +32,7 @@ You are the Fortress System Watchdog Agent — an autonomous self-healing, self-
 
 ## CANONICAL DOCUMENTS (strategic context — keep this reflecting the repo's governing docs)
 Weigh findings against the platform's intent, set by these repo documents of record:
-- FORTRESS_INTELLIGENCE_ARCHITECTURE.md — architecture of record (build-plan Phases 1–4). Contains **Phase 3.5 — Synthetic Intelligence Loop** and the **Cognition Layer** doctrine (agent registry as control surface, belief provenance, tradecraft as versioned artifacts) as recorded NORTH STARS: NOT in the build queue, current sequence unchanged; do not flag their absence as a defect. Cognition Layer includes the Cascade contamination-audit corollary (which learning loops consumed Cascade signals) — folded into the WO-DATA-INTEGRITY agent_investigation_memory survey — and §2b Two-Layer Beliefs (client-scoped facts vs global patterns; explicit abstraction+corroboration promotion gate; a global belief citing single-tenant evidence is a future watchdog-probe invariant violation). The 2026-07-10 Cascade belief containment was §2b's first enforcement action.
+- FORTRESS_INTELLIGENCE_ARCHITECTURE.md — architecture of record. **Vision v2 dated 2026-07-11** (supersedes 2026-04-07 vision section). Build sequence EXTENDED: Phases 1–4 as before + **Phase 5 Nervous System** (connected sensing in — sensors, vehicles, cameras, wearables, drone feeds become graph inputs; object permanence; household as one combined threat surface) + **Phase 6 Actuation** (connected response out — confidence thresholds trigger physical + digital actions). **DOCTRINE PREREQUISITES gate future phases:** consent architecture (explicit consent schema + contract language) MUST exist before any Phase 5 code; actuation ruling (§2b-level doctrine defining which actions may fire without a human, at what confidence, with what rollback) MUST exist before any Phase 6 code. Watchdog SCAN RULE: **Phase 5 and Phase 6 concepts are ROADMAP-ONLY — do not treat them as in-scope features; do not flag their absence as a defect; do not surface them as missing capabilities.** Emergent properties documented in v2 (consequences of the pillars, not features to build): **retroactive intelligence** (nothing deleted + everything re-scorable → archive appreciates), **absence detection** (silence as data; WO-CANARY is the inward-facing primitive, outward-facing baselining is roadmap), **synthetic experience** (Phase 3.5 decouples system experience from history), **behavioral identity** (gait/dwell/rhythm bind actors in the entity graph without face or plate). Existing v1 doctrines preserved and unchanged: **Phase 3.5 Synthetic Intelligence Loop** + **Cognition Layer** (agent registry as control surface, belief provenance, tradecraft as versioned artifacts) remain recorded NORTH STARS — NOT in the build queue, current sequence unchanged, do not flag absence as a defect. Cognition Layer includes the Cascade contamination-audit corollary — folded into the WO-DATA-INTEGRITY agent_investigation_memory survey — and §2b Two-Layer Beliefs (client-scoped facts vs global patterns; explicit abstraction+corroboration promotion gate; a global belief citing single-tenant evidence is a future watchdog-probe invariant violation). The 2026-07-10 Cascade belief containment was §2b's first enforcement action.
 - STANDING_RULES.md — the seven standing rules, in force at all times (incl. Rule 7: after every code change, update this KB + self-validation probes, then deploy; nothing complete until watchdog + scans reflect current state). Not overridden by any vision/priority doc.
 - FORTRESS_ACCEPTANCE_CRITERIA.md — acceptance criteria.
 - ops/inventories/PRIORITY1-MODEL-DATA-EGRESS-2026-07-09.md — CANONICAL model-data-egress inventory (2026-07-09): every edge function that sends data to an external model API, with model / data-class / code-ref / task-class. Input for the governance one-pager + the future model-routing WO. Records EFFECTIVE destinations (ai-gateway MODEL_NORMALIZATION rewrites most gemini-* → gpt-4o-mini). Refresh when model-call sites change.
@@ -3981,6 +3981,41 @@ Deno.serve(async (req) => {
         }
       } catch (p14pgErr) {
         console.warn('[Watchdog] W-MISSION P1.4-PAGEABLE check failed:', p14pgErr);
+      }
+
+      // ──── P1.6 — BENCHMARK-SUBJECT quarantine tripwire ──────────────
+      // Flags archival_documents where the SUBJECT quarantine is non-
+      // functional (placeholder subject) BUT content has already been
+      // ingested (processing_status='completed'). That combination means
+      // benchmark content is retrievable while its quarantine cannot
+      // fire — the document silently participates in tenant retrieval
+      // during harness runs, defeating the held-out rule.
+      //
+      // Doctrine: WO-OUTPERFORM-3SI §8.1. Ratified by operator
+      // 2026-07-11 alongside the Petronas Special Security Report
+      // reclassification. Enforcement token:
+      //   WO_OUTPERFORM_3SI_BENCHMARK_SUBJECT_QUARANTINE_TRIPWIRE_2026_07_11
+      try {
+        const { data: tripwire } = await supabase
+          .from('archival_documents')
+          .select('id, filename, benchmark_subject, processing_status')
+          .like('benchmark_subject', '%pending_subject_review%')
+          .eq('processing_status', 'completed');
+
+        const count = (tripwire ?? []).length;
+        if (count > 0) {
+          const firstThreeNames = (tripwire ?? []).slice(0, 3).map((r: any) => r.filename).join(' · ');
+          missionFindings.push({
+            category: 'mission_health',
+            severity: 'high',
+            title: `benchmark-subject tripwire: ${count} document(s) with pending_subject_review AND processing_status=completed`,
+            analysis: `${count} archival_documents row(s) carry a placeholder benchmark_subject matching '%pending_subject_review%' AND have processing_status='completed'. Content has been ingested and derived chunks are retrievable, but the placeholder subject will not match any real harness generation subject — SUBJECT quarantine is non-functional. These documents silently participate in tenant retrieval during harness runs. Affected (first 3): ${firstThreeNames}. Enforcement token: WO_OUTPERFORM_3SI_BENCHMARK_SUBJECT_QUARANTINE_TRIPWIRE_2026_07_11.`,
+            plainEnglish: `${count} benchmark document(s) became retrievable with a non-functional subject quarantine. Content-based subjects must be authored before the next harness run touches their subject-space.`,
+            action: `Query archival_documents WHERE benchmark_subject LIKE '%pending_subject_review%' AND processing_status='completed' to list affected docs. Author content-based subjects (e.g., 'apr_2020_covid_ops_disruption') based on ingested content and UPDATE benchmark_subject. Do NOT run a harness generation on affected subject-space until subjects are content-authored.`,
+          });
+        }
+      } catch (p16Err) {
+        console.warn('[Watchdog] W-MISSION P1.6-BENCHMARK-SUBJECT-TRIPWIRE check failed:', p16Err);
       }
 
       // ──── P1.5 — Quarantine rate spike ──────────────────────────────
