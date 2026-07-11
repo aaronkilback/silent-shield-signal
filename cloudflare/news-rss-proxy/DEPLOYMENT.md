@@ -7,13 +7,15 @@
 | Field | Value |
 |---|---|
 | Worker name | `news-rss-proxy` |
-| Latest version | `f62f8bc1-5af6-4313-a6db-890266759aea` |
-| Deployed at | 2026-07-09T02:19:46.777Z (secret change) + 2026-07-09T02:19:58.392Z (initial deploy) |
+| Latest version | `0ca2e5a3-0416-4fef-ad6f-ac145893b30f` (redeployed 2026-07-11T20:39 UTC) |
+| Prior versions | 2026-07-09: `5df3373d` (Upload 02:19:45), `f62f8bc1` (Secret Change 02:19:46), `05e69789` (Upload 02:19:57). 2026-07-11: `d905bbf6` (Secret Change 20:02, this session's rotation). |
 | Deploy author | akilback@hotmail.com |
 | CF subdomain | `akilback.workers.dev` |
 | Public URL | `https://news-rss-proxy.akilback.workers.dev/` |
 | Response at `/` | HTTP 403 (correct — refuses unauthenticated requests) |
 | Secret name | `PROXY_SECRET` (secret_text) — rotated 2026-07-11 during triage |
+
+**Redeploy 2026-07-11T20:39 UTC (version `0ca2e5a3-0416-4fef-ad6f-ac145893b30f`), reason:** deployed artifact predated the branch's session-authored code (2026-07-09 deploys were 19 min after commit `8c8b5f2b` was authored on the machine). CF OAuth token could not read deployed script content to make the diff definitive (API returned 10405 "Method not allowed for this authentication scheme" — script-content READ needs `Workers Scripts:Read` on an API token, not the OAuth token wrangler stores). Redeploy anchors the divergence question: **deployed code now equals branch worker.js** (commit `8c8b5f2b`, Chrome/124.0 UA on line 54). Post-redeploy direct probe still returns 503 with Google's block page (cf-ray `-YVR` Vancouver POP) — strong signal that Google's block is upstream-of-UA (IP-range on CF Worker egress), not UA-driven. Waiting one `monitor-rss-sources` cron cycle before escalating to option D (region/query variance).
 
 ## Triage evidence
 
