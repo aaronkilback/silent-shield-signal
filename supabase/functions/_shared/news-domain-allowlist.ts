@@ -65,6 +65,17 @@ export const CURATED_REGIONAL_ADVOCACY: ReadonlyArray<string> = Object.freeze([
   // Canadian BC / Alberta regional (NE-BC energy corridor + client geographies)
   'citynews.ca', 'vancouversun.com', 'timescolonist.com', 'calgaryherald.com',
   'edmontonjournal.com', 'energeticcity.ca', 'alaskahighwaynews.ca', 'thenorthernview.com',
+  // WO-COVERAGE (2026-07-10) — three additions driven by 7d rejected-URL evidence on
+  // Petronas (Indigenous rights context) + BC Place (FIFA venue-security context).
+  // Reddit deferred to per-path substrate (r/britishcolumbia, r/energy scoped-only —
+  // blanket reddit.com would be another Kilbacks-firehose class of noise). Meta / X /
+  // TikTok / YouTube also deferred to per-path substrate (BC Gov, FIFA official,
+  // institutional accounts). Gate 3 relevance scoring runs downstream of allowlist
+  // admission (line 558 ingest-signal invoke), so blanket-scope hosts still get
+  // filtered on content — no extra keyword scoping needed here.
+  'amnesty.ca',              // Indigenous rights / LNG-corridor advocacy (Petronas)
+  'delta-optimist.com',      // Glacier Media community paper, Metro Vancouver (BC Place)
+  'foxsports.com',           // World Cup + Vancouver venue sports coverage (BC Place)
 ]);
 
 export interface AllowlistResolutionResult {

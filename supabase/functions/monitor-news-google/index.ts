@@ -421,7 +421,25 @@ Deno.serve(async (req) => {
       // Resume position WITHIN this client. Only the first iterated client
       // honors startQueryIdx0 (the cursor). Every subsequent client iterates
       // its full queries array from 0.
-      const startQueryIdx = (clientIdx === startIdx) ? startQueryIdx0 : 0;
+      //
+      // WO-COVERAGE cursor fix (2026-07-10): if the resumed startQueryIdx0
+      // exceeds THIS client's queries.length (previous run's cursor pointed
+      // past this client's current query list — happens when keyword count
+      // shrinks or client config changes between runs), reset to 0 and iterate
+      // the full array. Prior behavior silently stranded the client: the inner
+      // loop ran zero times AND (per historical heartbeat evidence) the
+      // per-tenant fold telemetry didn't surface the tenant. BC Place was the
+      // recurring victim — 47 monitoring_keywords generate ~100+ queries but
+      // resume cursors of 31, 85, etc. would leave BC Place effectively
+      // unscanned for that run. See WO-COVERAGE Phase 1b diagnostic.
+      let startQueryIdx = (clientIdx === startIdx) ? startQueryIdx0 : 0;
+      if (clientIdx === startIdx && startQueryIdx >= queries.length) {
+        console.warn(`[monitor-news-google] resume cursor query_index=${startQueryIdx} exceeds ${client.name}'s queries.length=${queries.length}; resetting to 0 (cursor drift)`);
+        startQueryIdx = 0;
+      }
+      if (clientIdx === startIdx) {
+        console.log(`[monitor-news-google] resume-first client ${client.name}: queries.length=${queries.length}, effective startQueryIdx=${startQueryIdx}`);
+      }
 
       // Execute Google Custom Search for each query
       for (let qIdx = startQueryIdx; qIdx < queries.length; qIdx++) {
@@ -437,6 +455,28 @@ Deno.serve(async (req) => {
           nextCursor = { client_id: client.id, query_index: qIdx };
           stopIdx = clientIdx;
           console.log(`[monitor-news-google] budget exhausted mid-client at ${clientIdx}/${totalClients}, queryIdx=${qIdx}/${queries.length}; next run resumes at ${nextCursor.client_id}@q${nextCursor.query_index}`);
+          // WO-COVERAGE (2026-07-10): fold this client's partial cycleStats
+          // into the per-tenant tracker BEFORE the labeled break — otherwise
+          // the tenant disappears from telemetry when the run exits mid-client,
+          // which was the shape of the BC-Place-stranded evidence.
+          {
+            const t = client.tenant_id as string;
+            const acc = trackGPerTenant[t] ?? {
+              urls_received: 0,
+              urls_rejected_domain: 0,
+              urls_passed_allowlist: 0,
+              overlay_failed: false,
+              used_overlay: false,
+              allowlist_size: allowlistResolution.allowlist.size,
+            };
+            acc.urls_received += cycleStats.urls_received;
+            acc.urls_rejected_domain += cycleStats.urls_rejected_domain;
+            acc.urls_passed_allowlist += cycleStats.urls_passed_allowlist;
+            acc.overlay_failed = acc.overlay_failed || allowlistResolution.overlay_failed;
+            acc.used_overlay = acc.used_overlay || allowlistResolution.used_overlay;
+            acc.allowlist_size = allowlistResolution.allowlist.size;
+            trackGPerTenant[t] = acc;
+          }
           break clientLoop;
         }
         const query = queries[qIdx];
@@ -620,6 +660,14 @@ Deno.serve(async (req) => {
       // PROD-S Track G — fold this client's cycleStats into the per-tenant
       // aggregate. Same tenant across multiple clients accumulates. Watchdog
       // checks per-tenant rejection ratio against this object.
+      //
+      // WO-COVERAGE (2026-07-10): fold is UNCONDITIONAL — every client-tenant
+      // pairing gets recorded even when cycleStats are all zero (empty
+      // queries array, cursor past end, zero URLs returned by Google). The
+      // per-tenant tracker's job is to report presence + coverage; a tenant
+      // absent from the tracker looks identical to a tenant that wasn't
+      // iterated, which is what stranded BC Place for weeks. Defense-in-depth
+      // against future early-continue paths that might skip this block.
       {
         const t = client.tenant_id as string;
         const acc = trackGPerTenant[t] ?? {
