@@ -1,6 +1,9 @@
 # news-rss-proxy — Deployment State + Triage Evidence (2026-07-11)
 
-**PR context:** This PR (#123, `feat/news-rss-proxy-worker`) originally opened for the CF-Worker proxy to bypass Google's 503/429 on `news.google.com/rss` from Supabase egress IPs (issue #81). Closed 2026-07-11T19:47:20Z by aaronkilback; reopened 2026-07-11 during triage session after evidence of 6/6 active sources at 503 supported the COMMIT + WIRE disposition.
+**PR context:** This PR (#123, `feat/news-rss-proxy-worker`) originally opened for the CF-Worker proxy to bypass Google's 503/429 on `news.google.com/rss` from Supabase egress IPs (issue #81).
+
+- **Closed** 2026-07-11T19:47:20Z by aaronkilback (self-close, no merge). **Close cause:** the operator's working belief at the time was that the Worker had never actually been deployed and that 5 Canadian RSS feeds had superseded the Google-News approach — matching the "SUPERSEDED" disposition drafted in the docs-bundle commit message.
+- **Reopened** 2026-07-11T20:02:46Z by aaronkilback. **Reopen cause:** `wrangler deployments list` confirmed the Worker WAS deployed 2026-07-09 (three versions, live at `news-rss-proxy.akilback.workers.dev`) AND Query 1 (this file) showed 6-of-6 active `news.google.com`-backed sources at HTTP 503 at 2026-07-11T19:08 — the underlying coverage problem the Worker was designed to address was still live, and the deployed artifact needed to be tracked on `main` regardless of whether the WIRE experiment succeeded.
 
 ## Deploy state (verified via wrangler)
 
@@ -79,11 +82,13 @@ ORDER BY ls.last_signal_at DESC NULLS LAST;
 
 **Shape both cases share:** the writer counts an intermediate optimistic value (job-completed / signals-created-counter) that survives even when the terminal outcome (per-source fetch / actual persisted row) failed. The registry design must count terminal outcomes, not intermediate optimism.
 
-## One-feed test plan (per operator ruling 2026-07-11)
+## Comparative experiment plan (per operator ruling 2026-07-11, replaces the earlier one-feed test)
 
-**Candidate:** `1a1b7341-0b85-417f-9f3f-34862b72641c` — BC Energy Regulator (safe tenant-scoped operational context, low signal-relevance blast radius, 19-day signal gap makes the improvement measurable).
+The one-feed test was upgraded to a comparative experiment after the first two post-UPDATE cron cycles (20:23, 20:53) failed on the proxy path while multiple direct-path sources succeeded in the same windows. Rather than diagnosing off a single-cycle outcome, we now compare proxy-vs-direct success rates across many cycles.
 
-**Repoint:** `sources.config.feed_url` changes from
+**Experiment layout:** 1 source on the proxy path (BC Energy Regulator, `1a1b7341-...`), 5 sources on direct `news.google.com` paths (Wilderness Committee, Activist Cash, EcoExposed, Canada National Observer, BC Activist Network Funding Watch). **No further feed changes** during the observation window.
+
+**Repoint (BCER only):** `sources.config.feed_url` changed at 2026-07-11T20:14:43 UTC from
 ```
 https://news.google.com/rss/search?q=BCER+OR+%22BC+Energy+Regulator%22&hl=en-CA&gl=CA&ceid=CA:en
 ```
@@ -92,21 +97,19 @@ to
 https://news-rss-proxy.akilback.workers.dev/rss/search?q=BCER+OR+%22BC+Energy+Regulator%22&hl=en-CA&gl=CA&ceid=CA:en&s=<PROXY_SECRET>
 ```
 
-Only BC Energy Regulator is repointed. The other 5 remain on direct URLs pending a separate operator go.
+**Observation window:** next 12–24 hours (~48–96 cron cycles at 15-min interval). Per cycle, capture per-source outcome (timestamp, `last_ingested_at` advance, `error_message` state). Build a comparison matrix: proxy-path success rate vs direct-path success rate across the same windows.
 
-**Pass criterion:** on the next `monitor-rss-sources` fetch cycle (every ~15 min), the BC Energy Regulator source must show:
-- `last_ingested_at` advanced
-- `error_message` empty
-- Items scanned > 0
-- At least one derived signal within the following ~24 h (or explicit "0 items in feed for this query today" if Google's own search returns no fresh items — Google would still return 200 with an empty feed)
+**Decision rule at window close:**
+- **Proxy meaningfully better than direct** → batch repoint the remaining 5 (with the queued rotation) proceeds.
+- **Proxy equal or worse** → the CF-egress approach is dead. Disposition: tear down the Worker + evaluate the paid-scraper fallback the original `worker.js` header comments anticipated.
+
+Either way, the decision lands on counted outcomes, not a single cycle.
 
 ## Security notes
 
 1. **Proxy secret rides in the query string (`?s=<PROXY_SECRET>`) inside `sources.config`.** This is acceptable given the worker's implicit host lock (worker.js only ever rebuilds `news.google.com` URLs, never accepts a target host from the caller — not an open proxy). Query-string secrets are visible to CF Access Logs and to Cloudflare's Analytics but not to callers of the worker or to the DNS layer. The secret has been rotated 2026-07-11 during this triage session.
-2. **Header-based auth (future hardening).** Repointing to headers (e.g., `X-Proxy-Secret`) removes the secret from URL/logs but requires monitor-rss-sources to attach a request header when fetching, which is a code change. Flagged as a follow-up item — not blocking this one-feed test.
+2. **Header-based auth (future hardening).** Repointing to headers (e.g., `X-Proxy-Secret`) removes the secret from URL/logs but requires monitor-rss-sources to attach a request header when fetching, which is a code change. Flagged as a follow-up item — not blocking this experiment.
 
-## Hold order
+## Hold state (during observation window)
 
-After the one-feed test passes on BC Energy Regulator: **do NOT repoint the other 5** without a separate go from the operator. The batch repoint is its own reviewed step.
-
-The local `~/.fortress-proxy-secret` file (0600 perms, 65 bytes) will be deleted after the one-feed test passes AND the remaining 5 feeds are ruled on.
+The local `~/.fortress-proxy-secret` file (0600 perms, 65 bytes) stays on disk until the observation window closes AND the disposition (batch repoint OR tear down) is executed. All 5 direct-path sources stay untouched during the window — the direct URLs ARE the control group.

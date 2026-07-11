@@ -2,9 +2,10 @@
  * news-rss-proxy — Cloudflare Worker fetch-proxy for Google News RSS (#81).
  *
  * WHY: Google returns 503/429 to Supabase datacenter egress IPs on news.google.com/rss, which
- * paused 14 client-relevant Google-News query feeds on 2026-04-12. Cloudflare's egress IP pool is
- * large/diverse; this Worker fetches news.google.com from CF and returns the RSS, so monitor-rss-
- * sources (running on Supabase) can reach it again by pointing the feed URL at this Worker.
+ * paused 4 Google-News query feeds on 2026-04-12 (per DEPLOYMENT.md Query 1: 1510eb4e, c347193d,
+ * 30944607, 9fb2c172). Cloudflare's egress IP pool is large/diverse; this Worker fetches
+ * news.google.com from CF and returns the RSS, so monitor-rss-sources (running on Supabase) can
+ * reach it again by pointing the feed URL at this Worker.
  *
  * SECURITY: host-locked to news.google.com (NOT an open proxy — no SSRF), plus an optional shared
  * secret. Read-only GET passthrough.
@@ -21,13 +22,14 @@
  *      recommended so others can't spend your CF quota.
  *   3. Note the Worker URL (e.g. https://news-rss-proxy.<acct>.workers.dev).
  *
- * ONE-FEED TEST (before repointing all 14): repoint ONE paused feed's sources.config.url to the
- * Worker URL, set that source status='active', and over ~24h watch:
+ * COMPARATIVE EXPERIMENT (2026-07-11, replaces the earlier one-feed test): repoint ONE active
+ * feed's sources.config.feed_url to the Worker URL, leave the others on direct news.google.com,
+ * and observe 12-24h of cron cycles for per-source success/503 outcomes:
  *   SELECT signal_origin, count(*) FROM public.signals
  *   WHERE signal_origin='monitor-rss-sources' AND created_at > now()-interval '1 day'
- *     AND source_id IN (SELECT id FROM sources WHERE config->>'url' LIKE '%workers.dev%') GROUP BY 1;
- * If it yields (Google served CF) → repoint + unpause the other 13. If still blocked (Worker
- * returns 503 from upstream) → fall back to option A (paid scraper proxy).
+ *     AND source_id IN (SELECT id FROM sources WHERE config->>'feed_url' LIKE '%workers.dev%') GROUP BY 1;
+ * Decision rule: proxy path meaningfully better than direct → batch repoint the actives.
+ * Proxy path equal or worse → tear down the Worker; evaluate the paid scraper fallback below.
  */
 export default {
   async fetch(request, env) {
