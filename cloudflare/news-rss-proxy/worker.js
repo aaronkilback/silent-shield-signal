@@ -1,35 +1,30 @@
 /**
- * news-rss-proxy — Cloudflare Worker fetch-proxy for Google News RSS (#81).
+ * news-rss-proxy — RETIRED 2026-07-13 (see DEPLOYMENT.md teardown record).
  *
- * WHY: Google returns 503/429 to Supabase datacenter egress IPs on news.google.com/rss, which
- * paused 4 Google-News query feeds on 2026-04-12 (per DEPLOYMENT.md Query 1: 1510eb4e, c347193d,
- * 30944607, 9fb2c172). Cloudflare's egress IP pool is large/diverse; this Worker fetches
- * news.google.com from CF and returns the RSS, so monitor-rss-sources (running on Supabase) can
- * reach it again by pointing the feed URL at this Worker.
+ * STATUS: worker deleted from CF account 2026-07-13T21:12 UTC via
+ *   `wrangler delete --name news-rss-proxy`. Route + secret gone. File preserved as inventory
+ *   (Twitter-monitor pattern) for future audit — do NOT redeploy without a new experiment.
  *
- * SECURITY: host-locked to news.google.com (NOT an open proxy — no SSRF), plus an optional shared
- * secret. Read-only GET passthrough.
+ * WHY RETIRED: 48h A/B experiment (2026-07-11T20:14 → 2026-07-13T20:38 UTC, 194 cron cycles) with
+ *   1 source on the proxy path and 5 on direct URLs, per the operator's comparative-experiment
+ *   ruling that replaced the earlier one-feed test:
+ *     - Proxy success rate:   1/194 ≈ 0.5%
+ *     - Direct success rate:  ~100% (all 5 direct sources' latest cron cycles succeeded)
+ *   Decision rule from `DEPLOYMENT.md` triggered: "Proxy equal or worse → tear down."
+ *   Google's block on news.google.com/rss is currently affecting CF Worker YVR egress *more* than
+ *   Supabase edge-function IPs, not less — the proxy path was the actively-blocked path, opposite
+ *   of the original hypothesis.
  *
- * REPOINTING: a feed URL of
- *     https://news.google.com/rss/search?q=Coastal+GasLink&hl=en-CA&gl=CA&ceid=CA:en
- * becomes (just swap the host + add the secret):
- *     https://<worker-host>/rss/search?q=Coastal+GasLink&hl=en-CA&gl=CA&ceid=CA:en&s=<PROXY_SECRET>
- * The Worker rebuilds the upstream news.google.com URL from the path + query (minus `s`).
+ * PAID SCRAPER FALLBACK — DEPRIORITIZED. The original file header (preserved below for reference)
+ *   anticipated a paid scraper fallback. Post-teardown ruling: transport is NOT the bottleneck.
+ *   All 6 sources produced 0 signals over 48h even with 100% direct-path fetch success. The
+ *   pipeline downstream of successful fetches (dedup / relevance filter / signal creation) is
+ *   where items die. Fix the pipeline before spending on a paid-scraper transport layer.
  *
- * DEPLOY (operator — I have no CF auth):
- *   1. `wrangler deploy` this file (or paste into a new Worker in the CF dashboard).
- *   2. Set a secret: `wrangler secret put PROXY_SECRET` (any long random string). Optional but
- *      recommended so others can't spend your CF quota.
- *   3. Note the Worker URL (e.g. https://news-rss-proxy.<acct>.workers.dev).
- *
- * COMPARATIVE EXPERIMENT (2026-07-11, replaces the earlier one-feed test): repoint ONE active
- * feed's sources.config.feed_url to the Worker URL, leave the others on direct news.google.com,
- * and observe 12-24h of cron cycles for per-source success/503 outcomes:
- *   SELECT signal_origin, count(*) FROM public.signals
- *   WHERE signal_origin='monitor-rss-sources' AND created_at > now()-interval '1 day'
- *     AND source_id IN (SELECT id FROM sources WHERE config->>'feed_url' LIKE '%workers.dev%') GROUP BY 1;
- * Decision rule: proxy path meaningfully better than direct → batch repoint the actives.
- * Proxy path equal or worse → tear down the Worker; evaluate the paid scraper fallback below.
+ * ORIGINAL HEADER (preserved as inventory) — was the Cloudflare Worker fetch-proxy for Google
+ * News RSS (#81). Rationale, security, repointing, and comparative-experiment scaffolding all
+ * followed here. Retained in git history at any commit before this one (last live version:
+ * `0ca2e5a3-0416-4fef-ad6f-ac145893b30f`, deployed 2026-07-11T20:39 UTC).
  */
 export default {
   async fetch(request, env) {
