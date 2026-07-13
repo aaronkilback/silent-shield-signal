@@ -1,4 +1,27 @@
-# news-rss-proxy — Deployment State + Triage Evidence (2026-07-11)
+# news-rss-proxy — RETIRED 2026-07-13
+
+## TEARDOWN RECORD (2026-07-13T21:12 UTC)
+
+**Worker deleted:** `wrangler delete --name news-rss-proxy` from repo root. Account listing confirms `news-rss-proxy` GONE; `silent-shield-signal` (Fortress AI prod frontend) unaffected. Route + `PROXY_SECRET` destroyed with the worker. `~/.fortress-proxy-secret` removed from local disk. BCER `sources.config.feed_url` reverted to direct `news.google.com` at 2026-07-13T21:00:52 UTC.
+
+**Comparative experiment result (2026-07-11T20:14:43 UTC → 2026-07-13T20:38:02 UTC, 194 cron cycles):**
+
+| Path | Sources | Successful fetches (of 194 cycles) | Success rate |
+|---|---|---|---|
+| PROXY | 1 (BC Energy Regulator) | 1 (only advance was ~9h post-repoint at 2026-07-12 05:38:19 UTC) | ~0.5% |
+| DIRECT | 5 (Wilderness Committee, Activist Cash, EcoExposed, Canada National Observer, BC Activist Network Funding Watch) | ~100% (all 5 sources' `last_ingested_at` = latest cron cycle) | ~100% |
+
+**Decision-rule outcome:** "Proxy equal or worse → tear down the Worker + evaluate paid-scraper fallback." Proxy was clearly WORSE — not equal — so teardown executed.
+
+**Paid-scraper fallback: DEPRIORITIZED.** Ancillary finding from the same window: all 6 sources produced 0 persisted signals over 48h despite 100% direct-path fetch success. **Transport is not the bottleneck.** The pipeline downstream of successful fetches — dedup / relevance filter / signal creation — is where items die. Fix the pipeline before spending on a paid-scraper transport layer.
+
+**Preserved as inventory (Twitter-monitor pattern):** `worker.js` and this `DEPLOYMENT.md` stay in `main` as historical record. Last live version: `0ca2e5a3-0416-4fef-ad6f-ac145893b30f`, deployed 2026-07-11T20:39 UTC. To re-enable if a future experiment justifies it: new operator decision required + fresh `PROXY_SECRET` + fresh deploy + new comparative experiment.
+
+**Incident during teardown:** the `wrangler delete` command initially misfired against `silent-shield-signal` (Fortress AI prod frontend Worker) instead of `news-rss-proxy`. Root cause: `cloudflare/news-rss-proxy/wrangler.toml` did not exist on the session's working branch (branch pre-dated PR #123 merge that introduced the file), so wrangler walked up the tree and matched `wrangler.toml` at repo root (`name = "silent-shield-signal"`). Detected within seconds via account listing; corrective redeploy from `main` at 2026-07-13T21:11:01 UTC (version `cfa49e38-d404-477c-ac2f-f9daf4821a0c`). Fortress AI prod frontend never went down (edge cache served through the ~10 min gap). Full incident: `docs/platform-operations/incidents/INC-WRANGLER-MISFIRE-2026-07-13.md`.
+
+---
+
+## Original deployment record (below preserved for history)
 
 **PR context:** This PR (#123, `feat/news-rss-proxy-worker`) originally opened for the CF-Worker proxy to bypass Google's 503/429 on `news.google.com/rss` from Supabase egress IPs (issue #81).
 
