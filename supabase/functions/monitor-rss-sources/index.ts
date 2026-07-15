@@ -69,9 +69,15 @@ interface RSSItem {
   pubDate: string;
 }
 
+// Regex allows optional attributes on the opening <item ...> tag (e.g., CBC's
+// `<item cbc:type="story" cbc:deptid="..." cbc:syndicate="true">`). The old
+// `/<item>/` matched only the bare tag and silently dropped every namespaced
+// item — 60+ items/day across 3 CBC feeds for ≥16 days before it was caught
+// by curl+grep. See docs/platform-operations/wo-coverage-source-health-registry-spec.md
+// motivating case #3. Unit tests in parse-rss_test.ts.
 function parseRSS(xmlText: string): RSSItem[] {
   const items: RSSItem[] = [];
-  const itemMatches = xmlText.matchAll(/<item>([\s\S]*?)<\/item>/g);
+  const itemMatches = xmlText.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/g);
   
   for (const match of itemMatches) {
     const itemXml = match[1];
