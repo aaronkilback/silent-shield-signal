@@ -28,6 +28,14 @@
 
 ## Why deferred
 
+**Approach validation (2026-07-15 operator ruling, verbatim):**
+
+> keyword-CSE approach validated as structurally low-yield 2026-07-15 (~4800 items/14d, 100% correctly rejected); successor approach is actor-list-based collection, scope when unblocked.
+
+The 100% rejection rate is NOT a bug — the classifier is correctly filtering against weak keyword-CSE queries. The real gap is that CSE-by-keyword against a tenant name like "BC Place" or "Trent Reznor" returns generic mentions across the internet, of which almost none are security-relevant. Actor-list-based collection (defined targets → their public accounts → their content) inverts that: known-relevant sources on the front end instead of relevance filtering on the back end. This makes classifier rejections rare-by-construction rather than 100%-by-construction.
+
+**Consequence for SOCIAL-ENRICH:** the enrichment work (Item 1 Instagram media capture, Item 2 OG-image wiring) targets a pipeline whose input shape is about to change. Build it against the successor actor-list pipeline, not against the current keyword-CSE loop.
+
 Corrected 14-day yield audit (2026-07-15) after precise `source_type='social_media'` filter:
 
 | Monitor | 14d runs | 14d docs (`source_type='social_media'` or 'web') | 14d signals |
