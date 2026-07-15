@@ -6,6 +6,47 @@
 
 ---
 
+## 0. Motivating cases
+
+Three-for-three: every silent-failure this registry would have caught on day 1 that operator caught by other means.
+
+### Case #1 — job-level succeeded vs per-source failure (2026-06-27 → 2026-07-11)
+
+`cron_heartbeat` for `monitor-rss-sources` over a 14-day window showed **355 runs / all `completed` / 0 failed**. Per-source outcome tracking (curl + grep) showed **6-of-6 per-source failures** across the news-google-backed sources for the same window. A source-health registry with per-source freshness + docs-produced counters would have flipped each source RED on its first failure and stayed RED until it produced. Instead, the pipeline reported "healthy" for two weeks while 6 sources produced nothing.
+
+### Case #2 — heartbeat counter vs signal persistence (2026-07-11 20:23, 20:53)
+
+Two consecutive `monitor-rss-sources` cron cycles reported `result_summary.signals_created = 2`. Querying `public.signals` for the same windows returned **0 rows**. The counter and the persistence were talking about different things — investigation later found the counter is misnamed (it counts `ingested_documents` inserts, not signals). Same defect class as the 2026-05-23/24 social-monitor dry-up: heartbeat counters count intermediate optimistic values, not terminal outcomes. Registry design MUST count terminal outcomes (per-source items persisted, per-source signals landed), not counter increments.
+
+### Case #3 — silent parse-time drop of namespaced RSS items (2026-06-29 → 2026-07-15, ≥16 days)
+
+`last_ingested_at` advancing every 15 min. `error_message` empty. `cron_heartbeat.status = completed` every run. `sources.status = active`. `signals_created` counter incrementing (misleadingly, per Case #2). **Zero documents persisted for 16+ days** across 3 CBC feeds (`7c8dcc58` BC, `aad42d5c` Calgary, `fbb31305` Canada National).
+
+Live curl of the feeds at 2026-07-15 showed 20 fresh items each, published today. Root cause: `parseRSS()` regex at `monitor-rss-sources:74` required literal `<item>` on the opening tag; CBC's items opened with `<item cbc:type="story" cbc:deptid="..." cbc:syndicate="true">`. Silent parse-time discard, 60+ items/day evaporated before ANY counter could increment.
+
+**Surfacing method:** out-of-band `curl + grep '<item[> ]'` on the live feeds. No existing telemetry surfaced it. Registry's Phase 1 minimal columns (`last-successful-fetch`, `last-error`, **`docs-produced-30d`**) would have flagged this on day 1 — 3-for-3 on the priority argument.
+
+Also: the same identical buggy regex `/<item>([\s\S]*?)<\/item>/g` exists in **7 other edge functions** (ingest-expert-media, monitor-news, monitor-community-outreach, monitor-regional-apac, monitor-threat-intel, monitor-canadian-sources, monitor-court-registry). Any one of them may be silently dropping items from feeds with namespaced attributes right now. Registry probes gate on `docs_produced_30d < expected_daily_min` — they don't care which producer's regex is broken, they just fire and let the operator investigate.
+
+### The shape of the zero (design requirement — operator ruling 2026-07-15)
+
+> Both counters (documents and signals) would be 0 regardless of the parser bug — but the shape of that 0 differs: parser-bug 0 vs classifier-drop 0 vs Google-News-empty 0 vs feed-genuinely-empty 0. Current telemetry can't distinguish them.
+
+This is the design requirement. The registry MUST expose enough per-source instrumentation to distinguish these four zero-shapes:
+
+- **parser-0** — fetch succeeded, items in wire, parser dropped them (Case #3)
+- **classifier-0** — fetch succeeded, items parsed, classifier decided "no signal" or "no client match" (correct behavior; measured yet distinct from failure)
+- **empty-feed-0** — fetch succeeded, feed returned 0 items (source publishing nothing right now)
+- **feed-blocked-0** — fetch failed (403/503/blocked); items would have existed if fetch succeeded (this one IS caught today by `error_message`)
+
+At minimum, three counters per source per fetch: `items_in_wire` (from raw feed parsing), `items_persisted_to_ingested_documents`, `signals_landed_from_this_source_in_window`. All three going to 0 IS a producer death signal, but ONE going to 0 while others are non-zero pinpoints the layer.
+
+### Corroborating positive control — Energeticcity.ca (per operator ruling 2026-07-15, item 5)
+
+`Energeticcity.ca` (`7f756c88-faf0-4bdb-94c7-21dbe528740f`): **143 docs / 25 signals in 7 days.** Every failure found this week is at or before the fetch/parse/persist boundary, not in classification. **Every future coverage investigation should scope to that boundary first** — the ingest → classify → signal path works end-to-end when a feed delivers real items. If a source produces 0 signals but Energeticcity.ca continues producing 25/week, the fault is upstream of classification.
+
+---
+
 ## 1. What we're building
 
 Two coupled artifacts:
