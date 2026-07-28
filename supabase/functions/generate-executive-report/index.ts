@@ -261,6 +261,8 @@ Deno.serve(async (req) => {
       .lte('opened_at', periodEnd.toISOString())
       .neq('is_test', true)
       .is('deleted_at', null)
+      // G(b): exclude superseded (merged-away duplicate) incidents.
+      .is('superseded_by', null)
       .order('opened_at', { ascending: false });
 
     if (incidentsError) throw incidentsError;
