@@ -201,20 +201,48 @@ Deno.serve(async (req) => {
     const cancelledRe = /\b(cancel(?:led|ed)?|lifted|all\s*clear|stand\s*down|rescinded)\b/i;
     freshSignals = freshSignals.filter((s: any) => !cancelledRe.test(s.title ?? ''));
 
+    // F. INTERIM GENERATOR-LEVEL DEDUP (consolidated ruling — temporary until
+    // upstream dedup): merge claims sharing entity+event+date instead of
+    // double-counting. Beyond CAP identifiers, fall back to a normalized
+    // title + received-day key so near-duplicate signals (e.g. "Massive Wildfires
+    // Near Clinton" / "Massive wildfires near Clinton" same day) collapse to one.
     const seenEvents = new Map<string, any>();
     for (const s of freshSignals) {
       const cap = (s.raw_json && typeof s.raw_json === 'object') ? s.raw_json.cap : null;
+      const normTitle = (s.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const day = String(s.received_at || s.created_at || '').slice(0, 10);
       const dedupKey = cap?.identifier
         ? `cap:${cap.identifier}`
         : cap
           ? `evt:${cap.event}|${cap.area_desc ?? cap.areaDesc ?? ''}`
-          : `id:${s.id}`;
+          : normTitle
+            ? `evt:${normTitle}|${day}`
+            : `id:${s.id}`;
       const existing = seenEvents.get(dedupKey);
       if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
         seenEvents.set(dedupKey, s);
       }
     }
     freshSignals = Array.from(seenEvents.values());
+
+    // ── A. TIERED RELEVANCE GATE (consolidated brief-quality ruling 2026-07-28) ──
+    // relevance_score is 0–1. ≥0.60 = MAIN tier (exec flash, client issues,
+    // incidents, risk table, action items — only this tier drives actions/ratings).
+    // 0.30–0.59 = AWARENESS tier → "Industry & Community Awareness" narrative
+    // context only (no action items, no incident refs, no risk-table effect).
+    // <0.30 (incl. unscored/null) = excluded entirely.
+    const REL_MAIN = 0.60;
+    const REL_AWARENESS_MIN = 0.30;
+    const relScore = (s: any): number => {
+      const v = typeof s?.relevance_score === 'number' ? s.relevance_score : parseFloat(s?.relevance_score);
+      return Number.isFinite(v) ? v : 0;
+    };
+    const awarenessSignals = freshSignals.filter((s: any) => {
+      const r = relScore(s);
+      return r >= REL_AWARENESS_MIN && r < REL_MAIN;
+    });
+    freshSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN);
+    console.log(`[generate-executive-report] A/tiered-gate: ${freshSignals.length} main (>=${REL_MAIN}) · ${awarenessSignals.length} awareness (${REL_AWARENESS_MIN}–${REL_MAIN}) · <${REL_AWARENESS_MIN} excluded`);
 
     // Fetch incidents with classification rationale (excluding deleted + test)
     const { data: incidents, error: incidentsError } = await supabase
@@ -362,6 +390,18 @@ Deno.serve(async (req) => {
 
     const criticalSignals = reportableSignals.filter((s: any) => s.severity === 'critical');
     const highSignals = reportableSignals.filter((s: any) => s.severity === 'high');
+
+    // ── B. FLASH / ACTION LIABILITY GUARD (consolidated brief-quality ruling 2026-07-28) ──
+    // The executive flash + action items derive ONLY from main-tier signals in
+    // these categories. civil_emergency (wildfires, evacuations, air quality)
+    // informs the summary/issues + risk CONTEXT but must NEVER generate the flash
+    // or a CRITICAL action item for an energy client — that framing is a liability.
+    const FLASH_ELIGIBLE_CATEGORIES = new Set(['operational', 'regulatory', 'active_threat', 'security']);
+    const flashEligibleSignals = reportableSignals.filter((s: any) => FLASH_ELIGIBLE_CATEGORIES.has(s.category));
+    const flashCritical = flashEligibleSignals.filter((s: any) => s.severity === 'critical');
+    const flashHigh = flashEligibleSignals.filter((s: any) => s.severity === 'high');
+    console.log(`[generate-executive-report] B/flash-guard: ${flashEligibleSignals.length} flash-eligible (crit ${flashCritical.length}/high ${flashHigh.length}); ${reportableSignals.length - flashEligibleSignals.length} main-tier signals routed to issues/context only`);
+
     const p1p2Incidents = incidents?.filter(i => i.priority === 'p1' || i.priority === 'p2') || [];
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -406,21 +446,39 @@ Deno.serve(async (req) => {
     console.log(`Incident breakdown: ${p1p2Incidents.length} total P1/P2, ${newIncidentsLast24h.length} new (last 24h), ${staleOpenIncidents.length} stale (>7 days), ${unknownIncidents.length} unknown/unclassified`);
 
     // Calculate risk ratings
+    // ── D. RISK-TABLE EVIDENCE RULE (consolidated brief-quality ruling 2026-07-28) ──
+    // A threat factor rates above LOW only if there is ≥1 genuine signal IN THAT
+    // CATEGORY at ≥60 relevance (freshSignals is already the ≥0.60 main tier).
+    // Previously `sabotageThreat` counted `|| severity === 'critical'`, so every
+    // critical WILDFIRE (civil_emergency) was counted as "Sabotage/Vandalism"
+    // (INC audit: 10/10 of the "Sabotage 10" were critical wildfires, 0 actual
+    // sabotage). Category-only counting removes that mislabel. "Critical Threats"
+    // now counts flash-eligible criticals only, so civil_emergency does not
+    // inflate the risk table.
     const surveillanceRisk = freshSignals.filter(s =>
       s.category?.toLowerCase().includes('surveillance') ||
-      s.normalized_text?.toLowerCase().includes('reconnaissance')
+      s.category?.toLowerCase().includes('reconnaissance')
     ).length;
 
     const protestRisk = freshSignals.filter(s =>
       s.category?.toLowerCase().includes('protest') ||
-      s.category?.toLowerCase().includes('activism') ||
-      s.normalized_text?.toLowerCase().includes('rally')
+      s.category?.toLowerCase().includes('activism')
     ).length;
 
     const sabotageThreat = freshSignals.filter(s =>
       s.category?.toLowerCase().includes('sabotage') ||
-      s.category?.toLowerCase().includes('vandalism') ||
-      s.severity === 'critical'
+      s.category?.toLowerCase().includes('vandalism')
+    ).length;
+
+    const criticalThreatCount = flashCritical.length;
+
+    // Work Interruption: genuine in-category signals only — NOT "all open
+    // incidents" (that counted the wildfire/civil_emergency incidents as work
+    // interruption for an energy client).
+    const workInterruptionRisk = freshSignals.filter(s =>
+      s.category?.toLowerCase().includes('work_interruption') ||
+      s.category?.toLowerCase().includes('operational_disruption') ||
+      s.category?.toLowerCase().includes('blockade')
     ).length;
 
     function getRiskLevel(count: number): string {
@@ -431,7 +489,7 @@ Deno.serve(async (req) => {
     }
 
     const overallRiskLevel = getRiskLevel(
-      Math.max(surveillanceRisk, protestRisk, sabotageThreat, criticalSignals.length)
+      Math.max(surveillanceRisk, protestRisk, sabotageThreat, criticalThreatCount)
     );
 
     // Build evidence sources array for traceability
@@ -512,8 +570,8 @@ ABSOLUTE DATE ACCURACY RULES:
 ${criticalDateContext}
 
 VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
-- ${criticalSignals.length} critical severity signals
-- ${highSignals.length} high severity signals
+- ${flashCritical.length} critical severity signals (flash-eligible: operational/regulatory/active_threat/security only)
+- ${flashHigh.length} high severity signals (flash-eligible)
 - ${p1p2Incidents.length} TOTAL P1/P2 priority incidents
 - ${newIncidentsLast24h.length} NEW incidents (opened in last 24 hours)
 - ${staleOpenIncidents.length} STALE open incidents (opened >7 days ago, still open)
@@ -525,8 +583,15 @@ ${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h):\n${newIncidentsLas
 
 ${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (>7 days old, require review):\n${staleOpenIncidents.slice(0, 3).map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]}`).join('\n')}` : ''}
 
-Top 3 signals:
-${criticalSignals.slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${cleanSignalExcerpt(s.normalized_text).substring(0, 150)}`).join('\n')}
+Top 3 flash-eligible signals:
+${(flashCritical.length ? flashCritical : flashHigh).slice(0, 3).map((s, i) => `${i + 1}. [${s.category}] ${cleanSignalExcerpt(s.normalized_text).substring(0, 150)}`).join('\n') || '(none — no operational/regulatory/threat/security signals this period)'}
+
+FLASH GUARD (liability rules — not style):
+- The flash and its recommended action MUST derive only from the flash-eligible signals above (operational, regulatory, active_threat, security). Wildfires, evacuations, air-quality, and other civil_emergency events are handled in the Issues/Operations sections and MUST NOT be the flash or a CRITICAL action.
+- NEVER name a private individual in the flash or recommended action. Reference people by role or community (e.g. "an affected resident", "the HSE Manager") unless they are a public figure acting in a public capacity.
+- Partnership / equity / consultation / divestment developments are "developments requiring engagement" — never threat-framed.
+- Do not use "escalating" or similar unless a flash-eligible signal explicitly says so. Report procedural reviews as reviews, not approvals; never let a claim exceed its source.
+- If there are no flash-eligible critical/high signals, state plainly that no immediate action is required this period.
 
 Provide a JSON response with exactly this structure:
 {
@@ -554,11 +619,14 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
     // When the period is quiet on every measurable axis, short-circuit
     // with a deterministic flash that matches the body. The LLM only
     // gets called when there's something to actually say.
+    // B: the flash is "quiet" when there are no FLASH-ELIGIBLE critical/high
+    // signals and no new incidents — regardless of civil_emergency volume or an
+    // overall risk elevated by wildfire context. A wildfire-only period yields a
+    // deterministic "no immediate action" flash, never a civil-emergency lead.
     const isQuietPeriod =
-      criticalSignals.length === 0
-      && highSignals.length === 0
-      && newIncidentsLast24h.length === 0
-      && (overallRiskLevel || '').toUpperCase() === 'LOW';
+      flashCritical.length === 0
+      && flashHigh.length === 0
+      && newIncidentsLast24h.length === 0;
 
     let executiveFlash: any = {
       mostPressingIssue: 'Intelligence analysis in progress',
@@ -600,8 +668,8 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
     // Generate Impact Ladders for top issues
     const impactPrompt = `As a security strategist, create impact ladders for the top 3 threats facing ${client.name}.
 
-Current threat landscape:
-${criticalSignals.slice(0, 5).map((s, i) => `${i + 1}. ${s.category}: ${cleanSignalExcerpt(s.normalized_text).substring(0, 200)}`).join('\n')}
+Current threat landscape (flash-eligible: operational/regulatory/active_threat/security only — civil_emergency is covered in Operations, not here):
+${(flashCritical.length ? flashCritical : flashHigh).slice(0, 5).map((s, i) => `${i + 1}. ${s.category}: ${cleanSignalExcerpt(s.normalized_text).substring(0, 200)}`).join('\n') || '(no operational/regulatory/threat/security signals this period)'}
 
 For each major threat, provide a JSON array with this structure:
 [
@@ -689,6 +757,12 @@ NUMBER RECONCILIATION RULE: A separate Risk Assessment table appears below the s
 - If a severity-tier count cannot be cleanly broken down by factor, omit the count from the summary and rely on the table to convey volume.
 - Never present a number that contradicts what an executive will see two paragraphs later.
 
+LANGUAGE CALIBRATION (consolidated brief-quality ruling — enforce strictly):
+- Partnership, equity, consultation, and divestment developments (e.g. a partner selling a stake) are "developments requiring engagement," never threat-framed.
+- Report activist/community events neutrally by name and date. Do NOT use "escalating", "intensifying", or similar unless a signal explicitly states it.
+- A claim must never exceed its source: reviews are reviews (not approvals), proposals are proposals (not decisions), concerns are concerns (not findings).
+- Do NOT name private individuals; reference people by role or community unless they are a public figure acting in a public capacity.
+
 OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
     console.log('Generating executive summary...');
@@ -702,6 +776,12 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       functionName: 'generate-executive-report',
     });
     if (summaryResult.content) executiveSummary = applyToneTransformation(summaryResult.content);
+    // E: cut the "Reliability Score: X% | Sources: N verified | External Intel: …"
+    // line — the metric is not real yet (brief-quality ruling 2026-07-28).
+    executiveSummary = executiveSummary
+      .replace(/^\s*Reliability Score:.*$/gim, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
 
     // Generate action items grounded in actual signal evidence.
     //
@@ -713,10 +793,12 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     // actual top signals so each recommendation must trace to a
     // specific observed event/entity.
     const actionSignalContext = (() => {
-      const tier1 = [...criticalSignals, ...highSignals];
+      // B: action items derive ONLY from flash-eligible signals
+      // (operational/regulatory/active_threat/security) — never civil_emergency.
+      const tier1 = [...flashCritical, ...flashHigh];
       const widened = tier1.length >= 3
         ? tier1.slice(0, 8)
-        : [...tier1, ...reportableSignals.filter((s: any) => !['critical', 'high'].includes(s.severity))].slice(0, 8);
+        : [...tier1, ...flashEligibleSignals.filter((s: any) => !['critical', 'high'].includes(s.severity))].slice(0, 8);
       if (widened.length === 0) return '(No reportable signals in this period.)';
       return widened.map((s: any, i: number) => {
         const sigId = s.signal_number || `SIG-${(s.id || '').substring(0, 8).toUpperCase()}`;
@@ -866,6 +948,12 @@ DEDUCTIONS: [2-3 sentences connecting the signals to a specific implication for 
 
 Use professional executive language. Be direct. Avoid hedging.
 
+LANGUAGE CALIBRATION (consolidated brief-quality ruling — enforce strictly):
+- Partnership, equity, consultation, and divestment developments (e.g. a partner selling a stake) are "developments requiring engagement," never threat-framed.
+- Report activist/community events neutrally by name and date. Do NOT use "escalating", "intensifying", or similar unless a signal explicitly states it.
+- A claim must never exceed its source: reviews are reviews (not approvals), proposals are proposals (not decisions), concerns are concerns (not findings).
+- Do NOT name private individuals; reference people by role or community unless they are a public figure acting in a public capacity.
+
 OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
     console.log('Generating strategic deductions...');
@@ -989,6 +1077,12 @@ ${topSignals.some((s: any) => {
 }) ? '\nWARNING: Some signals above have event dates older than 1 year. Treat these as historical context only — never as current active threats.' : ''}
 
 Write 2-3 paragraphs of narrative followed by a DEDUCTIONS: paragraph. Use executive-appropriate language. Be specific about names, dates, organizations, and implications for ${client.name}.
+
+LANGUAGE CALIBRATION (consolidated brief-quality ruling — enforce strictly):
+- Partnership, equity, consultation, and divestment developments (e.g. a partner selling a stake) are "developments requiring engagement," never threat-framed.
+- Report activist/community events neutrally by name and date. Do NOT use "escalating", "intensifying", or similar unless a signal explicitly states it.
+- A claim must never exceed its source: reviews are reviews (not approvals), proposals are proposals (not decisions), concerns are concerns (not findings).
+- Do NOT name private individuals; reference people by role or community unless they are a public figure acting in a public capacity.
 
 OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
@@ -1516,8 +1610,8 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         </tr>
         <tr>
           <td>Work Interruption</td>
-          <td><span class="risk-level">${getRiskLevel(incidents?.filter(i => i.status === 'open').length || 0)}</span></td>
-          <td>${incidents?.filter(i => i.status === 'open').length || 0}</td>
+          <td><span class="risk-level">${getRiskLevel(workInterruptionRisk)}</span></td>
+          <td>${workInterruptionRisk}</td>
         </tr>
         <tr>
           <td>Sabotage / Vandalism</td>
@@ -1526,8 +1620,8 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         </tr>
         <tr>
           <td>Critical Threats</td>
-          <td><span class="risk-level">${getRiskLevel(criticalSignals.length)}</span></td>
-          <td>${criticalSignals.length}</td>
+          <td><span class="risk-level">${getRiskLevel(criticalThreatCount)}</span></td>
+          <td>${criticalThreatCount}</td>
         </tr>
       </tbody>
     </table>
