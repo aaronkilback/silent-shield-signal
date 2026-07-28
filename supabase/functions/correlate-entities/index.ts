@@ -1,5 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { attenuateConfidence } from "../_shared/calibration.ts";
+import {
+  extractEntityNames,
+  matchEntitiesInPage,
+  type EntityRow,
+} from "../_shared/entity-correlation.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -29,55 +34,6 @@ function normaliseQuotes(s: string): string {
     .replace(/\u201c|\u201d|\u201e|\u201f|\u2033|\u2036/g, '"');
 }
 
-// Token boundary check — more reliable than \b when phrases contain apostrophes.
-// Returns true if 'phrase' appears in 'text' as a complete token
-// (not embedded mid-word). Case-insensitive.
-function hasTokenMatch(text: string, phrase: string): boolean {
-  const t = text.toLowerCase();
-  const p = phrase.toLowerCase();
-  let idx = t.indexOf(p);
-  while (idx !== -1) {
-    const charBefore = idx === 0 ? '' : t[idx - 1];
-    const charAfter  = idx + p.length >= t.length ? '' : t[idx + p.length];
-    const beforeOk = charBefore === '' || !/[a-z0-9]/i.test(charBefore);
-    const afterOk  = charAfter  === '' || !/[a-z0-9]/i.test(charAfter);
-    if (beforeOk && afterOk) return true;
-    idx = t.indexOf(p, idx + 1);
-  }
-  return false;
-}
-
-// Disambiguation: context-sensitive false-positive filters per entity type
-const DISAMBIGUATION_NEGATIVES: Record<string, string[]> = {
-  organization: [
-    'casing', 'casings', 'cartridge', 'ammunition', 'caliber', 'firearm', 'handgun',
-    'shotgun', 'bullet', 'projectile', 'bombshell', 'nutshell', 'eggshell', 'seashell',
-    'shell out', 'shell shock', 'tortoise shell',
-  ],
-  person: [
-    'password', 'username', 'login', 'variable', 'function', 'class',
-  ],
-};
-
-function isContextualMatch(fullText: string, phrase: string, entityType: string): boolean {
-  const phraseLower = phrase.toLowerCase();
-  const textLower = fullText.toLowerCase();
-  const idx = textLower.indexOf(phraseLower);
-  if (idx === -1) return false;
-  const windowStart = Math.max(0, idx - 120);
-  const windowEnd = Math.min(textLower.length, idx + phraseLower.length + 120);
-  const window = textLower.substring(windowStart, windowEnd);
-  const negatives = DISAMBIGUATION_NEGATIVES[entityType] || [];
-  for (const neg of negatives) {
-    if (window.includes(neg.toLowerCase())) return false;
-  }
-  // Extra guard for very short phrases: require they appear as standalone tokens
-  if (phraseLower.length <= 6) {
-    if (!hasTokenMatch(window, phraseLower)) return false;
-  }
-  return true;
-}
-
 Deno.serve(async (req) => {
   // EMERGENCY CONTAINMENT KILL-SWITCH — set CORRELATE_ENTITIES_DISABLED=true
   // (Supabase secret) to disable instantly with NO code deploy. Absent/false = unchanged.
@@ -104,6 +60,26 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Oversize guard (INC-JOBWORKER-SATURATION-2026-07-27 item 3).
+    // Matching a document against every active entity cannot fit in the isolate
+    // for multi-MB docs (HTTP 546). We DELIBERATELY SKIP oversize docs rather
+    // than 546→retry→DLQ (silent) or truncate the scan (which would falsely mark
+    // a partially-scanned doc "correlated" — NVD summaries are uniform lists, the
+    // head is not representative). The skip is recorded on the signal so the gap
+    // is queryable (correlation_status='skipped_oversize'), never silent.
+    // Bound set below the measured safe size (≈700KB OK; 1.35MB 546s).
+    const MAX_CORRELATE_TEXT_CHARS = 600_000;
+    if (text.length > MAX_CORRELATE_TEXT_CHARS) {
+      console.log(`[correlate-entities] SKIP oversize ${sourceType}:${sourceId} — ${text.length} chars > ${MAX_CORRELATE_TEXT_CHARS}`);
+      if (sourceType === 'signal') {
+        await supabase.from('signals').update({ correlation_status: 'skipped_oversize' }).eq('id', sourceId);
+      }
+      return new Response(
+        JSON.stringify({ success: true, skipped: 'oversize', doc_bytes: text.length, matches: [], suggestions: [], totalMatches: 0, pendingSuggestions: 0 }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
 
     // #134: resolve tenant_id from the source record. Entity suggestions
     // created here must carry tenant_id or analysts will not see them.
@@ -138,160 +114,43 @@ Deno.serve(async (req) => {
       console.warn(`[#134] correlate-entities: could not resolve tenant_id for ${sourceType}:${sourceId} — suggestions will be skipped`);
     }
 
-    // Fetch all active entities with pagination (PostgREST max-rows cap = 1000)
-    const entities: any[] = [];
+    // Normalise quotes AND lowercase the text ONCE, up front. The matcher reuses
+    // this single lowercased copy for every entity instead of re-lowercasing the
+    // full (possibly multi-MB) document per comparison — the allocation that
+    // OOM'd the isolate (HTTP 546) even after entity streaming.
+    const textLower = normaliseQuotes(text).toLowerCase();
+
+    // Patterns reused by the suggestion pass below. (Name extraction itself now
+    // lives in extractEntityNames; these three are still needed to type the
+    // remaining unmatched names into suggestions.)
+    const emailPattern = /\b([a-zA-Z0-9._-]{3,}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
+    const phonePattern = /\b(\+?1?\s*\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})\b/g;
+    const domainPattern = /\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,})\b/gi;
+
+    const extractedNames = extractEntityNames(text);
+    console.log(`Extracted ${extractedNames.size} potential entity names`);
+
+    // Stream active entities one page at a time and match per page, discarding
+    // each page before fetching the next. Bounds peak memory to one page
+    // (~1000 rows) instead of the whole entity table, which OOM'd small compute
+    // on large documents (HTTP 546, INC-JOBWORKER-SATURATION-2026-07-27 item 3).
+    // Match output is identical to loading all entities at once — proven by
+    // _shared/entity-correlation_test.ts. `attributes` is no longer selected
+    // (the matcher never used it), further reducing per-row memory.
+    const matches: EntityMatch[] = [];
     const pageSize = 1000;
     let offset = 0;
     while (true) {
       const { data: page, error: pageError } = await supabase
         .from('entities')
-        .select('id, name, aliases, type, attributes')
+        .select('id, name, aliases, type')
         .eq('is_active', true)
         .range(offset, offset + pageSize - 1);
       if (pageError) throw pageError;
       if (!page || page.length === 0) break;
-      entities.push(...page);
+      matches.push(...matchEntitiesInPage(textLower, extractedNames, page as EntityRow[]));
       if (page.length < pageSize) break;
       offset += pageSize;
-    }
-
-    // Normalise the incoming text once so all matching uses consistent apostrophes
-    const textNorm = normaliseQuotes(text);
-
-    const matches: EntityMatch[] = [];
-
-    const blacklist = new Set([
-      'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
-      'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after',
-      'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-      'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
-      'september', 'october', 'november', 'december',
-      'will', 'may', 'john doe', 'jane doe', 'test user',
-      'unknown', 'anonymous', 'n/a', 'none', 'null', 'undefined',
-      'chief executive', 'chief officer', 'vice president', 'senior director',
-      'managing director', 'board director', 'executive director', 'operations manager',
-      'project manager', 'account manager', 'general manager', 'deputy minister',
-      'prime minister', 'foreign minister', 'defense minister', 'attorney general',
-      'solicitor general', 'chief justice', 'associate justice',
-      'federal government', 'provincial government', 'local government', 'city council',
-      'town council', 'the government', 'the department', 'the ministry', 'the agency',
-      'the organization', 'the company', 'the corporation', 'the group',
-      'the association', 'the institute', 'national security', 'public safety',
-      'law enforcement', 'new report', 'new study', 'breaking news', 'top story',
-      'latest news', 'press release', 'media release', 'official statement',
-      'smith', 'jones', 'brown', 'wilson', 'taylor', 'johnson', 'williams',
-      'davies', 'evans', 'thomas',
-      'john', 'jane', 'james', 'robert', 'michael', 'william', 'david', 'richard',
-      'joseph', 'mary', 'patricia', 'linda', 'barbara', 'elizabeth', 'jennifer',
-      'maria', 'susan', 'margaret',
-    ]);
-
-    const personPattern = /\b([A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?)\b/g;
-    const orgPattern = /\b([A-Z][A-Za-z]{2,}(?:\s+(?:Inc|Corp|LLC|Ltd|Company|Corporation|Group|Association|Organization|Systems|Solutions|Technologies|Services)\.?))\b/gi;
-    const emailPattern = /\b([a-zA-Z0-9._-]{3,}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g;
-    const phonePattern = /\b(\+?1?\s*\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})\b/g;
-    const domainPattern = /\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,})\b/gi;
-
-    const extractedNames = new Set<string>();
-    let m: RegExpExecArray | null;
-
-    while ((m = personPattern.exec(text)) !== null) {
-      const name = m[1];
-      if (!blacklist.has(name.toLowerCase()) && !name.toLowerCase().includes('test') &&
-          !name.toLowerCase().includes('example') && name.length >= 5) {
-        extractedNames.add(name);
-      }
-    }
-    while ((m = orgPattern.exec(text)) !== null) {
-      const org = m[1];
-      if (org.length >= 5 && !blacklist.has(org.toLowerCase())) extractedNames.add(org);
-    }
-    while ((m = emailPattern.exec(text)) !== null) extractedNames.add(m[1]);
-    const publicDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'example.com', 'test.com'];
-    while ((m = domainPattern.exec(text.toLowerCase())) !== null) {
-      const domain = m[1];
-      if (!domain.includes('@') && domain.split('.').length >= 2 && !publicDomains.includes(domain)) {
-        extractedNames.add(domain);
-      }
-    }
-
-    console.log(`Extracted ${extractedNames.size} potential entity names`);
-
-    if (entities && entities.length > 0) {
-      for (const entity of entities) {
-        const names = [entity.name, ...(entity.aliases || [])];
-        const matchedTerms: string[] = [];
-
-        for (const rawName of names) {
-          // Normalise quotes in entity name to match signal text
-          const nameNorm = normaliseQuotes(rawName);
-          const nameLower = nameNorm.toLowerCase();
-
-          // Skip 1-2 char entries — too ambiguous.
-          // 3-char acronyms like CGL are valid.
-          if (nameLower.length <= 2) continue;
-
-          // Build match variants to handle common formatting differences:
-          // 1. Full normalised name
-          // 2. Without parenthetical: "Coastal GasLink (CGL)" -> "Coastal GasLink"
-          // 3. Without punctuation: "Houston, BC" -> "Houston BC"
-          const variants = new Set<string>([nameLower]);
-          const withoutParens = nameLower.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
-          if (withoutParens && withoutParens !== nameLower) variants.add(withoutParens);
-          const withoutPunct = nameLower.replace(/[,;:]/g, '').replace(/\s+/g, ' ').trim();
-          if (withoutPunct && withoutPunct !== nameLower) variants.add(withoutPunct);
-
-          for (const variant of variants) {
-            if (matchedTerms.includes(rawName)) break;
-            // Use token boundary check instead of \b regex for reliability with apostrophes
-            if (hasTokenMatch(textNorm, variant)) {
-              if (isContextualMatch(textNorm, variant, entity.type)) {
-                matchedTerms.push(rawName);
-              } else {
-                console.log(`Disambiguation rejected: "${rawName}" (variant: "${variant}")`);
-              }
-            }
-          }
-
-          // Leading-phrase match for long entity names (3+ words)
-          if (!matchedTerms.includes(rawName)) {
-            const nameWords = nameLower.split(/\s+/);
-            if (nameWords.length >= 3 && nameWords[0].length >= 4 && nameWords[1].length >= 4) {
-              const leadPhrase = nameWords.slice(0, 2).join(' ');
-              if (hasTokenMatch(textNorm, leadPhrase) && isContextualMatch(textNorm, leadPhrase, entity.type)) {
-                matchedTerms.push(leadPhrase);
-                console.log(`Leading-phrase match: "${leadPhrase}" -> entity "${rawName}"`);
-              }
-            }
-          }
-
-          // Extracted-name cross-check
-          for (const extracted of extractedNames) {
-            if (matchedTerms.includes(rawName)) break;
-            const extractedLower = extracted.toLowerCase();
-            const entityWords = nameLower.split(/\s+/);
-            const extractedWords = extractedLower.split(/\s+/);
-            const allExtractedInEntity = extractedWords.every(w => entityWords.includes(w));
-            const allEntityInExtracted = entityWords.every(w => extractedWords.includes(w));
-            if (allExtractedInEntity || allEntityInExtracted) {
-              if (isContextualMatch(textNorm, extracted, entity.type)) {
-                matchedTerms.push(extracted);
-                extractedNames.delete(extracted);
-              }
-            }
-          }
-        }
-
-        if (matchedTerms.length > 0) {
-          matches.push({
-            entityId: entity.id,
-            entityName: entity.name,
-            confidence: Math.min(matchedTerms.length * 0.3, 0.95),
-            matchedOn: matchedTerms,
-          });
-          console.log(`Matched entity: ${entity.name} (terms: ${matchedTerms.join(', ')})`);
-        }
-      }
     }
 
     // Remaining extracted names -> entity suggestions
