@@ -1627,6 +1627,16 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     </table>
   </div>
 
+  <!-- A. INDUSTRY & COMMUNITY AWARENESS (0.30–0.59 relevance — context only) -->
+  ${awarenessSignals.length > 0 ? `
+  <div class="section">
+    <h2 class="section-title">Industry &amp; Community Awareness</h2>
+    <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance industry, community, and movement context for situational awareness only — not client-specific threats. No action items, incident references, or risk ratings derive from this section.</p>
+    <ul style="font-size:13px;line-height:1.6;padding-left:18px;">
+      ${awarenessSignals.slice(0, 12).map((s: any) => `<li>${String(s.title || '').replace(/[<>]/g, '')} <span style="color:#888;">(${(s.category || 'context')}, ${String(s.received_at || '').slice(0, 10)})</span></li>`).join('')}
+    </ul>
+  </div>` : ''}
+
   <!-- IMPACT ANALYSIS -->
   ${impactLadders.length > 0 ? `
   <div class="section">
