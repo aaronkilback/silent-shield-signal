@@ -14,6 +14,14 @@ Supabase keys updated and validated.
 - Before responding with a HOLD or asking for a ruling, commit first, then hold.
 - WIP commits may be messy; squash/reword later. The commit is the durable artifact, not the tidiness.
 - **Provenance:** the hydration session active ~Jul 15–26 2026 ("streamed responses destroyed by hydration overwrite") left **zero recoverable artifact** after a machine reboot — no commit, no stash, no branch. All of its work and its rulings (REPORT-GATE, RSS-counter scheduling, #221 slot) were lost and had to be re-ruled from scratch. This rule exists so that never happens again.
+## RLS-at-Creation Standing Rule (2026-07-28, INC-RLS-EXPOSURE — RATIFIED)
+
+**Every new table in the `public` schema ships with Row Level Security ENABLED at creation** — in the same migration that creates it. Deny-by-default is correct: writers are service-role (bypass RLS), so an RLS-enabled table with no policy still works for the pipeline while being closed to `anon`/`authenticated`. Add policies only where a non-service-role reader genuinely needs access (and scope them tightly — tenant/owner-bound).
+
+- **No table is created without `alter table … enable row level security` in the same migration.** A table that stores anything (even "internal" bookkeeping) is closed by default.
+- **A public table with `rowsecurity=false` is a CRITICAL defect** (Supabase advisory `rls_disabled_in_public`). Watchdog probe backlog: `docs/platform-operations/backlog/watchdog-rls-disabled-probe.md`. Known exception: `spatial_ref_sys` (PostGIS extension-owned public reference).
+- **Frontend/anon-read tables need a policy BEFORE RLS is enabled**, or the app breaks — never blind-enable a table the frontend reads directly; write the (owner/tenant-scoped) policy first.
+- **Provenance:** INC-RLS-EXPOSURE-2026-07-28 — backfill-snapshot tables leaked real tenant/client mappings + intelligence to the unauthenticated anon key because they shipped RLS-disabled. Full record: `docs/platform-operations/incidents/INC-RLS-EXPOSURE-2026-07-28.md`.
 
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
