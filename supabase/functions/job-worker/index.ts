@@ -87,11 +87,6 @@ Deno.serve(async (req) => {
       .from('function_jobs')
       .select('id, job_type, payload, attempts, max_attempts, scheduled_for')
       .eq('status', 'pending')
-      // INC-JOBWORKER-SATURATION-2026-07-27 item 2: hold correlate-entities out
-      // of the drain until item 3 (memory bound) ships. Its pending rows stay
-      // pending, untouched. Remove this line when re-enabling correlate-entities
-      // (clearing CORRELATE_ENTITIES_DISABLED).
-      .neq('job_type', 'correlate-entities')
       .lte('scheduled_for', new Date().toISOString())
       .order('scheduled_for', { ascending: true })
       .order('created_at', { ascending: true })
