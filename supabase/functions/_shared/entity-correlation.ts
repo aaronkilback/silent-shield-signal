@@ -34,17 +34,21 @@ export function normaliseQuotes(s: string): string {
 }
 
 // Token boundary check — more reliable than \b when phrases contain apostrophes.
-export function hasTokenMatch(text: string, phrase: string): boolean {
-  const t = text.toLowerCase();
+// `textLower` MUST already be lowercased. Lowercasing the full text ONCE (in
+// the caller) rather than once per entity/variant is what keeps a multi-MB
+// document from exhausting the isolate's memory (HTTP 546) — the dominant
+// allocation the streaming refactor alone did not remove.
+// INC-JOBWORKER-SATURATION-2026-07-27 item 3.
+export function hasTokenMatch(textLower: string, phrase: string): boolean {
   const p = phrase.toLowerCase();
-  let idx = t.indexOf(p);
+  let idx = textLower.indexOf(p);
   while (idx !== -1) {
-    const charBefore = idx === 0 ? '' : t[idx - 1];
-    const charAfter = idx + p.length >= t.length ? '' : t[idx + p.length];
+    const charBefore = idx === 0 ? '' : textLower[idx - 1];
+    const charAfter = idx + p.length >= textLower.length ? '' : textLower[idx + p.length];
     const beforeOk = charBefore === '' || !/[a-z0-9]/i.test(charBefore);
     const afterOk = charAfter === '' || !/[a-z0-9]/i.test(charAfter);
     if (beforeOk && afterOk) return true;
-    idx = t.indexOf(p, idx + 1);
+    idx = textLower.indexOf(p, idx + 1);
   }
   return false;
 }
@@ -61,9 +65,9 @@ const DISAMBIGUATION_NEGATIVES: Record<string, string[]> = {
   ],
 };
 
-export function isContextualMatch(fullText: string, phrase: string, entityType: string): boolean {
+// `textLower` MUST already be lowercased (see hasTokenMatch).
+export function isContextualMatch(textLower: string, phrase: string, entityType: string): boolean {
   const phraseLower = phrase.toLowerCase();
-  const textLower = fullText.toLowerCase();
   const idx = textLower.indexOf(phraseLower);
   if (idx === -1) return false;
   const windowStart = Math.max(0, idx - 120);
@@ -142,14 +146,19 @@ export function extractEntityNames(text: string): Set<string> {
 }
 
 /**
- * Match one page of entities against the (already quote-normalised) text.
- * Returns the matches found in this page; mutates `extractedNames` by removing
- * any name consumed by an entity's extracted-name cross-check (identical to the
- * inline loop — the removal is commutative across pages, so streaming yields the
- * same final matches and remaining names as matching all entities at once).
+ * Match one page of entities against the (already quote-normalised AND
+ * lowercased) text. Returns the matches found in this page; mutates
+ * `extractedNames` by removing any name consumed by an entity's extracted-name
+ * cross-check (identical to the inline loop — the removal is commutative across
+ * pages, so streaming yields the same final matches and remaining names as
+ * matching all entities at once).
+ *
+ * `textLower` is lowercased once by the caller and reused for every entity —
+ * NOT re-lowercased per comparison — so a multi-MB document does not blow the
+ * isolate's memory (HTTP 546). INC-JOBWORKER-SATURATION-2026-07-27 item 3.
  */
 export function matchEntitiesInPage(
-  textNorm: string,
+  textLower: string,
   extractedNames: Set<string>,
   page: EntityRow[],
 ): EntityMatch[] {
@@ -174,8 +183,8 @@ export function matchEntitiesInPage(
 
       for (const variant of variants) {
         if (matchedTerms.includes(rawName)) break;
-        if (hasTokenMatch(textNorm, variant)) {
-          if (isContextualMatch(textNorm, variant, entity.type)) {
+        if (hasTokenMatch(textLower, variant)) {
+          if (isContextualMatch(textLower, variant, entity.type)) {
             matchedTerms.push(rawName);
           }
         }
@@ -186,7 +195,7 @@ export function matchEntitiesInPage(
         const nameWords = nameLower.split(/\s+/);
         if (nameWords.length >= 3 && nameWords[0].length >= 4 && nameWords[1].length >= 4) {
           const leadPhrase = nameWords.slice(0, 2).join(' ');
-          if (hasTokenMatch(textNorm, leadPhrase) && isContextualMatch(textNorm, leadPhrase, entity.type)) {
+          if (hasTokenMatch(textLower, leadPhrase) && isContextualMatch(textLower, leadPhrase, entity.type)) {
             matchedTerms.push(leadPhrase);
           }
         }
@@ -201,7 +210,7 @@ export function matchEntitiesInPage(
         const allExtractedInEntity = extractedWords.every((w) => entityWords.includes(w));
         const allEntityInExtracted = entityWords.every((w) => extractedWords.includes(w));
         if (allExtractedInEntity || allEntityInExtracted) {
-          if (isContextualMatch(textNorm, extracted, entity.type)) {
+          if (isContextualMatch(textLower, extracted, entity.type)) {
             matchedTerms.push(extracted);
             extractedNames.delete(extracted);
           }

@@ -37,11 +37,11 @@ function canonical(matches: EntityMatch[]): string {
 }
 
 function runWithPages(pageSize: number): { matches: EntityMatch[]; remaining: string[] } {
-  const textNorm = normaliseQuotes(TEXT);
+  const textLower = normaliseQuotes(TEXT).toLowerCase();
   const extractedNames = extractEntityNames(TEXT); // fresh per run — it is mutated
   const matches: EntityMatch[] = [];
   for (let i = 0; i < ENTITIES.length; i += pageSize) {
-    matches.push(...matchEntitiesInPage(textNorm, extractedNames, ENTITIES.slice(i, i + pageSize)));
+    matches.push(...matchEntitiesInPage(textLower, extractedNames, ENTITIES.slice(i, i + pageSize)));
   }
   return { matches, remaining: [...extractedNames].sort() };
 }

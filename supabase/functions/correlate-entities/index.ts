@@ -94,8 +94,11 @@ Deno.serve(async (req) => {
       console.warn(`[#134] correlate-entities: could not resolve tenant_id for ${sourceType}:${sourceId} — suggestions will be skipped`);
     }
 
-    // Normalise the incoming text once so all matching uses consistent apostrophes
-    const textNorm = normaliseQuotes(text);
+    // Normalise quotes AND lowercase the text ONCE, up front. The matcher reuses
+    // this single lowercased copy for every entity instead of re-lowercasing the
+    // full (possibly multi-MB) document per comparison — the allocation that
+    // OOM'd the isolate (HTTP 546) even after entity streaming.
+    const textLower = normaliseQuotes(text).toLowerCase();
 
     // Patterns reused by the suggestion pass below. (Name extraction itself now
     // lives in extractEntityNames; these three are still needed to type the
@@ -125,7 +128,7 @@ Deno.serve(async (req) => {
         .range(offset, offset + pageSize - 1);
       if (pageError) throw pageError;
       if (!page || page.length === 0) break;
-      matches.push(...matchEntitiesInPage(textNorm, extractedNames, page as EntityRow[]));
+      matches.push(...matchEntitiesInPage(textLower, extractedNames, page as EntityRow[]));
       if (page.length < pageSize) break;
       offset += pageSize;
     }
