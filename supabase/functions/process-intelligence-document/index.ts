@@ -4,6 +4,20 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
 import { enqueueJob } from "../_shared/queue.ts";
 
+// Canonical DB entity_type enum (public.entity_type). The extraction prompt is
+// constrained to these values, but a model can still emit an out-of-vocab type;
+// any such value maps to 'other' so downstream `.eq('type', …)` lookups and the
+// entity INSERT never hit "invalid input value for enum entity_type".
+// The vocabulary is doctrine — the prompt conforms to the DB, never the reverse.
+// INC-JOBWORKER-SATURATION-2026-07-27 item 4.
+const VALID_ENTITY_TYPES = new Set([
+  'person', 'organization', 'location', 'infrastructure', 'domain',
+  'ip_address', 'email', 'phone', 'vehicle', 'other',
+]);
+function clampEntityType(t: unknown): string {
+  return typeof t === 'string' && VALID_ENTITY_TYPES.has(t) ? t : 'other';
+}
+
 const AI_REFUSAL_PATTERNS = [
   /i cannot (fulfill|provide|complete|generate)/i,
   /i('m| am) unable to/i,
@@ -583,7 +597,10 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
                         name: { type: "string" },
                         type: { 
                           type: "string",
-                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "asset", "project", "route", "research_initiative"]
+                          // Must exactly match the DB entity_type enum (see VALID_ENTITY_TYPES).
+                          // Drifted values (asset/project/route/research_initiative) removed —
+                          // they caused "invalid input value for enum entity_type". Item 4.
+                          enum: ["person", "organization", "location", "infrastructure", "domain", "ip_address", "email", "phone", "vehicle", "other"]
                         },
                         confidence: { type: "number", minimum: 0, maximum: 1 },
                         matched_entity_id: { type: "string" },
@@ -642,6 +659,13 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
       signals_created: 0,
       mentions_created: 0
     };
+
+    // Clamp extracted entity types to the DB entity_type enum up front, so both
+    // the dedup comparisons and the DB writes below use only valid values and
+    // never trigger "invalid input value for enum entity_type" (item 4).
+    for (const e of intelligence.entities || []) {
+      e.type = clampEntityType(e.type);
+    }
 
     // ── Entity deduplication ──
     // 1. Intra-batch dedup: collapse duplicate names within this extraction
