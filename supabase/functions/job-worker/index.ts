@@ -87,6 +87,15 @@ Deno.serve(async (req) => {
       .from('function_jobs')
       .select('id, job_type, payload, attempts, max_attempts, scheduled_for')
       .eq('status', 'pending')
+      // INC-JOBWORKER-SATURATION-2026-07-27: correlate-entities is excluded from
+      // the shared drain. Each CE job is expensive (matches a doc against every
+      // active entity, tens of seconds), so a CE backlog monopolises the
+      // single-flight worker and starves fast jobs (process-intelligence-document
+      // etc.). The oversize-skip fix (item 3) stops CE from 546-ing, but the
+      // per-job cost still makes it unsafe to drain here. CE needs a throttled /
+      // separate drain (or the Option-2 pg_trgm pre-filter) before rejoining —
+      // see incident follow-ups. Its pending rows stay pending, untouched.
+      .neq('job_type', 'correlate-entities')
       .lte('scheduled_for', new Date().toISOString())
       .order('scheduled_for', { ascending: true })
       .order('created_at', { ascending: true })
