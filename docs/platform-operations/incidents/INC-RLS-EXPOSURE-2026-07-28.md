@@ -1,6 +1,6 @@
 # INC-RLS-EXPOSURE-2026-07-28
 
-**Status:** Prod sealed for the sensitive/internal set; **frontend-read tables HELD for operator ruling** (enabling RLS without a policy would break the app). Staging safe set sealed. Standing rule + watchdog probe added.
+**Status:** ✅ **FULLY SEALED / CLOSED (2026-07-28).** Both prod and staging now have **zero** RLS-disabled public tables (except the PostGIS exception `spatial_ref_sys`). Verified: anon SELECT returns `[]` on all previously-exposed tables. Standing rule + watchdog probe added. See RESOLUTION below.
 
 **Severity:** CRITICAL (Supabase advisory `rls_disabled_in_public`, 2026-07-26) — public tables with RLS **disabled** AND anon-readable on BOTH prod (`kpuqukppbmwebiptqmog`) and staging (`lkvyrvuakzguszbpwnfz`).
 
@@ -59,3 +59,24 @@ These are read by the app directly with anon/user JWTs; enabling RLS with **no p
 2. Staging `cron_heartbeat`/`cron_job_registry`: replicate prod's RLS policies.
 3. Consider **deleting** the one-off backfill-snapshot tables (`_repair_…`, `…_backfill_snapshot_…`, `ops_backfill_…`) — they've served their migration purpose and hold sensitive tenant data. (Not deleted here — standing "nothing deleted" rule; sealed instead. Flag for disposition.)
 4. Build the watchdog rls-disabled probe.
+
+---
+
+## RESOLUTION (2026-07-28) — operator rulings executed
+
+**All three HELD groups sealed with policies (not blind-enable):**
+- **benchmark_results/runs/examples** → RLS enabled + operator-only read policy `for select to authenticated using (is_super_admin(auth.uid()))`. Constellation viz runs in the operator's authenticated session, so zero frontend breakage; policy-first order = zero additional exposed-hours. Follow-up (non-blocking): move the read server-side behind an edge function.
+- **academy_scenarios / academy_courses (staging)** → authenticated-read (shared curriculum). **academy_judgment_progress / academy_learner_profiles / academy_responses / academy_progress (staging)** → per-user owner policy `using (user_id = auth.uid()) with check (…)`. learner_profiles carries PII (full_name/email/phone/address) — now owner-scoped.
+- **staging cron_heartbeat / cron_job_registry** → replicated prod's policies (`{admin OR super_admin} read` + `service_role ALL`).
+
+**Verification:** anon SELECT → `[]` on benchmark_results/runs/examples, academy_scenarios, academy_learner_profiles. Final enumeration: prod = NONE, staging = NONE RLS-disabled (excl. spatial_ref_sys).
+
+### Benchmark integrity check (operator ruling — these tables were anon-WRITABLE since creation)
+Cheap referential/consistency check on prod:
+- `benchmark_results` total = **3978**; **orphan rows with no parent run = 0**; **orphan rows with no example = 0**; distinct runs referenced = **102** = `benchmark_runs` total **102**. Date range 2026-05-08 → 2026-06-28.
+- **Referential integrity is intact.** BUT `benchmark_results` has **no `updated_at` and no row-hash**, so this check **cannot prove individual row values were never externally tampered** during the anon-writable window. This is an inherent audit gap: the exposed tables carried no immutable audit story. **The sealed window (2026-07-28) is now the trust boundary** for benchmark data; the WO-OUTPERFORM-3SI quarantine-substrate audit narrative must treat pre-seal benchmark rows as "consistency-verified, tamper-unprovable." No evidence of tampering was found; none can be positively excluded.
+
+### Migrations
+Applied prod + staging via `apply_migration` (tracked in each DB). Repo carries `20260728020000_inc_rls_exposure_seal.sql` (deny-by-default set) + `20260728030000_inc_rls_exposure_held_policies.sql` (policy set). Env-specific academy divergence (prod `academy_judgment_progress` vs staging `academy_progress`/`academy_courses`) applied per-env.
+
+**INC-RLS-EXPOSURE-2026-07-28 CLOSED.**
