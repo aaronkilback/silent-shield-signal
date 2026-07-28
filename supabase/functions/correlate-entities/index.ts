@@ -61,6 +61,26 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Oversize guard (INC-JOBWORKER-SATURATION-2026-07-27 item 3).
+    // Matching a document against every active entity cannot fit in the isolate
+    // for multi-MB docs (HTTP 546). We DELIBERATELY SKIP oversize docs rather
+    // than 546→retry→DLQ (silent) or truncate the scan (which would falsely mark
+    // a partially-scanned doc "correlated" — NVD summaries are uniform lists, the
+    // head is not representative). The skip is recorded on the signal so the gap
+    // is queryable (correlation_status='skipped_oversize'), never silent.
+    // Bound set below the measured safe size (≈700KB OK; 1.35MB 546s).
+    const MAX_CORRELATE_TEXT_CHARS = 600_000;
+    if (text.length > MAX_CORRELATE_TEXT_CHARS) {
+      console.log(`[correlate-entities] SKIP oversize ${sourceType}:${sourceId} — ${text.length} chars > ${MAX_CORRELATE_TEXT_CHARS}`);
+      if (sourceType === 'signal') {
+        await supabase.from('signals').update({ correlation_status: 'skipped_oversize' }).eq('id', sourceId);
+      }
+      return new Response(
+        JSON.stringify({ success: true, skipped: 'oversize', doc_bytes: text.length, matches: [], suggestions: [], totalMatches: 0, pendingSuggestions: 0 }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
     // #134: resolve tenant_id from the source record. Entity suggestions
     // created here must carry tenant_id or analysts will not see them.
     //   signals             → direct tenant_id column
