@@ -24,6 +24,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 import { recordTelemetry, classifyError } from "../_shared/observability.ts";
+import { acquireWorkerLease, releaseWorkerLease } from "../_shared/worker-lease.ts";
 
 const BATCH_SIZE = 25;            // jobs claimed per worker tick
 const JOB_TIMEOUT_MS = 90_000;    // per-job execution ceiling
@@ -43,6 +44,21 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
+
+  // ── Single-flight guard (INC-JOBWORKER-SATURATION-2026-07-27) ─────────────
+  // pg_cron fires every 60s but a run can last up to RUN_TIMEOUT_MS (110s).
+  // Without this, ticks overlap and concurrent workers exhaust the DB
+  // connection pool (total lockout). Acquire the singleton lease; if another
+  // run holds a fresh one, no-op this tick — no heartbeat (no work done).
+  // The lease is released in `finally`; a crashed worker's lease self-expires
+  // after 150s so this cannot deadlock the queue.
+  const runId = crypto.randomUUID();
+  const gotLease = await acquireWorkerLease(supabase, runId);
+  if (!gotLease) {
+    console.log('[job-worker] Lease held by another run — skipping this tick');
+    return successResponse({ skipped: true, reason: 'lease_held' });
+  }
+
   const hb = await startHeartbeat(supabase, 'job-worker-1min');
   const runStartedAt = Date.now();
   let claimed = 0;
@@ -71,6 +87,11 @@ Deno.serve(async (req) => {
       .from('function_jobs')
       .select('id, job_type, payload, attempts, max_attempts, scheduled_for')
       .eq('status', 'pending')
+      // INC-JOBWORKER-SATURATION-2026-07-27 item 2: hold correlate-entities out
+      // of the drain until item 3 (memory bound) ships. Its pending rows stay
+      // pending, untouched. Remove this line when re-enabling correlate-entities
+      // (clearing CORRELATE_ENTITIES_DISABLED).
+      .neq('job_type', 'correlate-entities')
       .lte('scheduled_for', new Date().toISOString())
       .order('scheduled_for', { ascending: true })
       .order('created_at', { ascending: true })
@@ -207,5 +228,10 @@ Deno.serve(async (req) => {
     console.error('[job-worker] Fatal:', error);
     await failHeartbeat(supabase, hb, error);
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
+  } finally {
+    // Always release the lease so the next tick can run. Guarded by runId
+    // inside the helper, so we never clobber a lease another run reclaimed
+    // after ours went stale.
+    await releaseWorkerLease(supabase, runId);
   }
 });
