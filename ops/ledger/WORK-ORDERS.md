@@ -1112,3 +1112,35 @@ The sequence executed here — **merge (governed PR) → migration (SQL editor) 
 - MEMORY ENTRIES ADDED: 3 (env-specific-IDs feedback, silent-context project, fortress-frontend-worker reference)
 - REMAINING FOLLOW-ONS (ledgered, non-blocking): silent-context isAllTenantsView case (first in line); in-chat client-selector affordance; localStorage session/context store separation; Node 20→24 workflow pin bump; `tenants.classification` enum end-state; WO-PRR lane-shape decision proper.
 
+---
+
+# LEDGER-GAP RECONSTRUCTION — Jul 12–26 2026 (built 2026-07-27 from evidence)
+
+> This ledger was last updated 2026-07-11 (`95421d40`, #153). The Jul 12–26 window went unledgered because the session working it was abandoned at a machine reboot with **zero recoverable artifact** (see below). This is a single after-the-fact reconstruction entry built from git history, deployed edge-function source, and the `docs/platform-operations/` docs of the period — **not deeper archaeology**. It closes the gap and re-rules the three orphaned decisions from that session.
+
+## What changed prod in the window (evidence-backed)
+
+- **#154 — news-rss-proxy teardown + INC-WRANGLER-MISFIRE** (`7836b2f8`, merged; work commit `d8f3599e`, 2026-07-13). Tore down the Cloudflare `news-rss-proxy` Worker experiment (Google-News RSS fetch proxy, #123). Incident record: a `wrangler` op without `--name` deleted the prod frontend Worker for ~10 min (edge cache masked visible downtime). Ratified doctrine: **all wrangler delete/deploy MUST pass `--name <target>` + echo target to stdout first** (memory `feedback_wrangler_name_flag_required.md`).
+
+- **#155 — monitor-rss-sources parseRSS regex fix, DEPLOYED** (`d0932720`, 2026-07-15). Changed the item regex from bare `/<item>/` to `/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/` so namespaced/attributed CBC items (`<item cbc:type="story" …>`) are no longer silently dropped. **Deploy CODE-VERIFIED live in prod:** `get_edge_function('monitor-rss-sources')` returned **v99, updated 2026-07-15**, and the deployed source carries the fixed regex (deployed CLI-direct; `deploy-functions.yml` remains a dead pipeline). Root cause was a ≥16-day silent parse-time drop of ~60+ items/day across 3 CBC feeds (BC, Calgary, Canada National).
+  - **Runtime-yield verification PENDING (blocked this session):** operator reported "green — 27 CBC docs across the first 2 cycles" post-deploy. Attempted to confirm via `SELECT count(*) FROM ingested_documents JOIN sources … cbc … 2026-07-15`; **MCP `execute_sql` timed out repeatedly** while prod status was `ACTIVE_HEALTHY` (MCP connection flakiness, not a prod outage). **TODO: re-run the CBC-yield count when MCP recovers and stamp the exact figure here.**
+
+- **#156 — source-health-registry spec** (`87df9b3f`, 2026-07-15). Docs only, no prod effect. Added motivating cases #1–#3 + the "shape of zero" design requirement (`docs/platform-operations/wo-coverage-source-health-registry-spec.md`). The three motivating cases: (1) counter-vs-persistence mismatch class; (2) heartbeat `signals_created` counts `ingested_documents` inserts, not signals (the counter defect re-ruled in slot 4 below); (3) the silent namespaced-`<item>` parse drop fixed by #155.
+
+- **EcoExposed source — paused/dead** (evidence: `cloudflare/news-rss-proxy/DEPLOYMENT.md`). Google-News RSS source `139eb93b` returned **503 Service Unavailable** (2026-07-11 19:08Z) and **never produced a signal** across the observation window. Recorded here as a dead-source disposition of the news-rss-proxy experiment. **Current `sources.status` PENDING DB re-verify** (same MCP timeout as above).
+
+## Session-loss finding
+
+The hydration session active ~Jul 15–26 ("streamed responses destroyed by hydration overwrite") left **no commit, no stash, no branch** — its working tree died at a machine reboot and is unrecoverable. Reflog's most recent real work is the RSS/social-enrich commits of Jul 15; nothing hydration-related exists anywhere in git. **Consequence ratified as standing doctrine 2026-07-27** — commit-before-hold rule added to `CLAUDE.md` (`4798b9ca`).
+
+## Orphaned Jul-15 rulings — NEVER RECORDED, re-ruled 2026-07-27
+
+The abandoned session verbally ruled three decisions that were never written to any doc or ledger. "REPORT-GATE" appears **nowhere** in the repo; the RSS-counter "next build slot" and the #221 confidence slot survive only as *findings* in the Jul-11 docs, not as scheduled work. All three are re-ruled this session, executed in this exact order after this entry commits:
+
+1. **GENERATE-BRIEF-NOW / report-gate** — regenerate the Petronas exec brief (Jul 19–26), produce a per-claim relevance-score audit, then rule whether the existing `relevanceTokens` filter suffices, needs a hard `>=60` gate, or the gate must move into incident/pattern creation. **HOLD for ruling before any generator change.**
+2. **#221** — replace `agent-chat` `suggest_entity` hardcoded `confidence: 0.75` (`index.ts:1885`, + sibling create paths) with computed/attributed confidence per the survey doc. Smallest diff, CLI-direct deploy, before/after live rows.
+3. **Counter fix** — rename heartbeat `signals_created → documents_ingested` (lines 281/329 + response writer) and add a true `signals_created` derived from `function_jobs` results end-of-run. One PR, deploy, honest heartbeat evidence.
+4. **7-regex PR** — apply the #155 regex to the 7 remaining functions still carrying bare `/<item>([\s\S]*?)<\/item>/` (`ingest-expert-media`, `monitor-regional-apac`, `monitor-news`, `monitor-community-outreach`, `monitor-threat-intel`, `monitor-canadian-sources`, `monitor-court-registry`). Fixture test per function; deploy the 4 live-feed-serving ones first.
+
+Open-PR triage + all other scope stays parked until 2–5 land.
+

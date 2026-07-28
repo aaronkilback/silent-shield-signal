@@ -6,6 +6,15 @@ Supabase keys updated and validated.
 
 <!-- last-deploy: 2026-04-24 -->
 
+## Commit-Before-Hold Standing Rule (2026-07-27 — RATIFIED)
+
+**Any session that touches code MUST commit WIP to a named branch at every meaningful stopping point, and unconditionally before any hold, handoff, or end-of-session.** Uncommitted work in an abandoned session is treated as lost — because it is: the working tree of a dead session is unrecoverable, and machine-local branches do not survive a reboot unless committed. A partial, clearly-labeled WIP commit on a `wip/…` or feature branch is always preferable to an uncommitted tree.
+
+- "Meaningful stopping point" = any point where you would lose more than a few minutes of thinking if the session died right now.
+- Before responding with a HOLD or asking for a ruling, commit first, then hold.
+- WIP commits may be messy; squash/reword later. The commit is the durable artifact, not the tidiness.
+- **Provenance:** the hydration session active ~Jul 15–26 2026 ("streamed responses destroyed by hydration overwrite") left **zero recoverable artifact** after a machine reboot — no commit, no stash, no branch. All of its work and its rulings (REPORT-GATE, RSS-counter scheduling, #221 slot) were lost and had to be re-ruled from scratch. This rule exists so that never happens again.
+
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
 **No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.
