@@ -75,3 +75,13 @@ Sample poison payloads (3 of 6 most-recent failed): all `correlate-entities`, `a
 ## Detection/response lessons
 - **The specified reversible levers (disable cron / park jobs via SQL) were unreachable *because of* the incident** — the pool exhaustion locked out SQL from every path including the dashboard. The working lever was the management-API deploy path (function no-op) + the in-code env kill-switch + compute restart. Record this: **an incident that exhausts the DB can lock out its own SQL-based remediation; keep non-SQL levers (function kill-switches, env flags, compute restart) in the runbook.**
 - **`correlate-entities` has an env kill-switch (`CORRELATE_ENTITIES_DISABLED`)**; `job-worker` did not — hence the deploy-based no-op. Consider standardizing an env kill-switch on every heavy/queue-draining function.
+
+---
+
+## Item 4 addendum (2026-07-28) — enum-drop loss accepted + soak substitution
+
+**Enum-backfill CANCELLED (operator ruling, forward-fix only).** Investigation after the enum clamp shipped: the `invalid input value for enum entity_type` errors were caught **per-entity** (counted in `results.errors`, the bad entity dropped) — the `process-intelligence-document` **jobs completed** (0 enum-failed jobs; 0 stuck/pending docs). So there is no failed-job population to reprocess; the loss is individual out-of-vocab entities (`asset`/`project`/`route`/`research_initiative`/`event`) that were never inserted, with no per-document marker.
+
+- **Loss accepted:** bounded, low-value — every dropped entity would now map to the catch-all `'other'` type. Reprocessing would spend LLM budget to recover `'other'`-type rows. Not worth it.
+- **Future rule:** IF entity-vocabulary work later promotes `asset`/`route`/`project`/`event` to first-class `entity_type` values, source them from the **entity-scoping mechanism** at that time — **not** from an enum-drop backfill.
+- **Soak substitution:** the staged **25/cycle backfill soak** for the job-worker single-flight guard loses its synthetic workload (batch cancelled). **Soak validation instead comes from normal queue operation over the next ~48h** — the guard is already draining the real backlog cleanly (`claimed:25/succeeded:25` runs observed). Watch job-worker heartbeats + connection health over the window; no dedicated soak batch needed.
