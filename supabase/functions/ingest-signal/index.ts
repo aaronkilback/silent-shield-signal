@@ -946,11 +946,13 @@ Extract the following fields as JSON:
 - event_date: ISO 8601 date (YYYY-MM-DD) of WHEN THE EVENT OCCURRED — extract from text clues, not crawl date
 - is_historical: true if event occurred >90 days ago
 
-SEVERITY RULES:
-- critical: Immediate threat to life/safety, active sabotage in progress, ongoing breach, credible imminent attack
-- high: Planned direct action within 7 days, serious legal order affecting operations, active malware campaign targeting sector
-- medium: Activist monitoring, routine regulatory filing, general cyber indicator, planned protest >7 days out
-- low: Historical event >90 days ago, informational/background, geopolitical context with no direct client nexus
+SEVERITY RUBRIC (ANCHORED — grade the CLIENT IMPACT, not the drama of the world-event):
+- critical: imminent threat to LIFE or to CRITICAL INFRASTRUCTURE — active sabotage in progress, ongoing breach of client systems, credible imminent attack on client people/sites/operations.
+- high: DIRECT threat to client-class assets or operations requiring near-term (days) response — planned direct action against the client's sites/corridors within ~7 days, a serious legal/regulatory order directly affecting client operations, an active malware campaign specifically targeting the client or its named systems.
+- medium: relevant but not an imminent client threat — activist monitoring, routine regulatory filings, general sector cyber indicators, planned protest >7 days out. NEWS COVERAGE OF A DISTANT EVENT IS MEDIUM AT MOST unless it has a concrete client pathway (proximity to client assets/corridors, named client systems, direct supply-chain/personnel impact). A severe event happening far away, reported in the news, is NOT a high/critical signal for THIS client.
+- low: historical (>90 days), informational/background, geopolitical context with no client nexus, general-interest coverage.
+
+DISTRIBUTION EXPECTATION: severity must discriminate. A healthy feed is PYRAMID-SHAPED — the large majority of signals are low or medium, high is uncommon, critical is rare. If you are assigning high/critical to most items (especially news coverage), you are grading world-event drama, not client impact — step down. Grade what this means for the CLIENT, not how dramatic the headline is. The analyst-calibration examples below (if present) SUPPLEMENT this rubric; the rubric is the foundation and holds even with zero examples.
 
 CATEGORY GUIDANCE:
 - active_threat: Use for ongoing or imminent threats requiring immediate attention (violence, active sabotage, credible attack)
