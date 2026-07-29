@@ -4,7 +4,7 @@ import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance-scorer.ts';
 import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
-import { fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from '../_shared/alert-tier.ts';
+import { fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT, resolveAlertEmission } from '../_shared/alert-tier.ts';
 import { coerceOrigin, deriveOrigin } from '../_shared/signal-origins.ts';
 import { computeComposite } from '../_shared/signal-scores.ts';
 import { enqueueJob } from '../_shared/queue.ts';
@@ -2355,9 +2355,15 @@ Score this signal's relevance and classify the connection.`
               // zero verified -> one alert to an unroutable sentinel (never claimable/sent) surfaced via
               // the #69 operator-alert-bridge. SMS/oncall interruption transport deferred per AV.3 —
               // email stands in for now.
-              const __fpVerified = await fetchVerifiedRecipientEmails(supabase, clientId);
-              const __fpTargets = __fpVerified.length > 0 ? __fpVerified : [UNROUTED_RECIPIENT];
-              for (const __fpRecipient of __fpTargets) {
+              // REFUSE-TO-EMIT (INC-ALERT-DELIVERY item 2): no unroutable placeholders on the P1
+              // fast-path either. No verified recipient or fixture-origin -> refused + logged.
+              const __fpEmission = await resolveAlertEmission(supabase, {
+                tier: 'interruption', clientId: clientId, isFixture: (signal?.is_test === true) || (is_test === true),
+                incidentId: newIncident.id, signalId: signal.id,
+                subject: `P1 CRITICAL: ${signal.normalized_text?.substring(0, 50)}`,
+                emittedBy: 'ingest-signal',
+              });
+              for (const __fpRecipient of __fpEmission.recipients) {
               await supabase.from('alerts').insert({
                 incident_id: newIncident.id,
                 channel: 'email',

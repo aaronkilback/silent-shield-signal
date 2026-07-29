@@ -5,7 +5,7 @@ import { classifyUserSafeError } from "../_shared/user-safe-errors.ts";
 import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
 import { classifySignalIntoStoryline } from "../_shared/storyline-engine.ts";
 import { computeComposite } from "../_shared/signal-scores.ts";
-import { mapThreatLevelToTier, isDeliveryTier, fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from "../_shared/alert-tier.ts";
+import { mapThreatLevelToTier, isDeliveryTier, fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT, resolveAlertEmission } from "../_shared/alert-tier.ts";
 import { evaluateIncidentGate, persistGateDecision, deriveIncidentClassification, writeIncidentClassification } from "../_shared/incident-creation-gate.ts";
 
 const corsHeaders = {
@@ -1227,9 +1227,15 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
     // #69 operator-alert-bridge digest surfaces. See _shared/alert-tier.ts.
     const __alertTier = mapThreatLevelToTier(decision.threat_level);
     if (isDeliveryTier(__alertTier)) {
-      const __verified = await fetchVerifiedRecipientEmails(supabase, signal.client_id);
-      const __targets = __verified.length > 0 ? __verified : [UNROUTED_RECIPIENT];
-      for (const recipient of __targets) {
+      // REFUSE-TO-EMIT (INC-ALERT-DELIVERY item 2): no unroutable placeholders. A pageable alert
+      // with no verified recipient or fixture/benchmark origin is refused + logged, not emitted.
+      const __emission = await resolveAlertEmission(supabase, {
+        tier: __alertTier, clientId: signal.client_id, isFixture: signal.is_test === true,
+        incidentId: incident_id, signalId: signal.id,
+        subject: `[${(decision.threat_level || '').toUpperCase()}] ${signal.category} Alert`,
+        emittedBy: 'ai-decision-engine',
+      });
+      for (const recipient of __emission.recipients) {
         await supabase.from('alerts').insert({
           incident_id: incident_id,
           recipient: recipient,
