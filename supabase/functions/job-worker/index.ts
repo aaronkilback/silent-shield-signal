@@ -60,6 +60,15 @@ Deno.serve(async (req) => {
   }
 
   const hb = await startHeartbeat(supabase, 'job-worker-1min');
+  // Reap-on-next-start (INC-ALERT-DELIVERY triage item 3): a platform-killed run leaves a
+  // 'running' heartbeat forever (single-flight lease prevents concurrency, not stuck heartbeats).
+  // Mark any prior 'running' job-worker heartbeat failed before we begin — bounded, self-healing.
+  if (hb.id) {
+    await supabase.from('cron_heartbeat').update({
+      status: 'failed', completed_at: new Date().toISOString(),
+      error_message: 'reaped: superseded by a newer run (prior run stuck in running / platform-killed)',
+    }).eq('job_name', 'job-worker-1min').eq('status', 'running').neq('id', hb.id);
+  }
   const runStartedAt = Date.now();
   let claimed = 0;
   let succeeded = 0;

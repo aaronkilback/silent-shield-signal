@@ -54,3 +54,39 @@ export async function fetchVerifiedRecipientEmails(supabase: any, clientId: stri
     .not("verified_at", "is", null);
   return (data ?? []).map((r: any) => String(r.email).trim().toLowerCase());
 }
+
+/**
+ * REFUSE-TO-EMIT gate for pageable alerts (INC-ALERT-DELIVERY item 2). A delivery-tier alert
+ * is NOT materialized (no unroutable placeholder in `alerts`) when: (a) no active+verified
+ * recipient exists for the client, or (b) the subject is fixture/benchmark origin. Refusals
+ * land in `alert_emission_refusals` (visible log), never silence. Returns the recipients to
+ * emit to when it IS allowed. Quarantine now covers alerting, not just retrieval.
+ */
+export async function resolveAlertEmission(
+  supabase: any,
+  opts: { tier: AlertTier; clientId: string | null | undefined; isFixture: boolean; incidentId?: string | null; signalId?: string | null; subject?: string | null; emittedBy: string },
+): Promise<{ emit: boolean; recipients: string[]; reason: string }> {
+  if (!isDeliveryTier(opts.tier)) return { emit: false, recipients: [], reason: "non_delivery_tier" };
+
+  const logRefusal = async (reason: string) => {
+    try {
+      await supabase.from("alert_emission_refusals").insert({
+        tier: opts.tier, reason, client_id: opts.clientId ?? null,
+        incident_id: opts.incidentId ?? null, signal_id: opts.signalId ?? null,
+        subject: opts.subject ?? null, emitted_by: opts.emittedBy,
+      });
+    } catch (e) { console.warn("[alert-tier] refusal log failed:", (e as Error).message); }
+    console.log(`[alert-tier] REFUSE-TO-EMIT ${opts.tier}: ${reason} (client=${opts.clientId ?? "none"}, by=${opts.emittedBy})`);
+  };
+
+  if (opts.isFixture) {
+    await logRefusal("fixture_or_benchmark_origin");
+    return { emit: false, recipients: [], reason: "fixture_or_benchmark_origin" };
+  }
+  const verified = await fetchVerifiedRecipientEmails(supabase, opts.clientId);
+  if (verified.length === 0) {
+    await logRefusal("no_verified_recipient");
+    return { emit: false, recipients: [], reason: "no_verified_recipient" };
+  }
+  return { emit: true, recipients: verified, reason: "ok" };
+}
