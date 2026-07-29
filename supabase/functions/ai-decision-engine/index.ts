@@ -6,7 +6,7 @@ import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
 import { classifySignalIntoStoryline } from "../_shared/storyline-engine.ts";
 import { computeComposite } from "../_shared/signal-scores.ts";
 import { mapThreatLevelToTier, isDeliveryTier, fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from "../_shared/alert-tier.ts";
-import { evaluateIncidentGate, persistGateDecision } from "../_shared/incident-creation-gate.ts";
+import { evaluateIncidentGate, persistGateDecision, deriveIncidentClassification, writeIncidentClassification } from "../_shared/incident-creation-gate.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1048,6 +1048,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
             signal_id: signal.id,
             client_id: signal.client_id,
             priority: (gate.priority || decision.incident_priority || 'p3') as any,
+            incident_type: deriveIncidentClassification(signal).incident_type,
             status: 'open',
             is_test: signal.is_test || false,
             title: (() => {
@@ -1108,6 +1109,8 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         if (incident) {
           incident_id = incident.id;
           console.log(`Incident created successfully: ${incident_id}`);
+          // Fail-loud classification-rationale write — no incident without provenance.
+          await writeIncidentClassification(supabase, incident.id, signal, gate);
           await persistGateDecision(supabase, signal.id, 'ai-decision-engine', gate, incident.id);
 
           // Close the predictive feedback loop: mark any prior prediction for this signal as verified

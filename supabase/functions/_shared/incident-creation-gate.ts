@@ -174,6 +174,48 @@ export async function evaluateIncidentGate(
     values };
 }
 
+// ── Classification write (WO-INCIDENT-QA Step 3) ──
+// Every created incident gets a real incident_type AND an incident_classification_rationale
+// row — fail-loud if the rationale cannot be written (an incident without provenance is the
+// exact "UNKNOWN" defect this closes).
+
+const CYBER_CATS = new Set(['cybersecurity', 'malware', 'phishing', 'intrusion', 'data_exfil', 'ddos', 'ransomware', 'vulnerability', 'cyber']);
+const PHYSICAL_CATS = new Set(['wildfire', 'civil_emergency', 'natural_disaster', 'weather', 'violence', 'active_threat', 'physical', 'sabotage', 'health_concern', 'amber_alert', 'environmental']);
+const SOCIAL_CATS = new Set(['protest', 'activism', 'social_sentiment', 'extremism', 'crime']);
+
+export function deriveIncidentClassification(signal: any): { incident_type: string; system_of_origin: string } {
+  const cat = String(signal?.category || '').toLowerCase();
+  let system_of_origin = 'intel_platform';
+  if (CYBER_CATS.has(cat)) system_of_origin = 'cyber';
+  else if (PHYSICAL_CATS.has(cat)) system_of_origin = 'physical';
+  else if (SOCIAL_CATS.has(cat)) system_of_origin = 'social_media';
+  const incident_type = signal?.signal_type || cat || 'other';
+  return { incident_type, system_of_origin };
+}
+
+/**
+ * Write the classification-rationale row for a freshly-created incident. FAIL-LOUD:
+ * throws if the row cannot be written, so a classification gap surfaces immediately
+ * instead of silently producing an UNKNOWN incident.
+ */
+export async function writeIncidentClassification(
+  supabase: any, incidentId: string, signal: any, gate: GateResult,
+): Promise<{ incident_type: string; system_of_origin: string; classification: string }> {
+  const { incident_type, system_of_origin } = deriveIncidentClassification(signal);
+  const classification = String(gate.priority || 'p3').toUpperCase(); // P1|P2|P3
+  const { error } = await supabase.from('incident_classification_rationale').insert({
+    incident_id: incidentId,
+    classification,
+    system_of_origin,
+    rationale: `Auto-classified at creation. Gate ${gate.branch}: ${gate.reason}. category=${signal?.category ?? 'n/a'}, type=${incident_type}.`,
+    classified_by: 'auto',
+  });
+  if (error) {
+    throw new Error(`classification write failed for incident ${incidentId}: ${error.message}`);
+  }
+  return { incident_type, system_of_origin, classification };
+}
+
 /**
  * Persist the gate decision. Best-effort: a logging failure must not itself admit or
  * block an incident, but it is surfaced (console.error) so the gap is visible.

@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { evaluateIncidentGate, persistGateDecision } from "../_shared/incident-creation-gate.ts";
+import { evaluateIncidentGate, persistGateDecision, deriveIncidentClassification, writeIncidentClassification } from "../_shared/incident-creation-gate.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -112,13 +112,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Create incident (full classification write lands in Step 3).
+    // Create incident with a real classification (Step 3: incident_type always written).
+    const classification = deriveIncidentClassification(signal);
     const { data: incident, error: incidentError } = await supabase
       .from('incidents')
       .insert({
-        title: signal.title || `Incident: ${signal.signal_type}`,
+        title: signal.title || `Incident: ${classification.incident_type}`,
         summary: signal.description,
-        incident_type: signal.signal_type,
+        incident_type: classification.incident_type,
         severity_level: severityLevel,
         priority: incidentPriority as any,
         status: 'open',
@@ -135,6 +136,8 @@ Deno.serve(async (req) => {
 
     if (incidentError) throw incidentError;
 
+    // Fail-loud classification-rationale write — no incident without provenance.
+    await writeIncidentClassification(supabase, incident.id, signal, gate);
     await persistGateDecision(supabase, signalId, 'check-incident-escalation', gate, incident.id);
 
     // Link signal + related + entities.
