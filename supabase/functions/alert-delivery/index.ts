@@ -23,6 +23,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { Resend } from "npm:resend@2.0.0";
 import { authorizeInternal } from "./lib.ts";
 import { processClaimedAlert } from "./processor.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -56,6 +57,9 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const worker = crypto.randomUUID();
+  // Heartbeat (INC-ALERT-DELIVERY remediation): a delivery pipeline with no heartbeat was the
+  // 10-month blind spot. It ends structurally — every drain records success/failure.
+  const hb = await startHeartbeat(supabase, 'alert-delivery-v2-email');
 
   // Atomic claim. The RPC also reconciles lease-expired 'sending' rows that are at/past the
   // DB-authoritative idempotency cutoff into 'requires_reconciliation' (never returned for resend).
@@ -63,7 +67,7 @@ Deno.serve(async (req) => {
   const { data: claimed, error: claimErr } = await supabase.rpc("claim_pending_email_alerts", {
     p_worker: worker, p_limit: CLAIM_LIMIT, p_lease_seconds: LEASE_SECONDS,
   });
-  if (claimErr) { console.error("[alert-delivery v2] claim failed:", claimErr.message); return json({ error: "claim_failed" }, 500); }
+  if (claimErr) { console.error("[alert-delivery v2] claim failed:", claimErr.message); await failHeartbeat(supabase, hb, claimErr); return json({ error: "claim_failed" }, 500); }
 
   // Send-time re-verify (#71 B) — PER-CLIENT PAIR gate, SINGLE SOURCE OF TRUTH = client_alert_recipients.
   // Retires the flat alert_delivery_allowed_recipients gate. Two batch queries, no claim-RPC change:
@@ -74,15 +78,12 @@ Deno.serve(async (req) => {
   //       and any TOCTOU deactivation between claim and send.
   const claimedAlerts = (claimed ?? []) as any[];
 
-  const incidentIds = [...new Set(claimedAlerts.map((a) => a.incident_id).filter(Boolean))];
-  const incidentToClient = new Map<string, string>();
-  if (incidentIds.length) {
-    const { data: incRows } = await supabase.from("incidents").select("id, client_id").in("id", incidentIds);
-    for (const r of (incRows ?? [])) if (r.client_id) incidentToClient.set(r.id, r.client_id);
-  }
-  for (const a of claimedAlerts) a.__client_id = a.incident_id ? (incidentToClient.get(a.incident_id) ?? null) : null;
-
-  const clientIds = [...new Set([...incidentToClient.values()])];
+  // Send-time re-verify (INC-ALERT-DELIVERY remediation): DECOUPLED from the incident FK.
+  // The alert carries its own client_id (set at emit); the (client, recipient) pair gate still
+  // closes the cross-client hole + TOCTOU deactivation, but a dead/missing incident no longer
+  // makes a real, verified-recipient alert undeliverable.
+  for (const a of claimedAlerts) a.__client_id = a.client_id ?? null;
+  const clientIds = [...new Set(claimedAlerts.map((a) => a.client_id).filter(Boolean))];
   const allow = new Set<string>();
   if (clientIds.length) {
     const { data: recipRows } = await supabase
@@ -103,6 +104,11 @@ Deno.serve(async (req) => {
     results.push({ id: a.id, outcome: r.outcome, ...(r.error_class ? { error_class: r.error_class } : {}) });
   }
 
+  await completeHeartbeat(supabase, hb, {
+    claimed: claimedAlerts.length,
+    sent: results.filter((r) => r.outcome === 'sent').length,
+    results: results.length,
+  });
   return json({ worker, claimed: claimedAlerts.length, results });
 });
 

@@ -1238,6 +1238,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
       for (const recipient of __emission.recipients) {
         await supabase.from('alerts').insert({
           incident_id: incident_id,
+          client_id: signal.client_id,
           recipient: recipient,
           channel: 'email',
           tier: __alertTier,
