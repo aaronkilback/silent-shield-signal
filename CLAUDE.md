@@ -468,6 +468,14 @@ If one exists, do NOT create a duplicate — update or fix the existing one.
 - **Enforcement:** RPC `public.registry_phantom_check()` returns each registry entry's `has_cron` + `ever_succeeded`; the system-watchdog "REGISTRY-IS-A-PROMISE" probe aggregates all phantoms into ONE critical finding per run (never one-per-phantom — attention doctrine).
 - **Provenance:** health-monitor triage 2026-07-29 found 4 phantoms (community-outreach, threat-intel, twitter-6h, resolve-agent-predictions); the probe then surfaced a broader ~30-entry registry-hygiene backlog. Promises get verified.
 
+### Parked-PR Re-Triage Standing Rule (2026-07-29 — RATIFIED) — Registry-is-a-Promise, applied to branches
+
+**Any open PR labeled `parked: post-readiness` (or otherwise held) longer than 30 days MUST be re-triaged against `main` at the next monthly review.** An open PR is a promise that work is still coming; a branch that has silently drifted stale, been superseded by out-of-band prod changes, or had its deliverable land elsewhere is the branch-space twin of a registry phantom — a standing expectation the backlog then repeats. Re-triage each: verify head commits against main by patch-id (`git cherry`) + content-diff, then re-rule **SUPERSEDED** (cite the commit/PR that landed it — incl. out-of-band prod schema now salvaged), **STALE** (the gating process/lane it served was obsoleted — cite the successor), or still **LIVE** (restate the specific unblock gate). Nothing stays parked on an unexamined promise.
+
+- **Prod-applied-but-unlanded is a phantom too.** A parked feat/* PR whose schema was applied to prod out-of-band is a DR/parity gap masquerading as pending work — salvage the migration to `git` (verified against live schema, not trusted) and re-rule the PR. (PR-triage 2026-07-29: #53/#57/#61/#67/#69/#74 migrations salvaged in #183.)
+- **Superseded-but-shipped decisions get archived, not deleted** — `docs/decisions/archive/` with a one-line superseded header. Authorization packages that shipped prod schema stay in the immutable decision chain even when their PR closes.
+- **Provenance:** PR-triage 2026-07-29 — 32 open PRs (many 30–130 days old); 20 closed (superseded/stale), 6 parked with explicit unblock gates, 3 queued, 2 reclassified stale after lane-currency check, 1 held for operator ruling. Branches get verified like registry entries.
+
 ### Run the validation script after any cron-related change
 ```
 node scripts/validate-cron-alignment.mjs
