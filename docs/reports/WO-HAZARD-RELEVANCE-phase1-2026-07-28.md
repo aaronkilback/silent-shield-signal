@@ -93,3 +93,15 @@ Surfaced, NOT implemented:
 4. **Fold into WO-INCIDENT-QA ruling phase:** hazard incidents inherit "no pathway → no incident → awareness only." The Clinton incident cluster is the test case for the cleanup verdicts.
 
 **Interim note (no action taken):** province-granular entries `"British Columbia"` / `"Northern BC"` in `clients.locations` are the specific tokens driving the over-scoring; even before geometry lands, tightening these to actual operating areas would reduce the false-positive rate — flagged for the ruling, not changed.
+
+---
+
+## ACCEPTANCE-TEST CORRECTION (2026-07-29, WO-FLARE-DISAMBIGUATION)
+
+The original acceptance-test headline "Kitimat/Skeena wildfires -> MAIN (0km from LNG terminal)"
+was a **geocoding artifact**, caught by the operator during daily product review. Those fires are
+68-208km away; the scorer had text-geocoded the region name "Kitimat/Skeena" to the terminal
+point. Corrected by coordinate-first scoring (WO-FLARE Phase 2): re-scored with true coordinates,
+10 of 13 drop to awareness; 3 legitimately stay MAIN via the Coastal GasLink corridor (5-28km).
+The acceptance test now passes for the RIGHT reason (real coordinates + corridor pathway), not a
+region-name artifact.
