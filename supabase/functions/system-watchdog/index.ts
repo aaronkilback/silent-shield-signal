@@ -3064,6 +3064,25 @@ Deno.serve(async (req) => {
         }
       } catch (_e) { /* best-effort probe */ }
 
+      // REGISTRY-IS-A-PROMISE probe (standing rule 2026-07-29): every cron_job_registry entry must
+      // have a live cron AND >=1 successful invocation. Phantoms (no cron OR never-succeeded) are
+      // registry dishonesty. Aggregated to ONE finding (attention doctrine — never 1-per-phantom).
+      try {
+        const { data: phantoms } = await supabase.rpc('registry_phantom_check');
+        const bad = (phantoms || []).filter((p: any) => !p.has_cron || !p.ever_succeeded);
+        if (bad.length > 0) {
+          const noCron = bad.filter((p: any) => !p.has_cron).length;
+          const neverRan = bad.filter((p: any) => p.has_cron && !p.ever_succeeded).length;
+          behavioralFindings.push({
+            category: 'behavioral_health', severity: 'critical',
+            title: `Registry phantoms: ${bad.length} job(s) registered without a live cron or a successful run ever`,
+            analysis: `${bad.length} cron_job_registry entries advertise a health expectation but ${noCron} have no live cron and ${neverRan} have never completed a run (name-mismatch, retired, or broken). The registry is a promise; these are unkept. Sample: ${bad.slice(0, 12).map((p: any) => p.job_name).join(', ')}${bad.length > 12 ? '…' : ''}.`,
+            plainEnglish: `${bad.length} scheduled jobs are registered as active but either aren't scheduled or have never once run — the registry is advertising work that isn't happening.`,
+            action: 'Triage each: retired → de-register; registry name ≠ heartbeat name → align; broken → fix + verify one run. registered-but-never-ran must not persist.',
+          });
+        }
+      } catch (_e) { /* best-effort probe */ }
+
       // 3. #83 SEVERITY RECALIBRATION regression probe (rule 7 — scans must reflect current state).
       // Post-#83: monitor-domains emits ONLY 'low' (its "legitimate domain" is fabricated from
       // client name/org, so typosquats of it are not a justified high), and detect-threat-patterns
