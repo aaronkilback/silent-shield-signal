@@ -36,6 +36,109 @@ function cleanSignalExcerpt(text: string | null | undefined): string {
   return t;
 }
 
+/**
+ * Private-individual name scrub — render-time enforcement of the flash's
+ * "never name a private individual" rule for ANY text that reaches the client
+ * PDF (incident titles/rationale, awareness titles, and the generated summary
+ * as a backstop). Added 2026-07-28 (second red-pen): the name "Steve Larabie"
+ * (a wildfire-affected private citizen) reached a client PDF via the incident
+ * table, which is raw DB text no prompt rule ever touched.
+ *
+ * Design — precision over recall (the brief template is frozen for the week):
+ *  - Only Title-Case "Firstname Lastname" personal names are candidates, and
+ *    only when the first token is a known common given name (or an honorific
+ *    prefixes it). This is deliberately aligned with the brief's tradecraft
+ *    convention that PUBLIC figures are written SURNAME-in-CAPITALS (e.g.
+ *    "Richard BROOKS") — an ALL-CAPS surname never matches the Title-Case
+ *    Lastname pattern, so public figures the analysts intentionally named are
+ *    preserved automatically.
+ *  - A name is KEPT (acting in a public capacity) when a public-role keyword
+ *    sits adjacent (before or after) — "activist Richard Brooks", "Brooks, the
+ *    union organizer".
+ *  - Otherwise it is replaced with a neutral role reference.
+ *  - Place/org false positives are avoided by the given-name gate plus a
+ *    geographic-prefix guard ("Fort St. John", "Lake Louise").
+ */
+const COMMON_GIVEN_NAMES = new Set([
+  'james','john','robert','michael','william','david','richard','joseph','thomas','charles',
+  'christopher','daniel','matthew','anthony','mark','donald','steven','steve','paul','andrew',
+  'joshua','kenneth','kevin','brian','george','timothy','ronald','edward','jason','jeffrey',
+  'ryan','jacob','gary','nicholas','eric','jonathan','stephen','larry','justin','scott',
+  'brandon','benjamin','samuel','gregory','frank','alexander','raymond','patrick','jack','dennis',
+  'jerry','tyler','aaron','jose','adam','nathan','henry','zachary','douglas','peter',
+  'kyle','noah','ethan','jeremy','walter','christian','keith','roger','terry','austin',
+  'sean','gerald','carl','harold','dylan','arthur','lawrence','jordan','jesse','bryan',
+  'billy','bruce','gabriel','joe','logan','alan','juan','albert','willie','elijah',
+  'wayne','randy','vincent','mason','roy','ralph','bobby','russell','bradley','philip',
+  'mary','patricia','jennifer','linda','elizabeth','barbara','susan','jessica','sarah','karen',
+  'nancy','lisa','margaret','betty','sandra','ashley','dorothy','kimberly','emily','donna',
+  'michelle','carol','amanda','melissa','deborah','stephanie','rebecca','laura','sharon','cynthia',
+  'kathleen','amy','angela','shirley','anna','brenda','pamela','emma','nicole','helen',
+  'samantha','katherine','christine','debra','rachel','carolyn','janet','catherine','maria','heather',
+  'diane','ruth','julie','olivia','joyce','virginia','victoria','kelly','lauren','christina',
+  'joan','evelyn','judith','megan','andrea','cheryl','hannah','jacqueline','martha','gloria',
+  'teresa','ann','sara','madison','frances','kathryn','janice','jean','abigail','alice',
+  'julia','judy','sophia','grace','denise','amber','doris','marilyn','danielle','beverly',
+  'isabella','theresa','diana','natalie','brittany','charlotte','marie','kayla','alexis','lori',
+  // common French-Canadian / other given names seen in NE BC / Canadian coverage
+  'pierre','jean','luc','marc','andre','francois','guy','yves','denis','claude',
+  'sylvie','nathalie','isabelle','manon','chantal','josee','veronique','genevieve','melanie','caroline',
+  'liam','mateo','sofia','mohammed','ahmed','ali','omar','wei','ming','raj',
+  'amir','fatima','aisha','chen','singh','kaur','dave','mike','chris','rob',
+  'tom','tony','bill','jim','ken','ron','don','ed','sam','ben',
+]);
+
+const PUBLIC_ROLE_RE = /(activist|organi[sz]er|protest\s+leader|journalist|reporter|columnist|editor|blogger|politician|premier|minister|mayor|councill?or|councilm[ae]n|councilwoman|senator|governor|member\s+of\s+parliament|\bmp\b|\bmla\b|\bmpp\b|chief|professor|doctor|president|vice[-\s]president|\bceo\b|\bcfo\b|\bcoo\b|\bcto\b|chair(?:man|woman|person)?|director|executive|founder|spokes(?:person|man|woman)|officer|constable|sergeant|inspector|superintendent|commissioner|judge|justice|lawyer|attorney|counsel|celebrity|musician|singer|actor|actress|athlete|author|candidate|leader|coordinator|advocate)/i;
+
+const GEO_PREFIX = new Set(['st','st.','saint','fort','lake','mount','mt','mt.','port','cape','new','prince','fond','sault','baie','grand','fonddu']);
+
+function scrubPrivateIndividualNames(input: string | null | undefined): string {
+  if (!input) return '';
+  let text = String(input);
+  const scrubbedSurnames = new Set<string>();
+  const COMMUNITY_CTX = /wildfire|evacuat|flood|resident|community|neighbou?r|family|homeowner|rancher|farmer|victim|missing/i;
+
+  // Shared keep/scrub decision for a candidate personal name at `offset`.
+  // Returns the replacement string, or null to KEEP the original match.
+  const decide = (match: string, surname: string, offset: number): string | null => {
+    // Geographic guard: "Fort St. John", "Lake Louise", etc.
+    const before = text.slice(Math.max(0, offset - 14), offset);
+    const prevTok = (before.match(/([A-Za-z.'-]+)\s*$/) || [, ''])[1].toLowerCase();
+    if (GEO_PREFIX.has(prevTok)) return null;
+    // Public-capacity guard: a public-role keyword within ~45 chars either side,
+    // or the name token itself IS a public-role word ("Mr. President").
+    const ctxBefore = text.slice(Math.max(0, offset - 45), offset);
+    const ctxAfter = text.slice(offset + match.length, offset + match.length + 45);
+    if (PUBLIC_ROLE_RE.test(match) || PUBLIC_ROLE_RE.test(ctxBefore) || PUBLIC_ROLE_RE.test(ctxAfter)) return null;
+    if (surname.length >= 6) scrubbedSurnames.add(surname);
+    return COMMUNITY_CTX.test(ctxBefore + ' ' + ctxAfter) ? 'a local resident' : 'a private individual';
+  };
+
+  // Pass 1 — honorific + one-or-two Title-Case tokens (whole match, incl. the
+  // honorific, is replaced). Dr/Prof deliberately excluded — they are public-role
+  // indicators. Catches "Mr. Thompson" and "Ms. Jane Doe".
+  const HON_RE = /\b(Mr|Mrs|Ms|Miss|Mx|Rev|Sgt|Cst|Capt|Lt|Sir|Dame)\.?\s+([A-Z][a-z]+)(?:\s+[A-Z]\.)?(?:\s+([A-Z][a-z]+(?:-[A-Z][a-z]+)?))?\b/g;
+  text = text.replace(HON_RE, (match: string, _honor: string, n1: string, n2: string | undefined, offset: number) => {
+    const surname = n2 || n1;
+    return decide(match, String(surname), offset) ?? match;
+  });
+
+  // Pass 2 — Firstname (known given name) + Title-Case Lastname, no honorific.
+  const GIVEN_RE = /\b([A-Z][a-z]+)(?:\s+[A-Z]\.)?\s+([A-Z][a-z]+(?:-[A-Z][a-z]+)?)\b/g;
+  text = text.replace(GIVEN_RE, (match: string, first: string, last: string, offset: number) => {
+    if (!COMMON_GIVEN_NAMES.has(String(first).toLowerCase())) return match;
+    return decide(match, String(last), offset) ?? match;
+  });
+
+  // Replace later bare-surname mentions of an already-scrubbed private name
+  // (length-gated to ≥6 to avoid clobbering common English words / place names).
+  for (const last of scrubbedSurnames) {
+    const esc = last.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(`\\b${esc}('s)?\\b`, 'g'), (_m, poss) => poss ? "the individual's" : 'the individual');
+  }
+  return text;
+}
+
 // Interface for evidence source tracking
 interface EvidenceSource {
   claim: string;
@@ -667,6 +770,11 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
       if (flashResult.data) executiveFlash = flashResult.data;
     }
 
+    // Item 1 (second red-pen): the flash's assessed trajectory + the body risk
+    // level are now handed to the summary prompt as CONSTRAINTS so the summary
+    // can elaborate but never silently contradict the banner printed above it.
+    const flashTrajectory = String(executiveFlash?.trajectory || 'STABLE').toUpperCase();
+
     // Generate Impact Ladders for top issues
     const impactPrompt = `As a security strategist, create impact ladders for the top 3 threats facing ${client.name}.
 
@@ -746,7 +854,7 @@ Write a professional 2-3 paragraph executive summary that:
 1. Opens with a BLUF (Bottom Line Up Front) — one sentence stating the single most important thing the executive needs to know right now
 2. Names all key individuals using SURNAME in CAPITALS following intelligence tradecraft convention (e.g., activist organizer Richard BROOKS, journalist Danny NUNES, Dr. Ulrike MEYER)
 3. Clearly distinguishes between new threats (last 24h) and stale open incidents — never present stale incidents as current threats
-4. States the threat trajectory explicitly: is overall risk ESCALATING, STABLE, or DE-ESCALATING compared to the previous reporting period, and why
+4. States the threat trajectory explicitly, CONSISTENT with the flash-assessed trajectory (${flashTrajectory}) — ESCALATING, STABLE, or DE-ESCALATING vs the previous reporting period, and why. If your read of the evidence genuinely differs, do NOT silently print the opposite word — reconcile it explicitly per the FLASH CONSISTENCY rule below
 5. Reports EXACT counts from verified data only — never round or estimate
 6. Closes with one specific sentence on what ${client.name} leadership should prioritize in the next 24 hours
 
@@ -764,6 +872,11 @@ LANGUAGE CALIBRATION (consolidated brief-quality ruling — enforce strictly):
 - Report activist/community events neutrally by name and date. Do NOT use "escalating", "intensifying", or similar unless a signal explicitly states it.
 - A claim must never exceed its source: reviews are reviews (not approvals), proposals are proposals (not decisions), concerns are concerns (not findings).
 - Do NOT name private individuals; reference people by role or community unless they are a public figure acting in a public capacity.
+
+FLASH CONSISTENCY (internal-consistency constraint — an executive flash banner has ALREADY been assessed and will be printed directly ABOVE your summary):
+- Flash-assessed trajectory: ${flashTrajectory}
+- Body / flash risk level: ${overallRiskLevel}
+You may elaborate, add nuance, or explain the drivers, but the headline trajectory and risk posture you state must NOT contradict the flash. If your read of the evidence genuinely differs, do not simply assert the opposite — reconcile it explicitly in one clause that names BOTH the flash's posture and your qualification (e.g. "wildfire context remains active in the region though the flash-eligible threat posture is stable"). Never print a trajectory word that disagrees with the flash without that explicit reconciliation. Silent disagreement is the specific failure this rule closes.
 
 OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbols. No bullet points using asterisks. No bold formatting. Write in complete sentences.`;
 
@@ -784,6 +897,11 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       .replace(/^\s*Reliability Score:.*$/gim, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+    // Item 3 (second red-pen): render-time private-name backstop over the
+    // generated prose. Title-Case-only matching leaves intentional CAPITALS
+    // public-figure surnames untouched; catches any private name that slipped
+    // through the prompt rule.
+    executiveSummary = scrubPrivateIndividualNames(executiveSummary);
 
     // Generate action items grounded in actual signal evidence.
     //
@@ -1110,9 +1228,48 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
 
     const threatCategories = Object.keys(signalsByCategory);
 
+    // Item 2 (second red-pen): collapse NAAD/CAP awareness items that share
+    // event type + area into ONE line with an update count. Distinct CAP ids
+    // are updates of one event (e.g. a severe-thunderstorm warning re-issued 7
+    // times), not seven events — rendering them as seven awareness lines
+    // overstated activity. Non-CAP awareness items pass through individually.
+    const awarenessRenderItems: Array<{ title: string; category: string; date: string; count: number }> = (() => {
+      const groups = new Map<string, { title: string; category: string; date: string; count: number; event: string; area: string }>();
+      const passthrough: Array<{ title: string; category: string; date: string; count: number }> = [];
+      for (const s of awarenessSignals as any[]) {
+        const cap = (s.raw_json && typeof s.raw_json === 'object') ? s.raw_json.cap : null;
+        const event = cap ? String(cap.event || '').trim() : '';
+        const area = cap ? String(cap.area_desc ?? cap.areaDesc ?? '').trim() : '';
+        const date = String(s.received_at || '').slice(0, 10);
+        const category = String(s.category || 'context');
+        if (cap && event) {
+          const key = `${event.toLowerCase()}|${area.toLowerCase()}`;
+          const g = groups.get(key);
+          if (g) {
+            g.count += 1;
+            if (date > g.date) g.date = date; // keep the latest update date
+          } else {
+            groups.set(key, { title: '', category, date, count: 1, event, area });
+          }
+        } else {
+          passthrough.push({ title: String(s.title || '').trim(), category, date, count: 1 });
+        }
+      }
+      const collapsed = Array.from(groups.values()).map((g) => {
+        // "severe thunderstorm warnings, 7 updates, Peace region"
+        const evtLabel = /warning|watch|statement|advisory/i.test(g.event) ? g.event : `${g.event} warnings`;
+        const areaLabel = g.area ? `, ${g.area}` : '';
+        const title = g.count > 1
+          ? `${evtLabel}, ${g.count} updates${areaLabel}`
+          : `${g.event}${areaLabel}`;
+        return { title, category: g.category, date: g.date, count: g.count };
+      });
+      return [...collapsed, ...passthrough];
+    })();
+
     // Format dates
-    const reportDate = new Date().toLocaleDateString('en-US', { 
-      year: 'numeric', month: 'short', day: 'numeric' 
+    const reportDate = new Date().toLocaleDateString('en-US', {
+      year: 'numeric', month: 'short', day: 'numeric'
     });
 
     // Generate HTML report with all enhancements
@@ -1571,9 +1728,9 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           <td style="font-family: Arial, sans-serif; font-size: 8.5pt;">${ageLabel}</td>
           <td><span class="system-origin">${systemOrigin}</span></td>
           <td>
-            <strong>${incident.title || incident.incident_type || 'Untitled Incident'}</strong><br>
+            <strong>${scrubPrivateIndividualNames(incident.title || incident.incident_type || 'Untitled Incident')}</strong><br>
             <span style="font-family: Arial, sans-serif; font-size: 8pt; color: #555;">
-              ${rationale?.rationale || incident.description || incident.summary || `${incident.incident_type ? incident.incident_type.replace(/_/g, ' ') : 'Security incident'} — under investigation`}
+              ${scrubPrivateIndividualNames(rationale?.rationale || incident.description || incident.summary || `${incident.incident_type ? incident.incident_type.replace(/_/g, ' ') : 'Security incident'} — under investigation`)}
             </span>
           </td>
           <td style="font-family: monospace; font-size: 8pt;">${incident.openedAtFormatted}</td>
@@ -1630,12 +1787,13 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
   </div>
 
   <!-- A. INDUSTRY & COMMUNITY AWARENESS (0.30–0.59 relevance — context only) -->
-  ${awarenessSignals.length > 0 ? `
+  <!-- Item 2: NAAD/CAP items collapsed by event+area to one counted line. -->
+  ${awarenessRenderItems.length > 0 ? `
   <div class="section">
     <h2 class="section-title">Industry &amp; Community Awareness</h2>
     <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance industry, community, and movement context for situational awareness only — not client-specific threats. No action items, incident references, or risk ratings derive from this section.</p>
     <ul style="font-size:13px;line-height:1.6;padding-left:18px;">
-      ${awarenessSignals.slice(0, 12).map((s: any) => `<li>${String(s.title || '').replace(/[<>]/g, '')} <span style="color:#888;">(${(s.category || 'context')}, ${String(s.received_at || '').slice(0, 10)})</span></li>`).join('')}
+      ${awarenessRenderItems.slice(0, 12).map((item) => `<li>${scrubPrivateIndividualNames(item.title).replace(/[<>]/g, '')} <span style="color:#888;">(${item.category}, ${item.date})</span></li>`).join('')}
     </ul>
   </div>` : ''}
 
