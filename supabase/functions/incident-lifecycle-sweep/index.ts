@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
     // Open, live incidents.
     const { data: incidents, error: incErr } = await supabase
       .from('incidents')
-      .select('id, incident_type, opened_at, is_stale, stale_since')
+      .select('id, incident_type, opened_at, is_stale, stale_since, signal_id')
       .eq('status', 'open')
       .is('superseded_by', null)
       .is('deleted_at', null)
@@ -47,15 +47,24 @@ Deno.serve(async (req) => {
     const linksByIncident = new Map<string, string[]>();
     const sigById = new Map<string, any>();
 
+    // Seed each incident's linked-signal set with its primary incidents.signal_id
+    // (ai-decision-engine's canonical link — it does not write incident_signals rows).
+    for (const inc of incidents || []) {
+      if (inc.signal_id) linksByIncident.set(inc.id, [inc.signal_id]);
+    }
+
     if (ids.length > 0) {
       const { data: links } = await supabase
         .from('incident_signals').select('incident_id, signal_id').in('incident_id', ids);
-      const sigIds = [...new Set((links || []).map((l: any) => l.signal_id).filter(Boolean))];
       for (const l of links || []) {
         const arr = linksByIncident.get(l.incident_id) || [];
-        arr.push(l.signal_id);
+        if (!arr.includes(l.signal_id)) arr.push(l.signal_id);
         linksByIncident.set(l.incident_id, arr);
       }
+      const sigIds = [...new Set([
+        ...(incidents || []).map((i: any) => i.signal_id).filter(Boolean),
+        ...(links || []).map((l: any) => l.signal_id).filter(Boolean),
+      ])];
       // Fetch linked signals in chunks (received_at, category, origin, cap expiry).
       for (let k = 0; k < sigIds.length; k += 200) {
         const chunk = sigIds.slice(k, k + 200);
