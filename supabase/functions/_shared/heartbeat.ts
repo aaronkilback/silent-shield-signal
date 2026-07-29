@@ -92,6 +92,34 @@ export async function completeHeartbeat(
 }
 
 /**
+ * Mark a heartbeat run as SKIPPED — the job ran but deliberately did no work
+ * (e.g. its output store is write-frozen). Honest terminal-outcome telemetry:
+ * a job either writes somewhere real or says it skipped, never a false 'succeeded'.
+ */
+export async function skipHeartbeat(
+  supabase: SupabaseClient,
+  hb: HeartbeatHandle,
+  reason: string,
+  extra?: Record<string, unknown>
+): Promise<void> {
+  const payload = {
+    completed_at: new Date().toISOString(),
+    status: "skipped",
+    duration_ms: Date.now() - hb.startedAt,
+    result_summary: { skipped: true, reason, ...(extra ?? {}) },
+  };
+  try {
+    if (hb.id) {
+      await supabase.from("cron_heartbeat").update(payload).eq("id", hb.id);
+    } else {
+      await supabase.from("cron_heartbeat").insert({ job_name: hb.jobName, ...payload });
+    }
+  } catch (e) {
+    console.error(`[heartbeat] skipHeartbeat failed for ${hb.jobName}:`, e);
+  }
+}
+
+/**
  * Mark a heartbeat run as failed.
  * Updates the existing row if we have an id, otherwise inserts a new failed row.
  */

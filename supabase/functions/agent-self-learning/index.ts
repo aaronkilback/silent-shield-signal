@@ -1,5 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
-import { startHeartbeat, completeHeartbeat, failHeartbeat, type HeartbeatHandle } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat, skipHeartbeat, type HeartbeatHandle } from "../_shared/heartbeat.ts";
 import { enqueueJob } from "../_shared/queue.ts";
 
 /**
@@ -94,6 +94,12 @@ Deno.serve(async (req) => {
     if (mode === 'proactive') {
       hb = await startHeartbeat(supabase, 'agent-self-learning-proactive-8h');
     }
+    // Honest terminal outcome (WO-LEARNING-LOOP): this agent writes BOTH live
+    // agent_investigation_memory AND (frozen) expert_knowledge. It is NOT fully skipped —
+    // memory writes proceed — but the expert_knowledge portion is rejected while the
+    // INC-LEARN-CONTAM freeze holds. Flag it in the run summary rather than pretending
+    // full success or full skip.
+    const { data: expertKnowledgeFrozen } = await supabase.rpc('has_learning_freeze');
     const queryLimit = max_queries || (mode === 'deep_dive' ? 5 : mode === 'literature_review' ? 6 : 3);
     const results: { topics_researched: string[]; entries_created: number; entries_updated: number } = {
       topics_researched: [],
@@ -246,12 +252,18 @@ Deno.serve(async (req) => {
     console.log(`[agent-self-learning] Complete: ${results.entries_created} new, ${results.entries_updated} updated`);
 
     if (hb) {
-      await completeHeartbeat(supabase, hb, {
-        mode,
-        topics_researched: results.topics_researched.length,
-        entries_created: results.entries_created,
-        entries_updated: results.entries_updated,
-      });
+      if (expertKnowledgeFrozen === true && results.entries_created === 0 && results.entries_updated === 0) {
+        // Nothing landed anywhere real this run and knowledge writes are frozen — honest skip.
+        await skipHeartbeat(supabase, hb, 'expert_knowledge frozen (INC-LEARN-CONTAM) and no memory entries created this run');
+      } else {
+        await completeHeartbeat(supabase, hb, {
+          mode,
+          topics_researched: results.topics_researched.length,
+          entries_created: results.entries_created,
+          entries_updated: results.entries_updated,
+          expert_knowledge_frozen: expertKnowledgeFrozen === true,
+        });
+      }
     }
 
     return successResponse({

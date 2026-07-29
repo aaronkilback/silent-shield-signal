@@ -2869,25 +2869,44 @@ Deno.serve(async (req) => {
     }
 
     // AGENT LEARNING HEALTH
+    // WO-LEARNING-LOOP re-anchor: measure the last actual belief WRITE (created_at), not the
+    // last modification (last_updated_at). A modification is not learning; a new belief is.
+    // The prior anchor under-reported the true stall by ~600h.
     const { data: latestBelief } = await supabase
       .from('agent_beliefs')
-      .select('last_updated_at, agent_call_sign')
-      .order('last_updated_at', { ascending: false })
+      .select('created_at, agent_call_sign')
+      .order('created_at', { ascending: false })
       .limit(1);
 
-    const beliefAge = latestBelief?.[0]?.last_updated_at
-      ? (Date.now() - new Date(latestBelief[0].last_updated_at).getTime()) / 3600000
+    const beliefAge = latestBelief?.[0]?.created_at
+      ? (Date.now() - new Date(latestBelief[0].created_at).getTime()) / 3600000
       : 999;
+
+    // Are the shared-learning belief stores intentionally write-frozen (INC-LEARN-CONTAM)?
+    // If so, this "stall" is a KNOWN containment posture, not a mystery for the operator to
+    // chase crons over. Detect the freeze trigger so the finding tells the truth.
+    const { data: frozenData } = await supabase.rpc('has_learning_freeze');
+    const frozen = frozenData === true;
 
     if (beliefAge > 48) {
       findings.push({
-        severity: 'critical',
+        severity: frozen ? 'medium' : 'critical',
         category: 'Agent Learning',
-        title: 'Agent learning pipeline has stalled',
-        analysis: `Agent beliefs have not been updated in ${Math.round(beliefAge)} hours. Agents are operating on stale knowledge.`,
-        recommendation: 'Check thread-weaver, self-improvement, and knowledge-seeker cron jobs. Review for model errors.',
-        plainEnglish: `Agent beliefs have not been updated in ${Math.round(beliefAge)} hours. Agents may be working from stale knowledge.`,
-        action: 'Check that thread-weaver, self-improvement, and knowledge-seeker cron jobs ran last night.',
+        title: frozen
+          ? 'Agent belief writes frozen (INC-LEARN-CONTAM containment)'
+          : 'Agent learning pipeline has stalled',
+        analysis: frozen
+          ? `No new agent belief written in ${Math.round(beliefAge)} hours. Cause is the INC-LEARN-CONTAM write-freeze (intentional containment) — the learning agents run and complete, but writes to agent_beliefs/expert_knowledge/global_learning_insights are rejected by trg_inc_learn_contam_freeze_*. This is contained-and-known, NOT a broken cron. Real unfreeze is gated on the anonymization work (WO-LEARN-UNFREEZE).`
+          : `No new agent belief written in ${Math.round(beliefAge)} hours. Agents are operating on stale knowledge.`,
+        recommendation: frozen
+          ? 'No cron action. Belief writes stay frozen until the INC-LEARN-CONTAM anonymization gate ships. Track WO-LEARN-UNFREEZE.'
+          : 'Check thread-weaver, self-improvement, and knowledge-seeker cron jobs. Review for model errors.',
+        plainEnglish: frozen
+          ? `The system deliberately stopped writing new agent beliefs ${Math.round(beliefAge)} hours ago to contain a data-contamination issue. This is working as intended; it stays this way until the safe-to-resume work is done.`
+          : `Agent beliefs have not been updated in ${Math.round(beliefAge)} hours. Agents may be working from stale knowledge.`,
+        action: frozen
+          ? 'None — contained by ruling. Revisit when WO-LEARN-UNFREEZE (anonymization gate) is scheduled.'
+          : 'Check that thread-weaver, self-improvement, and knowledge-seeker cron jobs ran last night.',
         canAutoRemediate: false,
         remediationAction: 'none',
       });
@@ -4208,31 +4227,26 @@ Deno.serve(async (req) => {
       const fingerprintsThisRun: string[] = [];
       for (const f of allFindings) {
         const { job, agent } = inferAffected(String(f.title || ''), String(f.analysis || ''));
-        const fp = await sha256Sync(`${f.category}|${String(f.title || '').substring(0, 100)}|${job ?? ''}`);
+        // STABLE fingerprint (WO-LEARNING-LOOP fix): normalize digit runs in the title so a
+        // recurrence with a changed count/hours ("has 5 invocations", "895h") dedups to the
+        // SAME row instead of creating a new one. Must match record_platform_finding()'s
+        // internal formula byte-for-byte so the auto-resolve list below stays correct.
+        const normTitle = String(f.title || '').substring(0, 100).replace(/[0-9]+/g, '#');
+        const fp = await sha256Sync(`${f.category || 'unknown'}|${normTitle}|${job ?? ''}`);
         fingerprintsThisRun.push(fp);
 
-        await supabase
-          .from('platform_findings')
-          .upsert({
-            fingerprint: fp,
-            category: f.category || 'unknown',
-            severity: f.severity || 'info',
-            title: f.title,
-            analysis: f.analysis ?? null,
-            plain_english: f.plainEnglish ?? null,
-            action: f.action ?? null,
-            affected_agent: agent,
-            affected_job: job,
-            metadata: { source: 'system-watchdog' },
-            last_seen_at: new Date().toISOString(),
-          }, { onConflict: 'fingerprint' });
-
-        // For recurring findings, bump the occurrence_count separately
-        // (upsert above sets last_seen_at but onConflict can't
-        // increment a column).
-        await supabase.rpc('exec_increment_finding_occurrence', { fp_in: fp })
-          .then(() => null)
-          .catch(() => null); // helper RPC may not exist yet — non-fatal
+        // Atomic insert-or-increment: occurrence_count now actually counts; last_seen_at
+        // moves; a recurring finding is re-opened (resolved_at cleared).
+        await supabase.rpc('record_platform_finding', {
+          p_category: f.category || 'unknown',
+          p_severity: f.severity || 'info',
+          p_title: f.title,
+          p_analysis: f.analysis ?? null,
+          p_plain_english: f.plainEnglish ?? null,
+          p_action: f.action ?? null,
+          p_affected_agent: agent,
+          p_affected_job: job,
+        }).then(() => null, (e: any) => console.warn('[Watchdog] record_platform_finding failed:', e?.message));
       }
 
       // Auto-resolve findings that didn't appear in THIS run. They
