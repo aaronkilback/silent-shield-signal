@@ -2977,11 +2977,30 @@ Deno.serve(async (req) => {
         socialByJob.get(hb.job_name)!.push(hb);
       }
 
+      // Known STRUCTURAL DEFERRALS — 0-signal BY RULING, not a regression. Reframe as a
+      // known limitation (low), never a recurring behavioral defect.
+      const KNOWN_DEFERRED_SOCIAL: Record<string, string> = {
+        'monitor-social-unified': 'keyword-CSE structural deferral (docs .../social-enrich-deferred.md, 2026-07-15) — Facebook/Instagram CSE returns nothing by design; the keyword-CSE approach was validation-failed and deferred by ruling. Successor: actor-list collection.',
+        'monitor-social-hourly': 'legacy social monitor, superseded by the deferred social-enrich track.',
+        'monitor-social': 'legacy social monitor, superseded by the deferred social-enrich track.',
+      };
       for (const [jobName, runs] of socialByJob) {
         const lastRun = runs[0];
         const signalsFromRuns = runs.map(r => r.result_summary?.signals_created ?? 0);
         const totalSignals = signalsFromRuns.reduce((a: number, b: number) => a + b, 0);
         if (totalSignals === 0 && runs.length >= 3) {
+          const deferred = KNOWN_DEFERRED_SOCIAL[jobName];
+          if (deferred) {
+            behavioralFindings.push({
+              category: 'behavioral_health',
+              severity: 'low',
+              title: `${jobName}: 0 signals — KNOWN LIMITATION (deferred by ruling)`,
+              analysis: `${jobName} produced 0 signals across ${runs.length} runs. This is a KNOWN LIMITATION deferred by ruling, NOT a regression: ${deferred}`,
+              plainEnglish: `${jobName} finds nothing because keyword-based social search was deferred by ruling — expected, not a fault. Successor work is actor-list collection.`,
+              action: 'No action — deferred by ruling. Revisit only when the actor-list collection successor is scheduled.',
+            });
+            continue;
+          }
           behavioralFindings.push({
             category: 'behavioral_health',
             severity: 'medium',
@@ -3079,6 +3098,14 @@ Deno.serve(async (req) => {
         // (or remove this comment if the new architecture uses a
         // different naming convention).
         'monitor-pastebin-6h',
+        // 2026-07-29: monitor-journey-checkins is STRUCTURALLY IDLE, not broken. It
+        // checks in on active traveller journeys; traveller_journey_events last saw
+        // activity 2026-06-17 (zero active journeys since). The function completes fine
+        // every 5 min but has nothing to check. Legitimately quiet. REVISIT: if journeys
+        // resume, a broken checkin during an active journey should NOT be masked — at
+        // that point replace this blanket entry with an active-journey-count-aware probe.
+        'monitor-journey-checkins-5min',
+        'monitor-journey-checkins',
       ]);
       const SOCIAL_ALREADY_CHECKED = new Set([
         'monitor-social-unified',
