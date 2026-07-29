@@ -6,6 +6,7 @@ import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
 import { fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from '../_shared/alert-tier.ts';
 import { coerceOrigin, deriveOrigin } from '../_shared/signal-origins.ts';
+import { computeComposite } from '../_shared/signal-scores.ts';
 import { enqueueJob } from '../_shared/queue.ts';
 import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
 import { getCallerIdentity, getAccessibleClientIds } from '../_shared/supabase-client.ts';
@@ -1958,6 +1959,17 @@ Score this signal's relevance and classify the connection.`
         severity_score: severityScore,
         quality_score: qualityScore,
         confidence: classification.confidence,
+        // WO-INCIDENT-QA Step 3b: persist composite_confidence on EVERY signal at
+        // ingest so the creation gate has a confidence value to enforce (was null on
+        // ~84% of signals). Provisional — source_credibility uses a neutral 0.5 prior
+        // here; ai-decision-engine recomputes with the real source_credibility_scores
+        // lookup downstream. When coverage exceeds ~80% over a rolling week, revisit
+        // the gate to drop the corroboration fallback (see _shared/incident-creation-gate.ts).
+        composite_confidence: computeComposite({
+          ai_confidence: classification.confidence,
+          relevance_score: relevanceResult.score,
+          source_credibility: 0.5,
+        }),
         relevance_score: relevanceResult.score,
         status: signalStatus,
         is_test: is_test || false,
