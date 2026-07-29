@@ -1,6 +1,6 @@
 # INC-ALERT-DELIVERY-2026-07-29
 
-**Status:** OPEN — Phase 1 evidence complete, remediation HELD for ruling. **Severity:** CRITICAL.
+**Status:** REMEDIATION SHIPPED + code-verified live 2026-07-29 (first email ever sent; awaiting operator inbox confirmation to flip to verified-live). **Severity:** CRITICAL.
 **Trigger:** neural-map finding — ~1000+ undispatched alerts, oldest ~298 days. **No bulk-dispatch of aged alerts** (per map guidance) — nothing dispatched during this investigation.
 
 ## Headline

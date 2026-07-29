@@ -2601,6 +2601,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         ${severityIcon[analysis.severity] || '⚠️'} Fortress Watchdog Intelligence Report
       </h1>
       <p style="margin: 8px 0 0; font-size: 14px; color: #e0e0e0; line-height: 1.4;">${analysis.overallAssessment}</p>
+      ${typeof (analysis as any).openFindingsTotal === 'number' ? `<p style="margin: 6px 0 0; font-size: 12px; color: #9aa0a6;">Showing ${analysis.findings.length} of ${(analysis as any).openFindingsTotal} open findings (single-sourced with the neural-map from platform_findings). Any critical appears on all surfaces until resolved or allowlisted.</p>` : ''}
       <p style="margin: 6px 0 0; font-size: 12px; color: #aaa;">${now} MT • Status: ${analysis.severity.toUpperCase()} ${resolved.length > 0 ? `• ${resolved.length} auto-resolved` : ''} ${chronic.length > 0 ? `• ${chronic.length} chronic` : ''}</p>
     </div>
     
@@ -3032,6 +3033,36 @@ Deno.serve(async (req) => {
           });
         }
       }
+
+      // INC-ALERT-DELIVERY probe: a pageable email alert pending >2h WITH a verified client
+      // recipient = the delivery pipeline is not draining (the 10-month blind spot must never
+      // recur silently). EXPECTED 0.
+      try {
+        const twoHrsAgo = new Date(Date.now() - 2 * 3600000).toISOString();
+        const { data: stuckAlerts } = await supabase
+          .from('alerts')
+          .select('id, client_id, recipient, created_at')
+          .in('tier', ['notification', 'interruption'])
+          .eq('channel', 'email').eq('status', 'pending')
+          .lt('created_at', twoHrsAgo).limit(200);
+        let deliverableStuck = 0;
+        for (const a of stuckAlerts || []) {
+          if (!a.client_id) continue;
+          const { count } = await supabase.from('client_alert_recipients')
+            .select('id', { count: 'exact', head: true })
+            .eq('client_id', a.client_id).eq('active', true).not('verified_at', 'is', null);
+          if ((count || 0) > 0) deliverableStuck++;
+        }
+        if (deliverableStuck > 0) {
+          behavioralFindings.push({
+            category: 'behavioral_health', severity: 'critical',
+            title: `Alert delivery stalled: ${deliverableStuck} pageable alert(s) pending >2h WITH a verified recipient`,
+            analysis: `${deliverableStuck} notification/interruption email alert(s) have an active+verified client recipient but are still pending after 2h — alert-delivery-v2-email is not draining them (INC-ALERT-DELIVERY probe). EXPECTED 0.`,
+            plainEnglish: `Alerts that SHOULD have reached a client are stuck undelivered — the alert-delivery pipeline may be down again (this was silent for 10 months before the heartbeat was added).`,
+            action: 'Check alert-delivery-v2-email heartbeat + logs; confirm claim_pending_email_alerts is matching (client_id set on the alert, recipient verified).',
+          });
+        }
+      } catch (_e) { /* best-effort probe */ }
 
       // 3. #83 SEVERITY RECALIBRATION regression probe (rule 7 — scans must reflect current state).
       // Post-#83: monitor-domains emits ONLY 'low' (its "legitimate domain" is fabricated from
@@ -4351,6 +4382,29 @@ Deno.serve(async (req) => {
       };
     }
     console.log(`[Watchdog] AI verdict: severity=${analysis.severity}, findings=${analysis.findings.length}, remediable=${analysis.findings.filter(f => f.canAutoRemediate).length}`);
+
+    // FINDINGS SINGLE-SOURCE RULE (ruling 2026-07-29): the email digest and the neural-map render
+    // from the SAME platform_findings rows. Pull all OPEN (unresolved) findings, expose the
+    // "N of M" count, and ensure every open critical/high appears in the email even if it
+    // originated on another surface (Sentinel, a prior run) — a CRITICAL on one surface appears on
+    // all until resolved/allowlisted.
+    try {
+      const { data: openPf } = await supabase.from('platform_findings')
+        .select('title, severity, plain_english, analysis, action, affected_job')
+        .is('resolved_at', null);
+      (analysis as any).openFindingsTotal = (openPf || []).length;
+      const haveTitles = new Set((analysis.findings || []).map((f: any) => String(f.title || '').toLowerCase()));
+      for (const pf of openPf || []) {
+        if (['critical', 'high'].includes(String(pf.severity)) && !haveTitles.has(String(pf.title || '').toLowerCase())) {
+          analysis.findings.push({
+            category: pf.affected_job || 'platform', severity: pf.severity, title: pf.title,
+            analysis: pf.analysis, plainEnglish: pf.plain_english, action: pf.action,
+            remediationStatus: 'chronic', canAutoRemediate: false, remediationAction: 'none',
+          });
+        }
+      }
+      console.log(`[Watchdog] single-source: ${(analysis as any).openFindingsTotal} open findings on platform_findings; email showing ${analysis.findings.length}`);
+    } catch (_e) { /* best-effort single-source merge */ }
 
     // Phase 3: Auto-Remediate (with learning-informed decisions)
     const remediableFindings = analysis.findings.filter(f => f.canAutoRemediate && f.remediationAction && f.remediationAction !== 'none');

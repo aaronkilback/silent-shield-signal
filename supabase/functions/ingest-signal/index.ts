@@ -2366,6 +2366,7 @@ Score this signal's relevance and classify the connection.`
               for (const __fpRecipient of __fpEmission.recipients) {
               await supabase.from('alerts').insert({
                 incident_id: newIncident.id,
+                client_id: clientId,
                 channel: 'email',
                 recipient: __fpRecipient,
                 tier: 'interruption',
