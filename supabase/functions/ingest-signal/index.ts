@@ -1994,6 +1994,19 @@ Score this signal's relevance and classify the connection.`
 
     console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
 
+    // WO-HAZARD-RELEVANCE Step 6: pathway-score hazard-class signals at ingest. A hazard
+    // with no client impact pathway (proximity/corridor/HQ) has its relevance capped to
+    // 0.40 — awareness only, never main-tier — and the reasoning is persisted. Fire-and-await
+    // (the RPC caps signals.relevance_score); failure is logged, never blocks ingest.
+    const HAZARD_CATS_INGEST = ['civil_emergency', 'wildfire', 'weather', 'natural_disaster', 'health_concern', 'amber_alert'];
+    if (signal?.id && HAZARD_CATS_INGEST.includes(classification.category)) {
+      try {
+        await supabase.rpc('score_signal_hazard_pathway', { p_signal_id: signal.id });
+      } catch (e) {
+        console.warn('[hazard-pathway] scoring failed for', signal.id, (e as Error).message);
+      }
+    }
+
     // F-CRT-XQ (2026-05-15) — X quota/spend telemetry.
     // When a signal originates from the X filtered stream, record one
     // tweet-read against x_quota_consumption. Source-class buckets enable

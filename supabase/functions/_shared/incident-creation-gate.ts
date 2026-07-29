@@ -7,8 +7,9 @@
 //   • confidence     >= 0.65    WHEN a confidence value is present; when confidence
 //                               is null, fall back to corroboration (>=2 independent
 //                               linked signals / entity corroboration).  [Option-1 ruling]
-//   • for hazard classes: a pathway — but until pathway scoring ships (Step 6) hazard
-//     classes are FROZEN (awareness only), a blanket temporary rule.
+//   • for hazard classes: a client impact pathway (Step 6, freeze lifted) — proximity to
+//     assets / corridor overlap / HQ, scored by PostGIS distance. No pathway → awareness
+//     only (relevance capped to 0.40 at ingest); pathway → normal relevance/confidence gate.
 // Severity sets PRIORITY (p1/p2/p3) only — never admission by itself.
 // [PATTERN] meta-observations (signals about signals) NEVER create incidents.
 //
@@ -32,7 +33,7 @@ export interface GateResult {
   admit: boolean;
   branch:
     | 'pattern_excluded'
-    | 'hazard_frozen'
+    | 'hazard_no_pathway'
     | 'relevance_below'
     | 'confidence_below'
     | 'confidence_null_uncorroborated'
@@ -127,11 +128,27 @@ export async function evaluateIncidentGate(
       values: baseValues };
   }
 
-  // 2. INTERIM HAZARD FREEZE — until pathway scoring (Step 6). Awareness only.
+  // 2. HAZARD PATHWAY (Step 6 — interim freeze LIFTED). A hazard/NAAD signal earns an
+  // incident ONLY via a client impact pathway (proximity / corridor / HQ). No pathway →
+  // awareness only. Pathway scoring also caps relevance to 0.40 for no-pathway hazards,
+  // so this is defence-in-depth over the relevance gate below.
   if (isHazardSignal(signal)) {
-    return { admit: false, branch: 'hazard_frozen', priority: null,
-      reason: `INTERIM hazard freeze: ${category || 'hazard/NAAD'} creates no incident until pathway scoring lands`,
-      values: baseValues };
+    let pathway: any = null;
+    const { data: existing } = await supabase.from('hazard_pathway_scores')
+      .select('has_pathway, reasoning').eq('signal_id', signal.id)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (existing) {
+      pathway = existing;
+    } else {
+      const { data: scored } = await supabase.rpc('score_signal_hazard_pathway', { p_signal_id: signal.id });
+      pathway = scored ? { has_pathway: scored.has_pathway, reasoning: scored.reason } : null;
+    }
+    if (!pathway?.has_pathway) {
+      return { admit: false, branch: 'hazard_no_pathway', priority: null,
+        reason: `hazard has no client impact pathway — awareness only: ${pathway?.reasoning || 'no pathway score'}`,
+        values: baseValues };
+    }
+    // pathway confirmed — fall through to the relevance/confidence gates.
   }
 
   // 3. Relevance gate (always).
