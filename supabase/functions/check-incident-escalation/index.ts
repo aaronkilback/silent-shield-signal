@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { evaluateIncidentGate, persistGateDecision } from "../_shared/incident-creation-gate.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,60 +53,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Determine severity level
-    let severityLevel = 'P4';
+    // Severity → PRIORITY label only (never admission). Kept for the severity_level field.
     const severityScore = signal.severity_score || 0;
-    
-    if (severityScore >= thresholds.P1) {
-      severityLevel = 'P1';
-    } else if (severityScore >= thresholds.P2) {
-      severityLevel = 'P2';
-    } else if (severityScore >= thresholds.P3) {
-      severityLevel = 'P3';
-    }
+    let severityLevel = 'P4';
+    if (severityScore >= thresholds.P1) severityLevel = 'P1';
+    else if (severityScore >= thresholds.P2) severityLevel = 'P2';
+    else if (severityScore >= thresholds.P3) severityLevel = 'P3';
 
-    // Only auto-escalate P1 and P2
-    if (!['P1', 'P2'].includes(severityLevel)) {
-      return new Response(
-        JSON.stringify({ success: true, escalated: false, reason: `Severity ${severityLevel} below escalation threshold` }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check for related signals
-    const entityIds = (signal.entity_mentions || []).map((m: any) => m.entity_id);
-    const windowStart = new Date();
-    windowStart.setDate(windowStart.getDate() - windowDays);
-
-    let relatedSignals: any[] = [];
-    
-    if (entityIds.length > 0) {
-      const { data: related } = await supabase
-        .from('entity_mentions')
-        .select('signal_id, entity_id')
-        .in('entity_id', entityIds)
-        .neq('signal_id', signalId)
-        .gte('created_at', windowStart.toISOString());
-
-      if (related) {
-        const relatedSignalIds = [...new Set(related.map(r => r.signal_id))];
-        
-        const { data: relatedSignalsData } = await supabase
-          .from('signals')
-          .select('id, title, severity_score')
-          .in('id', relatedSignalIds)
-          .eq('status', 'new');
-
-        relatedSignals = relatedSignalsData || [];
-      }
-    }
-
-    // Check if incident already exists for this signal
+    // Idempotency: bail if this signal already has an incident.
     const { data: existingIncident } = await supabase
       .from('incident_signals')
       .select('incident_id')
       .eq('signal_id', signalId)
-      .single();
+      .maybeSingle();
 
     if (existingIncident) {
       return new Response(
@@ -114,36 +74,45 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Determine incident priority using PECL grading rules
-    // P1: active_threat category + confirmed client + high score (not a cyber advisory)
-    // P2: credible threat with client confirmation OR high-relevance category
-    // P3: everything else — advisories, global intel, unconfirmed relevance
-    const P1_CATEGORIES = ['active_threat'];
-    const P2_CATEGORIES = ['cybersecurity', 'protest', 'insider_threat', 'regulatory', 'violence'];
-    const isCisaKev = signal.category === 'malware' &&
-      (signal.source_url?.includes('cisa.gov') ||
-       signal.normalized_text?.toLowerCase().includes('cisa kev'));
-    const hasClientConfirmation = signal.client_id != null;
+    // ── CREATION GATE (WO-INCIDENT-QA Step 1) — the shared admission authority ──
+    // relevance ≥ 0.60 AND (confidence ≥ 0.65 when present, else corroboration ≥ 2)
+    // AND non-hazard (interim freeze) AND non-[PATTERN]. Severity is priority-only.
+    const gate = await evaluateIncidentGate(supabase, signal, windowDays);
+    if (!gate.admit) {
+      await persistGateDecision(supabase, signalId, 'check-incident-escalation', gate, null);
+      return new Response(
+        JSON.stringify({ success: true, escalated: false, gate: gate.branch, reason: gate.reason }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    const incidentPriority = gate.priority as string;
 
-    let incidentPriority: string;
-    if (
-      severityLevel === 'P1' &&
-      hasClientConfirmation &&
-      P1_CATEGORIES.includes(signal.category) &&
-      !isCisaKev
-    ) {
-      incidentPriority = 'p1';
-    } else if (
-      (severityLevel === 'P1' || severityLevel === 'P2') &&
-      !isCisaKev &&
-      (hasClientConfirmation || P2_CATEGORIES.includes(signal.category))
-    ) {
-      incidentPriority = 'p2';
-    } else {
-      incidentPriority = 'p3';
+    // Related signals + entities (for linking the admitted incident).
+    const entityIds = (signal.entity_mentions || []).map((m: any) => m.entity_id).filter(Boolean);
+    let relatedSignals: any[] = [];
+    if (entityIds.length > 0) {
+      const windowStart = new Date();
+      windowStart.setDate(windowStart.getDate() - windowDays);
+      const { data: related } = await supabase
+        .from('entity_mentions')
+        .select('signal_id, entity_id')
+        .in('entity_id', entityIds)
+        .neq('signal_id', signalId)
+        .gte('created_at', windowStart.toISOString());
+      if (related) {
+        const relatedSignalIds = [...new Set(related.map((r: any) => r.signal_id))];
+        if (relatedSignalIds.length > 0) {
+          const { data: relatedSignalsData } = await supabase
+            .from('signals')
+            .select('id, title, severity_score')
+            .in('id', relatedSignalIds)
+            .eq('status', 'new');
+          relatedSignals = relatedSignalsData || [];
+        }
+      }
     }
 
-    // Create incident
+    // Create incident (full classification write lands in Step 3).
     const { data: incident, error: incidentError } = await supabase
       .from('incidents')
       .insert({
@@ -154,10 +123,11 @@ Deno.serve(async (req) => {
         priority: incidentPriority as any,
         status: 'open',
         opened_at: new Date().toISOString(),
+        created_by_function: 'check-incident-escalation',
         timeline_json: [{
           timestamp: new Date().toISOString(),
           action: 'created',
-          note: `Auto-escalated from signal. Severity score: ${severityScore} (${severityLevel}), assigned priority: ${incidentPriority.toUpperCase()}. Category: ${signal.category}, client confirmed: ${hasClientConfirmation}`
+          note: `Gate-admitted (${gate.branch}). ${gate.reason}. Severity score ${severityScore} (${severityLevel}) → priority ${incidentPriority.toUpperCase()}.`
         }]
       })
       .select()
@@ -165,39 +135,20 @@ Deno.serve(async (req) => {
 
     if (incidentError) throw incidentError;
 
-    // Link signal to incident
-    await supabase
-      .from('incident_signals')
-      .insert({
-        incident_id: incident.id,
-        signal_id: signalId
-      });
+    await persistGateDecision(supabase, signalId, 'check-incident-escalation', gate, incident.id);
 
-    // Link related signals if any
+    // Link signal + related + entities.
+    await supabase.from('incident_signals').insert({ incident_id: incident.id, signal_id: signalId });
     if (relatedSignals.length > 0) {
-      const relatedLinks = relatedSignals.map(rs => ({
-        incident_id: incident.id,
-        signal_id: rs.id
-      }));
-
-      await supabase
-        .from('incident_signals')
-        .insert(relatedLinks);
+      await supabase.from('incident_signals')
+        .insert(relatedSignals.map(rs => ({ incident_id: incident.id, signal_id: rs.id })));
     }
-
-    // Link entities to incident
     if (entityIds.length > 0) {
-      const entityLinks = entityIds.map((eid: string) => ({
-        incident_id: incident.id,
-        entity_id: eid
-      }));
-
-      await supabase
-        .from('incident_entities')
-        .insert(entityLinks);
+      await supabase.from('incident_entities')
+        .insert(entityIds.map((eid: string) => ({ incident_id: incident.id, entity_id: eid })));
     }
 
-    console.log(`Created incident ${incident.id} from signal ${signalId}`);
+    console.log(`Created incident ${incident.id} from signal ${signalId} (gate ${gate.branch})`);
 
     return new Response(
       JSON.stringify({

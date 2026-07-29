@@ -6,6 +6,7 @@ import { getLearningPromptBlock } from "../_shared/learning-context-builder.ts";
 import { classifySignalIntoStoryline } from "../_shared/storyline-engine.ts";
 import { computeComposite } from "../_shared/signal-scores.ts";
 import { mapThreatLevelToTier, isDeliveryTier, fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from "../_shared/alert-tier.ts";
+import { evaluateIncidentGate, persistGateDecision } from "../_shared/incident-creation-gate.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1008,11 +1009,19 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
           }
         }
 
-        if (compositeScore < 0.65 && !tier2_promotion) {
-          console.log(`[AI-Decision] Composite score ${compositeScore.toFixed(3)} below 0.65 — signal ${signal.id} monitored, no incident created.`);
+        // ── SHARED CREATION GATE (WO-INCIDENT-QA Step 1) — identical authority to
+        // check-incident-escalation. The freshly-computed composite is the gate's
+        // confidence value; relevance floor + interim hazard freeze + [PATTERN]
+        // exclusion now apply here too. Tier-2 promotion counts as corroboration.
+        signal.composite_confidence = compositeScore;
+        signal.relevance_score = relevanceScore;
+        const gate = await evaluateIncidentGate(supabase, signal, 7, { corroborationOverride: !!tier2_promotion });
+        if (!gate.admit) {
+          console.log(`[AI-Decision] Gate rejected (${gate.branch}) signal ${signal.id}: ${gate.reason}`);
+          await persistGateDecision(supabase, signal.id, 'ai-decision-engine', gate, null);
           await supabase.from('incident_creation_failures').insert({
             source_function: 'ai-decision-engine',
-            failure_reason: `Composite score ${compositeScore.toFixed(3)} below threshold 0.65`,
+            failure_reason: `Gate ${gate.branch}: ${gate.reason}`,
             signal_id: signal.id,
             client_id: signal.client_id,
             attempted_data: {
@@ -1020,6 +1029,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
               relevance_score: relevanceScore,
               source_credibility: sourceCredibility,
               composite_score: compositeScore,
+              gate_branch: gate.branch,
               threat_level: decision.threat_level,
               incident_priority: decision.incident_priority,
               reasoning: (decision.reasoning || '').substring(0, 200),
@@ -1037,7 +1047,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
           .insert({
             signal_id: signal.id,
             client_id: signal.client_id,
-            priority: decision.incident_priority || 'p3',
+            priority: (gate.priority || decision.incident_priority || 'p3') as any,
             status: 'open',
             is_test: signal.is_test || false,
             title: (() => {
@@ -1098,6 +1108,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         if (incident) {
           incident_id = incident.id;
           console.log(`Incident created successfully: ${incident_id}`);
+          await persistGateDecision(supabase, signal.id, 'ai-decision-engine', gate, incident.id);
 
           // Close the predictive feedback loop: mark any prior prediction for this signal as verified
           await supabase
