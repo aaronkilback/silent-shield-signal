@@ -9,7 +9,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
-import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat, skipHeartbeat } from "../_shared/heartbeat.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -19,6 +19,27 @@ Deno.serve(async (req) => {
     const supabase = createServiceClient();
 
     const hb = await startHeartbeat(supabase, 'knowledge-synthesizer-nightly');
+
+    // RUN-TIMEOUT / stuck-run guard (WO-LEARNING-LOOP Step 3): an edge isolate that hangs is
+    // platform-killed at ~150s before completeHeartbeat, leaving a 'running' row forever. We
+    // cannot self-timeout a killed isolate, so we reap-on-next-start: mark any prior 'running'
+    // heartbeat for this job failed before we begin. Bounded accumulation, self-healing.
+    if (hb.id) {
+      await supabase.from('cron_heartbeat').update({
+        status: 'failed', completed_at: new Date().toISOString(),
+        error_message: 'reaped: superseded by a newer run (prior run stuck in running / platform-killed)',
+      }).eq('job_name', 'knowledge-synthesizer-nightly').eq('status', 'running').neq('id', hb.id);
+    }
+
+    // Honest terminal outcome + hang avoidance: this synthesizer reads expert_knowledge and
+    // writes agent_beliefs — both write-frozen (INC-LEARN-CONTAM). While frozen there is
+    // nothing to synthesize into, so skip immediately rather than run the (hanging) pipeline.
+    const { data: learningFrozen } = await supabase.rpc('has_learning_freeze');
+    if (learningFrozen === true) {
+      await skipHeartbeat(supabase, hb, 'stores frozen (INC-LEARN-CONTAM) — synthesis target agent_beliefs is write-frozen');
+      return new Response(JSON.stringify({ skipped: true, reason: 'learning stores frozen (INC-LEARN-CONTAM)' }),
+        { headers: { 'Content-Type': 'application/json' } });
+    }
 
     const body = await req.json().catch(() => ({}));
     const {

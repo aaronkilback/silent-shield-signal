@@ -13,7 +13,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { extractYouTubeTranscript } from "../_shared/youtube-transcript.ts";
-import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat, skipHeartbeat } from "../_shared/heartbeat.ts";
 
 // High-value practitioner sources to monitor for recent content
 const PRACTITIONER_SOURCES = [
@@ -93,6 +93,16 @@ Deno.serve(async (req) => {
     if (!PERPLEXITY_API_KEY) return errorResponse('PERPLEXITY_API_KEY not configured', 500);
 
     const hb = await startHeartbeat(supabase, 'agent-knowledge-seeker-4am');
+
+    // Honest terminal outcome (WO-LEARNING-LOOP): while the shared-learning belief stores
+    // are write-frozen (INC-LEARN-CONTAM), this agent has nowhere real to write — report
+    // 'skipped', never a false 'succeeded'.
+    const { data: learningFrozen } = await supabase.rpc('has_learning_freeze');
+    if (learningFrozen === true) {
+      await skipHeartbeat(supabase, hb, 'stores frozen (INC-LEARN-CONTAM) — belief writes rejected, nothing to learn into');
+      return new Response(JSON.stringify({ skipped: true, reason: 'learning stores frozen (INC-LEARN-CONTAM)' }),
+        { headers: { 'Content-Type': 'application/json' } });
+    }
 
     const body = await req.json().catch(() => ({}));
     const {

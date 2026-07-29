@@ -69,3 +69,21 @@ Surfaced, not implemented:
 5. **Watchdog accuracy** — belief-age metric under-reports the stall by ~600h; `occurrence_count` dedup not collapsing recurrences (feeds item-3 escalation backlog).
 
 **Ruling needed on sequencing:** the learning loop cannot be "fixed" as an agent problem — it is gated on the INC-LEARN-CONTAM anonymization work. The honest options are (a) prioritize the anonymization gate, (b) repair the independently-broken pieces (learning_profiles, knowledge-synthesizer, cron intervals) while beliefs stay frozen, or (c) accept the loop as intentionally-contained and downgrade the recurring-critical to a known-limitation until the gate is scheduled.
+
+---
+
+## PHASE 2 — RULINGS EXECUTED (2026-07-29)
+
+**Item 1 — findings fingerprint dedup (DONE, deployed).** Root bug: fingerprints embedded variable counts/hours from the title, so every recurrence hashed differently → `occurrence_count` stuck at 1 and 261 rows for 49 real findings. Fixed: canonical fingerprint normalizes digit-runs (`record_platform_finding` RPC = single source of truth); historical collapse **261 → 49 rows** (`max_occurrence_count` now 58; synth-stuck 4→1). Unblocks the session-start escalation backlog.
+
+**Item 2 — "runs but does nothing" trap killed (DONE, deployed).** `skipHeartbeat` helper + `has_learning_freeze()` RPC. **Correction to Phase-1 over-generalization:** not all three agents write into frozen stores —
+- `agent-knowledge-seeker`: writes ONLY `expert_knowledge` (frozen) → now reports **`skipped`** (verified live: "stores frozen (INC-LEARN-CONTAM)").
+- `knowledge-synthesizer`: reads `expert_knowledge` + writes `agent_beliefs` (both frozen) → **`skipped`** (verified live) — this also fixes its stuck-running (skips instantly, no hang).
+- `agent-self-learning`: writes BOTH frozen `expert_knowledge` AND **live `agent_investigation_memory`** → does real memory work; now flags `expert_knowledge_frozen: true` in its run summary (skips only if it also produced zero memory).
+- `thread-weaver`: writes ONLY live stores (`investigation_threads`/`thread_memories`/`agent_investigation_memory`) → **does real work, not touched.** Phase-1 was wrong to list it as stalled.
+
+**Item 3 — hygiene (DONE).** 4 stuck `knowledge-synthesizer` 'running' rows reaped→failed; reap-on-next-start guard added (the practical run-timeout for platform-killed isolates). `self-improvement-nightly` cleanly disabled — it was a **phantom** (registry-only, never in cron, 1-yr interval); registry annotated DISABLED. Watchdog stall metric **re-anchored** from `last_updated_at` (modification, ~895h) to `created_at` (actual new-belief write, **~1516h true stall**); the finding now recognizes the freeze (`has_learning_freeze`) and reports it as **contained-and-known** ('medium', "no cron action") instead of critical-chase-the-crons.
+
+**Item 5 — LEDGER (positive entry):** **the containment freeze WORKED for 2 months — the system stayed clean.** No contaminated belief crossed from client-scoped to global in that window. The failure was **visibility**, not containment: the freeze status was invisible to the learning jobs (they reported false success), to the watchdog (wrong anchor, no freeze-awareness), and to the operator (buried in muted email). Items 1–3 fix the visibility. Containment itself is a success to bank.
+
+**Item 4 — WO-LEARN-UNFREEZE (NOT NOW, parked):** the real unfreeze. Design doc FIRST against the ratified §2b two-layer belief architecture — what anonymization means concretely, what crosses client-scoped→global, how the INC-LEARN-CONTAM contamination class is provably excluded. Read-only design work; slots **after SENTINEL-1 and the 7-day gate evidence**. No unfreeze code before the doc is ruled. **Interim posture: accept-as-contained, honestly ledgered** — the moat's operational-memory claim stays marked aspirational until writes resume.
