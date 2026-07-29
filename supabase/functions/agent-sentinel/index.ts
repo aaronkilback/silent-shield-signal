@@ -155,14 +155,31 @@ Deno.serve(async (req) => {
             byClass.set(key, g);
           }
           report.advisor_new_findings = byClass.size; // distinct lint CLASSES, not objects
+          // KNOWN-HYGIENE class allowlist (ruling 2026-07-29): report as low/known, not daily
+          // medium noise. Attention doctrine — a reviewed-and-accepted class must not re-alarm.
+          const KNOWN_HYGIENE: Record<string, string> = {
+            authenticated_security_definer_function_executable:
+              'Accepted class — the app runs as authenticated; definer functions executable by authenticated is expected.',
+            anon_security_definer_function_executable:
+              'Reviewed — anon EXECUTE revoked on all but the RLS-predicate + auth/signup keep-set (required for RLS evaluation). Remainder intentional.',
+            function_search_path_mutable:
+              'Known hygiene — batch search_path pin scheduled; our own RPCs already pinned.',
+            rls_enabled_no_policy:
+              'Working as designed — deny-by-default RLS seal (INC-RLS-EXPOSURE). RLS-enabled + no policy = CLOSED to anon/authenticated, which is correct. Permanent allowlist.',
+          };
           for (const [name, g] of byClass) {
-            const sev = g.level === 'ERROR' ? 'high' : g.level === 'WARN' ? 'medium' : 'low';
+            const hygiene = KNOWN_HYGIENE[name];
+            const sev = hygiene ? 'low' : (g.level === 'ERROR' ? 'high' : g.level === 'WARN' ? 'medium' : 'low');
             await recordFinding(supabase, {
               category: 'security_advisor', severity: sev,
-              title: `Advisor: ${name} (${g.count})`,
-              analysis: `Supabase security advisor [${g.level}] "${g.title}" — ${g.count} occurrence(s). ${g.detail.substring(0, 200)} Affected sample: ${g.samples.join(', ') || 'n/a'}.`,
-              plainEnglish: `Supabase's security advisor flags ${g.count} case(s) of "${g.title}". Review this class (surfaced by Sentinel advisor ingestion).`,
-              action: g.remediation || 'Review this advisor lint class; remediate or allowlist as a class.',
+              title: hygiene ? `Advisor: ${name} (${g.count}) — known hygiene (allowlisted)` : `Advisor: ${name} (${g.count})`,
+              analysis: hygiene
+                ? `KNOWN HYGIENE class (allowlisted, ruling 2026-07-29): ${hygiene} Current count ${g.count}.`
+                : `Supabase security advisor [${g.level}] "${g.title}" — ${g.count} occurrence(s). ${g.detail.substring(0, 200)} Affected sample: ${g.samples.join(', ') || 'n/a'}.`,
+              plainEnglish: hygiene
+                ? `Known, accepted security-hygiene class (${g.count} cases) — no action, allowlisted by ruling.`
+                : `Supabase's security advisor flags ${g.count} case(s) of "${g.title}". Review this class (surfaced by Sentinel advisor ingestion).`,
+              action: hygiene ? 'No action — reviewed and allowlisted as known hygiene.' : (g.remediation || 'Review this advisor lint class; remediate or allowlist as a class.'),
             });
             report.findings_written++;
           }
