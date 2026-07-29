@@ -459,6 +459,15 @@ If one exists, do NOT create a duplicate — update or fix the existing one.
 
 **Naming rule**: The pg_cron job name should be `<function-name>-<frequency>` (e.g., `monitor-rss-sources` if unique, or `agent-knowledge-seeker-4am` if time-of-day matters). Whatever name is chosen, it must match the `job_name` in the function's `cron_heartbeat` upsert exactly.
 
+### Registry-is-a-Promise Standing Rule (2026-07-29 — RATIFIED)
+
+**Every `cron_job_registry` entry with a health expectation MUST have (1) a matching live `cron.job` schedule AND (2) at least one successful historical invocation (a `cron_heartbeat` with `status IN ('succeeded','completed')` under the SAME `job_name`).** The registry is a promise the platform makes about what work is happening; a registered-but-never-ran entry is a lie the health monitor then repeats. **Registered-but-never-ran (no cron, OR no successful heartbeat ever, OR registry `job_name` ≠ heartbeat `job_name`) = CRITICAL finding, automatically.**
+
+- **No phantom stays registered.** If a job is retired or deferred, DE-REGISTER it (delete the `cron_job_registry` row) with a backlog note — do not leave a stale health expectation advertising shelved work.
+- **Name alignment is part of the promise.** The registry `job_name`, the `cron.job` jobname, and the function's `cron_heartbeat` `job_name` must all be identical (the `resolve-agent-predictions` phantom was a `-nightly` registry entry against a `-daily` heartbeat — it "never ran" only because the names never matched).
+- **Enforcement:** RPC `public.registry_phantom_check()` returns each registry entry's `has_cron` + `ever_succeeded`; the system-watchdog "REGISTRY-IS-A-PROMISE" probe aggregates all phantoms into ONE critical finding per run (never one-per-phantom — attention doctrine).
+- **Provenance:** health-monitor triage 2026-07-29 found 4 phantoms (community-outreach, threat-intel, twitter-6h, resolve-agent-predictions); the probe then surfaced a broader ~30-entry registry-hygiene backlog. Promises get verified.
+
 ### Run the validation script after any cron-related change
 ```
 node scripts/validate-cron-alignment.mjs
