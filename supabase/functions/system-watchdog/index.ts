@@ -451,6 +451,13 @@ Fortress is an AI-powered SOC for Fortune 500 companies with these core systems:
 - EXPECTED: Zero orphaned records, zero orphaned feedback, zero NEW null-client archival docs, zero unflagged test beliefs/entities
 - REMEDIATION: fix_orphaned_signals, fix_orphaned_entities, fix_orphaned_feedback, fix_stale_source_timestamps
 
+INCIDENT-QA INVARIANTS (WO-INCIDENT-QA Step 5, 2026-07-28) — telemetry.incidentQA:
+- unknownClassificationOver24h — open incidents >24h old with NULL/'unknown' incident_type OR no incident_classification_rationale row. EXPECTED 0. Nonzero = a creation path is writing incidents without classification (the Step-3 fail-loud write regressed or a new bypassing writer appeared).
+- zeroLinkedSignals — open incidents with no incident_signals link AND no primary incidents.signal_id. EXPECTED 0. Nonzero = an incident exists with no evidence at all (a ghost).
+- openHazardEventEnded — open hazard incidents (wildfire/weather/civil_emergency/natural_disaster/health/amber) not is_stale and >8d old. EXPECTED 0. Nonzero = incident-lifecycle-sweep is not closing ended hazard events (sweep cron stalled/failing).
+- creationSpike (bool) — creationLast24h > max(5, 3× prior-7d daily avg). true = an incident-creation spike; investigate whether the creation gate regressed or a real event cluster occurred. creationLast24h/creationPrior7dDailyAvg give context.
+- All three counts EXPECTED 0; creationSpike EXPECTED false. Any violation = an incident-QA defect.
+
 ### Communications Infrastructure (HIGH)
 - Two-way SMS via Twilio: send-sms (outbound), ingest-communication (inbound webhook)
 - list-communications provides thread queries per case/contact/investigator
@@ -672,6 +679,7 @@ interface TelemetryData {
   };
   dailyBriefing: { sentToday: boolean; suppressionLikely: boolean; recipientCount: number };
   dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number; newOrphanArchivalDocs: number; unflaggedTestBeliefs: number; unflaggedTestEntities: number };
+  incidentQA: { unknownClassificationOver24h: number; zeroLinkedSignals: number; openHazardEventEnded: number; creationLast24h: number; creationPrior7dDailyAvg: number; creationSpike: boolean };
   bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number; recurringPatterns: string[] };
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
@@ -1275,6 +1283,42 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     (allTenantsForCheck || []).filter(isUnflaggedTest).length +
     (allClientsForCheck || []).filter(isUnflaggedTest).length;
 
+  // ── WO-INCIDENT-QA Step 5 probes ── invariants that must hold once the creation
+  // gate + classification write-fix + lifecycle sweep are live. All EXPECTED 0 (except
+  // creation counts). Nonzero = a regression; surface as an incident-QA defect.
+  const HAZARD_ITYPES = new Set(['wildfire', 'weather', 'civil_emergency', 'natural_disaster', 'health', 'health_concern', 'amber_alert']);
+  const incidentQA = { unknownClassificationOver24h: 0, zeroLinkedSignals: 0, openHazardEventEnded: 0, creationLast24h: 0, creationPrior7dDailyAvg: 0, creationSpike: false };
+  try {
+    const dayAgoIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const eightDaysAgoIso = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: openIncs } = await supabase.from('incidents')
+      .select('id, incident_type, is_stale, opened_at, signal_id')
+      .eq('status', 'open').is('superseded_by', null).is('deleted_at', null).neq('is_test', true);
+    const openList = openIncs || [];
+    const openIds = openList.map((i: any) => i.id);
+    const ratSet = new Set<string>();
+    const linkSet = new Set<string>();
+    if (openIds.length > 0) {
+      const { data: rats } = await supabase.from('incident_classification_rationale').select('incident_id').in('incident_id', openIds);
+      (rats || []).forEach((r: any) => ratSet.add(r.incident_id));
+      const { data: lks } = await supabase.from('incident_signals').select('incident_id').in('incident_id', openIds);
+      (lks || []).forEach((l: any) => linkSet.add(l.incident_id));
+    }
+    for (const i of openList) {
+      const over24h = !!i.opened_at && i.opened_at < dayAgoIso;
+      if (over24h && (!i.incident_type || String(i.incident_type).toLowerCase() === 'unknown' || !ratSet.has(i.id))) incidentQA.unknownClassificationOver24h++;
+      // A ghost is an incident with NO evidence at all — neither an incident_signals
+      // link NOR a primary incidents.signal_id (ai-decision-engine's canonical link).
+      if (!linkSet.has(i.id) && !i.signal_id) incidentQA.zeroLinkedSignals++;
+      if (HAZARD_ITYPES.has(String(i.incident_type || '')) && !i.is_stale && !!i.opened_at && i.opened_at < eightDaysAgoIso) incidentQA.openHazardEventEnded++;
+    }
+    const { count: c24 } = await supabase.from('incidents').select('id', { count: 'exact', head: true }).gte('opened_at', dayAgoIso);
+    const { count: c7 } = await supabase.from('incidents').select('id', { count: 'exact', head: true }).gte('opened_at', eightDaysAgoIso).lt('opened_at', dayAgoIso);
+    incidentQA.creationLast24h = c24 || 0;
+    incidentQA.creationPrior7dDailyAvg = Math.round(((c7 || 0) / 7) * 10) / 10;
+    incidentQA.creationSpike = (c24 || 0) > Math.max(5, incidentQA.creationPrior7dDailyAvg * 3);
+  } catch (_e) { /* best-effort probe; watchdog self-validation covers hard failures */ }
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -1286,6 +1330,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     },
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
     dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0, newOrphanArchivalDocs: newOrphanArchivalDocsCount || 0, unflaggedTestBeliefs, unflaggedTestEntities },
+    incidentQA,
     bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
     database: { connected: dbConnected, responseTimeMs: dbResponseTimeMs },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },

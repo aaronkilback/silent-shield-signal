@@ -1,0 +1,6 @@
+-- WO-HAZARD-RELEVANCE Step 6: hazard pathway scoring function.
+-- Geocodes a signal's location via geo_place_gazetteer, computes PostGIS distance to the
+-- client's geo assets (class-adjusted buffers: AQ/weather regional x2.5), caps no-pathway
+-- hazards to relevance 0.40 (awareness), and persists reasoning to hazard_pathway_scores.
+-- Full body applied via MCP apply_migration (score_signal_hazard_pathway_fn_v2) 2026-07-28.
+-- See _shared/incident-creation-gate.ts (hazard branch) + ingest-signal (ingest-time cap).

@@ -6,6 +6,7 @@ import { callAiGateway, callAiGatewayJson } from '../_shared/ai-gateway.ts';
 import { logError } from '../_shared/error-logger.ts';
 import { fetchVerifiedRecipientEmails, UNROUTED_RECIPIENT } from '../_shared/alert-tier.ts';
 import { coerceOrigin, deriveOrigin } from '../_shared/signal-origins.ts';
+import { computeComposite } from '../_shared/signal-scores.ts';
 import { enqueueJob } from '../_shared/queue.ts';
 import { scoreForeignAlignment, extractMentions } from './foreign-alignment.ts';
 import { getCallerIdentity, getAccessibleClientIds } from '../_shared/supabase-client.ts';
@@ -1958,6 +1959,17 @@ Score this signal's relevance and classify the connection.`
         severity_score: severityScore,
         quality_score: qualityScore,
         confidence: classification.confidence,
+        // WO-INCIDENT-QA Step 3b: persist composite_confidence on EVERY signal at
+        // ingest so the creation gate has a confidence value to enforce (was null on
+        // ~84% of signals). Provisional — source_credibility uses a neutral 0.5 prior
+        // here; ai-decision-engine recomputes with the real source_credibility_scores
+        // lookup downstream. When coverage exceeds ~80% over a rolling week, revisit
+        // the gate to drop the corroboration fallback (see _shared/incident-creation-gate.ts).
+        composite_confidence: computeComposite({
+          ai_confidence: classification.confidence,
+          relevance_score: relevanceResult.score,
+          source_credibility: 0.5,
+        }),
         relevance_score: relevanceResult.score,
         status: signalStatus,
         is_test: is_test || false,
@@ -1981,6 +1993,19 @@ Score this signal's relevance and classify the connection.`
     }
 
     console.log(`Signal ingested: ${signal.id}${matchedKeywords.length > 0 ? ` (keywords: ${matchedKeywords.join(', ')})` : ''}`);
+
+    // WO-HAZARD-RELEVANCE Step 6: pathway-score hazard-class signals at ingest. A hazard
+    // with no client impact pathway (proximity/corridor/HQ) has its relevance capped to
+    // 0.40 — awareness only, never main-tier — and the reasoning is persisted. Fire-and-await
+    // (the RPC caps signals.relevance_score); failure is logged, never blocks ingest.
+    const HAZARD_CATS_INGEST = ['civil_emergency', 'wildfire', 'weather', 'natural_disaster', 'health_concern', 'amber_alert'];
+    if (signal?.id && HAZARD_CATS_INGEST.includes(classification.category)) {
+      try {
+        await supabase.rpc('score_signal_hazard_pathway', { p_signal_id: signal.id });
+      } catch (e) {
+        console.warn('[hazard-pathway] scoring failed for', signal.id, (e as Error).message);
+      }
+    }
 
     // F-CRT-XQ (2026-05-15) — X quota/spend telemetry.
     // When a signal originates from the X filtered stream, record one
