@@ -8,9 +8,10 @@
 //      table is a defect; one that is ALSO anon-readable is a CRITICAL exposure.
 //   2. Anon-key exposure control — actually authenticate as anon and try to read a curated
 //      set of sensitive tables. Rows returned = live exposure (belt to the RLS suspenders).
-//   3. Advisor-style summary — the RLS/anon checks mirror Supabase advisory
-//      `rls_disabled_in_public`. Full Management-API advisor ingestion needs a PAT secret
-//      and is honestly reported as NOT wired (reality-check, no fake capability).
+//   3. Management API security advisor ingestion — pulls the canonical Supabase security
+//      advisor via GET /v1/projects/{ref}/advisors/security (Bearer SENTINEL_MGMT_PAT). Known
+//      exceptions (spatial_ref_sys PostGIS) are reported but raise no finding; any NEW lint
+//      gets its own finding. Falls back to 'not_wired' if the PAT secret is absent.
 //
 // Findings flow through record_platform_finding() so they dedup + escalate like any watchdog
 // finding. Clean posture writes NO finding (silence = healthy; attention is protected).
@@ -56,7 +57,10 @@ Deno.serve(async (req) => {
     rls_exposed_tables: [] as string[],      // RLS-disabled AND anon-readable
     anon_exposed_tables: [] as string[],     // empirically read by anon key
     anon_probe_ran: false,
-    advisor_management_api: 'not_wired (needs Management-API PAT secret)',
+    advisor_management_api: 'not_wired (SENTINEL_MGMT_PAT secret missing)',
+    advisor_lints_ingested: 0,
+    advisor_lints: [] as Array<{ name: string; table: string | null; level: string; known: boolean }>,
+    advisor_new_findings: 0,                  // advisor lints that are NOT already-known exceptions
     findings_written: 0,
   };
 
@@ -114,11 +118,69 @@ Deno.serve(async (req) => {
       console.warn('[sentinel] SUPABASE_ANON_KEY not available — anon exposure probe skipped');
     }
 
+    // ── Probe 3: Management API security advisor ingestion ──
+    // Pulls the canonical Supabase security advisor (rls_disabled_in_public,
+    // policy_exists_rls_disabled, security_definer_view, function_search_path_mutable, auth
+    // config, etc.). Known-accepted exceptions (spatial_ref_sys = PostGIS extension-owned) are
+    // reported but do NOT raise a finding — silence for the expected, a line for the new.
+    const mgmtPat = Deno.env.get('SENTINEL_MGMT_PAT') ?? null;
+    if (mgmtPat) {
+      try {
+        const projectRef = new URL(url).hostname.split('.')[0];
+        const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/advisors/security`, {
+          headers: { Authorization: `Bearer ${mgmtPat}`, Accept: 'application/json' },
+        });
+        if (!res.ok) {
+          report.advisor_management_api = `error_http_${res.status}`;
+        } else {
+          const body = await res.json();
+          const lints: any[] = Array.isArray(body?.lints) ? body.lints : [];
+          report.advisor_lints_ingested = lints.length;
+          const isKnownException = (l: any) =>
+            l?.name === 'rls_disabled_in_public' && l?.metadata?.name === 'spatial_ref_sys';
+          // ATTENTION: aggregate by lint CLASS — one finding per class with a count + sample of
+          // affected objects, never one-per-object (289 lints must not become 289 findings).
+          const byClass = new Map<string, { level: string; count: number; samples: string[]; title: string; detail: string; remediation: string }>();
+          for (const l of lints) {
+            const known = isKnownException(l);
+            const schema = l?.metadata?.schema || 'public';
+            const table = l?.metadata?.name ?? null;
+            const level = String(l?.level || 'INFO').toUpperCase();
+            report.advisor_lints.push({ name: l?.name ?? 'unknown', table, level, known });
+            if (known) continue; // expected — reported in the summary, no finding raised
+            const key = String(l?.name ?? 'unknown');
+            const g = byClass.get(key) ?? { level, count: 0, samples: [], title: l?.title || key, detail: l?.description || l?.detail || '', remediation: l?.remediation || '' };
+            g.count++;
+            if (table && g.samples.length < 8) g.samples.push(`${schema}.${table}`);
+            byClass.set(key, g);
+          }
+          report.advisor_new_findings = byClass.size; // distinct lint CLASSES, not objects
+          for (const [name, g] of byClass) {
+            const sev = g.level === 'ERROR' ? 'high' : g.level === 'WARN' ? 'medium' : 'low';
+            await recordFinding(supabase, {
+              category: 'security_advisor', severity: sev,
+              title: `Advisor: ${name} (${g.count})`,
+              analysis: `Supabase security advisor [${g.level}] "${g.title}" — ${g.count} occurrence(s). ${g.detail.substring(0, 200)} Affected sample: ${g.samples.join(', ') || 'n/a'}.`,
+              plainEnglish: `Supabase's security advisor flags ${g.count} case(s) of "${g.title}". Review this class (surfaced by Sentinel advisor ingestion).`,
+              action: g.remediation || 'Review this advisor lint class; remediate or allowlist as a class.',
+            });
+            report.findings_written++;
+          }
+          report.advisor_management_api = 'ingested';
+        }
+      } catch (e) {
+        report.advisor_management_api = `error: ${(e as Error).message}`;
+      }
+    }
+
     await completeHeartbeat(supabase, hb, {
       rls_disabled: report.rls_disabled_tables.length,
       rls_exposed: report.rls_exposed_tables.length,
       anon_exposed: report.anon_exposed_tables.length,
       anon_probe_ran: report.anon_probe_ran,
+      advisor_status: report.advisor_management_api,
+      advisor_lints_ingested: report.advisor_lints_ingested,
+      advisor_new_findings: report.advisor_new_findings,
       findings_written: report.findings_written,
       posture: report.findings_written === 0 ? 'clean' : 'defects_found',
     });
