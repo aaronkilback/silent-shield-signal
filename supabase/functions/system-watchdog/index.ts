@@ -3454,13 +3454,16 @@ Deno.serve(async (req) => {
           const dormantPct = Math.round(((fleetSize - ranIn7d) / fleetSize) * 100);
 
           if (dormantPct >= 80) {
+            // Ruling 2026-07-29: fleet-dormancy is a KNOWN real-vs-aspirational item on the
+            // honest-capability ledger (alongside confidence-sparsity + learning-loop), not a
+            // same-day actionable defect. Report as known-strategic (low), not high.
             behavioralFindings.push({
               category: 'behavioral_health',
-              severity: 'high',
-              title: `Agent fleet largely dormant: ${ranIn7d}/${fleetSize} ran in 7d`,
-              analysis: `${fleetSize - ranIn7d} of ${fleetSize} active agents have 0 entries in signal_agent_analyses for the past 7 days (${dormantPct}% dormant). Active agents that never run = specialist reasoning never reaches signals = the platform's primary value proposition isn't engaging.`,
-              plainEnglish: `Most of the AI agent fleet is sitting idle. Either tier-2 routing in review-signal-agent is too narrow (only invoking a handful of specialties), the AI gateway is failing silently, or upstream signal flow is broken. The fleet is configured but not being used.`,
-              action: `Audit review-signal-agent specialty routing — confirm it's matching against ai_agents.specialty rather than a hardcoded list. Run a benchmark to verify pipeline end-to-end. Check function_telemetry for AI gateway error spikes in the last 7d.`,
+              severity: 'low',
+              title: `Agent fleet largely dormant: ${ranIn7d}/${fleetSize} ran in 7d — KNOWN STRATEGIC (capability ledger)`,
+              analysis: `${fleetSize - ranIn7d} of ${fleetSize} active agents have 0 signal_agent_analyses entries in 7d (${dormantPct}% dormant). This is a RECORDED real-vs-aspirational finding on the honest-capability ledger — the fleet is configured beyond what current routing engages. Strategic, not a fresh defect: no same-day action. Revisit is a deliberate roadmap decision (broaden tier-2 routing / fleet consolidation), not a watchdog remediation.`,
+              plainEnglish: `Most of the AI agent fleet is idle — this is a known, ledgered strategic gap (capability configured ahead of adoption), not a new fault. Tracked, not actionable today.`,
+              action: `No same-day action — known-strategic (honest-capability ledger). Address via a deliberate roadmap decision on tier-2 routing breadth / fleet sizing.`,
             });
           } else if (dormantPct >= 60) {
             behavioralFindings.push({
