@@ -439,6 +439,14 @@ ON CONFLICT (id) DO NOTHING;
 
 ---
 
+## Migration-Apply Prohibition Standing Rule (2026-07-29 — RATIFIED)
+
+**`supabase db push` — or ANY bulk/multi-file migration apply — against prod is PROHIBITED until the repo-wide ledger-reconciliation sweep (WO-LEDGER-RECONCILE) completes.** The prod migration ledger (`supabase_migrations.schema_migrations`) has diverged from the committed migration filenames: **120 local `<version>_<name>.sql` files are absent from the ledger by version** (and many by name too), because the repo's standard workflow applies migrations via MCP `apply_migration`/`execute_sql`, which records a *generated* version/name rather than the file-prefix. The content of those 120 is **live in prod** (spot-verified 2026-07-29: travel tables, platform_findings, 3 INC-LEARN-CONTAM freeze triggers, job-worker lease, incidents supersede cols, alert_emission_refusals, signals confidence CHECKs) — so it is identifier-divergence, not unapplied work. A `db push` would nonetheless try to **re-run all 120**, most of them non-idempotent (bare `create table` / `add column` / `create trigger`), and error / corrupt state.
+
+- **Until WO-LEDGER-RECONCILE completes, any migration reaching prod goes via the existing CLI-direct SINGLE-FILE path only** (`apply_migration` one file, or the established per-file apply). Never `db push`, never a bulk apply.
+- **The 6-file salvage debt IS closed** (PR-triage 2026-07-29, PR #183 + ledger baseline): those 6 versions are now in the ledger. This prohibition is about the *broader, pre-existing* 120-file divergence, which is a separate hygiene gap.
+- **Backlog:** `WO-LEDGER-RECONCILE` — `docs/platform-operations/backlog/WO-LEDGER-RECONCILE.md`. The sweep baselines git↔ledger repo-wide (same operation as the 6, at scale) so `db push` becomes safe again.
+
 ## Rules for edge functions
 
 ### Scheduled edge functions — definition of done
