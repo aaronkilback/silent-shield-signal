@@ -73,20 +73,37 @@ Deno.serve(async (req) => {
     const role: string | null = body.role ?? null;
     const email: string | null = body.email ?? null;
 
-    if (conversationId) {
-      const { data: pcheck } = await admin
-        .from("conversation_participants")
-        .select("user_id")
-        .eq("conversation_id", conversationId)
-        .eq("user_id", callerId)
-        .maybeSingle();
-      if (!pcheck) {
-        return new Response(
-          JSON.stringify({ error: "not a participant of that conversation" }),
-          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
+    const deny = (msg: string) =>
+      new Response(JSON.stringify({ error: msg }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    // ── INC-AITOOLS-XTENANT hardening: mandatory authorization gate ──
+    // (1) Role allowlist + no-escalation. super_admin is NEVER grantable by invite.
+    const ROLE_RANK: Record<string, number> = { viewer: 1, analyst: 2, admin: 3, super_admin: 4 };
+    if (role !== null) {
+      if (!(role in ROLE_RANK) || role === "super_admin") return deny("role not grantable by invite");
+      const { data: callerRoles } = await admin.from("user_roles").select("role").eq("user_id", callerId);
+      const callerMax = Math.max(0, ...((callerRoles ?? []).map((r: { role: string }) => ROLE_RANK[r.role] ?? 0)));
+      if ((ROLE_RANK[role] ?? 99) >= callerMax) return deny("cannot grant a role at or above your own");
     }
+
+    // (2) Client-scoped invites require caller to be an admin/owner of the CLIENT'S tenant.
+    if (clientId) {
+      const { data: cli } = await admin.from("clients").select("tenant_id").eq("id", clientId).maybeSingle();
+      if (!cli?.tenant_id) return deny("unknown client_id");
+      const { data: mem } = await admin.from("tenant_users").select("role")
+        .eq("user_id", callerId).eq("tenant_id", cli.tenant_id).maybeSingle();
+      if (!mem || !["admin", "owner"].includes(String(mem.role))) return deny("not an admin of that client's tenant");
+    }
+
+    // (3) Conversation-scoped invites require the caller to be a participant (MANDATORY, not optional).
+    if (conversationId) {
+      const { data: pcheck } = await admin.from("conversation_participants").select("user_id")
+        .eq("conversation_id", conversationId).eq("user_id", callerId).maybeSingle();
+      if (!pcheck) return deny("not a participant of that conversation");
+    }
+
+    // (4) An invite must carry an authorized scope. A bare role-only invite is rejected.
+    if (!clientId && !conversationId) return deny("invite must be scoped to a client_id or conversation_id you administer");
 
     const pin = generatePin();
     const { data: invite, error: insErr } = await admin

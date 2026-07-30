@@ -166,22 +166,13 @@ Deno.serve(async (req) => {
         );
     }
 
-    // Client-scoped: add to client_users
-    if (invite.client_id) {
-      await admin
-        .from("client_users")
-        .upsert(
-          { client_id: invite.client_id, user_id: userId },
-          { onConflict: "client_id,user_id" }
-        )
-        .then(
-          () => {},
-          (e) => console.warn("[accept-operator-invite] client_users insert:", e)
-        );
-    }
+    // INC-AITOOLS-XTENANT: the former `client_users` upsert targeted a NON-EXISTENT table (silent
+    // no-op) and conferred nothing. Removed. Operator invites grant a role only; RLS access requires
+    // an explicit tenant_users membership granted through the tenant-invitation flow, not this path.
 
-    // Role
-    if (invite.role) {
+    // Role — defensively reject privileged roles even if an old/forged invite carries one.
+    // create-operator-invite already blocks super_admin/escalation; this is defense-in-depth.
+    if (invite.role && invite.role !== "super_admin" && ["viewer", "analyst", "admin"].includes(String(invite.role))) {
       await admin
         .from("user_roles")
         .upsert(

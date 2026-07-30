@@ -3175,6 +3175,17 @@ Deno.serve(async (req) => {
             plainEnglish: `A report was generated but its rendered copy was not saved, so we can't audit what it actually said.`,
             action: 'Confirm the WO-REPORT-PERSIST-01 storage-upload block in generate-executive-report deployed; check osint-media bucket write permissions.' });
         }
+        // (e) INC-AITOOLS-XTENANT — any operator_invites row whose CREATOR is not a member of the
+        // invited client's tenant = a cross-tenant invite (the create-operator-invite escalation path).
+        const { data: badInvites } = await supabase.rpc('operator_invite_membership_check');
+        const badInviteCount = Array.isArray(badInvites) ? badInvites.length : 0;
+        if (badInviteCount > 0) {
+          behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
+            title: `Cross-tenant operator invite: ${badInviteCount} invite(s) whose creator lacks tenant membership for that client`,
+            analysis: `An operator_invites row targets a client whose tenant the creator is NOT a member of. This is the create-operator-invite cross-tenant/escalation shape (INC-AITOOLS-XTENANT). Each such invite could grant access to a tenant the creator has no rights to.`,
+            plainEnglish: `Someone created an access invite to a client they don't belong to.`,
+            action: 'Inspect the operator_invites rows; confirm the create-operator-invite authorization gate (tenant membership + role allowlist) is deployed.' });
+        }
       } catch (_e) { /* best-effort probe */ }
 
       // 3. #83 SEVERITY RECALIBRATION regression probe (rule 7 — scans must reflect current state).
