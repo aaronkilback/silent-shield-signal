@@ -6,6 +6,7 @@ import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-c
 import { ACTIVE_INCIDENT_STATUSES, isIncidentActive } from "../_shared/incident-status.ts";
 import { HAZARD_CLASSES } from "../_shared/incident-creation-gate.ts";
 import { classifySubject, renderMandateGuidance } from "../_shared/client-mandate.ts";
+import { resolveCitation } from "../_shared/citation.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -290,6 +291,43 @@ Deno.serve(async (req) => {
 
     if (signalsError) throw signalsError;
 
+    // ── WO-PROVENANCE-01 step 2 — per-signal CITABILITY from source provenance (resolveCitation) ──
+    // A signal that cannot be cited cannot contribute to any main-body assertion (Blocker 1). We
+    // compute citability ONCE here, upstream of tiering AND of the incident/debate reads (Blocker B).
+    const _srcIds = [...new Set((signals ?? []).map((s: any) => s.source_id).filter(Boolean))];
+    const provById = new Map<string, any>();
+    const domainToPub = new Map<string, { publisher_name: string; publisher_kind: string }>();
+    if (_srcIds.length) {
+      const { data: srcRows } = await supabase.from('sources')
+        .select('id, publisher_kind, publisher_name, provenance_path').in('id', _srcIds);
+      for (const r of (srcRows ?? [])) provById.set(r.id, r);
+    }
+    {
+      // Aggregator resolution map (registrable domain -> publisher/kind) from configured citable sources.
+      const { data: allSrc } = await supabase.from('sources')
+        .select('publisher_kind, publisher_name, provenance_path, config')
+        .in('publisher_kind', ['official', 'wire', 'outlet', 'advocacy', 'sensor', 'subject'])
+        .in('provenance_path', ['url', 'api_endpoint']);
+      for (const r of (allSrc ?? [])) {
+        const u = ((r as any).config?.url || (r as any).config?.feed_url || '') as string;
+        let host = ''; try { host = new URL(u).hostname.replace(/^www\./, ''); } catch { /* */ }
+        if (host && !host.includes('google.com') && !host.includes('reddit.com') && !domainToPub.has(host))
+          domainToPub.set(host, { publisher_name: r.publisher_name, publisher_kind: r.publisher_kind });
+      }
+    }
+    const domainLookup = (d: string) => domainToPub.get(d) ?? null;
+    const citeFor = (s: any) => {
+      const p = provById.get(s.source_id);
+      return resolveCitation({
+        provenance: p ? { source_id: s.source_id, publisher_kind: p.publisher_kind, publisher_name: p.publisher_name, provenance_path: p.provenance_path }
+                      : (s.source_id ? { source_id: s.source_id, publisher_kind: null, publisher_name: null, provenance_path: null } : null),
+        source_url: s.source_url, raw_json: s.raw_json, published_at: s.received_at || s.event_date,
+      }, domainLookup);
+    };
+    const citableSet = new Set<string>();
+    const citeLineById = new Map<string, string>();
+    for (const s of (signals ?? [])) { const c = citeFor(s); if (c.citable) { citableSet.add(s.id); if (c.sourceLine) citeLineById.set(s.id, c.sourceLine); } }
+
     // Apply staleness filter: signals older than 14 days only if critical AND directly client-relevant.
     //
     // 2026-05-10: previously hardcoded `text.includes('petronas')` etc.
@@ -398,8 +436,14 @@ Deno.serve(async (req) => {
       const r = relScore(s);
       return r >= REL_AWARENESS_MIN && r < REL_MAIN;
     });
-    freshSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN);
-    console.log(`[generate-executive-report] A/tiered-gate: ${freshSignals.length} main (>=${REL_MAIN}) · ${awarenessSignals.length} awareness (${REL_AWARENESS_MIN}–${REL_MAIN}) · <${REL_AWARENESS_MIN} excluded`);
+    // ── Amendment A — no silent demotion above the main threshold ──
+    // Non-citable signals with relScore >= 0.60 do NOT route to awareness (that would launder their
+    // content into regional context). They route to a REVIEW QUEUE: excluded from all body prose,
+    // Flash, actions, and incident refs, surfaced to the operator with id/relevance/source/reason.
+    const reviewQueueSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN && !citableSet.has(s.id));
+    // Main tier = relevant AND citable. A non-citable signal can never feed a main-body assertion.
+    freshSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN && citableSet.has(s.id));
+    console.log(`[generate-executive-report] citability tiering: ${freshSignals.length} main-citable · ${reviewQueueSignals.length} review-queue (rel>=${REL_MAIN}, non-citable) · ${awarenessSignals.length} awareness · review-queue ids: ${reviewQueueSignals.map((s: any) => s.signal_number || s.id?.slice(0, 8)).join(', ')}`);
 
     // Fetch incidents with classification rationale (excluding deleted + test)
     const { data: incidents, error: incidentsError } = await supabase
@@ -432,6 +476,33 @@ Deno.serve(async (req) => {
 
     if (incidentsError) throw incidentsError;
 
+    // ── Amendment B — close the second entrance ──
+    // Incidents and multi-agent debates are the other two reads that can carry non-citable content
+    // into the body. Enforce citability UPSTREAM of both: an incident is BODY-ELIGIBLE only if it
+    // has >=1 CITABLE supporting signal; debates are gated to body-eligible incidents. The primary
+    // signal (incidents.signal_id) may be outside the report's signal window, so we resolve its
+    // citability directly.
+    const bodyEligibleIncidentIds = new Set<string>();
+    {
+      const incSigIds = [...new Set((incidents ?? []).map((i: any) => i.signal_id).filter(Boolean))];
+      const incSigCitable = new Set<string>();
+      if (incSigIds.length) {
+        const { data: incSigs } = await supabase.from('signals')
+          .select('id, source_id, source_url, raw_json, received_at, event_date')
+          .eq('client_id', client_id)  // defense-in-depth: an incident's supporting signal must be same-client
+          .in('id', incSigIds);
+        const extraSrc = [...new Set((incSigs ?? []).map((r: any) => r.source_id).filter(Boolean).filter((id: string) => !provById.has(id)))];
+        if (extraSrc.length) { const { data: more } = await supabase.from('sources').select('id, publisher_kind, publisher_name, provenance_path').in('id', extraSrc); for (const r of (more ?? [])) provById.set(r.id, r); }
+        for (const r of (incSigs ?? [])) if (citeFor(r).citable) incSigCitable.add(r.id);
+      }
+      for (const i of (incidents ?? [])) if (i.signal_id && (citableSet.has(i.signal_id) || incSigCitable.has(i.signal_id))) bodyEligibleIncidentIds.add(i.id);
+    }
+    // Reassign the incident set used for the body to body-eligible only (drives p1p2Incidents,
+    // counts, render, debates downstream). Non-eligible incidents are excluded from the report body.
+    const _incidentsRaw = incidents ?? [];
+    const incidentsBody = _incidentsRaw.filter((i: any) => bodyEligibleIncidentIds.has(i.id));
+    console.log(`[generate-executive-report] incident citability gate: ${incidentsBody.length}/${_incidentsRaw.length} body-eligible (>=1 citable supporting signal)`);
+
     // ── Multi-agent debate syntheses for this period (Day 2 of plan) ──
     // The executive report's analytical content must reflect the
     // platform's actual specialist work: AEGIS-CMD-adjudicated
@@ -440,7 +511,7 @@ Deno.serve(async (req) => {
     // regenerates analysis from raw signals via single-LLM —
     // destroying the auditable reasoning trail the platform's
     // value proposition rests on.
-    const incidentIds = (incidents ?? []).map((i: any) => i.id).filter(Boolean);
+    const incidentIds = incidentsBody.map((i: any) => i.id).filter(Boolean);  // debates gated to body-eligible incidents (Amendment B)
     const { data: rawDebates } = incidentIds.length > 0
       ? await supabase
           .from('agent_debate_records')
@@ -534,7 +605,10 @@ Deno.serve(async (req) => {
     console.log(`[generate-executive-report] narrative signals: ${narrativeSignals.length} (excluded ${patternSignalCount} pattern signals)`);
 
     function getHostname(url: string | null | undefined): string {
-      if (!url) return 'Fortress Intelligence';
+      // WO-PROVENANCE-01 step 3: no "Fortress Intelligence" fallback. A signal with no URL is
+      // non-citable (never fabricate the platform as the publisher). Citation is governed by
+      // resolveCitation upstream; this helper returns '' for the no-URL case.
+      if (!url) return '';
       try { return new URL(url).hostname; } catch { return url; }
     }
 
@@ -569,7 +643,7 @@ Deno.serve(async (req) => {
     const flashHigh = flashEligibleSignals.filter((s: any) => s.severity === 'high');
     console.log(`[generate-executive-report] B/flash-guard: ${flashEligibleSignals.length} flash-eligible (crit ${flashCritical.length}/high ${flashHigh.length}); ${reportableSignals.length - flashEligibleSignals.length} main-tier signals routed to issues/context only`);
 
-    const p1p2Incidents = incidents?.filter(i => i.priority === 'p1' || i.priority === 'p2') || [];
+    const p1p2Incidents = incidentsBody.filter((i: any) => i.priority === 'p1' || i.priority === 'p2') || [];  // body-eligible only (Amendment B)
     
     // ═══════════════════════════════════════════════════════════════════════════
     // FIX: Unknown incident classification using REAL fields (not non-existent category column)
@@ -914,13 +988,14 @@ ${agentContext}
 
 VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
 - Total signals collected: ${freshSignals.length}
+- Provenance note: ${reviewQueueSignals.length} signals met the relevance threshold but were excluded for unresolvable provenance (review queue — not analyzed, not cited).
 - Critical severity signals: ${criticalSignals.length}
 - High severity signals: ${highSignals.length}
 - TOTAL P1/P2 Incidents: ${p1p2Incidents.length}
 - NEW incidents (last 24h): ${newIncidentsLast24h.length}
 - STALE open incidents (>7 days old): ${staleOpenIncidents.length}
 - Unknown/unclassified incidents: ${unknownIncidents.length}
-- Open incidents total: ${incidents?.filter(isIncidentActive).length || 0}
+- Open incidents total: ${incidentsBody.filter(isIncidentActive).length || 0}
 
 ${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h) - THESE ARE THE CURRENT THREATS:\n${newIncidentsLast24h.map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]}`).join('\n')}` : 'NO new P1/P2 incidents in the last 24 hours. Focus on signal intelligence and stale incident review.'}
 
@@ -2016,7 +2091,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         ${item.signals.slice(0, 3).map((signal: any) => `
           <div class="evidence-citation">
             <div style="display: flex; justify-content: space-between; margin-bottom: 4pt;">
-              <span style="font-weight: 700; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.5pt;">Source: Fortress Intelligence Platform</span>
+              <span style="font-weight: 700; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.5pt;">Source: ${((citeLineById.get(signal.id) || '').split(',')[0] || getHostname(signal.source_url) || 'unattributed').replace(/[<>]/g, '')}</span>
               <span style="font-family: monospace; font-size: 7.5pt; color: #666;">${new Date(signal.received_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</span>
             </div>
             <p style="margin: 0 0 4pt; line-height: 1.5;">
@@ -2175,6 +2250,8 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           client: client.name,
           period: `${periodStart.toLocaleDateString()} - ${periodEnd.toLocaleDateString()}`,
           signals_analyzed: freshSignals.length,
+          review_queue_count: reviewQueueSignals.length,
+          review_queue: reviewQueueSignals.map((s: any) => ({ id: s.id, signal_number: s.signal_number, relevance: s.relevance_score, source: (provById.get(s.source_id)?.publisher_kind || 'unknown'), reason: citeFor(s).reason })),
           p1p2_incidents: p1p2Incidents.length,
           risk_level: overallRiskLevel,
           executive_flash: executiveFlash,
