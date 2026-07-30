@@ -3097,18 +3097,21 @@ Deno.serve(async (req) => {
             plainEnglish: `Unscoped beliefs are being written again — the belief-layer freeze is leaking.`,
             action: 'Verify trg_inc_learn_contam_freeze_ab is enabled; find the writer; do not re-enable belief injection until WO-BELIEF-PROVENANCE-01 closes.' });
         }
-        // (c) top-tier-citable source (official/wire) with no provenance path = a citation that
-        // asserts authority it cannot substantiate.
+        // (c) COVERAGE, not a breach (ruling 9a): a source with a citable IDENTITY
+        // (official/wire/outlet/advocacy/sensor/subject) but no recorded provenance path is
+        // correctly NON-CITABLE via the provenance rule — identity is not proof. Surface it as a
+        // LOW coverage note (can't be cited until a feed/endpoint is recorded), never critical.
+        // The safety property (no unprovenanced source is ever CITED) is enforced by resolveCitation.
         const { data: unprov } = await supabase.from('sources')
           .select('name')
-          .in('publisher_kind', ['official', 'wire'])
+          .in('publisher_kind', ['official', 'wire', 'outlet', 'advocacy', 'sensor', 'subject'])
           .eq('provenance_path', 'none');
         if ((unprov?.length ?? 0) > 0) {
-          behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
-            title: `Provenance: ${unprov!.length} top-tier-citable source(s) with provenance_path=none`,
-            analysis: `WO-PARTITION-01 A8c invariant: no official/wire source may be citable-tier yet unprovenanced. Offenders: ${unprov!.map((s: any) => s.name).slice(0, 12).join(', ')}. Either record a real feed/endpoint or move out of the top tier.`,
-            plainEnglish: `A source we would cite as authoritative has no recorded way it fetched the content.`,
-            action: 'Record the feed/api endpoint on sources.config, or reclassify out of official/wire.' });
+          behavioralFindings.push({ category: 'behavioral_health', severity: 'low',
+            title: `Provenance coverage: ${unprov!.length} citable-identity source(s) unprovenanced (non-citable until a feed is recorded)`,
+            analysis: `${unprov!.length} sources have a citable publisher_kind but provenance_path='none' — identity known, proof not recorded, so resolveCitation correctly drops them. Not a breach (identity != proof). Sample: ${unprov!.map((s: any) => s.name).slice(0, 12).join(', ')}. Record a feed/endpoint to make them citable.`,
+            plainEnglish: `Some known publishers have no recorded feed, so we cannot cite them yet.`,
+            action: 'Record the feed/api endpoint on sources.config to make these citable; otherwise leave (they stay non-citable, which is safe).' });
         }
       } catch (_e) { /* best-effort probe */ }
 
