@@ -46,6 +46,17 @@ Deno.serve(async (req) => {
 
     for (const schedule of dueSchedules) {
       try {
+        // ── WO-GROUNDING-01 item 0b — client-facing issuance HALT ──
+        // Executive reports carry ungrounded/unsupported citations (SIG-027390 wildfire↔LNG;
+        // "including Petronas Canada" on SIG-026745). No executive report may be delivered until
+        // binding-at-derivation (WO-GROUNDING-01) ships and the report row is issuable=true. This is
+        // belt-and-suspenders with the deny-by-default reports.issuable column.
+        if (schedule.report_type === 'executive') {
+          console.warn(`[ScheduledReports] REFUSED executive delivery for schedule ${schedule.id}: WO-GROUNDING-01 issuance halt (grounding gate not yet shipped).`);
+          errors++;
+          continue;
+        }
+
         const periodDays = schedule.config?.period_days || 7;
         const periodStart = new Date();
         periodStart.setDate(periodStart.getDate() - periodDays);
