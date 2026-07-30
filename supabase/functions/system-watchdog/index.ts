@@ -3083,6 +3083,35 @@ Deno.serve(async (req) => {
         }
       } catch (_e) { /* best-effort probe */ }
 
+      // WO-PARTITION-01 provenance/partition invariants (2026-07-30).
+      try {
+        // (b) agent_beliefs written with NULL client_id despite the INC-LEARN-CONTAM freeze.
+        const { count: nullBeliefWrites } = await supabase.from('agent_beliefs')
+          .select('*', { count: 'exact', head: true })
+          .is('client_id', null)
+          .gte('last_updated_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+        if ((nullBeliefWrites ?? 0) > 0) {
+          behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
+            title: `agent_beliefs: ${nullBeliefWrites} NULL-client belief write(s) in 24h (freeze breach)`,
+            analysis: `WO-BELIEF-PROVENANCE-01 invariant: agent_beliefs must be write-frozen (trg_inc_learn_contam_freeze_ab) and non-null client-scoped. ${nullBeliefWrites} rows were written/updated with NULL client_id in the last 24h — the containment or the freeze has a hole.`,
+            plainEnglish: `Unscoped beliefs are being written again — the belief-layer freeze is leaking.`,
+            action: 'Verify trg_inc_learn_contam_freeze_ab is enabled; find the writer; do not re-enable belief injection until WO-BELIEF-PROVENANCE-01 closes.' });
+        }
+        // (c) top-tier-citable source (official/wire) with no provenance path = a citation that
+        // asserts authority it cannot substantiate.
+        const { data: unprov } = await supabase.from('sources')
+          .select('name')
+          .in('publisher_kind', ['official', 'wire'])
+          .eq('provenance_path', 'none');
+        if ((unprov?.length ?? 0) > 0) {
+          behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
+            title: `Provenance: ${unprov!.length} top-tier-citable source(s) with provenance_path=none`,
+            analysis: `WO-PARTITION-01 A8c invariant: no official/wire source may be citable-tier yet unprovenanced. Offenders: ${unprov!.map((s: any) => s.name).slice(0, 12).join(', ')}. Either record a real feed/endpoint or move out of the top tier.`,
+            plainEnglish: `A source we would cite as authoritative has no recorded way it fetched the content.`,
+            action: 'Record the feed/api endpoint on sources.config, or reclassify out of official/wire.' });
+        }
+      } catch (_e) { /* best-effort probe */ }
+
       // 3. #83 SEVERITY RECALIBRATION regression probe (rule 7 — scans must reflect current state).
       // Post-#83: monitor-domains emits ONLY 'low' (its "legitimate domain" is fabricated from
       // client name/org, so typosquats of it are not a justified high), and detect-threat-patterns

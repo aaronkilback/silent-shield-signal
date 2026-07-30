@@ -447,6 +447,17 @@ Hard constraints, non-negotiable:
 
 Dependencies: Phase 3 outcome feedback loop must be live and accumulating first. The simulator is only as good as the operational memory calibrating it.
 
+BLOCKING PREREQUISITE — WO-BELIEF-PROVENANCE-01 (opened 2026-07-30, WO-PARTITION-01):
+the belief layer (`agent_beliefs`) is not partitioned or provenanced and MUST NOT be re-enabled
+for report/injection use until closed. Audit facts: `agent_beliefs` has `client_id` (nullable),
+NO `tenant_id`, NO signal-derivation link; 15,418 of 15,533 rows are NULL-client. Scope (do NOT
+architect new — reuse Cascade Energy containment 45→0 and the benchmark born-quarantined
+mechanism): (1) add `tenant_id` + enforce non-null `client_id`; (2) first-class signal-derivation
+link — no derivation ⇒ permanently non-citable; (3) backfill or quarantine the 15,418 NULL-client
+beliefs; (4) retrieval gate — no belief may enter a report whose `client_id` differs, none with
+unresolvable signal provenance may be cited; (5) `trg_inc_learn_contam_freeze_ab` stays in force
+until 1–4 are verified. This gate blocks Phase 3.5 injection re-enable. Full: FORTRESS_CAPABILITY_HORIZON.md.
+
 Moat statement: the generator is calibrated on proprietary incident-to-asset-to-outcome data that compounds monthly. The code is replicable; the calibration data is not.
 
 ---
