@@ -11,6 +11,20 @@
 //
 // The per-client subject lists live in clients.mandate_profile (jsonb, operator-reviewed). This
 // module is the mechanism; the data is the fixture.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// TWO SEPARATE AXES — do not conflate (operator ruling, 2026-07-30):
+//
+//   RELEVANCE / PATHWAY  (client_geo_assets + score_signal_hazard_pathway) — "does this matter?"
+//   AUTHORITY / MANDATE  (this module + clients.mandate_profile)           — "what may we DO?"
+//
+// A subject can be HIGH relevance and LOW authority at the same time. Coastal GasLink corridor and
+// the LNG Canada terminal both stay in the PATHWAY GEOMETRY (a hazard near them is genuinely
+// client-relevant and must score normally), yet their AUTHORITY class is AFFILIATED-INFORM: PECL
+// is a shipper/stakeholder, not the operator, so it briefs upward and assesses indirect impact —
+// it never tasks security or engages counterparties for them. Reclassifying a subject's authority
+// here does NOT remove it from relevance scoring, and must not. Keep the two axes independent.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
 
 export type AuthorityClass = 'OPERATE' | 'AFFILIATED-INFORM' | 'EXTERNAL-MONITOR';
 

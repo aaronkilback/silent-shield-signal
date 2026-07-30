@@ -89,6 +89,37 @@ Deno.serve(async (req) => {
       throw new Error('SUPABASE_URL or SERVICE_ROLE_JWT not configured');
     }
 
+    // WO-KEYPATH (2026-07-30) — vault-key fallback for getCallerIdentity-gated functions.
+    // verify_jwt=true targets accept the legacy SERVICE_ROLE_JWT (unchanged). But
+    // verify_jwt=false functions that gate via getCallerIdentity (_shared/supabase-client.ts)
+    // accept ONLY the canonical service-role key (== get_current_service_role_key(), the
+    // sb_secret_* value) and reject the legacy JWT with 401. We therefore try the JWT first
+    // and, ONLY on a 401, retry once with the vault key. MASKED HANDLING: the vault key is
+    // fetched in-process, memoized for the run, used as a Bearer, and NEVER logged or returned.
+    let _vaultKeyCache: string | null | undefined = undefined;
+    const getVaultKey = async (): Promise<string | null> => {
+      if (_vaultKeyCache !== undefined) return _vaultKeyCache;
+      try {
+        const { data } = await supabase.rpc('get_current_service_role_key');
+        _vaultKeyCache = (typeof data === 'string' && data.length > 0) ? data : null;
+      } catch { _vaultKeyCache = null; }
+      return _vaultKeyCache;
+    };
+    const invokeTarget = async (url: string, payload: unknown): Promise<Response> => {
+      const doFetch = (bearer: string) => fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearer}` },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(JOB_TIMEOUT_MS),
+      });
+      let resp = await doFetch(serviceRoleKey);
+      if (resp.status === 401) {
+        const vk = await getVaultKey();
+        if (vk && vk !== serviceRoleKey) resp = await doFetch(vk);
+      }
+      return resp;
+    };
+
     // ── 1. Fetch a batch of pending, due jobs ───────────────────────────────
     // Order by scheduled_for so retries that were rescheduled run when due,
     // not before. created_at is the tiebreaker for FIFO within a tick.
@@ -155,15 +186,10 @@ Deno.serve(async (req) => {
       let jobStatus = 0;
       let resultBody: unknown = null;
       try {
-        const resp = await fetch(`${supabaseUrl}/functions/v1/${encodeURIComponent(job.job_type)}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${serviceRoleKey}`,
-          },
-          body: JSON.stringify(job.payload),
-          signal: AbortSignal.timeout(JOB_TIMEOUT_MS),
-        });
+        const resp = await invokeTarget(
+          `${supabaseUrl}/functions/v1/${encodeURIComponent(job.job_type)}`,
+          job.payload,
+        );
         jobStatus = resp.status;
         const text = await resp.text();
         try { resultBody = text ? JSON.parse(text) : null; } catch { resultBody = text; }

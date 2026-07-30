@@ -1,7 +1,28 @@
 # WO-KEYPATH — service-role key-format divergence blocks headless function invocation
 
 **Opened:** 2026-07-30 (surfaced regenerating the exec brief via the job-worker).
-**Class:** infra / reliability. **Priority:** P2 (workaround exists: operator renders via UI).
+**Status:** RESOLVED 2026-07-30 (option 1 — vault-key fallback in job-worker) — operator-authorized.
+**Class:** infra / reliability.
+
+## RESOLUTION (2026-07-30)
+
+Implemented option 1 as a **401 fallback** (safest form): the job-worker tries the legacy
+`SERVICE_ROLE_JWT` first (verify_jwt=true targets keep working, unchanged) and, ONLY on a 401,
+retries once with the vault key `get_current_service_role_key()` — which is the `sb_secret_*`
+value `getCallerIdentity` accepts. The vault key is fetched in-process, memoized per run, used as
+a Bearer, and NEVER logged. It can only FIX (targets already 401ing), never break (first-try path
+unchanged). Verified headlessly on a harmless probe (`get-my-travel`): the call returned
+**HTTP 403 SERVICE_ROLE_NOT_ALLOWED** (the function's own policy) instead of the prior **401 HS256
+invalid** — proving `getCallerIdentity` now classifies the caller as `service_role`. The exec
+brief (and any `getCallerIdentity`-gated function) is therefore headlessly invocable again.
+
+Note: sending the vault key UNIVERSALLY was rejected — it is `sb_secret_*`, which the platform
+`verify_jwt=true` gate rejects (`UNAUTHORIZED_INVALID_JWT_FORMAT`); the fallback design avoids
+that entirely.
+
+---
+
+### Original finding (retained)
 
 ## The finding
 
