@@ -432,15 +432,16 @@ Deno.serve(async (req) => {
       }
       return raw;
     };
+    // ── Amendment A CORRECTED (operator ruling 2026-07-30) — non-citable is a HARD exclusion at EVERY
+    // tier, awareness included. A signal with provenance_path=none or a non-citable kind produces NO
+    // rendered claim and NO [SIG] reference ANYWHERE in the report. Awareness = low relevance AND citable.
+    // Non-citable at ANY relevance → review queue (counted in the provenance note). Citability is not a
+    // relevance question; the earlier "demote to awareness" path was laundering and is removed.
     const awarenessSignals = freshSignals.filter((s: any) => {
       const r = relScore(s);
-      return r >= REL_AWARENESS_MIN && r < REL_MAIN;
+      return r >= REL_AWARENESS_MIN && r < REL_MAIN && citableSet.has(s.id);
     });
-    // ── Amendment A — no silent demotion above the main threshold ──
-    // Non-citable signals with relScore >= 0.60 do NOT route to awareness (that would launder their
-    // content into regional context). They route to a REVIEW QUEUE: excluded from all body prose,
-    // Flash, actions, and incident refs, surfaced to the operator with id/relevance/source/reason.
-    const reviewQueueSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN && !citableSet.has(s.id));
+    const reviewQueueSignals = freshSignals.filter((s: any) => relScore(s) >= REL_AWARENESS_MIN && !citableSet.has(s.id));
     // WO-PROVENANCE-01 Correction 1 — deterministic denominator chain, single unit = SIGNAL counts.
     // The generator fetches client-scoped signals only, so "in-window" here is the client-gated fetch
     // (the cross-client platform total is an analyst-external figure, not embedded in a client report).
