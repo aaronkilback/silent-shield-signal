@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { isIncidentActive } from "../_shared/incident-status.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -61,7 +62,7 @@ INVESTMENT TIMEFRAME: ${timeframe_months} months
 THREAT LANDSCAPE ANALYSIS:
 - Total Signals (Recent): ${signals?.length || 0}
 - Total Incidents (Historical): ${incidents?.length || 0}
-- Open Incidents: ${incidents?.filter(i => i.status === 'open').length || 0}
+- Open Incidents: ${incidents?.filter(isIncidentActive).length || 0}
 
 TASK:
 Develop a strategic security investment portfolio prioritized by risk reduction ROI. Provide:

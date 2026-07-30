@@ -5,6 +5,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { trackError, ErrorCategory, ErrorSeverity } from '@/lib/errorTracking';
+import { ACTIVE_INCIDENT_STATUSES } from '@/lib/incident-status';
 
 export interface SilentFailure {
   id: string;
@@ -285,7 +286,9 @@ export async function checkStateConsistency(): Promise<SilentFailure[]> {
   const { data: orphanedIncidents } = await supabase
     .from('incidents')
     .select('id, title')
-    .not('status', 'eq', 'resolved')
+    // CANONICAL active-incident set (was `.neq('status','resolved')`, a denylist that
+    // missed the soft-close status='closed'). Single source: src/lib/incident-status.ts.
+    .in('status', ACTIVE_INCIDENT_STATUSES as string[])
     .is('signal_ids', null)
     .is('created_by', null)
     .limit(10);

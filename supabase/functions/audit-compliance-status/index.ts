@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { isIncidentActive } from "../_shared/incident-status.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
@@ -89,7 +90,7 @@ AUDIT PERIOD: Last ${audit_period_days} days
 
 OPERATIONAL DATA:
 - Total Incidents: ${incidents?.length || 0}
-- Open Incidents: ${incidents?.filter(i => i.status === 'open').length || 0}
+- Open Incidents: ${incidents?.filter(isIncidentActive).length || 0}
 - Total Signals: ${signals?.length || 0}
 - Incident Outcomes Documented: ${outcomes?.length || 0}
 - Active Escalation Rules: ${escalationRules?.length || 0}

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { isIncidentActive } from "../_shared/incident-status.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -109,7 +110,7 @@ Deno.serve(async (req) => {
     // Calculate risk assessment
     const threatCount = results.nearby_entities.filter((e: any) => e.threat_score > 50).length;
     const highPrioritySignals = results.recent_signals.filter((s: any) => s.priority === 'high' || s.priority === 'critical').length;
-    const activeIncidents = results.recent_incidents.filter((i: any) => i.status === 'open' || i.status === 'acknowledged').length;
+    const activeIncidents = results.recent_incidents.filter((i: any) => isIncidentActive(i)).length;
 
     if (activeIncidents > 0 || highPrioritySignals > 3 || threatCount > 2) {
       results.risk_assessment = 'high';
