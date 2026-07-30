@@ -3115,6 +3115,58 @@ Deno.serve(async (req) => {
         }
       } catch (_e) { /* best-effort probe */ }
 
+      // WO-PROVENANCE-01 body-provenance invariants (2026-07-30).
+      try {
+        // (b) a review-queue signal (relevance>=0.60 but non-citable) was CITED in a recent report
+        // = laundering. meta_json.review_queue holds the ids; report_evidence_sources.source_id
+        // holds cited signal ids. Any overlap in the last 24h is a breach.
+        const { data: recentReports } = await supabase.from('reports')
+          .select('id, meta_json').eq('type', 'executive_intelligence')
+          .gte('created_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+        let launderedCites = 0;
+        for (const r of (recentReports ?? [])) {
+          const rq = ((r as any).meta_json?.review_queue ?? []) as any[];
+          if (!rq.length) continue;
+          const rqIds = new Set(rq.map((x: any) => x.id).filter(Boolean));
+          const { data: ev } = await supabase.from('report_evidence_sources').select('source_id').eq('report_id', r.id);
+          for (const e of (ev ?? [])) if (rqIds.has((e as any).source_id)) launderedCites++;
+        }
+        if (launderedCites > 0) {
+          behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
+            title: `Provenance laundering: ${launderedCites} review-queue signal(s) cited in a report (24h)`,
+            analysis: `A signal that met the relevance threshold but was excluded for unresolvable provenance (review queue) appeared as cited evidence in an executive report. The citability gate has a hole.`,
+            plainEnglish: `A report cited a source we already said we cannot cite.`,
+            action: 'Verify the resolveCitation tiering in generate-executive-report; a review-queue signal must never reach report_evidence_sources.' });
+        }
+        // (a) active incidents whose PRIMARY supporting signal is non-citable. The exec-brief
+        // incident gate excludes these from the body; a rising count means non-citable-evidenced
+        // incidents are accumulating (LOW — the gate holds them out, but they merit review).
+        const { data: actIncs } = await supabase.from('incidents')
+          .select('id, signal_id')
+          .in('status', ['open', 'acknowledged', 'contained', 'investigating', 'mitigated'])
+          .is('deleted_at', null).neq('is_test', true).not('signal_id', 'is', null).limit(500);
+        const incSigIds = [...new Set((actIncs ?? []).map((i: any) => i.signal_id))];
+        const citableSrcSig = new Set<string>();
+        if (incSigIds.length) {
+          const { data: sigs } = await supabase.from('signals').select('id, source_id').in('id', incSigIds);
+          const srcIds2 = [...new Set((sigs ?? []).map((s: any) => s.source_id).filter(Boolean))];
+          const citKindOk = new Set<string>();
+          if (srcIds2.length) {
+            const { data: srcs } = await supabase.from('sources').select('id, publisher_kind, provenance_path').in('id', srcIds2);
+            for (const s of (srcs ?? [])) if (['official', 'wire', 'outlet', 'advocacy', 'sensor', 'subject'].includes((s as any).publisher_kind) && (s as any).provenance_path !== 'none') citKindOk.add((s as any).id);
+          }
+          for (const s of (sigs ?? [])) if ((s as any).source_id && citKindOk.has((s as any).source_id)) citableSrcSig.add((s as any).id);
+        }
+        const nonCit = (actIncs ?? []).filter((i: any) => !citableSrcSig.has(i.signal_id));
+        if (nonCit.length > 0) {
+          behavioralFindings.push({ category: 'behavioral_health', severity: 'low',
+            title: `Incident evidence: ${nonCit.length} active incident(s) with non-citable primary evidence`,
+            analysis: `${nonCit.length} active incidents have a primary supporting signal that is non-citable (aggregator/none/internal). The exec-brief incident gate excludes these from the report body; surfaced for review of upstream incident creation.`,
+            plainEnglish: `Some open incidents rest on evidence we cannot cite; they are kept out of client reports.`,
+            action: 'Review incident creation for these; a durable fix is a citable-evidence gate at incident creation.' });
+        }
+      } catch (_e) { /* best-effort probe */ }
+
       // 3. #83 SEVERITY RECALIBRATION regression probe (rule 7 — scans must reflect current state).
       // Post-#83: monitor-domains emits ONLY 'low' (its "legitimate domain" is fabricated from
       // client name/org, so typosquats of it are not a justified high), and detect-threat-patterns

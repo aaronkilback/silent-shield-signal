@@ -1008,7 +1008,8 @@ FLASH-ELIGIBLE LEAD SET (operational / regulatory / active_threat / security, ma
 ${(flashCritical.length ? flashCritical : flashHigh).slice(0, 5).map((s, i) => `${i + 1}. [${s.category}] ${cleanSignalExcerpt(s.normalized_text).substring(0, 180)}`).join('\n') || '(none this period — if empty, the lead is that no flash-eligible threat requires action; hazard/wildfire items are monitoring context only, never the lead)'}
 
 MULTI-AGENT DEBATE SYNTHESES (last ${period_days}d, ${(periodDebates ?? []).length}):
-These are AEGIS-CMD-judged syntheses authored by specialist agents under structured debate. They are the platform's primary analytical output for incidents in this period. Use them as the interpretive backbone of the executive summary — distill their judgments into the BLUF and summary paragraphs. Do NOT regenerate analysis the agents already produced.
+These are AEGIS-CMD-judged syntheses authored by specialist agents under structured debate. Use them as INTERPRETIVE FRAMING ONLY — they may shape emphasis and structure of the summary.
+PROVENANCE CONSTRAINT (WO-PROVENANCE-01, Correction 3 ruling b): debate syntheses have NO signal-derivation link, so you must NOT restate any debate claim as a fact in the body. Every factual assertion in the summary must independently trace to a CITED signal listed above; a debate contributes no standalone assertion or citation. Do NOT regenerate analysis the agents already produced.
 ${(periodDebates ?? []).slice(0, 8).map((d: any, idx: number) => {
   const linkedIncident = (incidents ?? []).find((i: any) => i.id === d.incident_id);
   const incTitle = linkedIncident?.title || `Incident ${String(d.incident_id).slice(0, 8)}`;
@@ -2250,6 +2251,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           client: client.name,
           period: `${periodStart.toLocaleDateString()} - ${periodEnd.toLocaleDateString()}`,
           signals_analyzed: freshSignals.length,
+          distinct_citable_publishers: new Set(freshSignals.map((s: any) => citeFor(s).publisherEntity).filter(Boolean)).size,
           review_queue_count: reviewQueueSignals.length,
           review_queue: reviewQueueSignals.map((s: any) => ({ id: s.id, signal_number: s.signal_number, relevance: s.relevance_score, source: (provById.get(s.source_id)?.publisher_kind || 'unknown'), reason: citeFor(s).reason })),
           p1p2_incidents: p1p2Incidents.length,
