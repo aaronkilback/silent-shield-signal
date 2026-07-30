@@ -24,13 +24,27 @@
 - **Data timeline:** NO tenant data existed until **2026-03-05** (Petronas first real signals 2026-03-29).
   **The discoverable window (Nov 22–25 2025) and the data-bearing window (Mar–Jun 2026) DO NOT OVERLAP.**
 - **Per-tenant exposure overlap (data present AND vuln live, to 2026-06-12):**
-  | Tenant / client | First data | Signals in overlap |
-  |---|---|---|
-  | Petronas Canada (Silent Shield Ops) | 2026-03-29 | 993 |
-  | BC Place (Critical Risk Team) | 2026-05-18 | 153 |
-  | Trent Reznor (Critical Risk Team) | 2026-05-20 | 11 |
-  | Kilbacks (SSO, personal) | 2026-06-11 | 26 |
-  | Cascade / _qa / _benchmark / _invariant | — | test tenants |
+  | Tenant / client | First data | Signals in overlap | Sensitivity (operator-confirmed) |
+  |---|---|---|---|
+  | Petronas Canada (Silent Shield Ops) | 2026-03-29 | 992 | see PECL breakdown below |
+  | BC Place (Critical Risk Team) | 2026-05-18 | 153 | **open-source data only (operator-confirmed)** |
+  | Trent Reznor (Critical Risk Team) | 2026-05-20 | 11 | **test tenant, ZERO personal data (operator-confirmed)** |
+  | Kilbacks (SSO, personal) | 2026-06-11 | 26 | personal/test tenant (Aaron) |
+  | Cascade / _qa / _benchmark / _invariant | — | — | test tenants |
+
+### PECL (Petronas) data classes reachable in the window (created_at < 2026-06-12), by sensitivity
+- **Signals — 992, ALL public-source origin.** By monitor: monitor-news-google 324, monitor-rss-sources 142,
+  monitor-naad-alerts 43 (public emergency), monitor-cisa-kev 16 (public CVE), monitor-wildfires 9 (public NRCan),
+  monitor-csis 2, unknown-legacy 456 (origin unrecorded — same public-OSINT population). Publisher kinds:
+  aggregator 180 / outlet 125 / sensor 26 / advocacy 3 / official 1 / internal (Fortress-derived) 145 / no-source 512.
+  **No private-intelligence origin** (no breach data, dark web, or POI-investigation-derived signals).
+- **Client-confidential business intelligence — 1 `clients` row**, fields: high_value_assets (**7**), locations (**18**),
+  monitoring_keywords (**42**), competitor_names (**9**), supply_chain_entities (**15**), employee_count (present),
+  risk_assessment (populated jsonb), threat_profile (populated jsonb), monitoring_config (populated jsonb). Proprietary,
+  not personal — Petronas critical-infrastructure list, threat posture, supply chain, competitors.
+- **Personal information (named individuals) — HIGHEST sensitivity: 788 PECL person-entity records** + **2 investigations**
+  reachable via get_entity_details / search_entities / search_investigations. (knowledge_base_articles are not
+  client-scoped — no client_id.) This is the class that makes PECL a PIPEDA personal-data consideration.
 
 ### Retention / auditability — plain statement
 - **Per-invocation records are NOT retained.** `function_telemetry` has **0 records for ai-tools-query**
