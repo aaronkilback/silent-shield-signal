@@ -70,6 +70,52 @@
 - **Watchdog probe (e):** `operator_invite_membership_check()` RPC — any `operator_invites` whose creator
   lacks tenant membership for that client → CRITICAL. Negative-tested (fires 1 on seeded fixture, 0 clean).
 
+## Amendment 2026-07-30 — determination reversal + field-level PII inventory
+
+### SUPERSEDED operator determination
+> ~~"Petronas = open source, no confidential client information."~~ — **SUPERSEDED 2026-07-30.**
+Retained for the record: the assessment changed. **Corrected finding:** the PECL person-entity and
+investigation records contain **confidential, PECL-internal personal information that is NOT
+OSINT-derivable.** The "public OSINT" characterization applies to the 992 *signals*, not to the
+*entity/investigation* records.
+
+### Explicit flags (not OSINT-derivable → internal origin)
+- **Employment-separation data present:** `former_employee`, `termination_reason`, `termination_year` —
+  internal HR-class facts, not public.
+- **Ethnicity / nationality fields present** (`ethnicity`, `nationality`) — special-category personal data,
+  not OSINT-derivable.
+- **Investigations carry a `police_file_number` and `maximo_number` (Maximo work-order refs)** — indicating
+  **PECL-internal / law-enforcement origin**, not open source.
+
+### Field-level PII inventory — 788 PECL person entities (created_at < 2026-06-12), FIELD NAMES ONLY
+Columns: `id, name, type, aliases, description, risk_level, attributes(jsonb), created_by, created_at,
+updated_at, is_active, threat_score, threat_indicators, associations, active_monitoring_enabled,
+current_location, monitoring_radius_km, confidence_score, entity_status, address_street, address_city,
+address_province, address_postal_code, address_country, client_id, tenant_id, ai_assessment(jsonb),
+ai_assessed_at, quality_score, priority_scan_requested_at, deleted_at, deletion_reason, visibility_class`.
+
+Populated (of 788): name 788 · description 344 · risk_level 288 · threat_score 177 · threat_indicators 157 ·
+aliases 45 · phone 29 · email 27 · contact_info 24 · current_location 12 · associations 11 · employment 11 ·
+home-address 3 · social handles 2 · nationality/ethnicity 1 · ai_assessment 0.
+
+Flagged categories: **photographs 15 (`entity_photos`) · home addresses 3 · associates 11 (+2 relationship
+edges) · employment history 11 · social handles 2**; NONE for dates-of-birth, vehicle/property, family members.
+
+### Field-level inventory — 2 PECL investigations
+Columns: `id, file_number, maximo_number, prepared_by, created_by_name, synopsis, information,
+recommendations, file_status, incident_id, police_file_number, cross_references, correlated_entity_ids,
+intake_email_tag, next_review_at`. Populated (of 2): file_number/maximo_number/prepared_by/created_by_name/
+synopsis/file_status/intake_email_tag 2 · correlated_entity_ids (link to persons) 2 · information 1 ·
+**police_file_number 1** · recommendations/incident_id/cross_references 0.
+
+### LEGAL HOLD (enacted 2026-07-30)
+The 788 person entities + their 15 `entity_photos` + the 2 investigations are **FROZEN** pending legal
+review — no modification, deletion, or reclassification. Mechanism: `legal_hold` boolean column on
+`entities`/`entity_photos`/`investigations` (set true on the held set), enforced by BEFORE UPDATE OR DELETE
+trigger `block_legal_hold_writes()` (raises on any held row). Held person entities were quiesced
+(`active_monitoring_enabled=false`) so live monitors skip them and do not hit the block. Migration
+`20260730203000_inc_aitools_legal_hold.sql`.
+
 ## Open
 - ai-tools-query re-enable stays gated behind the caller→scope gate (Generic Tool Path Clearance Phase B).
 - Item 4 (full triage of the 232 verify_jwt=false functions + the ~25 request-client-scoped list) pending.
