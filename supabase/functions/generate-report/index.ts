@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { isIncidentActive } from "../_shared/incident-status.ts";
 import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
@@ -177,7 +178,7 @@ Deno.serve(async (req) => {
     // Calculate metrics
     const criticalSignals = signals?.filter(s => s.severity === 'critical').length || 0;
     const highSignals = signals?.filter(s => s.severity === 'high').length || 0;
-    const openIncidents = incidents?.filter(i => i.status === 'open').length || 0;
+    const openIncidents = incidents?.filter(isIncidentActive).length || 0;
     const resolvedIncidents = incidents?.filter(i => i.status === 'resolved').length || 0;
 
     // Top 25 signals for the report table — already sorted by severity desc, received desc

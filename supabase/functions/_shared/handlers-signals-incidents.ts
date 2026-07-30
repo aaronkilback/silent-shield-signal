@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 import type { ToolHandlerRegistry } from "./aegis-tool-executor.ts";
 import { entityIntelligence, entityDetails, entitySignals, entityRelationships } from "./tenant-entity-graph.ts";
+import { ACTIVE_INCIDENT_STATUSES } from "./incident-status.ts";
 
 // Helper — reused across handlers for edge function calls with timeout
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
@@ -371,7 +372,10 @@ export const signalsAndIncidentsHandlers: ToolHandlerRegistry = {
       .eq("tenant_id", tenantId)
       .eq("clients.tenant_id", tenantId)
       .not("clients.name", "ilike", "\\_%")
-      .in("status", ["open", "acknowledged", "contained"])
+      // CANONICAL active-incident status set (single source: _shared/incident-status.ts
+      // ⇄ public.active_incidents view). Was a local ["open","acknowledged","contained"]
+      // allowlist that silently omitted investigating/mitigated.
+      .in("status", ACTIVE_INCIDENT_STATUSES as string[])
       .order("updated_at", { ascending: false });
 
     if (args.hours_back) {

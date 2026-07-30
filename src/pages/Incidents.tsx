@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
+import { isIncidentActive, isTerminalIncidentStatus } from "@/lib/incident-status";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -287,9 +288,10 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
   const filteredIncidents = incidents.filter((incident) => {
     const search = searchTerm.toLowerCase();
     
-    // Filter out closed false positive incidents unless "all" or "closed" is selected
-    const isFalsePositiveClosed = incident.status === "closed";
-    if (statusFilter !== "all" && statusFilter !== "closed" && isFalsePositiveClosed) {
+    // Filter out terminal (closed/resolved) incidents unless "all" or "closed" is selected.
+    // Terminal set is canonical (src/lib/incident-status.ts), not a local status literal.
+    const isTerminal = isTerminalIncidentStatus(incident.status);
+    if (statusFilter !== "all" && statusFilter !== "closed" && isTerminal) {
       return false;
     }
     
@@ -307,9 +309,11 @@ ${incident.timeline_json && incident.timeline_json.length > 0 ? `\nTimeline:\n${
 
   const stats = {
     total: incidents.length,
-    open: incidents.filter((i) => i.status === "open").length,
+    // "open" = canonically active (open/acknowledged/contained/investigating/mitigated),
+    // not the bare status==='open' literal — single source: src/lib/incident-status.ts.
+    open: incidents.filter(isIncidentActive).length,
     acknowledged: incidents.filter((i) => i.status === "acknowledged").length,
-    critical: incidents.filter((i) => i.priority === "p1" && i.status === "open").length,
+    critical: incidents.filter((i) => i.priority === "p1" && isIncidentActive(i)).length,
   };
 
   // Bulk selection handlers

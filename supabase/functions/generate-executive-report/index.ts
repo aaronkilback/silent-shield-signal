@@ -3,6 +3,7 @@ import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
 import { runEvidenceGate, getReliabilityFirstPrompt, DEFAULT_RELIABILITY_SETTINGS } from "../_shared/reliability-first.ts";
 import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
+import { ACTIVE_INCIDENT_STATUSES, isIncidentActive } from "../_shared/incident-status.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -95,6 +96,25 @@ const GEO_PREFIX = new Set(['st','st.','saint','fort','lake','mount','mt','mt.',
 function scrubPrivateIndividualNames(input: string | null | undefined): string {
   if (!input) return '';
   let text = String(input);
+
+  // [PATTERN] title exemption (ruling 3): a meta-signal title like
+  //   [PATTERN] Entity escalation: "Jane Doe" (3 signals in 7d)
+  // must NOT be run through the generic name passes below — that mangles the
+  // structured title ("Entity escalation: a private individual (3 signals..."). Instead,
+  // resolve the ENTITY REFERENCE cleanly: if the quoted entity is a private individual
+  // (the bare name would be scrubbed), render it descriptively as "private-individual
+  // entity"; a public figure or organization keeps its name. Structure is preserved.
+  const PATTERN_ESCALATION_RE = /^(\[PATTERN\]\s*Entity escalation:\s*)"([^"]+)"\s*\(\s*(\d+)\s*signals?\s*(?:in\s*)?(\d+)\s*d\s*\)\s*$/i;
+  const pm = text.match(PATTERN_ESCALATION_RE);
+  if (pm) {
+    const [, prefix, name, count, days] = pm;
+    // Recurse on the bare name (no [PATTERN] prefix → normal passes). If it changes,
+    // the entity is a private personal name; keep it otherwise (org / public figure).
+    const nameScrubbed = scrubPrivateIndividualNames(name);
+    const ref = nameScrubbed !== name ? 'private-individual entity' : name;
+    return `${prefix}${ref} (${count} signals/${days}d)`;
+  }
+
   const scrubbedSurnames = new Set<string>();
   const COMMUNITY_CTX = /wildfire|evacuat|flood|resident|community|neighbou?r|family|homeowner|rancher|farmer|victim|missing/i;
 
@@ -366,6 +386,14 @@ Deno.serve(async (req) => {
       .is('deleted_at', null)
       // G(b): exclude superseded (merged-away duplicate) incidents.
       .is('superseded_by', null)
+      // CANONICAL active-incident filter (zombie-incident fix). Only genuinely-open
+      // incidents reach the brief — a soft-closed incident (status='closed' +
+      // outcome_type, e.g. WO-INCIDENT-QA news_reclassified/invalid) must NOT render
+      // as an open P2. Terminal statuses live in ONE place: the active_incidents view
+      // / ACTIVE_INCIDENT_STATUSES mirror (_shared/incident-status.ts). Kept as a
+      // status .in() rather than reading the view because this query embeds
+      // incident_classification_rationale (PostgREST can't embed FKs through a view).
+      .in('status', ACTIVE_INCIDENT_STATUSES)
       .order('opened_at', { ascending: false });
 
     if (incidentsError) throw incidentsError;
@@ -830,7 +858,7 @@ VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
 - NEW incidents (last 24h): ${newIncidentsLast24h.length}
 - STALE open incidents (>7 days old): ${staleOpenIncidents.length}
 - Unknown/unclassified incidents: ${unknownIncidents.length}
-- Open incidents total: ${incidents?.filter(i => i.status === 'open').length || 0}
+- Open incidents total: ${incidents?.filter(isIncidentActive).length || 0}
 
 ${newIncidentsLast24h.length > 0 ? `NEW INCIDENTS (last 24h) - THESE ARE THE CURRENT THREATS:\n${newIncidentsLast24h.map((i, idx) => `${idx + 1}. [${i.priority?.toUpperCase()}] ${i.title} - Opened: ${new Date(i.opened_at).toISOString().split('T')[0]}`).join('\n')}` : 'NO new P1/P2 incidents in the last 24 hours. Focus on signal intelligence and stale incident review.'}
 
