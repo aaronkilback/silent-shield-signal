@@ -4,6 +4,8 @@ import { logError } from "../_shared/error-logger.ts";
 import { runEvidenceGate, getReliabilityFirstPrompt, DEFAULT_RELIABILITY_SETTINGS } from "../_shared/reliability-first.ts";
 import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 import { ACTIVE_INCIDENT_STATUSES, isIncidentActive } from "../_shared/incident-status.ts";
+import { HAZARD_CLASSES } from "../_shared/incident-creation-gate.ts";
+import { classifySubject, renderMandateGuidance } from "../_shared/client-mandate.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -356,9 +358,41 @@ Deno.serve(async (req) => {
     // <0.30 (incl. unscored/null) = excluded entirely.
     const REL_MAIN = 0.60;
     const REL_AWARENESS_MIN = 0.30;
+    const HAZARD_CAP = 0.40;
+
+    // ── Pathway fallback cap (fourth-read ruling 1) — FAIL-CLOSED doctrine enforcement ──
+    // A hazard-class signal reaches MAIN tier ONLY with an affirmatively-established pathway
+    // to a client asset (a PostGIS coordinate/asset/corridor hit recorded in
+    // hazard_pathway_scores with has_pathway=true). Text-derived geography, or NO score row at
+    // all, never exempts — the brief does NOT trust that upstream ingest scoring ran (e.g.
+    // monitor-rss-sources hazard signals bypass score_signal_hazard_pathway). Absent an
+    // established pathway, effective relevance is capped at 0.40 → awareness, never main/flash.
+    const pathwayEstablished = new Set<string>();
+    {
+      const hazardIds = freshSignals
+        .filter((s: any) => HAZARD_CLASSES.has(String(s?.category || '')))
+        .map((s: any) => s.id).filter(Boolean);
+      if (hazardIds.length > 0) {
+        const { data: pathRows } = await supabase
+          .from('hazard_pathway_scores')
+          .select('signal_id, has_pathway')
+          .in('signal_id', hazardIds)
+          .eq('has_pathway', true);
+        for (const p of pathRows ?? []) pathwayEstablished.add(p.signal_id);
+      }
+      const capped = freshSignals.filter((s: any) =>
+        HAZARD_CLASSES.has(String(s?.category || '')) && !pathwayEstablished.has(s?.id)).length;
+      console.log(`[generate-executive-report] pathway-cap: ${pathwayEstablished.size} hazard w/ established pathway; ${capped} no-pathway hazard capped to <=${HAZARD_CAP}`);
+    }
+
     const relScore = (s: any): number => {
       const v = typeof s?.relevance_score === 'number' ? s.relevance_score : parseFloat(s?.relevance_score);
-      return Number.isFinite(v) ? v : 0;
+      const raw = Number.isFinite(v) ? v : 0;
+      // Fail-closed hazard pathway cap: hazard-class with no established pathway → <= 0.40.
+      if (HAZARD_CLASSES.has(String(s?.category || '')) && !pathwayEstablished.has(s?.id)) {
+        return Math.min(raw, HAZARD_CAP);
+      }
+      return raw;
     };
     const awarenessSignals = freshSignals.filter((s: any) => {
       const r = relScore(s);
@@ -796,6 +830,34 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
         functionName: 'generate-executive-report',
       });
       if (flashResult.data) executiveFlash = flashResult.data;
+
+      // ── Flash precision check (fourth-read ruling 2) — strictest check on the most-read
+      // sentence. mostPressingIssue is the single line executives read; verify its SUBJECT,
+      // COUNTERPARTY, and ACTION against the flash-eligible source signals it must derive from.
+      // On mismatch (e.g. "Germany finalized a LNG deal" for an "Uniper buys from Ksi Lisims"
+      // source), fall back to the top source signal's own summary VERBATIM — never print a
+      // garbled claim as the headline.
+      const flashSources = (flashCritical.length ? flashCritical : flashHigh).slice(0, 3);
+      if (flashSources.length > 0 && executiveFlash?.mostPressingIssue) {
+        try {
+          const verify = await callAiGatewayJson<{ match: boolean; reason?: string }>({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: 'You verify factual fidelity. Respond with valid JSON only: {"match": boolean, "reason": string}. match=true ONLY if the CLAIM\'s subject (who), counterparty (with whom), and action (what happened) are ALL faithfully supported by at least one SOURCE. Naming a country instead of the company, the wrong party, or an action the source does not state = match=false.' },
+              { role: 'user', content: `CLAIM (flash sentence):\n"${executiveFlash.mostPressingIssue}"\n\nSOURCES (the flash must derive from these):\n${flashSources.map((s: any, i: number) => `${i + 1}. ${cleanSignalExcerpt(s.normalized_text).substring(0, 220)}`).join('\n')}` }
+            ],
+            functionName: 'generate-executive-report',
+          });
+          if (verify.data && verify.data.match === false) {
+            const fallback = cleanSignalExcerpt(flashSources[0].normalized_text).substring(0, 240);
+            console.warn(`[ExecBrief] flash precision FAIL (${verify.data.reason ?? 'subject/counterparty/action mismatch'}) — falling back to source verbatim`);
+            executiveFlash.mostPressingIssue = fallback;
+            executiveFlash.flash_precision_fallback = true;
+          }
+        } catch (e) {
+          console.warn('[ExecBrief] flash precision check errored (non-fatal):', (e as Error).message);
+        }
+      }
     }
 
     // Item 1 (second red-pen): the flash's assessed trajectory + the body risk
@@ -867,6 +929,9 @@ ${staleOpenIncidents.length > 0 ? `STALE OPEN INCIDENTS (opened >7 days ago, sti
 Top 5 Signals:
 ${freshSignals.slice(0, 5).map((s, i) => `${i + 1}. [${s.severity}] ${s.category}: ${cleanSignalExcerpt(s.normalized_text).substring(0, 200)}`).join('\n')}
 
+FLASH-ELIGIBLE LEAD SET (operational / regulatory / active_threat / security, main-tier, pathway-passing — your BLUF and opening paragraph MUST lead from THIS set, the same material the flash banner derives from):
+${(flashCritical.length ? flashCritical : flashHigh).slice(0, 5).map((s, i) => `${i + 1}. [${s.category}] ${cleanSignalExcerpt(s.normalized_text).substring(0, 180)}`).join('\n') || '(none this period — if empty, the lead is that no flash-eligible threat requires action; hazard/wildfire items are monitoring context only, never the lead)'}
+
 MULTI-AGENT DEBATE SYNTHESES (last ${period_days}d, ${(periodDebates ?? []).length}):
 These are AEGIS-CMD-judged syntheses authored by specialist agents under structured debate. They are the platform's primary analytical output for incidents in this period. Use them as the interpretive backbone of the executive summary — distill their judgments into the BLUF and summary paragraphs. Do NOT regenerate analysis the agents already produced.
 ${(periodDebates ?? []).slice(0, 8).map((d: any, idx: number) => {
@@ -900,6 +965,11 @@ LANGUAGE CALIBRATION (consolidated brief-quality ruling — enforce strictly):
 - Report activist/community events neutrally by name and date. Do NOT use "escalating", "intensifying", or similar unless a signal explicitly states it.
 - A claim must never exceed its source: reviews are reviews (not approvals), proposals are proposals (not decisions), concerns are concerns (not findings).
 - Do NOT name private individuals; reference people by role or community unless they are a public figure acting in a public capacity.
+
+SUMMARY LEAD CONSTRAINT (fourth-read ruling 3 — enforce strictly):
+- The BLUF and the opening paragraph MUST derive from the FLASH-ELIGIBLE LEAD SET above (categories operational, regulatory, active_threat, security). This is the same set the flash banner derives from — the summary's lead may not diverge from the flash's basis.
+- Regional hazard material (wildfire, evacuation, air-quality, flooding — categories civil_emergency, environmental, health_concern) is MONITORING CONTEXT ONLY. It may appear only AFTER the lead, framed as situational awareness (e.g. "regional wildfire activity continues near Clinton with no established pathway to PECL assets"), NEVER as "immediate attention", "key immediate concern", or an action item, and NEVER as the lead when the flash trajectory is STABLE.
+- If the flash-eligible lead set is empty, lead with that fact ("no flash-eligible threat requires action this period"); do not promote hazard context into the lead to fill the space.
 
 FLASH CONSISTENCY (internal-consistency constraint — an executive flash banner has ALREADY been assessed and will be printed directly ABOVE your summary):
 - Flash-assessed trajectory: ${flashTrajectory}
@@ -951,7 +1021,10 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       return widened.map((s: any, i: number) => {
         const sigId = s.signal_number || `SIG-${(s.id || '').substring(0, 8).toUpperCase()}`;
         const ents = Array.isArray(s.entity_tags) && s.entity_tags.length ? ` [entities: ${s.entity_tags.slice(0, 3).join(', ')}]` : '';
-        return `${i + 1}. ${sigId} [${(s.severity || 'medium').toUpperCase()}] ${s.category}: ${cleanSignalExcerpt(s.normalized_text)}${ents}`;
+        // Mandate classification of the signal's subject (ruling 4) — tells the generator
+        // which authority vocabulary it may draw from for any action about this signal.
+        const mc = classifySubject((client as any).mandate_profile, `${s.title || ''} ${s.normalized_text || ''}`);
+        return `${i + 1}. ${sigId} [${(s.severity || 'medium').toUpperCase()}] [${mc.authorityClass}] ${s.category}: ${cleanSignalExcerpt(s.normalized_text)}${ents}`;
       }).join('\n');
     })();
 
@@ -963,10 +1036,13 @@ Current period summary:
 - ${p1p2Incidents.length} P1/P2 incidents
 - Overall risk: ${overallRiskLevel}
 
-Signals to ground recommendations in:
+Signals to ground recommendations in (each tagged with its mandate authority class):
 ${actionSignalContext}
 
+${renderMandateGuidance((client as any).mandate_profile, client.name)}
+
 MANDATORY RULES:
+0. MANDATE FIRST: each signal above is tagged [OPERATE] / [AFFILIATED-INFORM] / [EXTERNAL-MONITOR]. Every recommendation MUST draw ONLY from that class's permitted verbs and carry its class prefix. Do NOT task security, harden, or "update protocols" for an AFFILIATED-INFORM or EXTERNAL-MONITOR subject. For LNG developments (Ksi Lisims / Uniper / LNG Canada) the correct output is a briefing/indirect-impact assessment for PECL stakeholders — never tasking another company's security.
 1. Every recommendation MUST begin by citing at least one signal ID from the list above (format: "[SIG-XXX]") and reference the specific observed event/entity. A reader must be able to point to the signal that triggered each action.
 2. NO generic, evergreen recommendations. If the action would apply to any company on any day with no signals at all, drop it.
 3. NO recommendations along the lines of "develop a plan", "conduct training", "implement audits", "enhance sharing" unless the signal evidence specifically warrants it.
@@ -1055,6 +1131,9 @@ MANDATORY TRADECRAFT RULES:
 - ONLY reference events, names, and facts that appear in the signals provided above — never introduce information from your training data or general knowledge
 - Named individuals: only use names that appear verbatim in the signal text — do not infer, reconstruct, or introduce names from context
 
+${renderMandateGuidance((client as any).mandate_profile, client.name)}
+- Any RECOMMENDED ACTION or implication line must respect the mandate class of its subject: never prescribe operational action (task/secure/harden/update protocols) for an AFFILIATED-INFORM or EXTERNAL-MONITOR subject. LNG-sector developments (Ksi Lisims / Uniper / LNG Canada) yield strategic assessment or a stakeholder briefing — never tasking another company's security.
+
 GROUNDING VERIFICATION — before writing each deduction:
 1. Identify the specific signal number above that supports this claim
 2. If you cannot cite a specific signal number — DO NOT include the claim
@@ -1115,6 +1194,56 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       functionName: 'generate-executive-report',
     });
     if (deductionsResult.content) deductions = applyToneTransformation(deductionsResult.content);
+
+    // ── AWARENESS SECTION SYNTHESIS (fourth-read ruling 5) — product surface, not exhaust log ──
+    // Filter first (asset-gate), then synthesize themed paragraphs. Never a raw title list.
+    const awarenessForSynthesis = (awarenessSignals as any[]).filter((s) => {
+      const title = String(s.title || '').trim();
+      const text = String(s.normalized_text || '').trim();
+      const hay = `${title} ${text}`.toLowerCase();
+      // Drop bare / contentless items.
+      if (text.length < 40 && title.length < 25) return false;
+      const clientRelevant = relevanceTokens.some((t: string) => hay.includes(t));
+      // Asset-gate: an unscoped CVE / vulnerability with no client asset or tech reference is
+      // noise at ANY tier.
+      const isCve = /\bcve-\d{4}-\d+/i.test(hay) ||
+        (String(s.category || '').includes('cyber') && /vulnerab|exploit|zero.day|patch/i.test(hay));
+      if (isCve && !clientRelevant) return false;
+      // [PATTERN] meta-observations render only if the entity is client-relevant (e.g. a WCNG
+      // pipeline escalation earns a sentence; "geographic cluster near Clinton" is the system
+      // talking to itself — internal only).
+      if (/^\[pattern\]/i.test(title) && !clientRelevant) return false;
+      return true;
+    });
+    const awarenessTotal = (awarenessSignals as any[]).length;
+    let awarenessSynthesis = '';
+    if (awarenessForSynthesis.length > 0) {
+      const awItems = awarenessForSynthesis.slice(0, 25).map((s: any) => {
+        const sigId = s.signal_number || `SIG-${(s.id || '').substring(0, 8).toUpperCase()}`;
+        return `${sigId} [${s.category}] ${cleanSignalExcerpt(s.normalized_text).substring(0, 200)}`;
+      }).join('\n');
+      const awarenessPrompt = `You are writing the "Industry & Community Awareness" section of an executive brief for ${client.name}. This is situational-awareness context ONLY — no client-specific threats, no action items.
+${criticalDateContext}
+
+AWARENESS ITEMS (lower-relevance context, each with a signal ID):
+${awItems}
+
+Write 2-4 SHORT themed paragraphs (NOT a list, NOT bullet points), each grounded with 1-2 signal IDs in brackets, e.g. [SIG-2026-027101]. Suggested themes (use only those the data supports):
+1. Regional hazard context — wildfire/weather/air-quality activity near the operating region. You MUST include an explicit sentence stating there is NO established pathway to ${client.name}'s operated assets (that verification IS the value; e.g. "regional wildfire activity continues near Clinton, ~325 km from the nearest PECL corridor, with no established pathway to operated assets").
+2. Industry & sector moves — LNG/energy developments, competitor and third-party activity, regulatory context.
+3. Patterns worth watching — recurring themes or escalations that do not yet warrant action.
+Rules: plain prose, no markdown, no asterisks, no headers. Total length UNDER 250 words. Prioritize the most relevant items; it is fine to omit minor ones. Never name a private individual. Do not frame anything as requiring immediate attention.`;
+      const awRes = await callAiGateway({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a security intelligence analyst writing concise situational-awareness context. Plain prose only, no markdown.' },
+          { role: 'user', content: awarenessPrompt }
+        ],
+        functionName: 'generate-executive-report',
+      });
+      if (awRes.content) awarenessSynthesis = scrubPrivateIndividualNames(applyToneTransformation(awRes.content)).slice(0, 1900); // length governor (~1/3 page)
+    }
+    console.log(`[generate-executive-report] awareness: ${awarenessTotal} tier items → ${awarenessForSynthesis.length} passed asset-gate → ${awarenessSynthesis ? 'synthesized' : 'empty'}`);
 
     const categoryDisplayNames: Record<string, string> = {
       'active_threat': 'Active Threat',
@@ -1815,14 +1944,13 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
   </div>
 
   <!-- A. INDUSTRY & COMMUNITY AWARENESS (0.30–0.59 relevance — context only) -->
-  <!-- Item 2: NAAD/CAP items collapsed by event+area to one counted line. -->
-  ${awarenessRenderItems.length > 0 ? `
+  <!-- Ruling 5: synthesized themed paragraphs (asset-gated), not a raw title list. -->
+  ${awarenessSynthesis ? `
   <div class="section">
     <h2 class="section-title">Industry &amp; Community Awareness</h2>
-    <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance industry, community, and movement context for situational awareness only — not client-specific threats. No action items, incident references, or risk ratings derive from this section.</p>
-    <ul style="font-size:13px;line-height:1.6;padding-left:18px;">
-      ${awarenessRenderItems.slice(0, 12).map((item) => `<li>${scrubPrivateIndividualNames(item.title).replace(/[<>]/g, '')} <span style="color:#888;">(${item.category}, ${item.date})</span></li>`).join('')}
-    </ul>
+    <p style="font-size:12px;color:#555;margin-bottom:8px;">Regional and sector situational context for awareness only — not client-specific threats. No action items, incident references, or risk ratings derive from this section.</p>
+    ${awarenessSynthesis.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p style="font-size:13px;line-height:1.6;margin-bottom:8px;">${p.trim().replace(/[<>]/g, '')}</p>`).join('')}
+    ${awarenessTotal > awarenessForSynthesis.length ? `<p style="font-size:11px;color:#888;margin-top:6px;">Synthesized from ${awarenessForSynthesis.length} asset-gated context items; the full awareness tier (${awarenessTotal}) is queryable in-platform.</p>` : ''}
   </div>` : ''}
 
   <!-- IMPACT ANALYSIS -->
