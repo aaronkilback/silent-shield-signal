@@ -996,7 +996,7 @@ ${agentContext}
 
 VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
 - Total signals collected: ${freshSignals.length}
-- Provenance note: ${reviewQueueSignals.length} signals met the relevance threshold but were excluded for unresolvable provenance (review queue — not analyzed, not cited).
+- Provenance note: ${reviewQueueSignals.length} signals excluded for unresolvable provenance (${reviewQueueSignals.filter((s: any) => relScore(s) >= REL_MAIN).length} at main-tier relevance, ${reviewQueueSignals.filter((s: any) => relScore(s) >= REL_AWARENESS_MIN && relScore(s) < REL_MAIN).length} at awareness relevance) — review queue, not analyzed, not cited.
 - Critical severity signals: ${criticalSignals.length}
 - High severity signals: ${highSignals.length}
 - TOTAL P1/P2 Incidents: ${p1p2Incidents.length}
@@ -1089,10 +1089,12 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     // disclosure, not LLM-discretionary. Appended verbatim so a reader always sees it when
     // signals met the relevance threshold but were excluded for unresolvable provenance.
     if (reviewQueueSignals.length > 0) {
+      const rqMain = reviewQueueSignals.filter((s: any) => relScore(s) >= REL_MAIN).length;
+      const rqAware = reviewQueueSignals.length - rqMain;
       executiveSummary = executiveSummary +
-        `\n\nProvenance note: ${reviewQueueSignals.length} signal${reviewQueueSignals.length === 1 ? '' : 's'} met the relevance threshold but ` +
+        `\n\nProvenance note: ${reviewQueueSignals.length} signal${reviewQueueSignals.length === 1 ? '' : 's'} ` +
         `${reviewQueueSignals.length === 1 ? 'was' : 'were'} excluded from analysis for unresolvable provenance ` +
-        `(review queue — not analyzed, not cited).`;
+        `(${rqMain} at main-tier relevance, ${rqAware} at awareness relevance) — review queue, not analyzed, not cited.`;
     }
 
     // Generate action items grounded in actual signal evidence.
