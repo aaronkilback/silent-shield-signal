@@ -2023,7 +2023,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
   ${awarenessSynthesis ? `
   <div class="section">
     <h2 class="section-title">Industry &amp; Community Awareness</h2>
-    <p style="font-size:12px;color:#555;margin-bottom:8px;">Regional and sector situational context for awareness only — not client-specific threats. No action items, incident references, or risk ratings derive from this section.</p>
+    <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance regional and sector context for situational awareness only — including client-adjacent items that did not rise to a cited, main-tier threat. No action items, incident references, or risk ratings derive from this section, and nothing here is asserted as a cited fact in the report body.</p>
     ${awarenessSynthesis.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p style="font-size:13px;line-height:1.6;margin-bottom:8px;">${p.trim().replace(/[<>]/g, '')}</p>`).join('')}
     ${awarenessTotal > awarenessForSynthesis.length ? `<p style="font-size:11px;color:#888;margin-top:6px;">Synthesized from ${awarenessForSynthesis.length} asset-gated context items; the full awareness tier (${awarenessTotal}) is queryable in-platform.</p>` : ''}
   </div>` : ''}
