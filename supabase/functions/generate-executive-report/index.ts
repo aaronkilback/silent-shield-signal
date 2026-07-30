@@ -441,8 +441,15 @@ Deno.serve(async (req) => {
     // content into regional context). They route to a REVIEW QUEUE: excluded from all body prose,
     // Flash, actions, and incident refs, surfaced to the operator with id/relevance/source/reason.
     const reviewQueueSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN && !citableSet.has(s.id));
+    // WO-PROVENANCE-01 Correction 1 — deterministic denominator chain, single unit = SIGNAL counts.
+    // The generator fetches client-scoped signals only, so "in-window" here is the client-gated fetch
+    // (the cross-client platform total is an analyst-external figure, not embedded in a client report).
+    const chainClientGated = signals?.length ?? 0;                                        // fetched: client + window + quality_status=active
+    const chainQuality = freshSignals.length;                                             // after stale/cancelled/dedup collapse
+    const chainRelevanceMain = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN).length;  // rel>=0.60 (citable + review-queue)
     // Main tier = relevant AND citable. A non-citable signal can never feed a main-body assertion.
     freshSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN && citableSet.has(s.id));
+    const chainCitable = freshSignals.length;                                             // rel>=0.60 AND citable
     console.log(`[generate-executive-report] citability tiering: ${freshSignals.length} main-citable · ${reviewQueueSignals.length} review-queue (rel>=${REL_MAIN}, non-citable) · ${awarenessSignals.length} awareness · review-queue ids: ${reviewQueueSignals.map((s: any) => s.signal_number || s.id?.slice(0, 8)).join(', ')}`);
 
     // Fetch incidents with classification rationale (excluding deleted + test)
@@ -1076,6 +1083,16 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     // public-figure surnames untouched; catches any private name that slipped
     // through the prompt rule.
     executiveSummary = scrubPrivateIndividualNames(executiveSummary);
+
+    // WO-PROVENANCE-01 Amendment A — the review-queue note is a DETERMINISTIC provenance
+    // disclosure, not LLM-discretionary. Appended verbatim so a reader always sees it when
+    // signals met the relevance threshold but were excluded for unresolvable provenance.
+    if (reviewQueueSignals.length > 0) {
+      executiveSummary = executiveSummary +
+        `\n\nProvenance note: ${reviewQueueSignals.length} signal${reviewQueueSignals.length === 1 ? '' : 's'} met the relevance threshold but ` +
+        `${reviewQueueSignals.length === 1 ? 'was' : 'were'} excluded from analysis for unresolvable provenance ` +
+        `(review queue — not analyzed, not cited).`;
+    }
 
     // Generate action items grounded in actual signal evidence.
     //
@@ -2167,7 +2184,28 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           })),
           executive_summary: executiveSummary,
           deductions,
-          narratives: narratives.map(n => ({ category: n.category, narrative: n.narrative }))
+          narratives: narratives.map(n => ({ category: n.category, narrative: n.narrative })),
+          // WO-PROVENANCE-01 — persisted to meta_json (DB column) so the review-queue note is a
+          // deterministic figure and the watchdog probe (b) can read meta_json->'review_queue'.
+          signals_analyzed: freshSignals.length,
+          distinct_citable_publishers: new Set(freshSignals.map((s: any) => citeFor(s).publisherEntity).filter(Boolean)).size,
+          review_queue_count: reviewQueueSignals.length,
+          review_queue: reviewQueueSignals.map((s: any) => ({
+            id: s.id,
+            signal_number: s.signal_number,
+            relevance: s.relevance_score,
+            source: (provById.get(s.source_id)?.publisher_kind || 'unknown'),
+            reason: citeFor(s).reason,
+          })),
+          // Deterministic denominator chain (single unit = signal counts). in_window (cross-client
+          // platform total) is analyst-external and intentionally not embedded in a client report.
+          denominator_chain: {
+            client_gated: chainClientGated,
+            quality: chainQuality,
+            relevance_main: chainRelevanceMain,
+            citable: chainCitable,
+            post_dedup: freshSignals.length,
+          },
         }
       })
       .select()
