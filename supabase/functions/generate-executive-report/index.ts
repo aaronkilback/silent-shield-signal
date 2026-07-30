@@ -2041,7 +2041,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
   ${awarenessSynthesis ? `
   <div class="section">
     <h2 class="section-title">Industry &amp; Community Awareness</h2>
-    <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance regional and sector context for situational awareness only — including client-adjacent items that did not rise to a cited, main-tier threat. No action items, incident references, or risk ratings derive from this section, and nothing here is asserted as a cited fact in the report body.</p>
+    <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance regional and sector context for situational awareness only. Items in this section ARE individually sourced to their originating signal, but did not rise to a main-tier, client-pathway threat. No action items, incident references, or risk ratings derive from this section, and nothing here should be read as a prioritized finding.</p>
     ${awarenessSynthesis.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p style="font-size:13px;line-height:1.6;margin-bottom:8px;">${p.trim().replace(/[<>]/g, '')}</p>`).join('')}
     ${awarenessTotal > awarenessForSynthesis.length ? `<p style="font-size:11px;color:#888;margin-top:6px;">Synthesized from ${awarenessForSynthesis.length} asset-gated context items; the full awareness tier (${awarenessTotal}) is queryable in-platform.</p>` : ''}
   </div>` : ''}
@@ -2212,6 +2212,58 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       .single();
 
     if (reportError) throw reportError;
+
+    // ── WO-REPORT-PERSIST-01 — persist rendered output + durable claim manifest ──
+    // Pillar-1: every report's rendered body is stored (storage_url populated) so it is auditable
+    // after the fact — the 6027f0ac gap (direct-invoke HTML lost, prose unrecoverable) never recurs.
+    try {
+      if (report?.id) {
+        const path = `reports/executive/${report.id}.html`;
+        const up = await supabase.storage.from('osint-media')
+          .upload(path, new Blob([html], { type: 'text/html' }), { upsert: true, contentType: 'text/html' });
+        if (up.error) {
+          console.error('[generate-executive-report] storage persist FAILED (watchdog will flag null storage_url):', up.error.message);
+        } else {
+          await supabase.from('reports')
+            .update({ storage_url: path, rendered_persisted_at: new Date().toISOString() })
+            .eq('id', report.id);
+        }
+
+        // Claim manifest: one row per rendered [SIG] citation + its resolver verdict. bound_signal_id
+        // and supports_claim stay NULL until binding-at-derivation (WO-GROUNDING-01) grades them.
+        const plain = html.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ');
+        const sigByNum = new Map<string, any>();
+        for (const s of [...(freshSignals as any[]), ...(reviewQueueSignals as any[]), ...(awarenessSignals as any[])])
+          if (s?.signal_number) sigByNum.set(s.signal_number, s);
+        const manifestRows: any[] = [];
+        const seenAssertions = new Set<string>();
+        const refRe = /SIG-2026-\d{6}/g;
+        let mm: RegExpExecArray | null;
+        while ((mm = refRe.exec(plain)) !== null) {
+          const sn = mm[0];
+          const assertion = plain.slice(Math.max(0, mm.index - 180), mm.index + sn.length + 10).replace(/\s+/g, ' ').trim();
+          const key = `${sn}::${assertion.slice(0, 60)}`;
+          if (seenAssertions.has(key)) continue;
+          seenAssertions.add(key);
+          const s = sigByNum.get(sn);
+          manifestRows.push({
+            report_id: report.id,
+            section: 'body',
+            assertion,
+            cited_signal_number: sn,
+            bound_signal_id: null,
+            citation_line: s ? (citeLineById.get(s.id) || null) : null,
+            resolver_verdict: s ? citeFor(s).reason : 'signal_not_in_pool',
+            supports_claim: null,
+            client_id,
+            tenant_id: (client as any).tenant_id ?? null,
+          });
+        }
+        if (manifestRows.length) await supabase.from('report_claim_manifest').insert(manifestRows);
+      }
+    } catch (persistErr) {
+      console.error('[generate-executive-report] persist/manifest error (non-fatal):', persistErr instanceof Error ? persistErr.message : persistErr);
+    }
 
     // Store evidence sources for traceability
     if (report && evidenceSources.length > 0) {

@@ -3121,7 +3121,7 @@ Deno.serve(async (req) => {
         // = laundering. meta_json.review_queue holds the ids; report_evidence_sources.source_id
         // holds cited signal ids. Any overlap in the last 24h is a breach.
         const { data: recentReports } = await supabase.from('reports')
-          .select('id, meta_json').eq('type', 'executive_intelligence')
+          .select('id, meta_json, storage_url, rendered_persisted_at').eq('type', 'executive_intelligence')
           .gte('created_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString());
         let launderedCites = 0;
         for (const r of (recentReports ?? [])) {
@@ -3164,6 +3164,16 @@ Deno.serve(async (req) => {
             analysis: `${nonCit.length} active incidents have a primary supporting signal that is non-citable (aggregator/none/internal). The exec-brief incident gate excludes these from the report body; surfaced for review of upstream incident creation.`,
             plainEnglish: `Some open incidents rest on evidence we cannot cite; they are kept out of client reports.`,
             action: 'Review incident creation for these; a durable fix is a citable-evidence gate at incident creation.' });
+        }
+        // (d) WO-REPORT-PERSIST-01 item 4 — any generated report with NULL storage_url is a Pillar-1
+        // violation: its rendered body was not persisted and becomes unauditable (the 6027f0ac gap).
+        const unpersisted = (recentReports ?? []).filter((r: any) => !r.storage_url);
+        if (unpersisted.length > 0) {
+          behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
+            title: `Report persistence: ${unpersisted.length} report(s) generated in 24h with NULL storage_url`,
+            analysis: `${unpersisted.length} executive report(s) were generated without persisting their rendered body to storage. Their prose is unrecoverable and cannot be audited after the fact — the exact failure mode that made 6027f0ac's fabrication class un-boundable retrospectively.`,
+            plainEnglish: `A report was generated but its rendered copy was not saved, so we can't audit what it actually said.`,
+            action: 'Confirm the WO-REPORT-PERSIST-01 storage-upload block in generate-executive-report deployed; check osint-media bucket write permissions.' });
         }
       } catch (_e) { /* best-effort probe */ }
 
