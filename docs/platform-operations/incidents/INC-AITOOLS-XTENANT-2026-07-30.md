@@ -116,6 +116,31 @@ trigger `block_legal_hold_writes()` (raises on any held row). Held person entiti
 (`active_monitoring_enabled=false`) so live monitors skip them and do not hit the block. Migration
 `20260730203000_inc_aitools_legal_hold.sql`.
 
+## Amendment 3 2026-07-30 — EXPLOITATION DIFFICULTY REVISED (more severe)
+
+> ~~Prior: exploitation required obtaining a valid `tenant_id` (UUID), assessed as the hardest step
+> with no obvious external source.~~ — **SUPERSEDED / CORRECTED 2026-07-30.**
+
+**Corrected assessment (verified against pre-containment git `adce9554`):** **no `tenant_id` was required.**
+- `search_clients` took only a `query` string, applied **no tenant filter**, and returned **`id` (client_id),
+  name, industry, status, contact_email, locations, and signal/incident counts for ALL clients across ALL tenants.**
+- The read/search tool class — `get_recent_signals`, `get_active_incidents`, `search_signals`,
+  `search_entities`, `search_investigations` — was **callable with no `tenant_id`** and returned **client
+  identifiers, client names (`clients(name)` joins), entity identifiers with `current_location` and
+  `threat_score`, and investigation `file_number`s and `synopsis`.**
+- `update_risk_profile`'s 404 path acted as a **tenant-membership oracle** and **echoed the probed `entity_id`**.
+- Commit `adce9554` was a **partial** tenant-isolation fix (#79) that scoped only certain write/lookup tools
+  (`update_risk_profile`, `lookup_ioc_indicator`) and **left the entire read class unscoped**.
+
+**Exploitation required only: knowledge of the endpoint name, the request-body shape, and a single POST.
+No authentication, no tenant identifier, no pivot.** This is materially more severe than the earlier
+"needed a tenant_id UUID first" framing — there was no gating step at all.
+
+**In-database auth trail:** `auth.audit_log_entries` is **empty (0 rows)** — GoTrue auth events route to the
+Supabase analytics/log pipeline, not the DB table. **No in-database auth trail exists** to attribute or rule
+out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
+org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
+
 ## Open
 - ai-tools-query re-enable stays gated behind the caller→scope gate (Generic Tool Path Clearance Phase B).
 - Item 4 (full triage of the 232 verify_jwt=false functions + the ~25 request-client-scoped list) pending.
