@@ -1,6 +1,16 @@
 # WO-GAZETTEER-BACKFILL-01 — verify & attribute the 22 legacy gazetteer rows
 
-**Status:** DONE except 1 (calgary). **Opened + executed:** 2026-07-31. **Provenance:** WO-GROUNDING-01 standing rule.
+**Status:** DONE (2026-07-31). **Provenance:** WO-GROUNDING-01 standing rule.
+
+## COMPLETION (2026-07-31)
+Provenance generalized: `bcgn_id` → **`gazetteer_source` (bcgn|abgn|geonames|other, CHECK) + `gazetteer_id`**, both
+**NOT NULL** (rule enforced at the DB layer). The rule was never BCGN-specific — BCGN just has no Alberta jurisdiction.
+The two Alberta places sourced from **Alberta Geographical Names (CGNDB / GeoDiscover Alberta)**:
+- **calgary** → `abgn` `IAKID` (51.0458, −114.0575); delta vs legacy ≈ 0.5 km.
+- **peace river** (Alberta TOWN) → `abgn` `IAEWL` (56.2358, −117.2986); matches the removed legacy coord ≈ 0.7 km
+  (confirming that legacy row WAS the AB town). Distinct from the BC 'Peace River Regional District' (still pending
+  as a polygon in the region follow-up — both features are legitimately separate).
+**Final: 34 rows, 34 with an authoritative identifier — zero un-attributed.**
 **Ordering:** must complete BEFORE WO-GATE3-PROXIMITY-WEIGHT-01 (replaying against unverified coords → unreliable numbers).
 
 ## What / why

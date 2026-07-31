@@ -112,8 +112,10 @@ dedicated assessment:** replay historical PECL signals through the (now-fuller) 
 scores they actually received, and quantify systematic under-crediting of asset-proximate signals. NOT closed here.
 
 ### STANDING RULE — gazetteer authoritativeness (ratified 2026-07-31)
-**Every `geo_place_gazetteer` entry carries its BCGN identifier (`bcgn_id`). A place with no authoritative BCGN
-entry is OMITTED, never approximated** (Altares principle — Altares has no BCGN entry, so it is not in the table).
+**Every `geo_place_gazetteer` entry carries an authoritative identifier from a NAMED source —
+`gazetteer_source` (bcgn | abgn | geonames | other) + `gazetteer_id`, both NOT NULL (enforced at the DB layer).
+A place with no authoritative entry in ANY appropriate source is OMITTED, never approximated** (Altares principle).
+The rule was never BCGN-specific — BCGN just has no Alberta jurisdiction (Calgary/Peace River use `abgn`).
 A centroid that resolves to the wrong place is worse than no resolution.
 - Column `bcgn_id text` added; the 13 sourced points backfilled with their BCGN URIs + authoritative geoms
   (this also corrected Taylor, which had been added with MODEL coords 56.15,-120.68 → BCGN 56.15889,-120.68667 —
