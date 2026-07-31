@@ -30,6 +30,53 @@ Baseline: batch 0 = **294**; after batch 1 = **274** (check2 44, check5 204, che
 - **Gate taught the shared helpers** requireInternalCaller/checkInternalCaller (check2 + check5) and userCanAccessClient
   (check2). Negative test green.
 
+### Cutover (2026-07-31) — DESCOPED to 6 functions, wiring staged for review
+Secret digest-verified identical in function-secrets + vault (`fortress_internal_secret`). Caller enumeration
+revealed the full gated set's callers = ~14 (not 6) — gating knowledge-synthesizer pulls in dashboard-ai-assistant
+(primary chat) + system-watchdog + a job-worker path. **Descoped** per operator.
+- **IN (6, tight blast radius):** auto-enrich-entities, auto-summarize-incident, autonomous-source-discovery,
+  detect-threat-patterns, monitor-court-registry, admin-feed-cleanup (operator-invoked, no wiring).
+- **Wirings staged (NOT applied/deployed — diffs printed for review):** 2 fn callers (data-quality-monitor→auto-summarize,
+  auto-orchestrator→detect-threat, env-sourced header) + 5 cron rewires (migration `20260731210000_wo_check5_cutover_cron_headers.sql`,
+  vault-sourced header, each command preserved verbatim + header only). monitor-community-outreach has no live cron → no wiring.
+- **Apply order after review:** apply cron migration + deploy the 2 fn callers FIRST → then deploy the 6 gated functions →
+  then verify each cron's next run (response code + work-done evidence, not a 200 no-op). Any 401 → roll back that caller, not the gate.
+
+### Cutover EXECUTED 2026-07-31 — verification status (WO stays OPEN until the 3 nightly confirm)
+Applied migration `wo_check5_cutover_cron_headers` (crons re-created — jobnames stable, new jobids 226–230);
+deployed 2 fn callers (auto-orchestrator, data-quality-monitor) + 6 gated functions. Vault gate pre-verified
+(header present + resolves to len 44 on all 5 crons; value never printed).
+
+**Gate behavior verified via `net.http_post` (real cron path) + `net._http_response`:**
+| Function | with vault header | no internal header | status |
+|---|---|---|---|
+| detect-threat-patterns | **200**, `clients_scanned:9` (work) | 401 "missing internal authorization" | ✅ FULLY VERIFIED |
+| monitor-court-registry | **200**, "Scanned 2 court registry sources" (work) | (gate live) | ✅ FULLY VERIFIED |
+| auto-enrich-entities | — (not exercised) | 401 "missing internal authorization" | ⏳ gate live; header-auth UNVERIFIED |
+| autonomous-source-discovery | — | 401 "missing internal authorization" | ⏳ gate live; header-auth UNVERIFIED |
+| auto-summarize-incident | — | 401 "missing internal authorization" | ⏳ gate live; header-auth UNVERIFIED |
+| admin-feed-cleanup | — | 401 "missing internal authorization" (behind verify_jwt=true) | ✅ gate live; operator sends header |
+
+**UNVERIFIED until first post-deploy SCHEDULED run — DO NOT close the WO:**
+- **auto-enrich-entities** — next run ~tomorrow 03:00 UTC. Check: heartbeat/`net._http_response` = 200 (not 401), AND entities enriched (heartbeat `result_summary` items_processed > 0 / entities.updated_at bump).
+- **auto-summarize-incident** — ~tomorrow 03:30 UTC. Check: 200, AND incidents got titles/summaries (heartbeat `auto-summarize-incidents-nightly` result). Also the **data-quality-monitor→auto-summarize** fn-caller path (env-sourced header) is unexercised — confirm on its next auto_fix run.
+- **autonomous-source-discovery** — next run **Sunday 03:00 UTC** (weekly `0 3 * * 0`). Check: 200, AND sources inserted.
+- **auto-orchestrator→detect-threat** fn-caller path (env-sourced header) unexercised — confirm on auto-orchestrator's next run (detect-threat itself already accepts the header, so low risk).
+- **Any 401 on a scheduled run → roll back THAT caller's wiring (re-run its original cron command / revert the fn header), NOT the gate.** Original cron commands captured in `20260731210000_wo_check5_cutover_cron_headers.sql` header comment + git history.
+
+### WO-CUTOVER-KSYNTH-01 (deferred — its own change)
+Gate knowledge-synthesizer + agent-mesh-dispatcher + generate-monitoring-proposals. Left UNGATED in prod for now
+(status quo, not a regression). Blockers to resolve first: (a) locate the job-worker that dispatches
+generate-monitoring-proposals from the agent-self-learning enqueue (`type:'generate-monitoring-proposals'`) — it must
+send the header; (b) review the knowledge-synthesizer call sites in dashboard-ai-assistant (L9859) + system-watchdog
+(L2481) + ingest-expert-media (L128/173) + process-security-report (L995) in isolation before wiring.
+
+### ingest-ioc-csv (HOLD — coded, NOT deployed; commit b4628122)
+Consumer hunt: no code caller (external curl only, per CLAUDE.md); `api_keys` table has **0 rows**; usage = **1**
+`microsoft_defender_ti` signal ever (2026-04-13), none since. Current state (verify_jwt=true + 0 provisioned keys)
+is closed-by-default and breaks nothing. Deploy the api-v1-signals x-api-key change ONLY when IOC ingest is actually
+needed, and provision the scoped api_key in the SAME change.
+
 ### ⚠ DEPLOY GATE for the 5 requireInternalCaller functions (do NOT deploy until BOTH done)
 `requireInternalCaller` fails CLOSED (503) if `FORTRESS_INTERNAL_SECRET` is unset — deploying before wiring
 would 503 every cron/internal caller. Required, in order:
