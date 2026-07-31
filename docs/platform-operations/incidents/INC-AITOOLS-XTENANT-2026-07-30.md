@@ -141,6 +141,53 @@ Supabase analytics/log pipeline, not the DB table. **No in-database auth trail e
 out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
 org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
 
+## Amendment 9 2026-07-31 — Callingbull origin: Energeticcity signal found; signal-level provenance link EXISTS (corrects 8(f)); operator email placed under legal hold
+
+Follow-up to 8(f). The operator's account created `1e506c55`; this amendment resolves *from what* and corrects
+8(f)'s overstatement that no signal source exists.
+
+**(1) The source signal exists.** `signals` query, 2026-04-01..04-04, Energeticcity + names Callingbull → **one row:**
+- `SIG-2026-000062` (`b49a456e-e3c5-44cb-a3d8-ffc5f5e6118f`), `created_at 2026-04-03 16:15:34Z`,
+  `event_date 2026-04-03 16:15Z`, `client_id 0f5c809d` (PECL), title "Indigenous Activist to Keynote at Fort St.
+  John Leadership Conference", `normalized_text` names Callingbull = true. `source_url =`
+  `https://energeticcity.ca/2026/04/03/award-winning-indigenous-activist-to-be-keynote-speaker-at-spark-conference/`.
+
+**(2) Timing + linkage.**
+- Signal `16:15:34` → entity `1e506c55` created `17:08:54.289` → **entity precedes-by nothing; the signal PRECEDES
+  the entity by ~53 min 20 s.**
+- **A stored field DOES link them:** `entity_mentions` row (entity ↔ SIG-2026-000062), `detected_at = created_at =
+  17:08:54.461` (**0.17 s after entity creation**), `confidence = 1`. The link was formed by the entity-creation
+  flow (not at signal ingest), back-linking the pre-existing Energeticcity signal to the new entity.
+- **Corrects 8(f):** the claim "no recorded signal source" was WRONG. A signal-level provenance link (entity →
+  Energeticcity article) exists. What remains absent: a **document** link (`document_entity_mentions = 0`) and an
+  explicit `source`/`source_investigation` attribute on the entity. Net: the operator's "she came from the
+  Energeticcity article" account is **platform-corroborated at the signal level**; the entity's *creation* is
+  operator-account-attributed, not autonomous extraction.
+
+**(3) Operator email — LEGAL HOLD record (operator-held corroboration; platform provenance gap noted separately).**
+Recorded as corroboration for the entity's origin. **Verifiable-in-platform:** referenced article URL =
+`https://energeticcity.ca/2026/04/03/award-winning-indigenous-activist-to-be-keynote-speaker-at-spark-conference/`
+(= `SIG-2026-000062.source_url`). **Off-platform (operator to supply — NOT fabricated here):** email **date**,
+**sender**, **recipient**. These four fields are the hold item; the email itself is off-platform (no copy in any
+Fortress store) and must be **preserved by the operator under the existing legal hold** alongside `1e506c55`
+(already `legal_hold=true`). **Platform-side provenance gap (separate):** the platform never captured the email or
+a document link; corroboration is signal-level (entity_mentions) + operator-held email only. Per WO-FABRICATED-FINDINGS-01
+discipline, the three off-platform fields are left blank for operator entry rather than inferred.
+
+| Legal-hold item | Value | Source |
+|---|---|---|
+| Referenced article URL | energeticcity.ca/2026/04/03/award-winning-indigenous-activist-…/ | platform-verified (SIG-2026-000062) |
+| Email date | *(operator to supply)* | off-platform |
+| Email sender | *(operator to supply)* | off-platform |
+| Email recipient | *(operator to supply)* | off-platform |
+
+**(4) Special-category attributes have NO recorded source AND no recorded creation time.** `ethnicity` and
+`nationality` on `1e506c55`: `audit_events` for this entity = **0 rows**; no per-field timestamp exists. Bounds:
+entity `created_at 2026-04-03 17:08:54` … `updated_at 2026-07-30 21:26:43` (the latter = incident-era change, e.g.
+legal-hold flag). **When ethnicity/nationality were set cannot be dated from any stored artifact** — they sit
+anywhere in that ~118-day window with no audit trail. This special-category provenance gap remains **open**
+regardless of the origin corroboration above.
+
 ## Amendment 8 2026-07-31 — collection-integrity corrections (scans are LLM-generated; contact records are manual; window git-proven)
 
 Source-read + DB-verified pass (Block A). Corrections a–f. Strikes preserve prior text.
@@ -200,10 +247,13 @@ squashes — **true origin may be earlier** than the git-provable 2026-03-28. (R
   **no `source` / `source_investigation` / `created_via` attribute** — the only attribute keys are
   `ethnicity, nationality, role` (special-category fields hand-attached with no provenance). Per this incident's
   own manual/automated definition (Amendment 4: `created_by` non-null = manual; `1e506c55` is one of the 12
-  akilback-created entities), **`1e506c55` was OPERATOR-CREATED, not extraction-created.** There is **no recorded
-  extraction, document, or signal source** on the entity. (`created_by=operator` cannot by itself distinguish a
-  hand-entered row from a tool run inside the operator's authenticated session, but either way it is the
-  operator's account with zero extraction provenance — the "entered via extraction" framing is not supported.)
+  akilback-created entities), **`1e506c55` was OPERATOR-CREATED (operator's account), not autonomously
+  extraction-created.** (`created_by=operator` cannot by itself distinguish a hand-entered row from a tool run
+  inside the operator's authenticated session, but either way it is the operator's account — the "no operator
+  involvement" reading is not supported.) ~~There is no recorded extraction, document, or signal source on the
+  entity.~~ **[FURTHER CORRECTED — Amendment 9: this clause is WRONG. An `entity_mentions` link to the
+  Energeticcity signal SIG-2026-000062 DOES exist, formed at the entity-creation instant. Document-level source
+  and an explicit source attribute remain absent, but a signal-level provenance link is present. See Amendment 9.]**
 - **Amber Bracken (`a9a4047c`)** — entered via a **dossier CRT supplied**, uploaded by the operator **to test how
   Fortress creates entities from a document** — not an intelligence target.
 - Both illustrate the governance gap in Amendment 6 / **WO-SUBJECT-GATE-01**: subjects entered and were enriched
