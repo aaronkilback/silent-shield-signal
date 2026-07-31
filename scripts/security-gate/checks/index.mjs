@@ -3,6 +3,7 @@ import ts from "typescript";
 import {
   parse, walk, lineOf, calleeName, leftmostId, collectRequestVars,
   readsRequestScopeId, hasMembershipCheck, usesServiceRole,
+  serveRequestParams, readsRequestBeyondMethod, usesSharedAuthHelper,
 } from "../lib/ast.mjs";
 
 function ancestorIsCase(node) {
@@ -130,6 +131,23 @@ export function check4Migration(fileName, sql) {
         detail: `create table without ${!rls ? "ENABLE ROW LEVEL SECURITY" : ""}${!rls && !policy ? " and " : ""}${!policy ? "a policy" : ""} in the same migration` });
     }
   }
+  return out;
+}
+
+// CHECK 5 — any edge function that READS request data must route through a shared identity /
+// accessible-client helper (getCallerIdentity, userCanAccessClient, getAccessibleClientIds, …).
+// A function that only answers the CORS/OPTIONS probe (req.method) is exempt by construction, so
+// the 503 containment stubs do not trip. Hand-rolled auth (direct auth.getUser, static-secret
+// checks, unauthenticated readers) fails until it adopts the shared helper OR carries an
+// // @security-exempt(check5): <reason> — YYYY-MM-DD annotation. Introduced INC-AITOOLS-XTENANT-2026-07-30.
+export function check5(fileName, sf) {
+  const out = [];
+  const reqParams = serveRequestParams(sf);
+  const reads = readsRequestBeyondMethod(sf, reqParams);
+  if (!reads) return out;                     // reads nothing beyond req.method → N/A
+  if (usesSharedAuthHelper(sf)) return out;   // routed through the shared helper → pass
+  out.push({ check: "check5", file: fileName, symbol: "<function>", line: reads.line,
+    detail: `reads request data (req.${reads.prop}) without routing through a shared getCallerIdentity/accessible-client helper` });
   return out;
 }
 

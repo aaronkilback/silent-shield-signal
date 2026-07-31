@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { parse, check1, check2, check3, check4Migration } from "./checks/index.mjs";
+import { parse, check1, check2, check3, check4Migration, check5 } from "./checks/index.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../..");
@@ -36,14 +36,14 @@ function verifyJwtFalseSet() {
 // Exemption: // @security-exempt(check2): reason — 2026-07-31   (greppable, must carry a reason)
 function exemptedChecks(source) {
   const set = new Set();
-  const re = /@security-exempt\((check[1-4])\)\s*:\s*.+?—\s*\d{4}-\d{2}-\d{2}/g;
+  const re = /@security-exempt\((check[1-5])\)\s*:\s*.+?—\s*\d{4}-\d{2}-\d{2}/g;
   let m; while ((m = re.exec(source)) !== null) set.add(m[1]);
   return set;
 }
 
 export function scanFile(fileName, source) {
   const sf = parse(fileName, source);
-  let v = [...check2(fileName, sf), ...check3(fileName, sf)];
+  let v = [...check2(fileName, sf), ...check3(fileName, sf), ...check5(fileName, sf)];
   const ex = exemptedChecks(source);
   return v.filter((x) => !ex.has(x.check));
 }
@@ -81,7 +81,7 @@ function changedFiles() {
 }
 
 function countsByCheck(list) {
-  const c = { check1: 0, check2: 0, check3: 0, check4: 0 };
+  const c = { check1: 0, check2: 0, check3: 0, check4: 0, check5: 0 };
   for (const v of list) c[v.check] = (c[v.check] || 0) + 1;
   return c;
 }
@@ -93,7 +93,7 @@ function main() {
   if (args.includes("--update-baseline")) {
     fs.writeFileSync(BASELINE_PATH, JSON.stringify(current.map(key).sort(), null, 2) + "\n");
     const c = countsByCheck(current);
-    console.log(`[security-gate] baseline written: ${current.length} violations (check1 ${c.check1}, check2 ${c.check2}, check3 ${c.check3}, check4 ${c.check4})`);
+    console.log(`[security-gate] baseline written: ${current.length} violations (check1 ${c.check1}, check2 ${c.check2}, check3 ${c.check3}, check4 ${c.check4}, check5 ${c.check5})`);
     return;
   }
 
@@ -114,8 +114,8 @@ function main() {
   if (args.includes("--json")) { console.log(JSON.stringify({ current, newV, changedV, baseCounts, curCounts }, null, 2)); }
 
   console.log("── WO-CI-SECURITY-GATE-01 ──");
-  console.log(`baseline counts:  check1 ${baseCounts.check1}  check2 ${baseCounts.check2}  check3 ${baseCounts.check3}  check4 ${baseCounts.check4}  (total ${baseline.size})`);
-  console.log(`current counts:   check1 ${curCounts.check1}  check2 ${curCounts.check2}  check3 ${curCounts.check3}  check4 ${curCounts.check4}  (total ${current.length})`);
+  console.log(`baseline counts:  check1 ${baseCounts.check1}  check2 ${baseCounts.check2}  check3 ${baseCounts.check3}  check4 ${baseCounts.check4}  check5 ${baseCounts.check5}  (total ${baseline.size})`);
+  console.log(`current counts:   check1 ${curCounts.check1}  check2 ${curCounts.check2}  check3 ${curCounts.check3}  check4 ${curCounts.check4}  check5 ${curCounts.check5}  (total ${current.length})`);
 
   let failed = false;
   if (newV.length) {

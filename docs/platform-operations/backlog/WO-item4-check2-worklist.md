@@ -145,3 +145,48 @@ SAFE (no containment):
 
 SOURCE-REVIEW PENDING (7, low tenant-intelligence risk — not person-entity surfaces; tracked in drift-baseline):
 - dr-storage-backup, r2-smoke-test (backup/smoke infra) · generate-lesson-video, reingest-spin-workbook, sync-buzzsprout (academy/podcast content) · heygen-webhook (video-gen webhook — confirm signature) · notify-bug-report (bug notifier — confirm caller gate).
+
+---
+## Last-7 + cipher-verify pass — round 2 (2026-07-31, INC-AITOOLS-XTENANT)
+Closed the 7 pending from round 1 by source read (no name-classification), and UPGRADED the 5 cipher
+"strong inference" clearances to source-verified (adce9554 precedent: subsystem inference ≠ clearance).
+
+### CONTAINED (503, deployed) — round 2 (+6 → 10 orphan-contained total)
+- **heygen-webhook** — verify_jwt=false, NO signature verification. Forged HeyGen payload sets
+  `academy_modules.video_url` to an arbitrary URL + triggers Cloudflare Stream to copy an arbitrary
+  URL = unauthenticated write + arbitrary-URL fetch.
+- **sync-buzzsprout** — verify_jwt=false, no auth; unauthenticated invocation writes `episodes` = unauth write.
+- **notify-bug-report** — verify_jwt=false, no gate; any `bug_id` reads bug_reports (tenant/client/conversation
+  + screenshot signed URLs) then sends Resend email + Twilio SMS = unauth tenant read + mail/SMS send.
+- **dr-storage-backup** — verify_jwt=false, service-role, gated ONLY by a static hardcoded secret (the SAME
+  literal compute-client-relevance used — now COMPROMISED, scrubbed from repo+prod). Read every tenant
+  storage bucket → R2, and `cleanup_key` DELETES arbitrary R2 objects = storage read/write/delete.
+- **reingest-spin-workbook** — verify_jwt=false, service-role, NO caller gate. `dry_run` returns a tenant's
+  stored xlsx rows + analytics over HTTP; non-dry-run rewrites `archival_documents.content_text/metadata`
+  = unauth tenant read + unauth write.
+- **generate-lesson-video** — verify_jwt=false, service-role, NO caller gate. Any `moduleId` writes
+  `academy_modules.*` + triggers a paid HeyGen generation = unauth write + metered 3rd-party API abuse.
+
+### CLEARED (source-verified) — round 2
+- **r2-smoke-test** — RETIRED no-op returning HTTP 410; no auth/DB/storage/fetch logic. Recommend de-provision.
+- **cipher-analyze-investigation, cipher-compute-fingerprint, cipher-endorse-hypothesis,
+  cipher-reject-hypothesis, cipher-ingest-evidence, cipher-promote-hypothesis** — ALL source-verified this
+  round: getCallerIdentity → reject unauthorized/anonymous → analyst+/admin+ role → userCanAccessClient
+  (investigation/hypothesis `client_id`); every read/write scoped by the validated `client_id`/`tenant_id`.
+  (Upgrades the round-1 "strong inference" on the 5 non-write ciphers to source-read.)
+- **cipher-guardrails-test** — FLAGGED, not contained. Hand-rolled permissive gate accepts any bearer
+  prefixed `eyJ`/`sb_secret_`/`sb_publishable_` (effectively bypassable) → CHECK-5 violation. BUT no
+  `createClient`, no DB/LLM/storage/mail — inert validator harness over caller-supplied `cases[]`, zero
+  data-plane capability, so no contain-on-sight trigger. Harden to getCallerIdentity (service-role-only)
+  or de-provision (test harness in prod).
+
+### Compromised shared secret (item 3) — CLOSED
+`ss-dr-smoke-9f3a2c` was a hardcoded literal (never a platform env secret) in exactly two functions —
+`compute-client-relevance` + `dr-storage-backup`. Both now 503 stubs with the check removed; literal
+scrubbed from repo AND redeployed out of prod. Zero remaining reliance; nothing to rotate via secrets.
+
+### CHECK 5 added to the CI gate (item 4)
+`scripts/security-gate/checks/index.mjs::check5` — any edge function that reads request data (beyond
+`req.method`) without routing through a shared identity/accessible-client helper fails, unless annotated
+`@security-exempt(check5)`. 503 stubs (read only `req.method`) are exempt by construction. Negative-tested
+green. Baseline: **214 check5 violations** (superset of the 54 check2 — the broader hand-rolled-auth burn-down).

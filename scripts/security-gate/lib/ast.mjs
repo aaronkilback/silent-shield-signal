@@ -129,4 +129,54 @@ export function usesServiceRole(sf) {
   return found;
 }
 
-export { SCOPE_IDS };
+// ── CHECK 5 support ──
+// The request parameter identifier(s) of the Deno.serve handler. Falls back to the
+// conventional names if the handler shape can't be resolved (fail-closed).
+export function serveRequestParams(sf) {
+  const names = new Set();
+  walk(sf, (n) => {
+    if (ts.isCallExpression(n) && calleeName(n) === "serve") {
+      const cb = n.arguments[0];
+      if (cb && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) && cb.parameters.length) {
+        const p0 = cb.parameters[0].name;
+        if (ts.isIdentifier(p0)) names.add(p0.text);
+      }
+    }
+  });
+  if (names.size === 0) { names.add("req"); names.add("request"); }
+  return names;
+}
+
+// Does the handler READ request data — anything beyond req.method (the CORS/OPTIONS probe)?
+// req.json()/text()/formData()/headers/url/body/… all count; req.method alone does NOT.
+// Returns the first such read { line, prop } or null.
+export function readsRequestBeyondMethod(sf, reqParams) {
+  let hit = null;
+  walk(sf, (n) => {
+    if (hit) return;
+    if (ts.isPropertyAccessExpression(n)) {
+      const root = leftmostId(n.expression);
+      if (root && reqParams.has(root) && n.name.text !== "method") {
+        hit = { line: lineOf(sf, n), prop: n.name.text };
+      }
+    }
+  });
+  return hit;
+}
+
+// The shared identity / accessible-client surface in _shared/supabase-client.ts.
+// Referencing ANY of these (import or call) counts as routing through the shared helper.
+const SHARED_AUTH_HELPERS = new Set([
+  "getCallerIdentity", "getUserFromRequest", "requireAuth",
+  "getAccessibleClientIds", "userCanAccessClient",
+  "getAccessibleRowOrNull", "filterAccessibleRows",
+]);
+export function usesSharedAuthHelper(sf) {
+  let found = false;
+  walk(sf, (n) => {
+    if (ts.isIdentifier(n) && SHARED_AUTH_HELPERS.has(n.text)) found = true;
+  });
+  return found;
+}
+
+export { SCOPE_IDS, SHARED_AUTH_HELPERS };

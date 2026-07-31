@@ -17,13 +17,17 @@ function checksHit(fileName, source) {
 }
 
 const cases = [
+  // BAD fixtures hand-roll auth (read req.json() with no shared helper) → also trip check5.
   { name: "ai-tools-query @ adce9554 (pre-containment)", file: "ai-tools-query.adce9554.BAD.ts.txt",
-    verifyJwtFalse: true, allowlisted: false, expectFail: ["check1", "check2"] },
+    verifyJwtFalse: true, allowlisted: false, expectFail: ["check1", "check2", "check5"] },
   { name: "create-operator-invite (pre-fix)", file: "create-operator-invite.prefix.BAD.ts.txt",
-    verifyJwtFalse: true, allowlisted: true, expectFail: ["check2", "check3"] },
+    verifyJwtFalse: true, allowlisted: true, expectFail: ["check2", "check3", "check5"] },
+  // 503 stub reads only req.method → check5 N/A → clean pass.
   { name: "ai-tools-query (current, 503 stub)", file: "ai-tools-query.current.GOOD.ts.txt",
     verifyJwtFalse: true, allowlisted: true, expectFail: [] },
-  { name: "create-operator-invite (current, fixed)", file: "create-operator-invite.current.GOOD.ts.txt",
+  // Fixed version hand-rolls a CORRECT gate but not via the shared helper — passes check5 only
+  // because it carries an @security-exempt(check5) annotation (exercises the exemption path).
+  { name: "create-operator-invite (current, fixed + check5 exemption)", file: "create-operator-invite.current.GOOD.ts.txt",
     verifyJwtFalse: false, allowlisted: true, expectFail: [] },
 ];
 
