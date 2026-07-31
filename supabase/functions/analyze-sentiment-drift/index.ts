@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 
 interface SentimentMetrics {
   positive: number;
@@ -63,6 +63,12 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    // WO-CHECK5-BURNDOWN-01: caller gate. Service-role (internal callers e.g. agent-chat) pass;
+    // user callers must belong to the entity's tenant; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+    if (caller.kind === "anonymous") return errorResponse("authentication required", 401);
+
     const { entity_id, time_windows } = await req.json();
 
     if (!entity_id) {
@@ -71,14 +77,19 @@ Deno.serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    // Get entity info
+    // Get entity info (client_id needed for the caller-membership check)
     const { data: entity, error: entityError } = await supabase
       .from("entities")
-      .select("id, name, type, risk_level")
+      .select("id, name, type, risk_level, client_id")
       .eq("id", entity_id)
       .single();
 
     if (entityError || !entity) {
+      return errorResponse("Entity not found", 404);
+    }
+
+    // Bind to the entity's tenant. 404 (not 403) to keep out-of-scope indistinguishable from not-found.
+    if (caller.kind === "user" && !(await userCanAccessClient(supabase, caller.userId, entity.client_id))) {
       return errorResponse("Entity not found", 404);
     }
 

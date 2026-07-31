@@ -40,6 +40,8 @@ const LEASE_SECONDS = 120;
 // Resend's 24h key retention). The handler cannot pass or drift it: claim_pending_email_alerts
 // reads the authoritative value internally and exposes no window parameter.
 
+// @security-exempt(check2): internal delivery worker — gated by ALERT_DELIVERY_INTERNAL_SECRET (constant-time, authorizeInternal) BEFORE any service-role client; request body intentionally unread; no request-derived tenant scope — 2026-07-31
+// @security-exempt(check5): same — routes through the dedicated internal-secret gate (the model requireInternalCaller is based on), not getCallerIdentity, because it is machine-only with no tenant/user caller — 2026-07-31
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);

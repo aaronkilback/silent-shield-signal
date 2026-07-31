@@ -112,6 +112,14 @@ export function hasMembershipCheck(node) {
     if (ts.isCallExpression(n)) {
       const name = calleeName(n);
       if (name === "get_user_accessible_client_ids" || name === "getAccessibleClientIds") found = true;
+      // userCanAccessClient(supabase, userId, clientId) — resolves the caller's accessible clients and
+      // checks membership (it calls getAccessibleClientIds internally). A genuine caller-membership check.
+      if (name === "userCanAccessClient") found = true;
+      // requireInternalCaller / checkInternalCaller — the shared internal-caller gate (WO-CHECK5-BURNDOWN-01).
+      // A machine-only function reachable ONLY by holders of FORTRESS_INTERNAL_SECRET has no cross-tenant
+      // exposure from request-derived scope: every caller is a trusted internal caller. This is the correct
+      // resolution for cron/service-to-service functions (which have no tenant/user caller to bind to).
+      if (name === "requireInternalCaller" || name === "checkInternalCaller") found = true;
       // supabase.rpc('get_user_accessible_client_ids')
       if (name === "rpc" && n.arguments[0] && ts.isStringLiteral(n.arguments[0]) &&
           /get_user_accessible_client_ids/.test(n.arguments[0].text)) found = true;
@@ -170,6 +178,8 @@ const SHARED_AUTH_HELPERS = new Set([
   "getCallerIdentity", "getUserFromRequest", "requireAuth",
   "getAccessibleClientIds", "userCanAccessClient",
   "getAccessibleRowOrNull", "filterAccessibleRows",
+  // WO-CHECK5-BURNDOWN-01 — the shared internal-caller gate for machine-only functions.
+  "requireInternalCaller", "checkInternalCaller",
 ]);
 export function usesSharedAuthHelper(sf) {
   let found = false;

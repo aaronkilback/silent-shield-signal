@@ -22,18 +22,19 @@
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
-  try {
-    // Reject anon — must be invoked with service-role bearer.
-    const auth = req.headers.get("Authorization") || "";
-    if (!auth.startsWith("Bearer ")) {
-      return errorResponse("Unauthorized — service-role required", 401);
-    }
+  // WO-CHECK5-BURNDOWN-01: destructive maintenance op (archives signals). Gate to holders of the
+  // dedicated internal secret (operator/platform) BEFORE any service-role client — replaces the
+  // prior any-`Bearer` check. The secret-holder IS the operator/super_admin-equivalent; not any authed user.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
+  try {
     const supabase = createServiceClient();
 
     // ── 1. Out-of-area NAAD archive ──────────────────────────────────

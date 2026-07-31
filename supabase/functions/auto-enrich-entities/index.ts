@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -27,6 +28,10 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
+
+  // WO-CHECK5-BURNDOWN-01: cron/internal only. Internal-caller gate BEFORE service-role client + body.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;

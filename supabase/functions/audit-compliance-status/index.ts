@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 import { isIncidentActive } from "../_shared/incident-status.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
@@ -14,12 +15,23 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // WO-CHECK5-BURNDOWN-01: caller gate. Service-role internal callers pass; user callers must
+    // belong to the requested client's tenant; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return new Response(JSON.stringify({ error: caller.error }), { status: caller.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (caller.kind === "anonymous") return new Response(JSON.stringify({ error: 'authentication required' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
     const { client_id, policy_area, audit_period_days = 90 } = await req.json();
     console.log('Auditing compliance status for client:', client_id, 'policy area:', policy_area);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Bind to the requested client's tenant. 404 keeps out-of-scope indistinguishable from not-found.
+    if (caller.kind === "user" && !(await userCanAccessClient(supabase, caller.userId, client_id))) {
+      return new Response(JSON.stringify({ error: 'Client not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // GEMINI_API_KEY handled by callAiGateway
 

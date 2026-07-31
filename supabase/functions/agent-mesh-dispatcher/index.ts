@@ -27,6 +27,7 @@ import {
   getEnv,
 } from '../_shared/supabase-client.ts';
 import { routeToAgents } from '../_shared/semantic-rag.ts';
+import { requireInternalCaller } from '../_shared/require-internal-caller.ts';
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  RATE LIMIT CHECK
@@ -67,6 +68,11 @@ Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') {
     return errorResponse('Method not allowed', 405);
   }
+
+  // WO-CHECK5-BURNDOWN-01: service-to-service only (knowledge-synthesizer). Internal-caller gate
+  // BEFORE reading the body — closes the prior unauthenticated agent-mesh write path.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   try {
     const body = await req.json().catch(() => null);

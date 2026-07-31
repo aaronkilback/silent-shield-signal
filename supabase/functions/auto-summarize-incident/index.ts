@@ -1,6 +1,7 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 
 /**
  * Auto-summarize incidents by generating titles and summaries from linked signals.
@@ -10,6 +11,10 @@ import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/hea
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // WO-CHECK5-BURNDOWN-01: cron/internal only (cron + data-quality-monitor). Gate BEFORE service-role + body.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   try {
     const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
