@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 import { recordTelemetry } from "../_shared/observability.ts";
 
@@ -72,6 +73,10 @@ interface ProposalRequest {
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // WO-CHECK5-BURNDOWN-01: job-queue dispatched (agent-self-learning). Internal-caller gate before body/service-role.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   try {
     const supabase = createServiceClient();

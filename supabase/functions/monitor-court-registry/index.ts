@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const COURT_KEYWORDS = [
@@ -10,6 +11,10 @@ const COURT_KEYWORDS = [
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // WO-CHECK5-BURNDOWN-01: cron-only monitor. Internal-caller gate before service-role client.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   const supabaseClient = createServiceClient();
   const hb = await startHeartbeat(supabaseClient, 'monitor-court-registry-4h');

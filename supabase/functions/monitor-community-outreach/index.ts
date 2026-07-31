@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 import { recordHeartbeat } from "../_shared/heartbeat.ts";
 import { enqueueJob } from "../_shared/queue.ts";
 import { toProbability } from "../_shared/signal-scores.ts";
@@ -180,6 +181,10 @@ const COMMUNITY_OUTREACH_SOURCE_ID = 'b604b8c8-8a19-4ddc-a0e6-9ea422af474f';
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // WO-CHECK5-BURNDOWN-01: cron-only monitor. Internal-caller gate before service-role client.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   const supabase = createServiceClient();
   const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');

@@ -8,12 +8,17 @@
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat, skipHeartbeat } from "../_shared/heartbeat.ts";
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;
+
+  // WO-CHECK5-BURNDOWN-01: cron + internal-fn callers only. Internal-caller gate before service-role client.
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   try {
     const supabase = createServiceClient();
