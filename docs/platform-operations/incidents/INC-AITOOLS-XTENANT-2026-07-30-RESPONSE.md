@@ -149,7 +149,9 @@ Personal-data weight of the exposure lands almost entirely on **PECL (788 person
 - **Item-4 triage** — full classification of the 232 `verify_jwt=false` functions + the ~25 request-client-scoped functions with their gates. Not done.
 - **PIPEDA reportability decision** — pending counsel. Inputs: §5 inventory + corrected exploitation difficulty + non-retention of all logs.
 - **CRT notification decision** — vinced@criticalriskteam.com is a legitimate CRT admin; CRT data confirmed open-source/test. Operator decision.
-- **3Si licensing question** — raised by operator; not yet scoped in this record.
+- **3Si licensing / contractual dimension** — operator states the sensitive fields derive from 3Si vendor documents (statement 3, findings-doc Amendment 4); **not corroborated in the DB** (no document link / no 3si-tagged upload). A contractual dimension may apply; classification of the data as in-scope PII is unchanged regardless of source.
+- **Sensitive-field provenance gap** — the special-category fields (ethnicity/nationality) and HR-class fields (termination_reason/former_employee) on the 2 entities carry **no source attribution** in the DB; one was hand-entered. Provenance for special-category data should be required at write time.
+- **Operator statements pending verification** — S1 (test/parallel use; PECL SoR) is consistent with timing (81% of person entities predate operational monitoring) but not confirmable as intent from data; S2 (2 investigations exercised the interface) consistent (both hand-created by Aaron 2026-05-04, closed); S3 (3Si-sourced) not corroborated. See findings-doc Amendment 4.
 - **WO-EDGE-USER-ATTRIBUTION** (`7913958d`) — add `user_id` to `function_telemetry`; forensic prerequisite. Not built.
 - **entity-by-UUID cross-tenant write bug** — the pre-containment `ai-tools-query` comment ("mutated any entity by UUID regardless") indicates a second write-side cross-tenant defect; not independently remediated (function is disabled, so latent).
 - **audit_events null-actor Pillar-1 defect** — 98% null-actor; no reliable actor attribution. Not fixed.

@@ -141,6 +141,35 @@ Supabase analytics/log pipeline, not the DB table. **No in-database auth trail e
 out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
 org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
 
+## Amendment 4 2026-07-30 — operator statements (ALL PENDING VERIFICATION) + verification evidence
+
+Three operator statements recorded 2026-07-30. Each is marked **pending verification** and checked by query
+below. **Sourcing does not alter classification:** personal data extracted from any source and held in Fortress
+remained personal information under Fortress's control and was within scope of the exposure. A **3Si contractual
+dimension** may apply and is noted as open.
+
+### Statement 1 — "Platform use is test/parallel; PECL file systems are the operational system of record."
+**Verification (creation path + date distribution of the 788 person entities):**
+- created_by: **776 NULL (automated/service-role), 12 by akilback@hotmail.com (manual)** — creation is overwhelmingly automated, not hand-entered.
+- by month: 2025-11 **184**, 2025-12 17, 2026-01 **163**, 2026-02 **276**, 2026-03 65, 2026-04 21, 2026-05 43, 2026-06 19.
+- **640 of 788 (81%) were created before 2026-03-01 — i.e. before operational SIGNAL monitoring began (signals first appear 2026-03-29).**
+- 593 `document_entity_mentions` link the 788 to ingested documents; 13 PECL `ingested_documents` exist.
+**Assessment:** the *timing* is **consistent** with pre-operational / backfill / document-ingestion population (81% predate live monitoring), which does not contradict "test/parallel." **Not confirmable as intent from data alone.** Whether PECL's own file systems are the SoR is **outside the DB and unverifiable here.** The records are real PII regardless of intent.
+
+### Statement 2 — "The 2 investigation records were entered to exercise the interface."
+**Verification:** both investigations created **2026-05-04**, `prepared_by`/`created_by_name` = **Aaron Kilback** (`5f48f826…`), `file_status=closed`, both carry `maximo_number` (one also `police_file_number`), neither linked to an incident.
+**Assessment:** **consistent** — both hand-created by the operator on a single day and closed. Intent not independently confirmable; the Maximo/police-file content mirrors real PECL-internal formats.
+
+### Statement 3 — "termination_reason, former_employee, nationality, ethnicity derive from 3Si vendor documents uploaded for analysis, not direct collection."
+**Verification (extraction provenance on the sensitive fields):**
+- Only **2 entities** carry any of the four fields (each field on 1 entity).
+- **Neither has any `document_entity_mentions` link (0)**, no `source_investigation`, no `source_document`/`3si`/`upload` attribute. One was **created manually by Aaron** (2026-04-03, no provenance keys); the other automated (2026-05-11, `investigation_status` only).
+- **0 documents in `ingested_documents` are tagged "3Si"/"3si".**
+**Assessment:** **NOT CORROBORATED.** There is **no stored provenance** linking these fields to a 3Si (or any) uploaded document. The claimed extraction chain is not recorded anywhere in the DB; one of the two records was hand-entered by the operator. This is itself a **provenance gap** — the special-category fields (ethnicity/nationality) and HR-class fields (termination) have no source attribution on record.
+
+### Classification (unchanged)
+Per the note: sourcing does not alter classification. Whatever the origin, these were personal information under Fortress's control and within the exposure scope. **Open: 3Si contractual dimension** (added to §6 open items of the RESPONSE record).
+
 ## Open
 - ai-tools-query re-enable stays gated behind the caller→scope gate (Generic Tool Path Clearance Phase B).
 - Item 4 (full triage of the 232 verify_jwt=false functions + the ~25 request-client-scoped list) pending.
