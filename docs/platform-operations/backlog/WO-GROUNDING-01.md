@@ -156,7 +156,19 @@ layers**:
 **The check IS a model call — and this is a MODEL GATING A MODEL (correlated failure), stated here, not
 discovered later.** `inference-llm.ts` (`makeLlmEntailmentJudge`, temp 0, sees ONLY the anchor texts + the
 conclusion, instructed that missing info ⇒ not entailed and that a recommendation/prediction/causal claim is
-entailed only if the anchors state the link). The non-sequitur case (case 3) is **provably not catchable by
+entailed only if the anchors state the link).
+
+**JUDGE MODEL — decorrelated from derivation (operator ruling 2026-07-31).** Derivation runs OpenAI `gpt-4o-mini`.
+The judge originally defaulted to the SAME model — maximal correlation. This gateway (`_shared/ai-gateway.ts`)
+has NO Claude route (`gpt-*`→OpenAI, `gemini-*`→Gemini, `sonar*`→Perplexity), so the strongest available
+decorrelation is a **different provider family: the judge now uses `gemini-2.5-flash` (Google)** — different
+training data + objective from OpenAI, which materially reduces the correlated-failure mode. The judge is a cheap
+call (anchors + conclusion only), so the extra provider is ~free. Standing constraint recorded in code: do NOT
+set the judge back to a `gpt-*` model while derivation uses `gpt-*`. (Also fixed a latent bug: `temperature`/
+`context` were passed as top-level fields that `AiGatewayRequest` does not define, so they were silently dropped;
+temp 0 now goes through `extraBody`, the phase tag through `extraContext`.) **This decorrelation is a mitigation,
+not a proof — the residual correlation is measured empirically by the judge confusion matrix (below), which is the
+number that decides whether DEDUCTIONS ship at all.** The non-sequitur case (case 3) is **provably not catchable by
 term-containment** — case 2 (valid deduction) and case 3 (non-sequitur) are INDISTINGUISHABLE to any structural
 check because both have every term anchored. Distinguishing them requires judging entailment, which for
 natural-language claims requires reasoning = a model. Therefore the same class of reasoning that produced a bad
