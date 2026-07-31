@@ -87,6 +87,30 @@ killer-whale → false.
    (SIG-2026-025641 also had `location = null`; the place was only in `normalized_text`). Gazetteer completeness
    for the client's operating area is a prerequisite, tracked here.
 
+### Gazetteer coverage pass (2026-07-31, before derivation)
+- **Scope (2a):** in 30d signals, 7 PECL-footprint places were absent from the 22-row gazetteer (Tumbler Ridge ×4,
+  Farmington/Chetwynd/Peace River RD/Blueberry/Doig/Prophet River ×1) — so it was a **live Gate-3 relevance defect**
+  for smaller Montney towns, not merely a prerequisite (the high-volume places — Calgary/Kitimat/FSJ — were covered).
+- **Populate (2b):** added 14 places (gazetteer 23 → **37**) with coordinates from **BC Geographical Names**
+  (apps.gov.bc.ca/pub/bcgnws), parsed **deterministically** from recorded WGS84 lat/lon — NOT model-generated.
+  **Vigilance caught 3 bad geocodes** (would have been fabrication-by-geocoding): 'Blueberry Creek' (Kootenay 49°N)
+  and 'Halfway House' (Cariboo 52°N) were wrong-region matches → replaced with the correct NE-BC First Nations
+  reserves (Blueberry River 205, Halfway River 168); **'Altares' has no BCGN entry → OMITTED, not fabricated.**
+- **Verify (2c):** 11/14 new places resolve to a PECL asset buffer (chetwynd 0km, groundbirch 5km, farmington 17km…).
+  3 don't, correctly: Tumbler Ridge (~125km, just outside Montney 120km — edge of area) + Pink Mountain (remote) +
+  **Peace River Regional District (region-as-point limitation** — BCGN centroid −122.75 sits west in the Rockies,
+  away from PECL's east-side ops; needs polygon overlap or a population-weighted point, tracked). Third fixture re-ran GREEN.
+
+### FINDING #3 (separate) — Gate-3 relevance depended on a 22-row gazetteer since it shipped
+`geo_place_gazetteer` had **22 rows** and was **missing Taylor — a place with PECL infrastructure** (contamination
+signal SIG-2026-025641). Gate-3 client-aware relevance (place→gazetteer→asset proximity) has depended on this table
+since it shipped, so **any asset-proximate signal naming an uncovered place silently failed the asset link** →
+under-credited relevance. **Preliminary evidence (30d PECL signals):** asset-proximate (n=52) avg relevance **0.6**
+vs no-asset-link (n=527) **0.5** — only 0.1 separation; proximity appears weakly weighted (and this is WITH the
+now-improved gazetteer — historically, with 22 rows, even fewer proximate signals would have resolved). **Recommend a
+dedicated assessment:** replay historical PECL signals through the (now-fuller) resolver, compare to the relevance
+scores they actually received, and quantify systematic under-crediting of asset-proximate signals. NOT closed here.
+
 ## Build order (ruled 2026-07-30)
 1. **WO-REPORT-PERSIST-01** — DONE (storage_url + claim manifest + issuance cols + delivery halt).
 2. Binding-at-derivation per the design above.

@@ -4,8 +4,9 @@
 
 import type { GroundingDeps } from "./derived-claim.ts";
 
-/** Names too ambiguous to be client aliases on their own (would false-match unrelated orgs). */
-const AMBIGUOUS_ALIASES = new Set(["petronas", "progress", "energy", "canada", "pcl"]);
+/** Names too ambiguous to be client aliases on their own (would false-match unrelated orgs).
+ *  'PCL' is a ruled client alias (operator 2026-07-31) and is intentionally NOT excluded. */
+const AMBIGUOUS_ALIASES = new Set(["petronas", "progress", "energy", "canada"]);
 
 export interface BuildGroundingDepsOptions {
   onReject?: GroundingDeps["onReject"];
