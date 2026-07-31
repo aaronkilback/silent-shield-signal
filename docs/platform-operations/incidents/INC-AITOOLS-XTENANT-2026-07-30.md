@@ -141,6 +141,29 @@ Supabase analytics/log pipeline, not the DB table. **No in-database auth trail e
 out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
 org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
 
+## Amendment 10 2026-07-31 — a Fortress-derived assessment reached a third party via MANUAL operator forwarding (platform-delivery scope correction)
+
+**Finding (operator-attested).** A **Fortress-derived assessment concerning entity `1e506c55`** (Ashley Callingbull)
+was **manually forwarded by the operator** (`akilback@petronascanada.com`) to **another PECL employee**
+(`kpearce@petronascanada.com`) on **2026-04-03** — the email now held under the Amendment 9 legal hold.
+
+**This is distinct from platform-issued delivery.**
+- The **Resend send-history audit was correct**: no *automated* Fortress send of this assessment occurred
+  (RESPONSE record §2 — the executive report "was never emailed"; the issuance gate R9 confirms 0 issuable).
+- **Manual forwarding leaves no platform record** — a person copying Fortress output into their own email client is
+  invisible to Resend, `function_telemetry`, and every Fortress store. There is no platform artifact of this send.
+
+**Scope correction.** ~~Any prior framing that no Fortress intelligence artifact reached a person other than the
+operator~~ **holds for PLATFORM-ISSUED delivery ONLY.** Via manual operator forwarding, a Fortress-derived
+assessment about `1e506c55` **did reach a third party** (a PECL colleague, same tenant). Corrected reading:
+- **Platform-issued delivery to third parties for this assessment: none** (Resend/issuance-gate correct).
+- **Operator-mediated (manual) dissemination: yes** — at least one Fortress-derived assessment of `1e506c55`
+  reached `kpearce@petronascanada.com` on 2026-04-03, evidenced only by the operator-held (off-platform) email.
+- **Consequence for the exposure model:** "reach" has two channels — platform delivery (audited, gated) and
+  manual operator forwarding (unaudited, invisible). The incident's delivery audits speak only to the first;
+  the second is provable only by operator-held artifacts. This does not change the cross-tenant-exposure finding,
+  but corrects any "artifact never left the operator" reading to "never left the operator **via the platform**."
+
 ## Amendment 9 2026-07-31 — Callingbull origin: Energeticcity signal found; signal-level provenance link EXISTS (corrects 8(f)); operator email placed under legal hold
 
 Follow-up to 8(f). The operator's account created `1e506c55`; this amendment resolves *from what* and corrects
@@ -165,21 +188,19 @@ Follow-up to 8(f). The operator's account created `1e506c55`; this amendment res
   operator-account-attributed, not autonomous extraction.
 
 **(3) Operator email — LEGAL HOLD record (operator-held corroboration; platform provenance gap noted separately).**
-Recorded as corroboration for the entity's origin. **Verifiable-in-platform:** referenced article URL =
-`https://energeticcity.ca/2026/04/03/award-winning-indigenous-activist-to-be-keynote-speaker-at-spark-conference/`
-(= `SIG-2026-000062.source_url`). **Off-platform (operator to supply — NOT fabricated here):** email **date**,
-**sender**, **recipient**. These four fields are the hold item; the email itself is off-platform (no copy in any
-Fortress store) and must be **preserved by the operator under the existing legal hold** alongside `1e506c55`
-(already `legal_hold=true`). **Platform-side provenance gap (separate):** the platform never captured the email or
-a document link; corroboration is signal-level (entity_mentions) + operator-held email only. Per WO-FABRICATED-FINDINGS-01
-discipline, the three off-platform fields are left blank for operator entry rather than inferred.
+Recorded as corroboration for the entity's origin. Off-platform fields **supplied by the operator 2026-07-31**;
+the referenced article URL is platform-verified (= `SIG-2026-000062.source_url`). The email itself is off-platform
+(no copy in any Fortress store) and is **preserved by the operator under the existing legal hold** alongside
+`1e506c55` (already `legal_hold=true`). **Platform-side provenance gap (separate):** the platform never captured
+the email or a document link; corroboration is signal-level (`entity_mentions`) + the operator-held email only.
 
 | Legal-hold item | Value | Source |
 |---|---|---|
+| Email date | **2026-04-03** | operator-supplied 2026-07-31 |
+| From | **akilback@petronascanada.com** | operator-supplied 2026-07-31 |
+| To | **kpearce@petronascanada.com** (another PECL employee) | operator-supplied 2026-07-31 |
 | Referenced article URL | energeticcity.ca/2026/04/03/award-winning-indigenous-activist-…/ | platform-verified (SIG-2026-000062) |
-| Email date | *(operator to supply)* | off-platform |
-| Email sender | *(operator to supply)* | off-platform |
-| Email recipient | *(operator to supply)* | off-platform |
+| Platform copy | **none — off-platform, operator-preserved** | operator-supplied 2026-07-31 |
 
 **(4) Special-category attributes have NO recorded source AND no recorded creation time.** `ethnicity` and
 `nationality` on `1e506c55`: `audit_events` for this entity = **0 rows**; no per-field timestamp exists. Bounds:
