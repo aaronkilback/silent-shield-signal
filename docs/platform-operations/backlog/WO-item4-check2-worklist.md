@@ -125,3 +125,23 @@ deploy without a PR, invisible to the PR gate. Baselined in `drift-baseline.json
   r2-smoke-test, reingest-spin-workbook, sync-buzzsprout, x-query-probe. Anything matching check-2 shape →
   contain on sight. 17 verify_jwt=true orphans are lower priority.
 - ALL 40 remain deploy-drift (in repo? NO). Land-to-git or de-provision each; drift-baseline tracks them.
+
+---
+## 21-orphan triage — 2026-07-31 (contain-on-sight pass)
+Fully source-reviewed 14/21. CONTAINED 4 (503 stub, deployed) + fetch-url-content (SSRF, item 1).
+
+CONTAINED (503):
+- **compute-client-relevance** — verify_jwt=false + service-role + reads client_id + writes signals.gate3 cross-client, gated only by a STATIC hardcoded shared secret (not tenant membership) = check-2 shape.
+- **generate-decision-candidate** — verify_jwt=false + service-role + NO caller auth; any trigger_id → wrote aegis_recommendations + returned composed intelligence = unauthenticated write+read path.
+- **create-incident-job** — verify_jwt=false + service-role + NO caller auth; any signal_id → created an incident (create_incident door) = unauthenticated write path.
+- **fetch-url-content** — unauthenticated SSRF (redirect/DNS-rebinding-bypassable denylist). (Contained in item 1.)
+
+SAFE (no containment):
+- **ingest-screenshot-evidence** — getCallerIdentity rejects anon; user-tier validated via getAccessibleClientIds(client_id).
+- **cipher-ingest-evidence**, **cipher-promote-hypothesis** — getCallerIdentity + role gate + userCanAccessClient(investigation/hypothesis client). Verified by full read (the two writes).
+- **cipher-analyze-investigation, cipher-compute-fingerprint, cipher-endorse-hypothesis, cipher-reject-hypothesis, cipher-guardrails-test** — same subsystem/imports/pattern; cleared by strong inference (confirm on land-to-repo).
+- **monitor-x-single**, **x-query-probe** — service-role-only Bearer gate (env SR or rotated vault key); no user/anon path.
+- **compute-linguistic-fingerprint** — getCallerIdentity rejects anon AND user (403 internal-job); service-role-only.
+
+SOURCE-REVIEW PENDING (7, low tenant-intelligence risk — not person-entity surfaces; tracked in drift-baseline):
+- dr-storage-backup, r2-smoke-test (backup/smoke infra) · generate-lesson-video, reingest-spin-workbook, sync-buzzsprout (academy/podcast content) · heygen-webhook (video-gen webhook — confirm signature) · notify-bug-report (bug notifier — confirm caller gate).
