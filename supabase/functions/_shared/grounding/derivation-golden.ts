@@ -15,11 +15,13 @@ const deps: GroundingDeps = {
   onReject: (i) => console.log(`   [reject] ${i.reason}: ${i.detail.slice(0, 80)}`),
 };
 
-// A HALLUCINATING model: for a BC wildfire rescue it emits client claims it cannot support.
+// A HALLUCINATING model: for a BC wildfire rescue it emits claims it cannot support.
 const hallucinatingModel: DeriveCandidates = async () => [
-  { text: "Coordinate the physical security review with Uniper for the LNG import terminal.", span: WILDFIRE, asserts_client_impact: true },
-  { text: "Petronas Canada crews conducted the wildfire rescue.", span: WILDFIRE, asserts_client_impact: true },
-  { text: "The evacuation threatens PECL Montney upstream operations.", span: WILDFIRE, asserts_client_impact: true },
+  { text: "Coordinate the physical security review with Uniper for the LNG import terminal.", span: WILDFIRE, asserts_client_impact: true }, // R4
+  { text: "Petronas Canada crews conducted the wildfire rescue.", span: WILDFIRE, asserts_client_impact: true }, // R4
+  { text: "The evacuation threatens PECL Montney upstream operations.", span: WILDFIRE, asserts_client_impact: true }, // R4
+  // R3 case: NO client language, but asserts terms absent from the span → must reject claim_not_grounded_in_span.
+  { text: "The fire has disrupted LNG shipments through Kitimat.", span: WILDFIRE },
 ];
 // A WELL-BEHAVED model: correctly returns nothing about the client for a wildfire signal.
 const wellBehavedModel: DeriveCandidates = async () => [];
@@ -36,9 +38,14 @@ const run = async () => {
   const wClient = clientClaims(w, PECL_ALIASES);
   console.log(`\nwell-behaved model:  ${w.accepted.length} accepted, ${wClient.length} CLIENT claims (silence is correct)`);
 
-  const pass = hClient.length === 0 && wClient.length === 0 && h.accepted.length === 0;
-  console.log(`\n${pass ? "✅ GOLDEN PASS — a wildfire signal yields ZERO client claims, even from a hallucinating model."
-                       : "❌ GOLDEN FAIL — a client claim survived a wildfire signal."}`);
+  // Prove R3 fires inside the loop (not only R4): the Kitimat/LNG claim rejects on grounding, not client scope.
+  const r3 = h.rejected.find((r) => r.reason === "claim_not_grounded_in_span");
+  const r3ok = !!r3 && /lng/.test(r3.detail) && /kitimat/.test(r3.detail);
+  console.log(`\nR3-in-loop: ${r3ok ? "PASS" : "FAIL"} — ${r3 ? r3.detail : "no claim_not_grounded_in_span rejection found"}`);
+
+  const pass = hClient.length === 0 && wClient.length === 0 && h.accepted.length === 0 && r3ok;
+  console.log(`\n${pass ? "✅ GOLDEN PASS — wildfire → ZERO client claims; R3 (grounding) AND R4 (scope) both proven in-loop."
+                       : "❌ GOLDEN FAIL."}`);
   process.exit(pass ? 0 : 1);
 };
 run();

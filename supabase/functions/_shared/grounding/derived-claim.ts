@@ -73,7 +73,7 @@ const COMMON_CAPS = new Set([
 ]);
 
 /** digit-groups (commas removed, decimals kept) — the numeric core of %, currency, counts, years, durations. */
-function numericTokens(text: string): string[] {
+export function numericTokens(text: string): string[] {
   return [...text.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => m[0].replace(/,/g, ""));
 }
 
@@ -84,7 +84,7 @@ function numericTokens(text: string): string[] {
  *  - NUMERIC (R3-ruling): percentages / currency / counts / years / durations — the other high-frequency
  *    fabrication class ("17%", "450 water licenses", "20-year"). The number itself must come from a span.
  */
-function salientTerms(text: string, clientAliasTokens: Set<string>): { textTerms: string[]; numericTerms: string[] } {
+export function salientTerms(text: string, clientAliasTokens: Set<string>): { textTerms: string[]; numericTerms: string[] } {
   const t = new Set<string>();
   for (const m of text.matchAll(/\b[A-Z]{2,}\b/g)) t.add(m[0].toLowerCase()); // acronyms
   for (const sentence of text.split(/(?<=[.!?])\s+/)) {
