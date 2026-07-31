@@ -58,6 +58,35 @@ its `over` claim texts in isolation; if a verifier cannot reconstruct the conclu
 alone (no outside facts), it is rejected. This is where DEDUCTIONS live and is the product's analytic
 value — so the bar is entailment, not mere topical adjacency.
 
+## Phase 1 (ACCEPTED 2026-07-31) + Phase 2 real resolvers (stopped before derivation)
+Module `supabase/functions/_shared/grounding/derived-claim.ts` (types + constructor), `resolvers.ts` (real
+GroundingDeps factory), `phase1-fixtures.ts` (4 fixtures). Constructor rules R1 (>=1 signal id) / R2 (span is a
+verbatim excerpt of its signal) / R4 entity-scope guard (alias-in-span OR Gate-3 asset link) / R3 grounding.
+
+**R3 rulings applied:** kept as a PRIMARY check (not a backstop); numeric fabrication class added (%, currency,
+counts, years, durations — the number must come from a span); every R3 rejection logged via `deps.onReject`
+with offending terms + claim text. First tuning item the log surfaced: possessive `Regulator's` → salient
+"regulators" ≠ span "Regulator" — a real paraphrase false-positive; **not loosened** (candidate for stemming).
+
+**Fixtures (all pass):** (a) wildfire SIG-2026-027390 → "Uniper LNG" REJECT `claim_not_grounded_in_span [lng, uniper]`;
+(b) "Petronas Canada has stakes" over SIG-2026-026745 REJECT `client_scope_unbacked`; **(c) asset-proximate
+SIG-2026-025641 (near Taylor) CONSTRUCTS via the Gate-3 asset link**; (control) grounded wildfire CONSTRUCTS.
+
+**Gate-3 asset-link (Amendment 7b) — RPC `public.grounding_resolve_asset_links(client_id, signal_ids[])`** created
+(SECURITY DEFINER; place→`geo_place_gazetteer`→`ST_DWithin` to `client_geo_assets`). Proven: SIG-2026-025641 →
+place 'taylor' → **Montney/Fort St. John upstream 15.3 km, within the 120 km buffer → resolved=true**; wildfire +
+killer-whale → false.
+
+### DATA GAPS found (not code gaps — reported per ruling)
+1. **`PCL` missing** from the PECL org-entity (85836824 "PETRONAS Canada") alias set. Present: PECL, Petronas
+   Canada Ltd, Progress Energy Canada, Progress Energy, Petroliam Nasional Canada. **`PCL` should be added** or a
+   claim using "PCL" won't alias-resolve. (Bare "Petronas"/"Progress"/"PCL" intentionally excluded as ambiguous.)
+2. **`geo_place_gazetteer` coverage gap:** "Taylor" was absent (22 rows total) → blocked Gate-3 resolution for a
+   signal squarely in PECL's Montney backyard. Added 'taylor' (56.15,-120.68) via `wo_grounding_gazetteer_taylor`.
+   **Architectural dependency:** Amendment 7b is only as good as gazetteer coverage + place extraction from text
+   (SIG-2026-025641 also had `location = null`; the place was only in `normalized_text`). Gazetteer completeness
+   for the client's operating area is a prerequisite, tracked here.
+
 ## Build order (ruled 2026-07-30)
 1. **WO-REPORT-PERSIST-01** — DONE (storage_url + claim manifest + issuance cols + delivery halt).
 2. Binding-at-derivation per the design above.

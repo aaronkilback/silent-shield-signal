@@ -44,6 +44,9 @@ export interface GroundingDeps {
   /** Amendment 7b: does this signal resolve to a client asset/operator link via Gate-3 PostGIS asset points
    *  (spatial contains / distance to a client-operated asset)? NOT string search. */
   resolveAssetLink(signalId: string): boolean;
+  /** R3-ruling: log EVERY rejection (esp. claim_not_grounded_in_span) with the offending term(s) + claim text.
+   *  Expect false rejections on legitimate paraphrase — the log is how the bar is tuned. Optional sink. */
+  onReject?(info: { reason: string; detail: string; claimText: string; terms?: string[] }): void;
 }
 
 export type ConstructResult<T> =
@@ -69,22 +72,32 @@ const COMMON_CAPS = new Set([
   "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
 ]);
 
+/** digit-groups (commas removed, decimals kept) — the numeric core of %, currency, counts, years, durations. */
+function numericTokens(text: string): string[] {
+  return [...text.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => m[0].replace(/,/g, ""));
+}
+
 /**
- * Salient terms a claim ASSERTS — all-caps acronyms (LNG, PCL) + Capitalized words that are NOT sentence-initial
- * and not common. These are the terms whose absence from every span means the claim is not grounded in its signal.
- * Client-alias tokens are removed here — client scope is governed by the entity-scope guard (R4), not R3.
+ * Salient terms a claim ASSERTS, in two classes whose absence from every span = not grounded:
+ *  - TEXT: all-caps acronyms (LNG, PCL) + Capitalized non-sentence-initial proper nouns (Uniper). Client-alias
+ *    tokens are removed — client scope is governed by the entity-scope guard (R4), not R3.
+ *  - NUMERIC (R3-ruling): percentages / currency / counts / years / durations — the other high-frequency
+ *    fabrication class ("17%", "450 water licenses", "20-year"). The number itself must come from a span.
  */
-function salientTerms(text: string, clientAliasTokens: Set<string>): string[] {
-  const terms = new Set<string>();
-  for (const m of text.matchAll(/\b[A-Z]{2,}\b/g)) terms.add(m[0].toLowerCase()); // acronyms
+function salientTerms(text: string, clientAliasTokens: Set<string>): { textTerms: string[]; numericTerms: string[] } {
+  const t = new Set<string>();
+  for (const m of text.matchAll(/\b[A-Z]{2,}\b/g)) t.add(m[0].toLowerCase()); // acronyms
   for (const sentence of text.split(/(?<=[.!?])\s+/)) {
     const words = sentence.split(/\s+/);
     for (let i = 1; i < words.length; i++) { // skip index 0 (sentence-initial capital is not a proper noun)
       const w = words[i].replace(/[^A-Za-z]/g, "");
-      if (/^[A-Z][a-z]+$/.test(w) && !COMMON_CAPS.has(w.toLowerCase())) terms.add(w.toLowerCase());
+      if (/^[A-Z][a-z]+$/.test(w) && !COMMON_CAPS.has(w.toLowerCase())) t.add(w.toLowerCase());
     }
   }
-  return [...terms].filter((t) => !clientAliasTokens.has(t));
+  return {
+    textTerms: [...t].filter((x) => !clientAliasTokens.has(x)),
+    numericTerms: numericTokens(text),
+  };
 }
 
 // ─────────────────────────────── Constructors ───────────────────────────────
@@ -134,12 +147,20 @@ export function createDerivedClaim(input: DerivedClaimInput, deps: GroundingDeps
       );
   }
 
-  // R3 — grounding: every salient term the claim asserts must appear in the union of its spans. A claim cannot
-  //      assert a subject its supporting spans do not contain (this is what makes a wildfire signal structurally
-  //      incapable of grounding a "Uniper LNG" claim).
-  const ungrounded = salientTerms(input.text, aliasTokens).filter((t) => !spanBlob.includes(t));
-  if (ungrounded.length > 0)
-    return reject("claim_not_grounded_in_span", `claim asserts term(s) absent from every source span: ${ungrounded.join(", ")}`);
+  // R3 — grounding (KEPT as a PRIMARY check, not a backstop — Phase 2 gives the model one signal but it can
+  //      still emit terms from context/training; R3 is the independent check that does not trust derivation).
+  //      Every salient term (proper nouns + numeric fabrication class) must appear in the union of the spans.
+  const { textTerms, numericTerms } = salientTerms(input.text, aliasTokens);
+  const spanNumbers = new Set(numericTokens(input.source_spans.map((s) => s.text).join("  ")));
+  const ungrounded = [
+    ...textTerms.filter((t) => !spanBlob.includes(t)),
+    ...numericTerms.filter((n) => !spanNumbers.has(n)),
+  ];
+  if (ungrounded.length > 0) {
+    const detail = `claim asserts term(s) absent from every source span: ${ungrounded.join(", ")}`;
+    deps.onReject?.({ reason: "claim_not_grounded_in_span", detail, claimText: input.text, terms: ungrounded });
+    return reject("claim_not_grounded_in_span", detail);
+  }
 
   return {
     ok: true,
