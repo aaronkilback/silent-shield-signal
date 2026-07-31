@@ -141,6 +141,65 @@ Supabase analytics/log pipeline, not the DB table. **No in-database auth trail e
 out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
 org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
 
+## Amendment 8 2026-07-31 — collection-integrity corrections (scans are LLM-generated; contact records are manual; window git-proven)
+
+Source-read + DB-verified pass (Block A). Corrections a–f. Strikes preserve prior text.
+
+**(a) Scans are LLM-generated, not real lookups.** Verified in `entity-deep-scan/index.ts` source + the stored rows.
+- The ONLY real external calls are: **HIBP** (`haveibeenpwned.com/api/v3`, L190/230), **Google CSE**
+  (`googleapis.com/customsearch/v1`, L276/333/383/430), **CISA KEV** (`cisa.gov/.../known_exploited_vulnerabilities.json`, L704).
+- **"Sanctions/registry screening" (L632–687) is a PROMPT to Perplexity `sonar` / OpenAI `gpt-4o-mini`, not an
+  API** — it asks a model to "Check <name> against OFAC SDN / EU / UN / SEC EDGAR / PEP / Interpol" and parses
+  the model's JSON. **No OFAC/EU/UN, no criminal-records, no property-records API exists anywhere in the function**
+  (grep: `lexis|pacer|courtlistener|tlo|clear|county|assessor|beenverified…` → NONE).
+- Stored proof (`created_by=null`, `benchmark_source_document_id=null` on all): `criminal_records`/Nikolai Vance
+  `url="https://[provincial court records database]"` (unfilled placeholder); `criminal_records`/Nick Vashouk
+  `url=eservices.alberta.ca/court-of-kb-criminal-search-**request**.html` (a request *form*, not a data API);
+  `public_records`/Nikolai Vance text = **`"I can't help with this request…"`** (an LLM refusal stored as a
+  public record); `sanctions_screening` rows carry synthetic `deep-scan://…` URIs.
+- ~~STRIKE (do not delete): prior text presenting `sanctions_screening (OFAC/UN/EU/Interpol/PEP/SEC)`,
+  `criminal_records`, and `public_records (property)` as real screening/lookups (Amendment 6), and
+  "runs OSINT (Google CSE, HIBP, people-search/court sites)" implying a court-records lookup (Amendment 5).~~
+  These are **model-generated assessments under authoritative labels**, not lookups. → tracked as **WO-FABRICATED-FINDINGS-01**.
+
+**(b) Contact records are manual case-file entry by named operators — NOT 3Si extraction, NOT signal extraction.**
+- ~~STRIKE (do not delete): any prior framing that the contact/PII records were extracted from the 3Si document
+  or from signal text.~~ **Corrected:** the contact-info store is `investigation_persons` (36 rows; 23 email,
+  31 phone; **no address column**) — the manual case-file module. Every row authored by a **named human**:
+  **13 case files (`INV-2026-0xx`) by Aaron Kilback, 1 (`INV-2026-0002`) by Vince Dancho**; each person created
+  3–15 min after its case file opened; `mentions_3si=false/null` on every file; `created_by` is a real user, not
+  service-role. Address/property records = `entity_content content_type='public_records'` (3 rows, LLM-generated
+  per (a)). Neither store traces to the 3Si document or to signal-text extraction.
+
+**(c) The 3Si document.** `8f147129-9666-4424-b642-d03880bf08cb` = **"3Si - 2026 Threat Primer.pdf"**, uploaded
+**2026-03-05**, a threat primer (not a contact list), with **0 `entity_content` children** and 0 investigation
+references. Operator-corroborated (operator identified + holds it); **platform-side provenance absent** (consistent
+with Amendment 7). Preserved under the legal hold.
+
+**(d) 32 persisted POI dossiers during the unauthenticated window.** `poi_reports`: **32 rows, 2026-03-17 →
+2026-06-13**, across **4 clients** (Petronas `0f5c809d`, `5f41e328`, `0bbbbbbb…0002`, `00ce7737`); targets include
+4 of the 7 (Vashouk, Fitzgerald, Callingbull ×6, Bracken) plus Kelly Pietras ×6, Trent Reznor, ISIS-K,
+FIFA Vancouver 2026, Nikolai Vance, etc. **No caller attribution exists in any store:** `poi_reports` has **no
+`created_by`**; `function_telemetry` (18 rows, 2026-05-12→06-13, all success) `context` holds **no `user_id`,
+`caller_kind`, or `tenant_id`** (only `attempt`/`fallback_from`/`hallucination_warnings`). `investigate-poi` is
+**not** telemetry-instrumented and left **0** attributable signals (`signal_origin='investigate-poi'`) or
+`entity_content` — its invocation can be neither confirmed nor excluded.
+
+**(e) Window is git-proven 2026-03-28 → 2026-07-31 (~125 days); both functions were born unauthenticated.**
+`git log -S "[functions.investigate-poi]"` / `"[functions.generate-poi-report]"` on `config.toml` each return
+**exactly one commit — `98fd8b75` (2026-03-28)** which ADDED `verify_jwt = false` for both; **no true→false commit
+exists** (they were false from first tracking). Contained at `0861ad11` (2026-07-31 09:10). The function blobs first
+appear in visible history at `88c135b2` (2026-04-02), but pre-2026-03-28 history is opaque Lovable "Changes"
+squashes — **true origin may be earlier** than the git-provable 2026-03-28. (Refines Amendment 5's "2026-04-02" start.)
+
+**(f) Operator clarifications (entity entry paths).**
+- **Ashley Callingbull (`1e506c55`)** — entered the PECL tenant via **extraction** and was **AI-enriched**;
+  **no operator instructed targeting her.** (Contextualizes Amendment 6, where she is the most deeply-collected.)
+- **Amber Bracken (`a9a4047c`)** — entered via a **dossier CRT supplied**, uploaded by the operator **to test how
+  Fortress creates entities from a document** — not an intelligence target.
+- Both illustrate the governance gap in Amendment 6 / **WO-SUBJECT-GATE-01**: subjects entered and were enriched
+  with no human subject-of-interest authorization step.
+
 ## Amendment 7 2026-07-31 — 3Si sourcing reclassified: operator-corroborated + platform provenance gap
 
 > ~~Amendment 4 / Amendment 6 framing: statement 3 (sensitive fields from 3Si vendor documents) is
@@ -163,9 +222,10 @@ is unchanged.
 
 **7 of the 788 PECL person entities are a deeply-collected core.** Against these named individuals,
 **automated OSINT collection was run WITHOUT a human-initiated request** (0 human-created content) —
-content types on record: `web_search`, `sanctions_screening` (OFAC/UN/EU/Interpol/PEP/SEC), `criminal_records`,
-`public_records` (property), `dark_web`, `associate_network`, `digital_footprint`, `relationship`, and
-**photographs**. All 7 are PECL-scoped. Structure (no values; 8-char id prefixes):
+content types on record: `web_search`, ~~`sanctions_screening` (OFAC/UN/EU/Interpol/PEP/SEC), `criminal_records`,
+`public_records` (property)~~ **[STRUCK — Amendment 8(a): these are LLM-generated model assessments, NOT real
+sanctions/criminal/property lookups; only web_search/HIBP/CISA are real]**, `dark_web`, `associate_network`,
+`digital_footprint`, `relationship`, and **photographs**. All 7 are PECL-scoped. Structure (no values; 8-char id prefixes):
 - `3c0deba7` (2026-01-20, automated, deep-scan report), `ca8c3de8` (2026-03-12, manual, 24 content),
   `1e682989` (2026-03-12, manual, 8), `82ff4e96` (2026-03-14, automated, doc-linked, 20),
   `162e91c6` (2026-03-16, manual, 19), **`1e506c55` (2026-04-03, manual, 155 content + 15 photos +
@@ -202,8 +262,9 @@ content types on record: `web_search`, `sanctions_screening` (OFAC/UN/EU/Interpo
   hard-disabled (503) **2026-07-31**. Window: **2026-04-02 → 2026-07-31, unauthenticated.** The
   "entity-scoped by design" annotation was verified FALSE as a safety claim (entity-scoped ≠ access-controlled).
 - **investigate-poi** — verify_jwt=false, no caller auth. Reads `entity_id`, runs OSINT (Google CSE, HIBP,
-  people-search/court sites), stores results + creates signals. First deploy **2026-04-02**; hard-disabled
-  **2026-07-31**. Window: **2026-04-02 → 2026-07-31, unauthenticated.**
+  ~~people-search/court sites~~ **[STRUCK — Amendment 8(a): no people-search/court-records API is called; the
+  "court/criminal/property" outputs are model-generated, not lookups]**), stores results + creates signals.
+  First deploy **2026-04-02**; hard-disabled **2026-07-31**. Window: **2026-04-02 → 2026-07-31, unauthenticated.**
 
 Both were reachable **before 2026-06-12 AND for ~7 weeks after** ai-tools-query closed. **The person-entity PII
 class was continuously reachable via at least one unauthenticated/unscoped path from ~2026-04-02 to 2026-07-31.**
