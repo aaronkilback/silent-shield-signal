@@ -95,6 +95,24 @@ Deno.serve(async (req) => {
         );
       }
 
+      // ── INC-AITOOLS-XTENANT: an admin may only mint a key for a client in THEIR OWN tenant ──
+      // (admin gate alone did not bind the client_id to the caller's tenant). super_admin bypasses.
+      if (client_id) {
+        const isSuper = roles?.some(r => r.role === 'super_admin');
+        if (!isSuper) {
+          const { data: cli } = await serviceClient.from('clients').select('tenant_id').eq('id', client_id).maybeSingle();
+          const { data: mem } = cli?.tenant_id
+            ? await serviceClient.from('tenant_users').select('user_id').eq('user_id', user.id).eq('tenant_id', cli.tenant_id).maybeSingle()
+            : { data: null };
+          if (!mem) {
+            return new Response(
+              JSON.stringify({ error: "Forbidden: not a member of that client's tenant" }),
+              { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        }
+      }
+
       const apiKey = generateApiKey();
       const keyHash = await hashApiKey(apiKey);
       const keyPrefix = apiKey.substring(0, 12) + '...';

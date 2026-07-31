@@ -105,3 +105,23 @@ deploy without a PR, invisible to the PR gate. Baselined in `drift-baseline.json
 `security-gate:drift`. Burn-down = land each to git or de-provision. Notable security-relevant orphans:
 `auth-email-hook`, `cipher-*` (7), `generate-decision-candidate`, `compute-client-relevance`,
 `fetch-url-content`, `heygen-webhook`, `ingest-screenshot-evidence`, `monitor-x-single`, `x-query-probe`.
+
+---
+## 40-orphan triage — round 1 (2026-07-31)
+23 of 40 orphans are verify_jwt=false (unauthenticated). Priority (source-reviewed):
+- **auth-email-hook** — SAFE. verify_jwt=false (GoTrue hook) but HMAC signature+timestamp verified
+  (verifyWebhookRequest / LOVABLE_API_KEY, 401 on invalid); /preview is Bearer-API-key gated. No tenant data.
+- **fetch-url-content** — UNAUTHENTICATED SSRF surface (reads `url`, fetches it). Has a denylist guard
+  (blocks localhost/RFC1918/link-local incl. 169.254 metadata) BUT bypassable: `redirect:"follow"` is NOT
+  re-validated on redirect, and DNS-rebinding (public hostname → private IP) passes the string check. NOT
+  check-2 shape (no tenant id) → not auto-contained; breaks the agent-chat/dashboard `fetch_url_content`
+  AI tool if disabled. RECOMMEND: verify_jwt=true (callers are internal) + re-validate redirect targets +
+  resolve-and-check IP. OPERATOR RULING NEEDED (contain now vs harden-in-place).
+- **Remaining 21 verify_jwt=false orphans — SOURCE REVIEW PENDING** (several concerning by name):
+  cipher-analyze-investigation, cipher-compute-fingerprint, cipher-endorse-hypothesis, cipher-guardrails-test,
+  cipher-ingest-evidence, cipher-promote-hypothesis, cipher-reject-hypothesis, compute-client-relevance,
+  compute-linguistic-fingerprint, create-incident-job, dr-storage-backup, generate-decision-candidate,
+  generate-lesson-video, heygen-webhook, ingest-screenshot-evidence, monitor-x-single, notify-bug-report,
+  r2-smoke-test, reingest-spin-workbook, sync-buzzsprout, x-query-probe. Anything matching check-2 shape →
+  contain on sight. 17 verify_jwt=true orphans are lower priority.
+- ALL 40 remain deploy-drift (in repo? NO). Land-to-git or de-provision each; drift-baseline tracks them.

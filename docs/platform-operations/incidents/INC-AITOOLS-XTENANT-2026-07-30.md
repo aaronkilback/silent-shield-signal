@@ -141,6 +141,38 @@ Supabase analytics/log pipeline, not the DB table. **No in-database auth trail e
 out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
 org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
 
+## Amendment 5 2026-07-31 — EXPOSURE WINDOW CORRECTED (NOT bounded to 2026-06-12)
+
+> ~~Prior framing: the exposure window was 2025-11-22 → 2026-06-12 (ai-tools-query hard-disabled
+> 2026-06-12), after which the person-entity PII class was no longer cross-tenant/unauthenticated
+> reachable.~~ — **STRUCK / CORRECTED 2026-07-31. The prior date does not bound the exposure.**
+
+**Two additional UNAUTHENTICATED paths to the SAME person-entity PII class were live until 2026-07-31:**
+- **generate-poi-report** — verify_jwt=false, no caller auth ever. Reads `entity_id`, returns the full POI
+  dossier (OSINT content, signals, watch-list, relationship graph) for any entity. First deploy **2026-04-02**;
+  hard-disabled (503) **2026-07-31**. Window: **2026-04-02 → 2026-07-31, unauthenticated.** The
+  "entity-scoped by design" annotation was verified FALSE as a safety claim (entity-scoped ≠ access-controlled).
+- **investigate-poi** — verify_jwt=false, no caller auth. Reads `entity_id`, runs OSINT (Google CSE, HIBP,
+  people-search/court sites), stores results + creates signals. First deploy **2026-04-02**; hard-disabled
+  **2026-07-31**. Window: **2026-04-02 → 2026-07-31, unauthenticated.**
+
+Both were reachable **before 2026-06-12 AND for ~7 weeks after** ai-tools-query closed. **The person-entity PII
+class was continuously reachable via at least one unauthenticated/unscoped path from ~2026-04-02 to 2026-07-31.**
+
+**Corrected per-path windows (all closed 2026-07-31 unless noted):**
+| Path | Window | Auth | Closed |
+|---|---|---|---|
+| ai-tools-query | 2025-11-22 → 2026-06-12 | verify_jwt=false, caller-supplied tenant scope | hard-disable 48ff0c09 |
+| generate-poi-report | **2026-04-02 → 2026-07-31** | verify_jwt=false, none | 503 (0861ad11) |
+| investigate-poi | **2026-04-02 → 2026-07-31** | verify_jwt=false, none | 503 (0861ad11) |
+| webhook-dispatcher | 2026-01-14 → 2026-07-31 | verify_jwt=false, spoofable | 503 (0861ad11) |
+| scan-client-staff | 2026-04-24 → 2026-07-31 | verify_jwt=true, no membership check | FIXED (caller tenant_users gate) |
+| api-key-management | 2026-01-14 → 2026-07-31 | verify_jwt=true, admin but not tenant-scoped | FIXED (tenant gate) |
+
+Discovery route: the WO-CI-SECURITY-GATE-01 check-2 triage (2026-07-31) surfaced these; contained same day.
+Per-invocation logs remain non-retained (function_telemetry/edge logs) — exploitation of these paths can be
+neither confirmed nor ruled out, same as ai-tools-query.
+
 ## Amendment 4 2026-07-30 — operator statements (ALL PENDING VERIFICATION) + verification evidence
 
 Three operator statements recorded 2026-07-30. Each is marked **pending verification** and checked by query
