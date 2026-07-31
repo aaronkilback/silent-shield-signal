@@ -129,6 +129,109 @@ A centroid that resolves to the wrong place is worse than no resolution.
   now **33 rows, 32 with `bcgn_id`**. **1 open: `calgary`** (Alberta → not in BCGN; needs a GeoNames account / Alberta
   gazetteer; kept, not removed, since the Calgary-HQ asset depends on it — operator decision).
 
+## Phase 3 — assembly (DONE 2026-07-31, commit cb982ebc)
+`assembly.ts` composes sections ONLY from already-bound `DerivedClaim`s. The assembly model supplies a
+`claim_id` + a sentence — never signal ids. Rejected BEFORE render (not flagged after): `unknown_claim_id`
+(sentence references no input claim = introduced sentence) and `sentence_introduces_new_fact` (salient/numeric
+term absent from the referenced claim = new fact, OR another claim's content pinned to this id). Accepted
+sentences carry the *referenced claim's* `source_signal_ids` — **binding travels with the claim, not the
+position.** Flash = top-ranked bound claim carrying its own ids (ranking is a PLACEHOLDER — `WO-FLASH-RANK-01`
+open). Golden (`assembly-golden.ts`) PASS: introduced sentence rejected pre-render; c1-content-under-c0-id
+rejected; Flash = most-corroborated bound claim. Plus the R3-in-loop golden case in `derivation-golden.ts`
+("…LNG shipments through Kitimat" → `claim_not_grounded_in_span [lng, kitimat]`).
+
+## Phase 4 — inference validity / entailment (DONE 2026-07-31)
+Implements Amendment 8. `derived-claim.ts` gains `validateInference(input, overClaimTexts, judge)` in **two
+layers**:
+1. **`inferenceAnchorCheck` — STRUCTURAL (deterministic, no model).** Every salient/numeric term the inference
+   asserts must appear in an anchor text; otherwise `inference_introduces_outside_term`. Catches an inference
+   that pulls in an OUTSIDE fact/term (golden case 1: "…triggers a CER regulatory review" → rejected `[cer]`,
+   the judge is never even called).
+2. **`EntailmentJudge` — the inference must FOLLOW from ONLY the anchor texts;** otherwise `inference_not_entailed`.
+   Catches the NON-SEQUITUR (golden case 3: anchors about a Uniper LNG offtake agreement → "Petronas Canada
+   should reassess its pricing strategy" — every salient term ["Petronas","Canada"] is anchored, so
+   term-containment ADMITS it; only entailment rejects it). Fail-closed: a missing/malformed/erroring judge
+   returns `entailed:false` — an inference is admitted only on an explicit well-formed `entailed:true`.
+
+**The check IS a model call — and this is a MODEL GATING A MODEL (correlated failure), stated here, not
+discovered later.** `inference-llm.ts` (`makeLlmEntailmentJudge`, temp 0, sees ONLY the anchor texts + the
+conclusion, instructed that missing info ⇒ not entailed and that a recommendation/prediction/causal claim is
+entailed only if the anchors state the link).
+
+**JUDGE MODEL — decorrelated from derivation (operator ruling 2026-07-31).** Derivation runs OpenAI `gpt-4o-mini`.
+The judge originally defaulted to the SAME model — maximal correlation. This gateway (`_shared/ai-gateway.ts`)
+has NO Claude route (`gpt-*`→OpenAI, `gemini-*`→Gemini, `sonar*`→Perplexity), so the strongest available
+decorrelation is a **different provider family: the judge now uses `gemini-2.5-flash` (Google)** — different
+training data + objective from OpenAI, which materially reduces the correlated-failure mode. The judge is a cheap
+call (anchors + conclusion only), so the extra provider is ~free. Standing constraint recorded in code: do NOT
+set the judge back to a `gpt-*` model while derivation uses `gpt-*`. (Also fixed a latent bug: `temperature`/
+`context` were passed as top-level fields that `AiGatewayRequest` does not define, so they were silently dropped;
+temp 0 now goes through `extraBody`, the phase tag through `extraContext`.) **This decorrelation is a mitigation,
+not a proof — the residual correlation is measured empirically by the judge confusion matrix (below), which is the
+number that decides whether DEDUCTIONS ship at all.** The non-sequitur case (case 3) is **provably not catchable by
+term-containment** — case 2 (valid deduction) and case 3 (non-sequitur) are INDISTINGUISHABLE to any structural
+check because both have every term anchored. Distinguishing them requires judging entailment, which for
+natural-language claims requires reasoning = a model. Therefore the same class of reasoning that produced a bad
+inference may also judge it sound; **the correlation is < 1 (separate temp-0 call, anchors-only context,
+fail-closed, explicit no-outside-facts instruction) but is NOT zero.** The deterministic guarantee stops at the
+anchor check; entailment is a **mitigation layer, not a proof.** Golden `inference-golden.ts` PASS (7 checks):
+case1 rejected structurally; case2 admitted; case3 rejected only via entailment; structural-alone proven to
+admit case3; broken judge fails closed. Note the golden's judge is a STUB standing in for the model — it proves
+the PLUMBING (structural catches case 1; the judge's verdict is honored; fail-closed), NOT that a live model
+reliably separates case 2 from case 3.
+
+## Phase 4 — EMPIRICAL judge measurement (2026-07-31, PECL 7/23–7/30, live Gemini judge)
+Ran the flag-gated side-by-side via the ephemeral read-only harness `grounding-review-ephemeral` (deployed →
+invoked read-only → **torn down same session**). Derivation over 59 main-tier signals produced **23 candidate
+inferences**; the operator **hand-labelled all 23 as N (does-not-entail)**; the live decorrelated judge
+(gemini-2.5-flash) was run against those labels.
+
+**Result — false-admits only (labels: 23 N / 0 E):**
+| | judge N (reject) | judge E (admit) |
+|---|---|---|
+| operator N (23) | 21 (agree) | **2 false-admit** |
+- **False-admit rate = 2/23 = 8.7%** (pairs #1, #5). Both had `structural_grounded=true` — the deterministic
+  anchor layer admitted them (every term anchored), so **entailment was the only line of defence and it failed on
+  those two.** Empirical confirmation of the Phase-4 limitation: term-containment cannot catch a non-sequitur; the
+  model judge is the sole guard, and it is imperfect. The two that got through were topically-tight but
+  unsupported ("proactive approach…enhancing community resilience" from two unrelated wildfire facts; "environmental
+  interdependence" from a two-hop smoke chain).
+
+### LIMIT ON THIS RESULT (recorded as a limit, not a footnote — operator ruling 2026-07-31)
+**The labelled set contains ZERO positive cases (0 of 23 entailed).** Therefore this measurement quantifies
+**false-admits only** — whether the judge waves through non-sequiturs, which is the dangerous direction. It
+**CANNOT distinguish a well-calibrated judge from one that rejects everything.** A judge hard-wired to return
+`entailed:false` would score 0 false-admits here and look perfect. **Before the judge's precision (its handling of
+genuine entailments) can be claimed, a SECOND labelled set containing real entailments is required.** Until that
+exists, the only supported claim is: *on this real-data sample the judge false-admits ~9% of non-sequiturs* —
+nothing about its true-positive behaviour.
+
+### SEPARATE FINDING — the inference GENERATOR produces non-entailing conclusions (generation-side defect)
+The derivation/deduction pass generated **23 conclusions from real 7/23–7/30 PECL signals and the operator
+labelled 0 of 23 as entailed.** The generator currently emits conclusions that **do not follow from their
+anchors** — the SAME defect as the "Strategic Deductions" blocks in report **6027f0ac**. **This is a
+generation-side problem, not only a judging-side one: even a perfect judge would reject the entire output.** The
+entailment judge is a *containment* layer over a generator that is itself unsound; fixing the judge does not make
+the DEDUCTIONS feature produce value. Tracked as **WO-DEDUCTION-GEN-01** (generator must produce entailing
+conclusions, or the deductions surface ships empty rather than fluent-but-unsupported). Upstream of judge tuning.
+
+### Side-finding surfaced by the run — client-alias over-inclusion (R4 scope guard too permissive)
+`buildGroundingDeps` resolves `clientAliases` from **every `organization` entity in the tenant with a non-empty
+alias set** — so the PECL alias list returned Greenpeace, Huawei, foreign intelligence services (BND/BfV/BIS/BND),
+Unist'ot'en, C-IRG, etc. (adversary/third-party monitored orgs), not just PECL's own identity. R4's client-impact
+guard (alias-in-span) is therefore **too permissive** — a claim naming any monitored org counts as client-relevant
+(only 1 matched this window, but the breadth is a latent defect). **Fix:** narrow Amendment-7a resolution to the
+client's own org-identity entity (e.g. the canonical client org row), not all tenant org entities. Tracked in
+WO-DEDUCTION-GEN-01's sibling scope-guard note.
+
+## Remaining before ship
+- **Blocked on WO-DEDUCTION-GEN-01** — the generator produces 0-entailment output on real data; shipping the
+  DEDUCTIONS surface now would ship fluent-but-unsupported conclusions. Fix generation first.
+- **Second labelled set with genuine entailments** required before any judge-precision claim.
+- Narrow the R4 client-alias resolution (side-finding above).
+- The ephemeral harness (`grounding-review-ephemeral`) is TORN DOWN; re-deploy from git history if the
+  side-by-side must be re-run after the generator fix.
+
 ## Build order (ruled 2026-07-30)
 1. **WO-REPORT-PERSIST-01** — DONE (storage_url + claim manifest + issuance cols + delivery halt).
 2. Binding-at-derivation per the design above.
