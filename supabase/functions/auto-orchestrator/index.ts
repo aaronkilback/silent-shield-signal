@@ -504,6 +504,8 @@ async function detectThreatPatternsInBackground(supabase: any, currentServiceKey
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${currentServiceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          // WO-CHECK5-BURNDOWN-01 cutover: detect-threat-patterns is internal-gated — send the shared secret.
+          'x-fortress-internal': Deno.env.get('FORTRESS_INTERNAL_SECRET') ?? '',
         },
         body: JSON.stringify({}),
         signal: controller.signal,

@@ -77,7 +77,9 @@ Deno.serve(async (req) => {
 
         if (auto_fix) {
           const { data: fixResult } = await supabase.functions.invoke('auto-summarize-incident', {
-            body: { batch_mode: true, limit: 20 }
+            body: { batch_mode: true, limit: 20 },
+            // WO-CHECK5-BURNDOWN-01 cutover: auto-summarize-incident is internal-gated — send the shared secret.
+            headers: { 'x-fortress-internal': Deno.env.get('FORTRESS_INTERNAL_SECRET') ?? '' },
           });
           fixResults.push({ issue_type: 'missing_title', result: fixResult });
         }
