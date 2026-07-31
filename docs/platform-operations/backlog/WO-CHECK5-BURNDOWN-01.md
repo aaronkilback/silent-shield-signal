@@ -54,6 +54,28 @@ revealed the full gated set's callers = ~14 (not 6) — gating knowledge-synthes
 - **Apply order after review:** apply cron migration + deploy the 2 fn callers FIRST → then deploy the 6 gated functions →
   then verify each cron's next run (response code + work-done evidence, not a 200 no-op). Any 401 → roll back that caller, not the gate.
 
+### Cutover EXECUTED 2026-07-31 — verification status (WO stays OPEN until the 3 nightly confirm)
+Applied migration `wo_check5_cutover_cron_headers` (crons re-created — jobnames stable, new jobids 226–230);
+deployed 2 fn callers (auto-orchestrator, data-quality-monitor) + 6 gated functions. Vault gate pre-verified
+(header present + resolves to len 44 on all 5 crons; value never printed).
+
+**Gate behavior verified via `net.http_post` (real cron path) + `net._http_response`:**
+| Function | with vault header | no internal header | status |
+|---|---|---|---|
+| detect-threat-patterns | **200**, `clients_scanned:9` (work) | 401 "missing internal authorization" | ✅ FULLY VERIFIED |
+| monitor-court-registry | **200**, "Scanned 2 court registry sources" (work) | (gate live) | ✅ FULLY VERIFIED |
+| auto-enrich-entities | — (not exercised) | 401 "missing internal authorization" | ⏳ gate live; header-auth UNVERIFIED |
+| autonomous-source-discovery | — | 401 "missing internal authorization" | ⏳ gate live; header-auth UNVERIFIED |
+| auto-summarize-incident | — | 401 "missing internal authorization" | ⏳ gate live; header-auth UNVERIFIED |
+| admin-feed-cleanup | — | 401 "missing internal authorization" (behind verify_jwt=true) | ✅ gate live; operator sends header |
+
+**UNVERIFIED until first post-deploy SCHEDULED run — DO NOT close the WO:**
+- **auto-enrich-entities** — next run ~tomorrow 03:00 UTC. Check: heartbeat/`net._http_response` = 200 (not 401), AND entities enriched (heartbeat `result_summary` items_processed > 0 / entities.updated_at bump).
+- **auto-summarize-incident** — ~tomorrow 03:30 UTC. Check: 200, AND incidents got titles/summaries (heartbeat `auto-summarize-incidents-nightly` result). Also the **data-quality-monitor→auto-summarize** fn-caller path (env-sourced header) is unexercised — confirm on its next auto_fix run.
+- **autonomous-source-discovery** — next run **Sunday 03:00 UTC** (weekly `0 3 * * 0`). Check: 200, AND sources inserted.
+- **auto-orchestrator→detect-threat** fn-caller path (env-sourced header) unexercised — confirm on auto-orchestrator's next run (detect-threat itself already accepts the header, so low risk).
+- **Any 401 on a scheduled run → roll back THAT caller's wiring (re-run its original cron command / revert the fn header), NOT the gate.** Original cron commands captured in `20260731210000_wo_check5_cutover_cron_headers.sql` header comment + git history.
+
 ### WO-CUTOVER-KSYNTH-01 (deferred — its own change)
 Gate knowledge-synthesizer + agent-mesh-dispatcher + generate-monitoring-proposals. Left UNGATED in prod for now
 (status quo, not a regression). Blockers to resolve first: (a) locate the job-worker that dispatches
