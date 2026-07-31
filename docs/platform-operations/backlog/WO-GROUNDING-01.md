@@ -111,6 +111,22 @@ now-improved gazetteer — historically, with 22 rows, even fewer proximate sign
 dedicated assessment:** replay historical PECL signals through the (now-fuller) resolver, compare to the relevance
 scores they actually received, and quantify systematic under-crediting of asset-proximate signals. NOT closed here.
 
+### STANDING RULE — gazetteer authoritativeness (ratified 2026-07-31)
+**Every `geo_place_gazetteer` entry carries its BCGN identifier (`bcgn_id`). A place with no authoritative BCGN
+entry is OMITTED, never approximated** (Altares principle — Altares has no BCGN entry, so it is not in the table).
+A centroid that resolves to the wrong place is worse than no resolution.
+- Column `bcgn_id text` added; the 13 sourced points backfilled with their BCGN URIs + authoritative geoms
+  (this also corrected Taylor, which had been added with MODEL coords 56.15,-120.68 → BCGN 56.15889,-120.68667 —
+  the rule caught exactly the defect it exists for; and Doig → the "Doig River 206" reserve).
+- **Region entries must be POLYGONS, not centroids.** PRRD + NRRM point-centroids REMOVED (PRRD's centroid sat in
+  the Rockies, west of PECL's ops). Re-add only as polygons from an authoritative boundary source; `ST_DWithin`
+  already handles polygon geometry, so no resolver change — data only. **Follow-up.**
+- **Backfill debt:** 22 legacy rows lack `bcgn_id` (vancouver, calgary, kitimat, fort st. john, dawson creek,
+  fort nelson, prince george, …). They hold coords of unknown provenance (possibly model-approximated at ship).
+  NOT removed yet (they are the high-volume covered places), but each must be **verified against BCGN + given an
+  id, and any without an authoritative match removed.** Tracked. Print of the 22: run
+  `select name from geo_place_gazetteer where bcgn_id is null`.
+
 ## Build order (ruled 2026-07-30)
 1. **WO-REPORT-PERSIST-01** — DONE (storage_url + claim manifest + issuance cols + delivery halt).
 2. Binding-at-derivation per the design above.
