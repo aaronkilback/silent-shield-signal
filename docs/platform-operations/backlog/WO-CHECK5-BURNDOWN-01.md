@@ -15,10 +15,53 @@ hand-rolled auth; every function on the shared `getCallerIdentity`/`userCanAcces
 ## Batch ledger (check-2, batches of 10)
 | Batch | Functions | Ruled | Result |
 |---|---|---|---|
-| 1 | admin-feed-cleanup, aegis-chat, agent-mesh-dispatcher, alert-delivery, analyze-sentiment-drift, assess-entity, audit-compliance-status, auto-enrich-entities, auto-summarize-incident, autonomous-source-discovery | PENDING operator ruling | — |
+| 1 | (10, see below) | RULED 2026-07-31 | check2 54→44, check5 214→204, total 294→274 |
 | 2–6 | (remaining 44) | not started | — |
 
-Baseline after batch 0 (pre-ruling): **check2=54, check5=214, check4=25, total=294.**
+Baseline: batch 0 = **294**; after batch 1 = **274** (check2 44, check5 204, check4 25, check3 1).
+
+### Batch 1 outcome (2026-07-31)
+- **CONTAINED (503, DEPLOYED):** aegis-chat (v110), assess-entity (v93).
+- **FIXED + DEPLOYED (getCallerIdentity + userCanAccessClient, via CLI bundle):** analyze-sentiment-drift,
+  audit-compliance-status. Service-role internal callers pass; user callers bound to client; anon rejected.
+- **CLEARED:** alert-delivery — `@security-exempt(check2/check5)` annotated.
+- **FIXED IN CODE, DEPLOY-BLOCKED:** agent-mesh-dispatcher, auto-enrich-entities, auto-summarize-incident,
+  autonomous-source-discovery, admin-feed-cleanup — all now call `requireInternalCaller` (new `_shared/require-internal-caller.ts`).
+- **Gate taught the shared helpers** requireInternalCaller/checkInternalCaller (check2 + check5) and userCanAccessClient
+  (check2). Negative test green.
+
+### ⚠ DEPLOY GATE for the 5 requireInternalCaller functions (do NOT deploy until BOTH done)
+`requireInternalCaller` fails CLOSED (503) if `FORTRESS_INTERNAL_SECRET` is unset — deploying before wiring
+would 503 every cron/internal caller. Required, in order:
+1. **Set `FORTRESS_INTERNAL_SECRET`** (Supabase secret + vault) — CREDENTIAL MUTATION, needs explicit operator "execute now".
+2. **Wire every caller to send `x-fortress-internal: <secret>`:** the cron `net.http_post` headers (migrations:
+   add_source_discovery_cron, schedule_auto_summarize_incidents, secure_cron_tokens, watch_list_content_scan_trigger)
+   + internal fn callers (knowledge-synthesizer→agent-mesh-dispatcher, data-quality-monitor→auto-summarize-incident).
+3. **Then deploy the 5 together.** Until then prod runs the OLD unauthenticated versions (interim exposure —
+   operator ruled "do not contain" these; they remain live pending the wire-up).
+
+### CHECK-4 LOG B addendum — the 12 policy-less tables: contents + service-role writers (2026-07-31)
+All 12 RLS-enabled, deny-by-default. **Every writer is service-role (edge fn or SECURITY-DEFINER RPC) — no anon/user writers.**
+Deny-by-default is the correct secure posture for all 12 (nothing non-service-role reads them). Tenant-data ones flagged.
+
+| Table | Holds | Service-role writer | Note |
+|---|---|---|---|
+| academy_agent_scores | academy agent judgment analytics | academy-score | internal analytics |
+| alert_delivery_allowed_recipients | alert email allowlist | (seed/RPC) | internal delivery config |
+| alert_emission_refusals | refused-alert audit (tier/reason/client_id/incident/signal) | (RPC) | audit |
+| **client_geo_assets** | **TENANT geo assets (client_id, geom, buffer_km)** | (geo pipeline/RPC) | ⚠ tenant — any future policy must be tenant-scoped, never open |
+| geo_place_gazetteer | place-name gazetteer (global reference) | (seed/RPC) | global, non-sensitive |
+| harness_retrieval_verifications | retrieval-harness QA telemetry | (RPC) | internal QA |
+| **hazard_pathway_scores** | **TENANT hazard scores (signal_id, client_id); 237 rows** | generate-executive-report | ⚠ tenant — deny-default safe; scoped policy only if a tenant surface reads it |
+| incident_gate_decisions | incident admission-gate audit | (RPC) | audit |
+| job_worker_lease | job-worker lease lock; 1 row | (RPC) | internal coordination |
+| **misrouted_signals** | **cross-tenant routing audit — intended_client_id + intended_client_name; 24,301 rows** | ingest-signal | ⚠⚠ HIGHEST — cross-tenant client identifiers; deny-by-default is critical, MUST never get an open policy |
+| operator_alert_bridge_state | operator alert-bridge cursor | alert-operator-bridge | internal operator state |
+| **report_claim_manifest** | **TENANT report claim provenance (report_id, assertion, bound_signal_id)** | generate-executive-report | ⚠ tenant — deny-default safe |
+
+Net: no live exposure — all writes service-role, all reads deny-by-default. The CHECK-4 finding is migration-hygiene
+(RLS not enabled in the creating migration; enabled out-of-band later) → burn down via WO-LEDGER-RECONCILE (git↔prod
+parity). Watch item: the 4 tenant-data tables must never receive an open (non-tenant-scoped) policy — especially misrouted_signals.
 
 ---
 
