@@ -28,7 +28,8 @@
     "check:openai-direct": "node scripts/check-no-direct-openai-fetch.mjs",
     "security-gate": "node scripts/security-gate/run.mjs",
     "security-gate:test": "node scripts/security-gate/negative-test.mjs",
-    "security-gate:baseline": "node scripts/security-gate/run.mjs --update-baseline"
+    "security-gate:baseline": "node scripts/security-gate/run.mjs --update-baseline",
+    "security-gate:drift": "node scripts/security-gate/drift.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

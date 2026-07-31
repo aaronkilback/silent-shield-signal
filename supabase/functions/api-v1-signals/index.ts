@@ -1,3 +1,4 @@
+// @security-exempt(check2): external API; client scope derived from the AUTHENTICATED credential (api_key.client_id via validateApiKey / OAuth token), never from request input — see validateAuth + scopedClientId (L284). — 2026-07-31
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {

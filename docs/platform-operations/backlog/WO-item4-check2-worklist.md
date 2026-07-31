@@ -67,3 +67,41 @@ For each: confirm whether the request-supplied client/tenant/entity id is valida
 | 59 | thread-weaver | <function> | 255 |
 | 60 | trajectory-positioner | <function> | 157 |
 | 61 | webhook-dispatcher | <function> | 40 |
+
+---
+## Triage round 1 — 2026-07-31 (INC-AITOOLS-XTENANT follow-on)
+
+### CLEARED (annotated `@security-exempt(check2)`, removed from baseline; 61 → 59)
+- **api-v1-signals** — external API; client scope derived from the AUTHENTICATED credential
+  (`api_key.client_id` via `validateApiKey`, or the OAuth token), never from request input
+  (`scopedClientId`, L284). Externally reachable by design via `x-api-key` or `Authorization: Bearer`.
+- **oauth-token** — OAuth2 `client_credentials` endpoint (verify_jwt=false by necessity). `client_id`
+  is an OAuth CLIENT credential validated against a `client_secret` hash (`oauth_clients`), not a tenant.
+
+### NOT CLEARED — confirmed unsafe (the POI/person-entity class at the centre of the incident)
+- **scan-client-staff** — verify_jwt=true (any authenticated user). Reads `client_id` from body, verifies
+  the client *exists* but NOT that the caller belongs to its tenant; then queues `entity-deep-scan` +
+  `osint-entity-scan` (HIBP, dark web, social) on that client's person entities. **Any authenticated
+  user can trigger OSINT collection on any client's staff.** Needs caller tenant_users membership check.
+- **investigate-poi** — **verify_jwt=false (UNAUTHENTICATED).** Reads `entity_id` from body, loads that
+  entity by id (no tenant scope), runs full OSINT (Google CSE, HIBP, people-search/court sites), stores
+  entity_content + creates signals. **Any unauthenticated caller can run a POI investigation on any
+  entity_id.** Critical.
+- **generate-poi-report** — **verify_jwt=false (UNAUTHENTICATED).** Reads `entity_id`, returns the full
+  AI POI dossier (all OSINT content, signals, watch-list status, relationship graph) for that entity.
+  **"entity-scoped by design" annotation VERIFIED FALSE as a safety claim:** entity-scoped ≠ access-
+  controlled; it derives NO client/authorization from the caller and returns any entity's dossier to any
+  unauthenticated caller. This is a direct unauthenticated read path to the 788-person-entity PII class.
+- **api-key-management** — verify_jwt=true + admin/super_admin gate, but reads `client_id` from body and
+  creates api_keys for it WITHOUT verifying the admin belongs to that client's tenant. Admin-gated but
+  not tenant-scoped — cross-tenant key minting possible if app-role admin is not tenant-bound.
+- **webhook-dispatcher** — **verify_jwt=false.** Takes a `signal` (with `client_id`) from the request and
+  dispatches to that client's registered webhooks. Externally spoofable: forge a signal → trigger webhook
+  deliveries. Needs an internal-only auth (shared secret) or verify_jwt=true + caller check.
+
+## Deploy-path drift (item 1) — 40 orphans
+40 edge functions are deployed to prod (ACTIVE) but ABSENT from the repo — reached prod via MCP/direct
+deploy without a PR, invisible to the PR gate. Baselined in `drift-baseline.json`; new orphans now FAIL
+`security-gate:drift`. Burn-down = land each to git or de-provision. Notable security-relevant orphans:
+`auth-email-hook`, `cipher-*` (7), `generate-decision-candidate`, `compute-client-relevance`,
+`fetch-url-content`, `heygen-webhook`, `ingest-screenshot-evidence`, `monitor-x-single`, `x-query-probe`.
