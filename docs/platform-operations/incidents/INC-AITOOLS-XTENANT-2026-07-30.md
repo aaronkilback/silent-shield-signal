@@ -141,6 +141,24 @@ Supabase analytics/log pipeline, not the DB table. **No in-database auth trail e
 out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
 org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
 
+## Amendment 7 2026-07-31 — 3Si sourcing reclassified: operator-corroborated + platform provenance gap
+
+> ~~Amendment 4 / Amendment 6 framing: statement 3 (sensitive fields from 3Si vendor documents) is
+> "NOT CORROBORATED" / "uncorroborated."~~ — **SUPERSEDED / RECLASSIFIED 2026-07-31.**
+
+**Corrected classification:** the 3Si sourcing of the special-category fields (`termination_reason`,
+`former_employee`, `nationality`, `ethnicity` on entities `1e506c55` and `5ac0636c`) is
+**OPERATOR-CORROBORATED** — the operator has identified the source document and holds it. This is **not**
+an unsupported claim. What is absent is **platform-side provenance**: no `source_investigation`, no
+`document_entity_mentions`, no `ingested_documents` 3Si-tagged record links these fields to the document
+inside Fortress. **Record this as a PROVENANCE GAP (platform did not capture the source lineage), not as an
+uncorroborated claim.** Classification of the data as in-scope personal information under Fortress's control
+is unchanged.
+
+**Preservation:** the source document is operator-held (off-platform — no platform copy exists in
+`ingested_documents`). It must be **preserved by the operator under the legal hold** alongside entities
+`1e506c55` / `5ac0636c` (already `legal_hold=true`). If a platform copy is ever ingested, it inherits the hold.
+
 ## Amendment 6 2026-07-31 — highest-sensitivity subset (7 entities) + entity-governance finding
 
 **7 of the 788 PECL person entities are a deeply-collected core.** Against these named individuals,
