@@ -141,6 +141,37 @@ Supabase analytics/log pipeline, not the DB table. **No in-database auth trail e
 out access (adds to: edge request logs not retained, `audit_events` starts 2026-03-05 / 98% null-actor, no
 org platform audit log on Pro). Exploitation remains neither confirmable nor deniable at every log layer.
 
+## Amendment 6 2026-07-31 — highest-sensitivity subset (7 entities) + entity-governance finding
+
+**7 of the 788 PECL person entities are a deeply-collected core.** Against these named individuals,
+**automated OSINT collection was run WITHOUT a human-initiated request** (0 human-created content) —
+content types on record: `web_search`, `sanctions_screening` (OFAC/UN/EU/Interpol/PEP/SEC), `criminal_records`,
+`public_records` (property), `dark_web`, `associate_network`, `digital_footprint`, `relationship`, and
+**photographs**. All 7 are PECL-scoped. Structure (no values; 8-char id prefixes):
+- `3c0deba7` (2026-01-20, automated, deep-scan report), `ca8c3de8` (2026-03-12, manual, 24 content),
+  `1e682989` (2026-03-12, manual, 8), `82ff4e96` (2026-03-14, automated, doc-linked, 20),
+  `162e91c6` (2026-03-16, manual, 19), **`1e506c55` (2026-04-03, manual, 155 content + 15 photos +
+  special-category — the most deeply collected; the individual the operator attributed to 3Si)**,
+  `a9a4047c` (2026-04-03, manual, 34).
+- **All 7 were reachable via the unauthenticated `generate-poi-report` / `investigate-poi` endpoints
+  throughout the corrected exposure window (2026-04-02 → 2026-07-31)** — both accepted any `entity_id`.
+- Artifacts: all 7 hold the collected `entity_content` dossier; 5 carry a `deep_scan_summary`; no persisted
+  standalone POI report; whether a dossier was returned to a caller during the window is unprovable (no logs).
+- **Enrichment TRIGGER per entity is NOT recorded** — `entity_content.metadata` has only `scan_type`, no
+  invoker/`requested_by`; `autonomous_actions_log` has 0 rows; per-invocation logs not retained. Cannot
+  attribute agent-chat vs scan-client-staff vs monitoring per entity.
+- The 3Si sourcing (special-category fields on `1e506c55` and `5ac0636c`) remains **uncorroborated** — no
+  `source_investigation`/document link on either.
+
+### Entity-governance finding (recorded separately)
+- **No subject-of-interest gate exists.** Entity creation is **extraction-confidence-based**
+  (`correlate-entities`: `confidence >= MIN_AUTO_CREATE_CONFIDENCE` auto-creates; `create-entity`: name+type
+  validity only). Any named individual extracted from a signal/document with sufficient confidence becomes a
+  person entity — including incidental/bystander individuals (consistent with 605/788 name-only records).
+- **Enrichment is AI-agent-invoked** (`agent-chat` tool calls to `entity-deep-scan`/`osint-entity-scan`/
+  `investigate-poi`), plus manual batch (`scan-client-staff`) and the `active_monitoring_enabled` monitoring
+  path (`correlate-entities`). No cron schedules deep collection; it is not automatic on creation.
+
 ## Amendment 5 2026-07-31 — EXPOSURE WINDOW CORRECTED (NOT bounded to 2026-06-12)
 
 > ~~Prior framing: the exposure window was 2025-11-22 → 2026-06-12 (ai-tools-query hard-disabled
