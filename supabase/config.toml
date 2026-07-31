@@ -1,10 +1,5 @@
 project_id = "kpuqukppbmwebiptqmog"
 
-# EPHEMERAL — WO-GROUNDING-01 review harness. verify_jwt=false because auth is the dedicated internal header
-# (requireInternalCaller / x-fortress-internal), NOT a JWT. Remove this block at teardown, same session.
-[functions.grounding-review-ephemeral]
-verify_jwt = false
-
 [functions.view-sra-report]
 verify_jwt = false
 
