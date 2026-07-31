@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity } from "../_shared/supabase-client.ts";
 
 interface BlockedTerm {
   id: string;
@@ -24,17 +24,14 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    
-    const supabase = createServiceClient();
+    // WO-CHECK5-BURNDOWN-01: shared caller gate replaces hand-rolled optional-auth. Require authentication
+    // (service-role internal or user); anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+    if (caller.kind === "anonymous") return errorResponse("authentication required", 401);
 
-    // Get user from auth header
-    let userId: string | null = null;
-    if (authHeader) {
-      const token = authHeader.replace("Bearer ", "");
-      const { data: { user } } = await supabase.auth.getUser(token);
-      userId = user?.id || null;
-    }
+    const supabase = createServiceClient();
+    const userId: string | null = caller.kind === "user" ? caller.userId : null;
 
     const { content, content_type, tenant_id, action_type } = await req.json();
 

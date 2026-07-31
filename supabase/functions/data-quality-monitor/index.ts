@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity } from "../_shared/supabase-client.ts";
 
 /**
  * Data Quality Monitor for Fortress
@@ -37,6 +37,12 @@ const GENERIC_DESCRIPTIONS = [
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // WO-CHECK5-BURNDOWN-01: caller gate. Service-role internal callers (cron + dashboard-ai-assistant) pass;
+  // authenticated users allowed; anon/unauthorized rejected. Global QA op — no per-client scope. Fail closed.
+  const caller = await getCallerIdentity(req);
+  if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+  if (caller.kind === "anonymous") return errorResponse("authentication required", 401);
 
   try {
     const supabase = createServiceClient();

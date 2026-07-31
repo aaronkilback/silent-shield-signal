@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
 
@@ -7,10 +7,20 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    // WO-CHECK5-BURNDOWN-01: AEGIS tool (dashboard-ai-assistant). Service-role internal calls pass; user
+    // callers must belong to the requested client's tenant; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+    if (caller.kind === "anonymous") return errorResponse("authentication required", 401);
+
     const { client_id, policy_document_content, policy_name } = await req.json();
     console.log('Mapping policy to controls for client:', client_id);
 
     const supabase = createServiceClient();
+
+    if (caller.kind === "user" && !(await userCanAccessClient(supabase, caller.userId, client_id))) {
+      return errorResponse("Client not found", 404);
+    }
 
     // Fetch client configuration to understand current controls
     const { data: client, error: clientError } = await supabase

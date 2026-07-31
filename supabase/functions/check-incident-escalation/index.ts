@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 import { evaluateIncidentGate, persistGateDecision, deriveIncidentClassification, writeIncidentClassification } from "../_shared/incident-creation-gate.ts";
 
 const corsHeaders = {
@@ -12,6 +13,12 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // WO-CHECK5-BURNDOWN-01: caller gate. Service-role internal callers (process-intelligence-document) pass;
+    // user callers must belong to the signal's client tenant; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return new Response(JSON.stringify({ error: caller.error }), { status: caller.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (caller.kind === "anonymous") return new Response(JSON.stringify({ error: 'authentication required' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
     const { signalId } = await req.json();
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -29,6 +36,11 @@ Deno.serve(async (req) => {
 
     if (signalError || !signal) {
       throw new Error('Signal not found');
+    }
+
+    // Bind user callers to the signal's client tenant (service-role internal callers pass).
+    if (caller.kind === "user" && !(await userCanAccessClient(supabase, caller.userId, signal.client_id))) {
+      return new Response(JSON.stringify({ error: 'Signal not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // Get config

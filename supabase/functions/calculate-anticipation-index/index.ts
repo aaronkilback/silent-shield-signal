@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 
 interface AnticipationIndexResult {
   overallScore: number;
@@ -23,7 +23,17 @@ Deno.serve(async (req) => {
 
   try {
     const { clientId } = await req.json().catch(() => ({}));
-    
+
+    // WO-CHECK5-BURNDOWN-01: caller gate. Service-role internal callers may run globally; user callers must
+    // supply a client_id they belong to; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+    if (caller.kind === "anonymous") return errorResponse("authentication required", 401);
+    if (caller.kind === "user") {
+      if (!clientId) return errorResponse("client_id required", 400);
+      if (!(await userCanAccessClient(supabase, caller.userId, clientId))) return errorResponse("Not found", 404);
+    }
+
     console.log('Calculating Anticipation Index', clientId ? `for client ${clientId}` : 'globally');
 
     // 1. Get automation metrics for accuracy data (last 30 days)

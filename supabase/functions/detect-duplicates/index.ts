@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 
 // Simple SHA-256 hash function
 async function hashContent(text: string): Promise<string> {
@@ -127,6 +127,12 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   try {
+    // WO-CHECK5-BURNDOWN-01: caller gate. Service-role internal callers (ingest-signal) pass; user callers
+    // must supply a client_id they belong to; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
+    if (caller.kind === "anonymous") return errorResponse("authentication required", 401);
+
     const {
       type,
       content,
@@ -146,6 +152,12 @@ Deno.serve(async (req) => {
     console.log(`Checking duplicates for ${type}${client_id ? ` (client: ${client_id})` : ''}`);
 
     const supabase = createServiceClient();
+
+    // Bind user callers to the client scope (service-role internal callers pass unrestricted).
+    if (caller.kind === "user") {
+      if (!client_id) return errorResponse("client_id required", 400);
+      if (!(await userCanAccessClient(supabase, caller.userId, client_id))) return errorResponse("Not found", 404);
+    }
 
     const signalMeta: {
       near_duplicate_threshold_used?: number;

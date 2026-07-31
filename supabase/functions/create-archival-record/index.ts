@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 
 // Access EdgeRuntime from global scope for background tasks
 // (In some runtimes this may be undefined, so we guard usage.)
@@ -15,6 +16,12 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // WO-CHECK5-BURNDOWN-01: caller gate. Service-role internal callers pass; user callers must belong to
+    // the record's client tenant; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return new Response(JSON.stringify({ error: caller.error }), { status: caller.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (caller.kind === "anonymous") return new Response(JSON.stringify({ error: 'authentication required' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
     const {
       filename,
       storagePath,
@@ -51,6 +58,11 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Bind user callers to the record's client tenant (service-role internal callers pass).
+    if (caller.kind === "user" && !(await userCanAccessClient(supabase, caller.userId, clientId))) {
+      return new Response(JSON.stringify({ error: 'Client not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     const sizeKB = (fileSize / 1024).toFixed(1);
     const sizeMB = (fileSize / (1024 * 1024)).toFixed(2);

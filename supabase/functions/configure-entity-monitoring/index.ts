@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getCallerIdentity, userCanAccessClient } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,6 +51,12 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // WO-CHECK5-BURNDOWN-01: caller gate. Service-role internal callers pass; user callers bound to the
+    // entity's client tenant below; anon/unauthorized rejected. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === "unauthorized") return new Response(JSON.stringify({ error: caller.error }), { status: caller.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (caller.kind === "anonymous") return new Response(JSON.stringify({ error: "authentication required" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
     const body: ConfigureMonitoringRequest = await req.json();
 
     // Validate entity identification
@@ -100,6 +107,11 @@ Deno.serve(async (req: Request) => {
         );
       }
       entity = data;
+    }
+
+    // Bind user callers to the resolved entity's client tenant (service-role internal callers pass).
+    if (entity && caller.kind === "user" && !(await userCanAccessClient(supabase, caller.userId, entity.client_id))) {
+      return new Response(JSON.stringify({ success: false, error: "Entity not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // Build update payload
