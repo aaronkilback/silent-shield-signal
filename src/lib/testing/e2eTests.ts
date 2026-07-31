@@ -4921,15 +4921,6 @@ export const threatIntelligenceTests = {
       },
     },
     {
-      name: 'identify-precursor-indicators function responds',
-      fn: async () => {
-        const { data, error } = await supabase.functions.invoke('identify-precursor-indicators', {
-          body: { test_mode: true }
-        });
-        // Should respond
-      },
-    },
-    {
       name: 'calculate-anticipation-index function responds',
       fn: async () => {
         const { data, error } = await supabase.functions.invoke('calculate-anticipation-index', {
@@ -5374,15 +5365,6 @@ export const geospatialMappingTests = {
       name: 'process-geospatial-map function responds',
       fn: async () => {
         const { data, error } = await supabase.functions.invoke('process-geospatial-map', {
-          body: { test_mode: true }
-        });
-        // Should respond
-      },
-    },
-    {
-      name: 'fuse-geospatial-intelligence function responds',
-      fn: async () => {
-        const { data, error } = await supabase.functions.invoke('fuse-geospatial-intelligence', {
           body: { test_mode: true }
         });
         // Should respond

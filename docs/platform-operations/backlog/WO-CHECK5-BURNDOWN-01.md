@@ -12,6 +12,18 @@ hand-rolled auth; every function on the shared `getCallerIdentity`/`userCanAcces
 - Prefer migrating to the shared `getCallerIdentity` gate over new bespoke checks (bespoke checks are what failed).
 - Contain on sight anything unauthenticated with a data-plane path.
 
+### STANDING RULE — callerless is not proven by an invoke() search (2026-07-31, ratified)
+**A function reachable as an AEGIS tool, or dispatched via the job queue, will NOT appear in an `invoke("fn")`
+search.** Before declaring ANY function callerless (de-provision) or classifying its invoker in triage, ALSO search:
+1. **AEGIS tool-routing tables** in `dashboard-ai-assistant/index.ts` AND `traveller-aegis-chat/index.ts`
+   (`case "<tool_name>":` → `invoke("<fn>")`) — tool names are snake_case, function slugs are kebab-case.
+2. **Job-queue dispatch types** (`type: '<fn>'` / `enqueueJob` / idempotencyKey) across all functions.
+3. Frontend, other edge functions, cron/pg_cron, migrations, docs, and external curl/API integrations.
+**Evidence:** batch-3 de-provision — an `invoke()` scan called 5 functions callerless; the full search found live
+callers on 3 (`map-policy-to-controls` via the `map_policy_to_controls` AEGIS tool; `generate-monitoring-proposals`
+via the job queue from agent-self-learning; `learn-from-investigations` dormant-but-documented). Deleting on the
+scan alone would have broken the AEGIS chat tool + the monitoring-proposal job.
+
 ## Batch ledger (check-2, batches of 10)
 | Batch | Functions | Ruled | Result |
 |---|---|---|---|
