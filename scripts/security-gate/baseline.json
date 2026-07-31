@@ -1,7 +1,6 @@
 [
   "check2|supabase/functions/data-quality-monitor/index.ts|<function>",
   "check2|supabase/functions/guardian-check/index.ts|<function>",
-  "check2|supabase/functions/ingest-ioc-csv/index.ts|<function>",
   "check2|supabase/functions/monitor-wildfire-comprehensive/index.ts|<function>",
   "check2|supabase/functions/optimize-defense-strategies/index.ts|<function>",
   "check2|supabase/functions/osint-entity-scan/index.ts|<function>",
@@ -141,7 +140,6 @@
   "check5|supabase/functions/ingest-email/index.ts|<function>",
   "check5|supabase/functions/ingest-expert-media/index.ts|<function>",
   "check5|supabase/functions/ingest-intelligence/index.ts|<function>",
-  "check5|supabase/functions/ingest-ioc-csv/index.ts|<function>",
   "check5|supabase/functions/ingest-world-geography/index.ts|<function>",
   "check5|supabase/functions/ingest-world-knowledge/index.ts|<function>",
   "check5|supabase/functions/intelligence-engine/index.ts|<function>",

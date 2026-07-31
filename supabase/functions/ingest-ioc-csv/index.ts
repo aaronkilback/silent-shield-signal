@@ -1,3 +1,5 @@
+// @security-exempt(check2): external API — client scope derived from the AUTHENTICATED credential (hashed x-api-key → api_keys.client_id via validateApiKey), never from request input — 2026-07-31
+// @security-exempt(check5): same — request-handling gated by the hashed x-api-key credential (api-v1-signals pattern), not getCallerIdentity, because scope is credential-bound — 2026-07-31
 /**
  * ingest-ioc-csv
  *
@@ -18,6 +20,35 @@
  */
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+
+// ── API-key auth (api-v1-signals pattern) ──────────────────────────────────────
+// WO-CHECK5-BURNDOWN-01: client scope is derived from the AUTHENTICATED credential
+// (hashed x-api-key → api_keys.client_id), NEVER from the request body. This closes the
+// prior path where any authenticated caller could ingest IOCs scoped to any client_id.
+async function validateApiKey(
+  supabase: any,
+  apiKeyHeader: string | null,
+): Promise<{ valid: true; client_id: string | null } | { valid: false; error: string }> {
+  if (!apiKeyHeader) return { valid: false, error: "Missing X-API-Key header" };
+
+  const data = new TextEncoder().encode(apiKeyHeader);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const keyHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+  const { data: apiKey, error } = await supabase
+    .from("api_keys")
+    .select("id, client_id, permissions, is_active, expires_at")
+    .eq("key_hash", keyHash)
+    .single();
+
+  if (error || !apiKey) return { valid: false, error: "Invalid API key" };
+  if (!apiKey.is_active) return { valid: false, error: "API key is inactive" };
+  if (apiKey.expires_at && new Date(apiKey.expires_at) < new Date()) return { valid: false, error: "API key has expired" };
+
+  await supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", apiKey.id);
+  // Scope comes from the credential. A null client_id credential is not permitted to ingest.
+  return { valid: true, client_id: apiKey.client_id ?? null };
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -175,15 +206,24 @@ Deno.serve(async (req) => {
       return errorResponse('Invalid JSON body', 400);
     }
 
-    // Health check
+    // Health check (unauthenticated probe — no data-plane effect)
     if (body.health_check) {
       return successResponse({ status: 'healthy', function: 'ingest-ioc-csv', timestamp: new Date().toISOString() });
     }
 
+    // ── AUTH: hashed x-api-key → api_keys → client scope from the credential (api-v1-signals pattern) ──
+    const auth = await validateApiKey(supabase, req.headers.get('x-api-key'));
+    if (!auth.valid) return errorResponse(auth.error, 401);
+    if (!auth.client_id) return errorResponse('API key is not scoped to a client; cannot ingest', 403);
+    // Scope is the credential's client_id — NEVER the request body. Reject a mismatched body client_id.
+    if (typeof body.client_id === 'string' && body.client_id.trim() && body.client_id.trim() !== auth.client_id) {
+      return errorResponse('client_id in body does not match the API key credential', 403);
+    }
+    const clientId = auth.client_id;
+
     const csvContent   = typeof body.csv_content   === 'string' ? body.csv_content.trim()  : null;
     const articleTitle = typeof body.article_title === 'string' ? body.article_title.trim() : 'Microsoft Defender TI — IOC Export';
     const articleUrl   = typeof body.article_url   === 'string' ? body.article_url.trim()   : '';
-    const clientId     = typeof body.client_id     === 'string' ? body.client_id.trim()     : null;
 
     if (!csvContent) {
       return errorResponse('csv_content is required. Paste the raw CSV text from the Defender TI export.', 400);
