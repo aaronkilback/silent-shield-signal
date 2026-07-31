@@ -15,6 +15,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { enqueueJob } from "../_shared/queue.ts";
+import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 
 const THREAT_SIGNAL_TYPES = new Set(['sabotage', 'protest', 'threat', 'violence', 'theft']);
 
@@ -46,6 +47,11 @@ const COMMON_NOUN_STOPLIST = new Set([
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // WO-CHECK5-BURNDOWN-01: machine-only (cron + auto-orchestrator). Internal-caller gate BEFORE
+  // service-role client + body. Joins the batch-1 cutover group (deploy with FORTRESS_INTERNAL_SECRET wired).
+  const gate = requireInternalCaller(req);
+  if (gate) return gate;
 
   try {
     const supabase = createServiceClient();
