@@ -180,9 +180,57 @@ admit case3; broken judge fails closed. Note the golden's judge is a STUB standi
 the PLUMBING (structural catches case 1; the judge's verdict is honored; fail-closed), NOT that a live model
 reliably separates case 2 from case 3.
 
+## Phase 4 — EMPIRICAL judge measurement (2026-07-31, PECL 7/23–7/30, live Gemini judge)
+Ran the flag-gated side-by-side via the ephemeral read-only harness `grounding-review-ephemeral` (deployed →
+invoked read-only → **torn down same session**). Derivation over 59 main-tier signals produced **23 candidate
+inferences**; the operator **hand-labelled all 23 as N (does-not-entail)**; the live decorrelated judge
+(gemini-2.5-flash) was run against those labels.
+
+**Result — false-admits only (labels: 23 N / 0 E):**
+| | judge N (reject) | judge E (admit) |
+|---|---|---|
+| operator N (23) | 21 (agree) | **2 false-admit** |
+- **False-admit rate = 2/23 = 8.7%** (pairs #1, #5). Both had `structural_grounded=true` — the deterministic
+  anchor layer admitted them (every term anchored), so **entailment was the only line of defence and it failed on
+  those two.** Empirical confirmation of the Phase-4 limitation: term-containment cannot catch a non-sequitur; the
+  model judge is the sole guard, and it is imperfect. The two that got through were topically-tight but
+  unsupported ("proactive approach…enhancing community resilience" from two unrelated wildfire facts; "environmental
+  interdependence" from a two-hop smoke chain).
+
+### LIMIT ON THIS RESULT (recorded as a limit, not a footnote — operator ruling 2026-07-31)
+**The labelled set contains ZERO positive cases (0 of 23 entailed).** Therefore this measurement quantifies
+**false-admits only** — whether the judge waves through non-sequiturs, which is the dangerous direction. It
+**CANNOT distinguish a well-calibrated judge from one that rejects everything.** A judge hard-wired to return
+`entailed:false` would score 0 false-admits here and look perfect. **Before the judge's precision (its handling of
+genuine entailments) can be claimed, a SECOND labelled set containing real entailments is required.** Until that
+exists, the only supported claim is: *on this real-data sample the judge false-admits ~9% of non-sequiturs* —
+nothing about its true-positive behaviour.
+
+### SEPARATE FINDING — the inference GENERATOR produces non-entailing conclusions (generation-side defect)
+The derivation/deduction pass generated **23 conclusions from real 7/23–7/30 PECL signals and the operator
+labelled 0 of 23 as entailed.** The generator currently emits conclusions that **do not follow from their
+anchors** — the SAME defect as the "Strategic Deductions" blocks in report **6027f0ac**. **This is a
+generation-side problem, not only a judging-side one: even a perfect judge would reject the entire output.** The
+entailment judge is a *containment* layer over a generator that is itself unsound; fixing the judge does not make
+the DEDUCTIONS feature produce value. Tracked as **WO-DEDUCTION-GEN-01** (generator must produce entailing
+conclusions, or the deductions surface ships empty rather than fluent-but-unsupported). Upstream of judge tuning.
+
+### Side-finding surfaced by the run — client-alias over-inclusion (R4 scope guard too permissive)
+`buildGroundingDeps` resolves `clientAliases` from **every `organization` entity in the tenant with a non-empty
+alias set** — so the PECL alias list returned Greenpeace, Huawei, foreign intelligence services (BND/BfV/BIS/BND),
+Unist'ot'en, C-IRG, etc. (adversary/third-party monitored orgs), not just PECL's own identity. R4's client-impact
+guard (alias-in-span) is therefore **too permissive** — a claim naming any monitored org counts as client-relevant
+(only 1 matched this window, but the breadth is a latent defect). **Fix:** narrow Amendment-7a resolution to the
+client's own org-identity entity (e.g. the canonical client org row), not all tenant org entities. Tracked in
+WO-DEDUCTION-GEN-01's sibling scope-guard note.
+
 ## Remaining before ship
-- **Ship behind a flag** (do NOT replace the existing prose path) + run both paths on **7/23–7/30 PECL** and
-  print a side-by-side: claims produced, claims rejected + why, the fixture results.
+- **Blocked on WO-DEDUCTION-GEN-01** — the generator produces 0-entailment output on real data; shipping the
+  DEDUCTIONS surface now would ship fluent-but-unsupported conclusions. Fix generation first.
+- **Second labelled set with genuine entailments** required before any judge-precision claim.
+- Narrow the R4 client-alias resolution (side-finding above).
+- The ephemeral harness (`grounding-review-ephemeral`) is TORN DOWN; re-deploy from git history if the
+  side-by-side must be re-run after the generator fix.
 
 ## Build order (ruled 2026-07-30)
 1. **WO-REPORT-PERSIST-01** — DONE (storage_url + claim manifest + issuance cols + delivery halt).
