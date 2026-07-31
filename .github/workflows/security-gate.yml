@@ -11,6 +11,10 @@ on:
   push:
     branches: [main]
 
+# Least-privilege: read-only GITHUB_TOKEN, explicit grants only if ever needed.
+permissions:
+  contents: read
+
 jobs:
   security-gate:
     runs-on: ubuntu-latest
