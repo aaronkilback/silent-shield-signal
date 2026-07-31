@@ -58,6 +58,75 @@ its `over` claim texts in isolation; if a verifier cannot reconstruct the conclu
 alone (no outside facts), it is rejected. This is where DEDUCTIONS live and is the product's analytic
 value — so the bar is entailment, not mere topical adjacency.
 
+## Phase 1 (ACCEPTED 2026-07-31) + Phase 2 real resolvers (stopped before derivation)
+Module `supabase/functions/_shared/grounding/derived-claim.ts` (types + constructor), `resolvers.ts` (real
+GroundingDeps factory), `phase1-fixtures.ts` (4 fixtures). Constructor rules R1 (>=1 signal id) / R2 (span is a
+verbatim excerpt of its signal) / R4 entity-scope guard (alias-in-span OR Gate-3 asset link) / R3 grounding.
+
+**R3 rulings applied:** kept as a PRIMARY check (not a backstop); numeric fabrication class added (%, currency,
+counts, years, durations — the number must come from a span); every R3 rejection logged via `deps.onReject`
+with offending terms + claim text. First tuning item the log surfaced: possessive `Regulator's` → salient
+"regulators" ≠ span "Regulator" — a real paraphrase false-positive; **not loosened** (candidate for stemming).
+
+**Fixtures (all pass):** (a) wildfire SIG-2026-027390 → "Uniper LNG" REJECT `claim_not_grounded_in_span [lng, uniper]`;
+(b) "Petronas Canada has stakes" over SIG-2026-026745 REJECT `client_scope_unbacked`; **(c) asset-proximate
+SIG-2026-025641 (near Taylor) CONSTRUCTS via the Gate-3 asset link**; (control) grounded wildfire CONSTRUCTS.
+
+**Gate-3 asset-link (Amendment 7b) — RPC `public.grounding_resolve_asset_links(client_id, signal_ids[])`** created
+(SECURITY DEFINER; place→`geo_place_gazetteer`→`ST_DWithin` to `client_geo_assets`). Proven: SIG-2026-025641 →
+place 'taylor' → **Montney/Fort St. John upstream 15.3 km, within the 120 km buffer → resolved=true**; wildfire +
+killer-whale → false.
+
+### DATA GAPS found (not code gaps — reported per ruling)
+1. **`PCL` missing** from the PECL org-entity (85836824 "PETRONAS Canada") alias set. Present: PECL, Petronas
+   Canada Ltd, Progress Energy Canada, Progress Energy, Petroliam Nasional Canada. **`PCL` should be added** or a
+   claim using "PCL" won't alias-resolve. (Bare "Petronas"/"Progress"/"PCL" intentionally excluded as ambiguous.)
+2. **`geo_place_gazetteer` coverage gap:** "Taylor" was absent (22 rows total) → blocked Gate-3 resolution for a
+   signal squarely in PECL's Montney backyard. Added 'taylor' (56.15,-120.68) via `wo_grounding_gazetteer_taylor`.
+   **Architectural dependency:** Amendment 7b is only as good as gazetteer coverage + place extraction from text
+   (SIG-2026-025641 also had `location = null`; the place was only in `normalized_text`). Gazetteer completeness
+   for the client's operating area is a prerequisite, tracked here.
+
+### Gazetteer coverage pass (2026-07-31, before derivation)
+- **Scope (2a):** in 30d signals, 7 PECL-footprint places were absent from the 22-row gazetteer (Tumbler Ridge ×4,
+  Farmington/Chetwynd/Peace River RD/Blueberry/Doig/Prophet River ×1) — so it was a **live Gate-3 relevance defect**
+  for smaller Montney towns, not merely a prerequisite (the high-volume places — Calgary/Kitimat/FSJ — were covered).
+- **Populate (2b):** added 14 places (gazetteer 23 → **37**) with coordinates from **BC Geographical Names**
+  (apps.gov.bc.ca/pub/bcgnws), parsed **deterministically** from recorded WGS84 lat/lon — NOT model-generated.
+  **Vigilance caught 3 bad geocodes** (would have been fabrication-by-geocoding): 'Blueberry Creek' (Kootenay 49°N)
+  and 'Halfway House' (Cariboo 52°N) were wrong-region matches → replaced with the correct NE-BC First Nations
+  reserves (Blueberry River 205, Halfway River 168); **'Altares' has no BCGN entry → OMITTED, not fabricated.**
+- **Verify (2c):** 11/14 new places resolve to a PECL asset buffer (chetwynd 0km, groundbirch 5km, farmington 17km…).
+  3 don't, correctly: Tumbler Ridge (~125km, just outside Montney 120km — edge of area) + Pink Mountain (remote) +
+  **Peace River Regional District (region-as-point limitation** — BCGN centroid −122.75 sits west in the Rockies,
+  away from PECL's east-side ops; needs polygon overlap or a population-weighted point, tracked). Third fixture re-ran GREEN.
+
+### FINDING #3 (separate) — Gate-3 relevance depended on a 22-row gazetteer since it shipped
+`geo_place_gazetteer` had **22 rows** and was **missing Taylor — a place with PECL infrastructure** (contamination
+signal SIG-2026-025641). Gate-3 client-aware relevance (place→gazetteer→asset proximity) has depended on this table
+since it shipped, so **any asset-proximate signal naming an uncovered place silently failed the asset link** →
+under-credited relevance. **Preliminary evidence (30d PECL signals):** asset-proximate (n=52) avg relevance **0.6**
+vs no-asset-link (n=527) **0.5** — only 0.1 separation; proximity appears weakly weighted (and this is WITH the
+now-improved gazetteer — historically, with 22 rows, even fewer proximate signals would have resolved). **Recommend a
+dedicated assessment:** replay historical PECL signals through the (now-fuller) resolver, compare to the relevance
+scores they actually received, and quantify systematic under-crediting of asset-proximate signals. NOT closed here.
+
+### STANDING RULE — gazetteer authoritativeness (ratified 2026-07-31)
+**Every `geo_place_gazetteer` entry carries its BCGN identifier (`bcgn_id`). A place with no authoritative BCGN
+entry is OMITTED, never approximated** (Altares principle — Altares has no BCGN entry, so it is not in the table).
+A centroid that resolves to the wrong place is worse than no resolution.
+- Column `bcgn_id text` added; the 13 sourced points backfilled with their BCGN URIs + authoritative geoms
+  (this also corrected Taylor, which had been added with MODEL coords 56.15,-120.68 → BCGN 56.15889,-120.68667 —
+  the rule caught exactly the defect it exists for; and Doig → the "Doig River 206" reserve).
+- **Region entries must be POLYGONS, not centroids.** PRRD + NRRM point-centroids REMOVED (PRRD's centroid sat in
+  the Rockies, west of PECL's ops). Re-add only as polygons from an authoritative boundary source; `ST_DWithin`
+  already handles polygon geometry, so no resolver change — data only. **Follow-up.**
+- **Backfill debt:** 22 legacy rows lack `bcgn_id` (vancouver, calgary, kitimat, fort st. john, dawson creek,
+  fort nelson, prince george, …). They hold coords of unknown provenance (possibly model-approximated at ship).
+  NOT removed yet (they are the high-volume covered places), but each must be **verified against BCGN + given an
+  id, and any without an authoritative match removed.** Tracked. Print of the 22: run
+  `select name from geo_place_gazetteer where bcgn_id is null`.
+
 ## Build order (ruled 2026-07-30)
 1. **WO-REPORT-PERSIST-01** — DONE (storage_url + claim manifest + issuance cols + delivery halt).
 2. Binding-at-derivation per the design above.
