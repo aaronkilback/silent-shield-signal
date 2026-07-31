@@ -26,6 +26,12 @@ This is the **coverage lane** of the four-lane relevance test: a client-relevant
 the client's operating footprint but scored as generic noise is a coverage miss. Gate-3 is the mechanism that is
 supposed to catch exactly those; the 0.1 separation suggests it currently does not.
 
+## ⚠ Dependency — DO NOT replay until WO-GAZETTEER-BACKFILL-01 completes
+The replay's numbers depend on verified coordinates. WO-GAZETTEER-BACKFILL-01 verified/attributed 32/33 gazetteer
+rows (BC deltas ≤2.2km, dedup done, Peace River removed); **`calgary` remains un-attributed pending an authoritative
+Alberta source.** Replaying against unverified coordinates produces unreliable numbers — complete the backfill
+(incl. calgary) first, then replay.
+
 ## Dependencies
 - WO-GROUNDING-01 gazetteer authoritativeness (37 rows, BCGN-sourced) — the corrected resolver this replay uses.
 - The relevance-scoring pipeline's current use (if any) of the Gate-3 asset-proximity signal — to be located first.

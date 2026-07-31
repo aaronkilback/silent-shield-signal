@@ -121,11 +121,11 @@ A centroid that resolves to the wrong place is worse than no resolution.
 - **Region entries must be POLYGONS, not centroids.** PRRD + NRRM point-centroids REMOVED (PRRD's centroid sat in
   the Rockies, west of PECL's ops). Re-add only as polygons from an authoritative boundary source; `ST_DWithin`
   already handles polygon geometry, so no resolver change — data only. **Follow-up.**
-- **Backfill debt:** 22 legacy rows lack `bcgn_id` (vancouver, calgary, kitimat, fort st. john, dawson creek,
-  fort nelson, prince george, …). They hold coords of unknown provenance (possibly model-approximated at ship).
-  NOT removed yet (they are the high-volume covered places), but each must be **verified against BCGN + given an
-  id, and any without an authoritative match removed.** Tracked. Print of the 22: run
-  `select name from geo_place_gazetteer where bcgn_id is null`.
+- **Backfill debt — DONE via WO-GAZETTEER-BACKFILL-01 (2026-07-31):** 22 legacy rows verified vs BCGN (all BC deltas
+  ≤2.2km — no scoring defect), snapped to authoritative geom + `bcgn_id`; fort-st-john duplicate removed; resolver
+  made spelling/punctuation-insensitive; `peace river` removed (Alberta town, no authoritative BC match). Gazetteer
+  now **33 rows, 32 with `bcgn_id`**. **1 open: `calgary`** (Alberta → not in BCGN; needs a GeoNames account / Alberta
+  gazetteer; kept, not removed, since the Calgary-HQ asset depends on it — operator decision).
 
 ## Build order (ruled 2026-07-30)
 1. **WO-REPORT-PERSIST-01** — DONE (storage_url + claim manifest + issuance cols + delivery halt).
