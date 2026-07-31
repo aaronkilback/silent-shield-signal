@@ -4384,6 +4384,23 @@ Deno.serve(async (req) => {
         return { job, agent };
       };
 
+      // CONTAINMENT REGISTRY (standing rule 2026-07-31): subjects deliberately contained (503),
+      // deleted/deprovisioned, or frozen are contained-BY-DESIGN, not failures. Load the active set once
+      // and reclassify any finding that names one — downgrade high/critical → info and annotate with the
+      // WO reference, so intentional states stop surfacing as CRITICAL/chronic. Registry absence = no-op.
+      let containmentRegistry: Array<{ subject: string; state: string; wo_reference: string }> = [];
+      try {
+        const { data: cr } = await supabase.from('containment_registry')
+          .select('subject, state, wo_reference')
+          .in('state', ['contained_503', 'deleted', 'deprovisioned', 'frozen']);
+        containmentRegistry = cr ?? [];
+      } catch (_e) { /* registry optional — if missing, reclassification is simply skipped */ }
+      const matchContainment = (title: string, analysis: string, job: string | null) => {
+        if (!containmentRegistry.length) return null;
+        const hay = `${title}\n${analysis}\n${job ?? ''}`.toLowerCase();
+        return containmentRegistry.find((c) => c.subject && hay.includes(c.subject.toLowerCase())) ?? null;
+      };
+
       const fingerprintsThisRun: string[] = [];
       for (const f of allFindings) {
         const { job, agent } = inferAffected(String(f.title || ''), String(f.analysis || ''));
@@ -4395,13 +4412,21 @@ Deno.serve(async (req) => {
         const fp = await sha256Sync(`${f.category || 'unknown'}|${normTitle}|${job ?? ''}`);
         fingerprintsThisRun.push(fp);
 
+        // Reclassify contained-by-design subjects: downgrade high/critical → info + annotate WO ref.
+        const contained = matchContainment(String(f.title || ''), String(f.analysis || ''), job);
+        const effSeverity = contained && (f.severity === 'critical' || f.severity === 'warning' || f.severity === 'high')
+          ? 'info' : (f.severity || 'info');
+        const effAnalysis = contained
+          ? `[CONTAINED-BY-DESIGN — ${contained.state}, ${contained.wo_reference}] ${f.analysis ?? ''}`.trim()
+          : (f.analysis ?? null);
+
         // Atomic insert-or-increment: occurrence_count now actually counts; last_seen_at
         // moves; a recurring finding is re-opened (resolved_at cleared).
         await supabase.rpc('record_platform_finding', {
           p_category: f.category || 'unknown',
-          p_severity: f.severity || 'info',
+          p_severity: effSeverity,
           p_title: f.title,
-          p_analysis: f.analysis ?? null,
+          p_analysis: effAnalysis,
           p_plain_english: f.plainEnglish ?? null,
           p_action: f.action ?? null,
           p_affected_agent: agent,
