@@ -173,9 +173,46 @@ export function createDerivedClaim(input: DerivedClaimInput, deps: GroundingDeps
   };
 }
 
-/** The ONLY way to make an Inference. Phase 1 enforces the non-empty `over` rule; Phase 4 adds entailment. */
+/** Non-empty `over` (Phase 1). Full validity (anchor + entailment) is `validateInference` below. */
 export function createInference(input: { text: string; over: string[] }): ConstructResult<Inference> {
   if (!input.over || input.over.length < 1)
     return reject("empty_over", "an Inference requires >= 1 claim id in `over` (no anchorless analysis)");
+  return { ok: true, value: { kind: "inference", text: input.text, over: [...input.over] } };
+}
+
+// ─────────────────────────── Phase 4 — Inference validity (Amendment 8) ───────────────────────────
+// Anchor existence is NECESSARY, not SUFFICIENT. Two layers:
+//   (1) inferenceAnchorCheck — STRUCTURAL (term-containment). Catches an inference that introduces an OUTSIDE
+//       term not in any anchor (case 1). Deterministic, no model.
+//   (2) EntailmentJudge — the inference must FOLLOW from ONLY the anchor texts. Catches the NON-SEQUITUR (case 3:
+//       every term is anchored but the conclusion does not follow). Term-containment CANNOT catch case 3 — only
+//       entailment can, and for natural-language claims that means a MODEL. A model judging a model's inference is
+//       a CORRELATED failure mode (see WO note). This is stated, not hidden.
+
+export type EntailmentVerdict = { entailed: boolean; reason: string };
+export type EntailmentJudge = (inferenceText: string, overClaimTexts: string[]) => Promise<EntailmentVerdict>;
+
+/** Structural anchor check: every salient/numeric term the inference asserts must appear in an anchor text.
+ *  Necessary-not-sufficient — it CANNOT distinguish a valid deduction from a non-sequitur when all terms match. */
+export function inferenceAnchorCheck(inferenceText: string, overClaimTexts: string[]): { grounded: boolean; ungrounded: string[] } {
+  const blob = norm(overClaimTexts.join("  "));
+  const nums = new Set(overClaimTexts.flatMap((t) => numericTokens(t)));
+  const { textTerms, numericTerms } = salientTerms(inferenceText, new Set());
+  const ungrounded = [...textTerms.filter((t) => !blob.includes(t)), ...numericTerms.filter((n) => !nums.has(n))];
+  return { grounded: ungrounded.length === 0, ungrounded };
+}
+
+/** Full inference validity: non-empty over → structural anchor → entailment (model). Rejects at the first failure. */
+export async function validateInference(
+  input: { text: string; over: string[] },
+  overClaimTexts: string[],
+  judge: EntailmentJudge,
+): Promise<ConstructResult<Inference>> {
+  if (!input.over || input.over.length < 1) return reject("empty_over", "an Inference requires >= 1 claim id in `over`");
+  const anchor = inferenceAnchorCheck(input.text, overClaimTexts);
+  if (!anchor.grounded)
+    return reject("inference_introduces_outside_term", `inference asserts term(s) not in any anchor claim: ${anchor.ungrounded.join(", ")}`);
+  const v = await judge(input.text, overClaimTexts);
+  if (!v.entailed) return reject("inference_not_entailed", v.reason || "conclusion does not follow from the anchor claims alone");
   return { ok: true, value: { kind: "inference", text: input.text, over: [...input.over] } };
 }
