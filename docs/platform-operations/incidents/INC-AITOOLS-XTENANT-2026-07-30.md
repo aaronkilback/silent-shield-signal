@@ -193,8 +193,17 @@ appear in visible history at `88c135b2` (2026-04-02), but pre-2026-03-28 history
 squashes — **true origin may be earlier** than the git-provable 2026-03-28. (Refines Amendment 5's "2026-04-02" start.)
 
 **(f) Operator clarifications (entity entry paths).**
-- **Ashley Callingbull (`1e506c55`)** — entered the PECL tenant via **extraction** and was **AI-enriched**;
-  **no operator instructed targeting her.** (Contextualizes Amendment 6, where she is the most deeply-collected.)
+- ~~**Ashley Callingbull (`1e506c55`)** — entered the PECL tenant via **extraction** and was **AI-enriched**;
+  no operator instructed targeting her.~~ **[STRUCK / CORRECTED 2026-07-31 — refuted by data.]** Query on
+  `entities` for `1e506c55`: **`created_by = 5f48f826-e7f6-4fda-8220-31323491494c = akilback@hotmail.com`
+  (the operator's own account)**, `created_at 2026-04-03 17:08:54`, **`document_entity_mentions = 0`**, and
+  **no `source` / `source_investigation` / `created_via` attribute** — the only attribute keys are
+  `ethnicity, nationality, role` (special-category fields hand-attached with no provenance). Per this incident's
+  own manual/automated definition (Amendment 4: `created_by` non-null = manual; `1e506c55` is one of the 12
+  akilback-created entities), **`1e506c55` was OPERATOR-CREATED, not extraction-created.** There is **no recorded
+  extraction, document, or signal source** on the entity. (`created_by=operator` cannot by itself distinguish a
+  hand-entered row from a tool run inside the operator's authenticated session, but either way it is the
+  operator's account with zero extraction provenance — the "entered via extraction" framing is not supported.)
 - **Amber Bracken (`a9a4047c`)** — entered via a **dossier CRT supplied**, uploaded by the operator **to test how
   Fortress creates entities from a document** — not an intelligence target.
 - Both illustrate the governance gap in Amendment 6 / **WO-SUBJECT-GATE-01**: subjects entered and were enriched
