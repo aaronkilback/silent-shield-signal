@@ -17,6 +17,7 @@
   "generate-captions",
   "generate-marketing-assets",
   "generate-script",
+  "grounding-review-ephemeral",
   "ingest-screenshot-evidence",
   "log-frontend-error",
   "monitor-x-single",

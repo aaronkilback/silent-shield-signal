@@ -505,6 +505,11 @@
     "added": "2026-07-31"
   },
   {
+    "function": "grounding-review-ephemeral",
+    "reason": "EPHEMERAL review harness (WO-GROUNDING-01). NOT public — verify_jwt=false but gated by requireInternalCaller (x-fortress-internal). Deploy→invoke→DELETE same session; remove this entry at teardown.",
+    "added": "2026-07-31"
+  },
+  {
     "function": "guardian-check",
     "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
     "added": "2026-07-31"
