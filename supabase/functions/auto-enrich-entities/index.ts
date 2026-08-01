@@ -43,10 +43,9 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
     hbClient = supabase;
-    hb = await startHeartbeat(supabase, 'auto-enrich-entities-nightly');
 
-    const { 
-      entity_id, 
+    const {
+      entity_id,
       batch_mode = false, 
       auto_apply = false, 
       limit = 10,
@@ -87,6 +86,10 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // Start the heartbeat only after input validation passes, so the 400 / JSON-parse-error paths never
+    // orphan a 'running' heartbeat. The nightly cron always sends batch_mode, so its path always heartbeats.
+    hb = await startHeartbeat(supabase, 'auto-enrich-entities-nightly');
 
     const results: any[] = [];
 
