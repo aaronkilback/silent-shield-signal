@@ -94,3 +94,75 @@ The pyramid rubric at `ingest-signal:944–965` already instructs "the large maj
 3. WO-GAZETTEER-COVERAGE-01 in parallel (the rule's false-negative rate is bounded by gazetteer coverage).
 4. Measure-before-and-after: baseline the 85% high/crit, re-measure at 24h/72h/7d; success = distribution moves toward target **without** dropping a resolved-pathway critical.
 5. WO-PER-CLIENT-SEVERITY-01 deferred until a shared-signal case is real.
+
+---
+
+## AMENDMENT 2 (2026-08-01) — pathway is a SET, not a geo test
+
+**Accepted upstream:** the rule, Option A, the item-4 ruling (`ungrounded_no_assets`, fail-open-flagged, do not floor), item-5 (no rubric rewording). **GAP corrected:** AMENDMENT 1 treated pathway as *geographic only*. The operator's four grading conditions were proximity, recency, **sector association**, and **supply-chain/personnel impact** — **three of four are not geo.** `ungrounded_no_assets` would fire (and floor to model grade) on a signal that has a real non-geo pathway (e.g. pos 7 "Collaboration on Pipeline" — critical-if-associated-with-a-Canadian-energy-company, which no gazetteer resolves).
+
+### 1. Pathway is a SET (minimum four) — resolvable-today status
+| Pathway | Test | Data source | Resolvable TODAY? |
+|---|---|---|---|
+| **proximity** | place in body → gazetteer → `ST_DWithin` vs `client_geo_assets` | existing resolver + 33-row gazetteer | **YES**, coverage-limited (WO-GAZETTEER-NATIONAL-01 is the input) |
+| **recency** | `event_date`/`temporal_grounding` vs now | `signals.temporal_grounding` (T-0), existing `>90d→low` rule | **YES** — but a **MODIFIER, not a standalone lifter** (operator's condition was "proximity **AND** recent"). Recency never lifts the floor alone; it multiplies/decays a pathway that already resolved. |
+| **sector** | body names a competitor / supply-chain entity / same-sector operator | **already in the PECL client record**: `competitor_names` (9), `supply_chain_entities` (15), `industry='energy'` | **YES, no new data** (see §2) |
+| **personnel** | body names a client entity or monitored person | `entities` where `client_id` + `active_monitoring_enabled` | **YES with existing data** — needs an entity-name match query wired; not yet built |
+
+So: **all four are resolvable today**; proximity is coverage-limited, sector needs only a string-match against data already present, personnel needs a query wired, recency already exists as a rule and is a modifier not a lifter.
+
+### 2. Sector — what it takes (no new data)
+String-match signal text against `competitor_names ∪ supply_chain_entities`, plus a **sector-term vocabulary** for `industry='energy'`. Two caveats surfaced by the empirical run:
+- **Vocabulary must cover the *whole* sector.** My test regex (`pipeline|lng|oil|gas|energy|petroleum|drilling|refin`) **missed pos 14 "Exploration of Nuclear Power"** (operator: medium) — nuclear/electricity/power weren't in it. The sector-term list is the exact twin of the gazetteer coverage gap: incomplete vocabulary = false-negatives.
+- **Broad entity tokens over-match on substring.** `China` and `NOV` (both in `supply_chain_entities`) would substring-hit unrelated text (`NOV`⊂`Cenovus`/`November`). Needs word-boundary matching + curation, not raw `LIKE '%x%'`.
+- **Decisive caveat: sector-match is a RELEVANCE gate, not a severity level** — see §3/§4 (pos 16 Cenovus).
+
+### 3. How the four combine — two-stage, NOT a flat OR
+A flat "any pathway → lift above low" **false-lifts routine business news** (proven in §4: pos 2 and pos 16). Proposal:
+
+- **Stage 1 — RELEVANCE (any pathway):** proximity OR sector OR personnel resolves → the signal is *client-relevant*. No pathway resolves → floor to `low` (or `ungrounded_no_assets` fail-open per AMENDMENT 1 item-4 when the client has no coverage at all).
+- **Stage 2 — SEVERITY within relevance:** the floor lifts above `low` **only if** relevance **AND** a **hazard/operational event predicate** fires — the client's own `monitoring_config.priority_keywords` are already the list (explosion, spill, leak, incident, violation, lawsuit, shooting, theft, trespass, vandalism, sabotage, blockade, protest, cyber…). Pathway *strength* + event *type* set the ceiling; **recency is the multiplier** (recent hazard on a resolved pathway → critical; stale → the existing `>90d→low` generalized).
+- **Rationale:** a resolved pathway is *necessary but not sufficient*. "Brewery for sale after a fire" near the CGL corridor (pos 2, proximity=TRUE) and "Cenovus Q2 profit" (pos 16, competitor-match) are pathway-linked but **event-less** → they must stay low. Pathway presence answers *"is this about the client's world?"*; the event predicate answers *"is it a threat to them?"*
+
+### 4. On-paper regression — the design's own test (empirical proximity + sector, 2026-08-01)
+Proximity via the live resolver; sector via match against the real `competitor_names`/`supply_chain_entities` lists. `M1` = naive any-pathway-lifts; `M2` = two-stage (pathway AND hazard-event).
+
+| pos | title | operator grade | prox | sector | M1 | M2 | M2 match? |
+|---|---|---|---|---|---|---|---|
+| 1 | Evacuations due to wildfires (N. Ontario) | crit-if-prox | F | – | low | low | ✓ (prox absent) |
+| 2 | CrossRoads Brewing for sale after fire | **low** | **T** | – | **lift** | low (no hazard event) | ✓ |
+| 3 | Wildfire aftermath (Clinton) | low | F | – | low | low | ✓ |
+| 4 | End of weather reprieve, BC crews | crit-if-prox | F | – | low | low | ✓ |
+| 5 | Evacuation Alert (Anarchist Mtn) | crit-if-prox | F | – | low | low | ✓ |
+| 6 | wildfire pact with Brazil | low | F | – | low | low | ✓ |
+| 7 | Collaboration on Pipeline | crit-if-energy | F | term | lift | lift (energy + operational) | ✓ |
+| 8 | Evacuation orders (Clinton/Pear Lake) | crit-if-prox | F | – | low | low | ✓ |
+| 9 | BC Wildfire Tally Past 100 | crit-if-prox | F | – | low | low | ✓ |
+| 10 | Impact of pipeline project | med-if-energy | F | term | lift | lift (med) | ✓ |
+| 11 | Wildfire Activity in Fraser Canyon | high-if-supplychain | F | – | low | low | ✓ (absent) |
+| 12 | Home Price Forecast Increase | low | F | – | low | low | ✓ |
+| 13 | Stolen Jewellery | low | F | – | low | low | ✓ |
+| 14 | Exploration of Nuclear Power | **medium** | F | – | low | **low** | ✗ (sector-vocab gap: nuclear) |
+| 15 | Plush red dragon toy sales surge | low | F | – | low | low | ✓ |
+| 16 | Cenovus Q2 Profit | **low** | F | **Cenovus** | **lift** | low (no hazard event) | ✓ |
+| 17 | Alberta Proposes New Pipeline | high | F | TransMtn+term | lift | lift (high) | ✓ |
+| 18 | Mobile vet clinic (Thunder Bay) | low | F | – | low | low | ✓ |
+| 19 | Fire Incident in Edmonton | high-if-supplychain | F | – | low | low | ✓ (absent) |
+| 20 | Personal Carbon Rationing | low | F | – | low | low | ✓ |
+
+**Scores:** M1 (naive any-pathway) = **17/20** — 2 false-lifts (pos 2 proximity-no-event, pos 16 competitor-no-event) + 1 false-neg (pos 14). M2 (two-stage pathway+event) = **19/20** — pos 2 and pos 16 correctly stay low; the **sole residual** is pos 14, a **sector-vocabulary coverage gap** (nuclear/power missing), fixable by completing the sector-term list → 20/20.
+
+**What the regression proves before any code is written:**
+1. The four-pathway model is directionally correct — **all 5 proximity-conditionals and both supply-chain-conditionals resolve to `low` in the absence of their pathway**, exactly as the operator intended.
+2. **The mandatory refinement is the Stage-2 event predicate** — without it, naive pathway-match false-lifts 10% of the sample (routine business news near/about the sector). This is not optional.
+3. **Sector vocabulary must cover the client's whole sector** (the pos-14 miss) — same discipline as gazetteer coverage.
+4. **Not tested by this sample:** recency (no item turned on recency alone) and personnel (no item named a monitored PECL person). Those pathways need their own fixtures before build.
+
+### Revised build order (supersedes AMENDMENT 1's list)
+1. `severity_grounding` marker (`grounded`/`ungrounded_no_assets`/`floored_no_pathway`) + a `resolved_pathways[]` audit field (no-unauditable-gates).
+2. Pathway resolver as a **set** (proximity via Option A text-RPC; sector via curated list match; personnel via entity match), returning which pathway(s) fired.
+3. **Stage-2 event predicate** using existing `priority_keywords` — the regression shows this is what makes the rule correct, not the pathway set alone.
+4. Complete the **sector-term vocabulary** (pos-14 lesson).
+5. WO-GAZETTEER-NATIONAL-01 (proximity input) in parallel.
+6. Recency + personnel fixtures before those pathways are trusted.
+7. Measure-before-and-after; success = distribution toward target **without** dropping a resolved-pathway+event critical.
