@@ -154,3 +154,118 @@ export function proseLintReport(prose: string, frame: ClaimFrame): {
   const violations = lintAegisProse(prose, frame);
   return { passed: violations.length === 0, violations };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R7 — tradecraft must never be cited as observation (P4, 2026-05-29).
+//
+// When tradecraft items have been injected into a prompt, the model's response
+// must EITHER include the bracketed `[TRADECRAFT REFERENCE — methodology, not
+// observation]` label at any point it paraphrases or cites the tradecraft,
+// OR not cite tradecraft content at all.
+//
+// The structural defense is the prompt instruction. This lint is the backstop:
+// if the response contains substring evidence of tradecraft content AND
+// uses assertive-evidence framing (R2 / R4 patterns) WITHOUT a tradecraft
+// framing word ("tradecraft", "methodology", "framework", "reference",
+// "doctrine", or the bracketed label), it's an R7 violation.
+//
+// This rule is class-aware: it doesn't need a ClaimFrame. It accepts the
+// injected tradecraft items directly so it can match substring overlap.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TradecraftInjectionItem {
+  id: string;
+  hypothesis: string;
+  domain?: string;
+}
+
+const TRADECRAFT_FRAMING_PATTERNS = [
+  /\btradecraft\b/i,
+  /\bmethodology\b/i,
+  /\bmethodologies\b/i,
+  /\bframework(?:s)?\b/i,
+  /\bdoctrine\b/i,
+  /\breference(?:s)?\b/i,
+  /\[TRADECRAFT REFERENCE/i,
+];
+
+const ASSERTIVE_OBSERVATION_PATTERNS = [
+  /\breports indicate\b/i,
+  /\bsources say\b/i,
+  /\baccording to (?:reports|sources)\b/i,
+  /\bevidence shows\b/i,
+  /\bdata confirms\b/i,
+  /\bobserved (?:that|in|to)\b/i,
+  /\bdemonstrates? that\b/i,
+];
+
+export function lintTradecraftCitation(
+  prose: string,
+  injectedTradecraft: TradecraftInjectionItem[],
+): ProseLintViolation[] {
+  const violations: ProseLintViolation[] = [];
+  if (!injectedTradecraft || injectedTradecraft.length === 0) return violations;
+
+  // Has the response used a framing word anywhere?
+  const hasFramingWord = TRADECRAFT_FRAMING_PATTERNS.some((p) => p.test(prose));
+
+  // Substring overlap between prose and any injected tradecraft hypothesis.
+  // Look for any contiguous 30+ char fragment from a tradecraft hypothesis
+  // appearing verbatim in the prose. Conservative — paraphrasing won't match
+  // but verbatim borrowing will.
+  const findOverlap = (proseText: string, items: TradecraftInjectionItem[]): TradecraftInjectionItem | null => {
+    const pLower = proseText.toLowerCase();
+    for (const item of items) {
+      const hLower = (item.hypothesis ?? "").toLowerCase();
+      if (hLower.length < 30) continue;
+      // Walk the hypothesis in 30-char windows; if any window appears verbatim in prose, that's overlap.
+      for (let i = 0; i + 30 <= hLower.length; i += 10) {
+        const window = hLower.slice(i, i + 30);
+        if (pLower.includes(window)) return item;
+      }
+    }
+    return null;
+  };
+
+  const overlap = findOverlap(prose, injectedTradecraft);
+  if (!overlap) return violations;  // no tradecraft borrowed — nothing to flag.
+
+  // Tradecraft was borrowed. Check whether the response is using
+  // observation-voice without framing.
+  const assertiveHits = ASSERTIVE_OBSERVATION_PATTERNS.flatMap((p) => {
+    const m = prose.match(p);
+    return m ? [m[0]] : [];
+  });
+  if (assertiveHits.length > 0 && !hasFramingWord) {
+    violations.push({
+      rule_id: "R7_tradecraft_must_not_be_observation",
+      matched_phrase: assertiveHits[0],
+      required_phrase_class: "tradecraft framing (e.g. '[TRADECRAFT REFERENCE]', 'the platform's methodology says…', 'as a framework…')",
+      details: `Prose contains content overlap with tradecraft item ${overlap.id} and uses observation-voice framing without the methodology label.`,
+    });
+  }
+
+  // Also flag strong certainty + borrowed tradecraft without framing.
+  const certaintyHits = STRONG_CERTAINTY_PATTERNS.flatMap((p) => {
+    const m = prose.match(p);
+    return m ? [m[0]] : [];
+  });
+  if (certaintyHits.length > 0 && !hasFramingWord) {
+    violations.push({
+      rule_id: "R7_tradecraft_must_not_be_observation",
+      matched_phrase: certaintyHits[0],
+      required_phrase_class: "tradecraft framing (methodology, not observation)",
+      details: `Prose claims certainty over content borrowed from tradecraft item ${overlap.id} without framing it as methodology.`,
+    });
+  }
+
+  return violations;
+}
+
+export function tradecraftLintReport(
+  prose: string,
+  injectedTradecraft: TradecraftInjectionItem[],
+): { passed: boolean; violations: ProseLintViolation[] } {
+  const violations = lintTradecraftCitation(prose, injectedTradecraft);
+  return { passed: violations.length === 0, violations };
+}

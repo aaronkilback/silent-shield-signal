@@ -156,7 +156,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = "", tradecraftContext: string = ""): string {
   const timeContext = getTimeContext();
 
   const tenantBoundaryBlock = tenantName
@@ -182,7 +182,7 @@ ${AEGIS_CHAT_MODIFIERS}
 ═══ CURRENT TIME ═══
 ${timeContext.full}
 ${loginSummaryContext}${agentRosterContext}
-${agentIntelligenceContext}
+${agentIntelligenceContext}${tradecraftContext}
 ${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
@@ -10598,6 +10598,120 @@ Deno.serve(async (req) => {
       console.log(`[AEGIS] Loaded ${beliefs.length} agent beliefs from ${byAgent.size} agents`);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // N+1 — Class A tradecraft keyword retrieval (operator-authorized 2026-05-29)
+    //
+    // Replaces P4's random-3 sampling with relevance-based retrieval against the
+    // retrieve_tradecraft_keyword RPC (Postgres FTS + ts_rank_cd).
+    //
+    // Load-bearing rule (operator directive): "Tradecraft appears ONLY when it
+    // materially improves reasoning, recommendation quality, or decision
+    // support." 0..budget items, never padded — empty result is valid.
+    //
+    // Calibration: threshold 0.25 returns 3 items for on-topic queries with
+    // library coverage, 0 items for off-topic queries or library gaps. See
+    // docs/.../classA-tradecraft-relevance-retrieval-design-2026-05-29.md.
+    //
+    // Flight Recorder traces every retrieval — including empty — so the 7-day
+    // review can measure injection rate, empty-result rate, FP, FN.
+    // ─────────────────────────────────────────────────────────────────────
+    const TRADECRAFT_BUDGET = 3;
+    const TRADECRAFT_THRESHOLD = 0.25;
+    const TRADECRAFT_MIN_CONFIDENCE = 0.80;
+    const TRADECRAFT_MIN_QUERY_LENGTH = 8; // skip trivial queries ("hi", "ok", "ty")
+
+    // Extract the last user message — that's the query that drives retrieval.
+    // Defensive: messages can be missing/empty/non-array depending on caller.
+    const _lastUserMsgForTC = Array.isArray(messages)
+      ? messages.filter((m: any) => m?.role === "user").pop()
+      : null;
+    const _lastUserTextForTC =
+      typeof _lastUserMsgForTC?.content === "string" ? _lastUserMsgForTC.content.trim() : "";
+
+    let tradecraftItems: Array<{
+      id: string; authored_by_agent: string; domain: string;
+      hypothesis: string; confidence: number; provenance_resolved: boolean;
+      rank: number;
+    }> = [];
+    let tradecraftSkippedReason: string | null = null;
+
+    if (_lastUserTextForTC.length < TRADECRAFT_MIN_QUERY_LENGTH) {
+      tradecraftSkippedReason = "query_too_short";
+    } else {
+      try {
+        const { data: tcRows, error: tcErr } = await supabaseClient.rpc(
+          "retrieve_tradecraft_keyword",
+          {
+            p_query: _lastUserTextForTC,
+            p_threshold: TRADECRAFT_THRESHOLD,
+            p_budget: TRADECRAFT_BUDGET,
+            p_min_confidence: TRADECRAFT_MIN_CONFIDENCE,
+          },
+        );
+        if (tcErr) {
+          console.warn("[AEGIS] tradecraft RPC error (non-fatal):", tcErr);
+          tradecraftSkippedReason = "rpc_error";
+        } else if (Array.isArray(tcRows)) {
+          tradecraftItems = tcRows as typeof tradecraftItems;
+          if (tradecraftItems.length === 0) tradecraftSkippedReason = "below_threshold";
+        }
+      } catch (tcErr) {
+        console.warn("[AEGIS] tradecraft retrieval failed (non-fatal):", tcErr);
+        tradecraftSkippedReason = "exception";
+      }
+    }
+
+    let tradecraftContext = "";
+    if (tradecraftItems.length > 0) {
+      tradecraftContext = `
+
+═══ TRADECRAFT REFERENCE — methodology, not observation ═══
+The following items are general methodology from the platform's analytical agent library. They describe how to approach security problems. They are NOT evidence about specific events in this tenant. They are NOT observations. They may be cited as methodology framing, never as observed fact.
+
+PROMPT RULES (BINDING):
+- Always include the bracketed label "[TRADECRAFT REFERENCE — methodology, not observation]" when paraphrasing or citing these items.
+- Never claim "Confirmed", "Reports indicate", "Sources say", or any assertive-evidence framing for these items.
+- If a tradecraft item is not relevant to the operator's question, silently omit it rather than name-and-dismiss it.
+
+${tradecraftItems.map((t, i) =>
+  `[TRADECRAFT REFERENCE — methodology, not observation] (item ${i + 1}, conf ${Math.round(t.confidence * 100)}%, ${t.domain}, by ${t.authored_by_agent}): ${t.hypothesis}`
+).join('\n\n')}
+═══════════════════════════════════════════════════════════════════════════
+`;
+      console.log(`[AEGIS] tradecraft injection: ${tradecraftItems.length} items (budget ${TRADECRAFT_BUDGET}, max_rank ${Math.max(...tradecraftItems.map(t => t.rank)).toFixed(3)})`);
+    } else {
+      console.log(`[AEGIS] tradecraft injection: 0 items (skipped_reason=${tradecraftSkippedReason ?? "unknown"})`);
+    }
+
+    // S6 — Flight Recorder ALWAYS records (empty + non-empty). Empty traces are
+    // the load-bearing data for the 7-day false-negative review.
+    try {
+      const ranks = tradecraftItems.map((t) => t.rank);
+      rec.retrieval({
+        surface: 'agent_tradecraft',
+        tenantScope: null,
+        returnedObjectIds: tradecraftItems.map((t) => t.id),
+        fallbackPath: 'none',
+        provenance: {
+          asset_class: 'global_shared',
+          retrieval_strategy: 'keyword_fts_ts_rank_cd',
+          threshold: TRADECRAFT_THRESHOLD,
+          budget: TRADECRAFT_BUDGET,
+          min_confidence: TRADECRAFT_MIN_CONFIDENCE,
+          min_query_length: TRADECRAFT_MIN_QUERY_LENGTH,
+          query_length: _lastUserTextForTC.length,
+          items_returned: tradecraftItems.length,
+          per_item_ranks: ranks,
+          max_rank: ranks.length > 0 ? Math.max(...ranks) : null,
+          domains: [...new Set(tradecraftItems.map((t) => t.domain))],
+          skipped_reason: tradecraftSkippedReason,
+          label_version: 'v2.2026-05-29-n1',
+        },
+      });
+    } catch (recErr) {
+      console.warn("[AEGIS] flight-recorder tradecraft trace failed (non-fatal):", recErr);
+    }
+
     // ── Login summary — fetch after auth resolves so we have user_id ──
     let loginSummaryContext = "";
     if (authenticatedUserId) {
@@ -11094,7 +11208,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
-        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "");
+        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "", tradecraftContext);
         // Flight recorder: prompt-assembly trace (final system prompt + context blocks).
         rec.prompt({
           systemPrompt: __recSystemPrompt,
@@ -11105,6 +11219,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             { name: 'agent_roster', size: agentRosterContext?.length ?? 0 },
             { name: 'cop', size: copContext?.length ?? 0 },
             { name: 'agent_intelligence', size: agentIntelligenceContext?.length ?? 0 },
+            { name: 'tradecraft', size: tradecraftContext?.length ?? 0 },
             { name: 'login_summary', size: loginSummaryContext?.length ?? 0 },
           ],
         });
