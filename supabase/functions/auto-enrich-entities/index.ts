@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,10 +34,16 @@ Deno.serve(async (req) => {
   const gate = requireInternalCaller(req);
   if (gate) return gate;
 
+  // Heartbeat handles declared outside the try so the catch can fail the heartbeat (block-scoped
+  // consts inside try are NOT visible in catch). job_name MUST match cron_job_registry + the cron jobname.
+  let hbClient: any = null;
+  let hb: any = null;
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+    hbClient = supabase;
+    hb = await startHeartbeat(supabase, 'auto-enrich-entities-nightly');
 
     const { 
       entity_id, 
@@ -274,6 +281,11 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
       }
     }
 
+    await completeHeartbeat(supabase, hb, {
+      processed: results.length,
+      applied: results.filter(r => r.applied).length,
+      failed: results.filter(r => !r.success).length,
+    });
     return new Response(
       JSON.stringify({
         success: true,
@@ -288,6 +300,7 @@ ${internalContext ? `Internal Intelligence:\n${internalContext}` : 'No internal 
 
   } catch (error) {
     console.error('[auto-enrich-entities] Error:', error);
+    if (hbClient && hb) { try { await failHeartbeat(hbClient, hb, error); } catch (_) { /* heartbeat best-effort */ } }
     return new Response(
       JSON.stringify({
         success: false,

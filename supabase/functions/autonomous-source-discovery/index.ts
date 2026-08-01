@@ -1,6 +1,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * Autonomous Source Discovery
@@ -71,8 +72,13 @@ Deno.serve(async (req) => {
   const gate = requireInternalCaller(req);
   if (gate) return gate;
 
+  // hb handles outside try so the catch can fail the heartbeat. job_name matches cron_job_registry + cron jobname.
+  let hbClient: any = null;
+  let hb: any = null;
   try {
     const supabase = createServiceClient();
+    hbClient = supabase;
+    hb = await startHeartbeat(supabase, 'source-discovery-weekly');
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const { client_id, dry_run = false } = body;
 
@@ -88,6 +94,7 @@ Deno.serve(async (req) => {
     const { data: clients, error: clientsError } = await clientQuery;
     if (clientsError || !clients?.length) {
       console.error("[source-discovery] No clients found:", clientsError);
+      await completeHeartbeat(supabase, hb, { clients_processed: 0, note: "no active clients" });
       return successResponse({ message: "No active clients found", results: [] });
     }
 
@@ -241,6 +248,11 @@ Return ONLY the JSON array, no other text.`;
     const totalAdded = allResults.reduce((sum, r) => sum + r.added, 0);
     const totalVerified = allResults.reduce((sum, r) => sum + r.verified, 0);
 
+    await completeHeartbeat(supabase, hb, {
+      clients_processed: allResults.length,
+      total_sources_added: totalAdded,
+      total_verified: totalVerified,
+    });
     return successResponse({
       success: true,
       dry_run,
@@ -252,6 +264,7 @@ Return ONLY the JSON array, no other text.`;
 
   } catch (err) {
     console.error("[source-discovery] Fatal error:", err);
+    if (hbClient && hb) { try { await failHeartbeat(hbClient, hb, err); } catch (_) { /* best-effort */ } }
     return errorResponse(err instanceof Error ? err.message : String(err), 500);
   }
 });

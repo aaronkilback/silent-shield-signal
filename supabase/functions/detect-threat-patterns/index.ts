@@ -16,6 +16,7 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { enqueueJob } from "../_shared/queue.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const THREAT_SIGNAL_TYPES = new Set(['sabotage', 'protest', 'threat', 'violence', 'theft']);
 
@@ -53,8 +54,13 @@ Deno.serve(async (req) => {
   const gate = requireInternalCaller(req);
   if (gate) return gate;
 
+  // hb handles outside try so the catch can fail the heartbeat. job_name matches cron_job_registry + cron jobname.
+  let hbClient: any = null;
+  let hb: any = null;
   try {
     const supabase = createServiceClient();
+    hbClient = supabase;
+    hb = await startHeartbeat(supabase, 'fortress-detect-patterns-6h');
     const body = await req.json().catch(() => ({}));
     const targetClientId: string | undefined = body.client_id;
 
@@ -438,6 +444,10 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[PatternDetect] Complete. ${totalPatternsDetected} patterns detected across ${(clients || []).length} clients.`);
+    await completeHeartbeat(supabase, hb, {
+      patterns_detected: totalPatternsDetected,
+      clients_scanned: (clients || []).length,
+    });
     return successResponse({
       success: true,
       patterns_detected: totalPatternsDetected,
@@ -447,6 +457,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('[PatternDetect] Error:', error);
+    if (hbClient && hb) { try { await failHeartbeat(hbClient, hb, error); } catch (_) { /* best-effort */ } }
     return errorResponse(error instanceof Error ? error.message : 'Unknown error', 500);
   }
 });
