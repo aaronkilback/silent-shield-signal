@@ -25,8 +25,10 @@ analysis.** The finding is still visible (not dropped), but it no longer surface
 absence = no-op (fail-open on the reclassification, never breaks the watchdog).
 
 - This generalizes the pre-existing hardcoded INC-LEARN-CONTAM special-case in system-watchdog (the belief-store
-  freeze note) into a data-driven rule. (Note: that hardcoded note cites `WO-LEARN-UNFREEZE`; the registry uses the
-  current `WO-BELIEF-PROVENANCE-01` reference — reconcile the two labels.)
+  freeze note) into a data-driven rule. **Label reconciled 2026-07-31:** the watchdog note and the registry both
+  now cite **`WO-BELIEF-PROVENANCE-01`** (the live WO) as the unfreeze gate. (Other strategic docs —
+  `registry-hygiene-phantom-sweep.md`, `INC-ALERT-DELIVERY-2026-07-29.md`, `WO-LEARNING-LOOP-phase1` — still say
+  `WO-LEARN-UNFREEZE` in a broader parking context; sweep those separately if a single canonical label is wanted.)
 
 ## Seeded 2026-07-31 (INC-AITOOLS-XTENANT / WO-CHECK5-BURNDOWN-01 week)
 - **21 contained_503** deployed stubs: the 15 WO-CHECK5-BURNDOWN-01 LOG-A stubs + aegis-chat, assess-entity

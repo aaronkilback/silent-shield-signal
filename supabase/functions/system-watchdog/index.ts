@@ -2897,16 +2897,16 @@ Deno.serve(async (req) => {
           ? 'Agent belief writes frozen (INC-LEARN-CONTAM containment)'
           : 'Agent learning pipeline has stalled',
         analysis: frozen
-          ? `No new agent belief written in ${Math.round(beliefAge)} hours. Cause is the INC-LEARN-CONTAM write-freeze (intentional containment) — the learning agents run and complete, but writes to agent_beliefs/expert_knowledge/global_learning_insights are rejected by trg_inc_learn_contam_freeze_*. This is contained-and-known, NOT a broken cron. Real unfreeze is gated on the anonymization work (WO-LEARN-UNFREEZE).`
+          ? `No new agent belief written in ${Math.round(beliefAge)} hours. Cause is the INC-LEARN-CONTAM write-freeze (intentional containment) — the learning agents run and complete, but writes to agent_beliefs/expert_knowledge/global_learning_insights are rejected by trg_inc_learn_contam_freeze_*. This is contained-and-known, NOT a broken cron. Real unfreeze is gated on the anonymization work (WO-BELIEF-PROVENANCE-01).`
           : `No new agent belief written in ${Math.round(beliefAge)} hours. Agents are operating on stale knowledge.`,
         recommendation: frozen
-          ? 'No cron action. Belief writes stay frozen until the INC-LEARN-CONTAM anonymization gate ships. Track WO-LEARN-UNFREEZE.'
+          ? 'No cron action. Belief writes stay frozen until the INC-LEARN-CONTAM anonymization gate ships. Track WO-BELIEF-PROVENANCE-01.'
           : 'Check thread-weaver, self-improvement, and knowledge-seeker cron jobs. Review for model errors.',
         plainEnglish: frozen
           ? `The system deliberately stopped writing new agent beliefs ${Math.round(beliefAge)} hours ago to contain a data-contamination issue. This is working as intended; it stays this way until the safe-to-resume work is done.`
           : `Agent beliefs have not been updated in ${Math.round(beliefAge)} hours. Agents may be working from stale knowledge.`,
         action: frozen
-          ? 'None — contained by ruling. Revisit when WO-LEARN-UNFREEZE (anonymization gate) is scheduled.'
+          ? 'None — contained by ruling. Revisit when WO-BELIEF-PROVENANCE-01 (anonymization gate) is scheduled.'
           : 'Check that thread-weaver, self-improvement, and knowledge-seeker cron jobs ran last night.',
         canAutoRemediate: false,
         remediationAction: 'none',
