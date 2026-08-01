@@ -2,6 +2,17 @@
 
 **Logged:** 2026-08-01. **Priority:** the item after the WO-INCIDENT-QA gate measurement (that measurement is done — see below). **Class:** relevance/grading correctness — upstream of the emit-seam and recipient-provisioning holds.
 
+## THE INVERSION — defining evidence (gate replay, BC Place, 2026-08-01)
+
+> **"Russian State-Sponsored Targeting of poorly configured networks"** — global cyber news, no connection to a Vancouver stadium: **relevance 0.70 → admitted as P1.**
+>
+> **Pitch invasion at BC Place during the Canada vs. Curaçao match** (protesters reached the field, attached themselves to the goalposts): **relevance 0.50 → refused.**
+
+The topical scorer ranks a threat with **zero** pathway to the client **above** an event happening **inside the client's own venue.** Everything else in this WO follows from that one pair. The relevance metric is not weak — it is **backwards**.
+
+## The gate makes a backwards metric WORSE, not better (2026-08-01)
+The WO-INCIDENT-QA gate tightens on `relevance_score` (raises the bar, adds a confidence floor). Applied to a **wrongly-ordered** metric, tightening **removes true positives faster than false ones**: the pitch invasion (rel 0.50, a true positive) is cut, while Russian FSB (rel 0.70, a false positive) survives. **Tightening a backwards metric is not a partial fix — it is a regression**: it improves the aggregate refusal rate while preferentially discarding exactly the client-specific material the product exists to surface. The gate must not be tuned tighter until the metric it gates on is re-ordered to client-pathway. Order first, threshold second.
+
 ## Finding
 An incident's priority currently derives from **threat magnitude** (how severe the event is in general), not from **threat-to-this-client** (does it reach this client's assets, entities, or operations). The admission gate's `relevance_score >= 0.60` is a **topical keyword match**, so global cyber/crime news clears it for any client that monitors security terms — while a genuine, client-specific event can score *below* it.
 
@@ -34,3 +45,10 @@ An incident's admission AND priority must be a function of a **pathway to THIS c
 
 ## Sequence
 Gate measurement — DONE (this WO's trigger). This item is next. **Downstream of it, still held:** emit-seam single-point-of-creation, recipient provisioning. Do not wire pages until priority reflects client-pathway, or the plumbing will faithfully deliver magnitude-graded noise.
+
+## Related finding — incident-layer dedup gap (record, 2026-08-01)
+The 14 PECL "Weather — B.C. South/North Peace River" incidents just bulk-closed as `noise` were **one weather event rendered as 14 separate incidents** (11 opened on 2026-07-18 alone). This is an **incident-layer instance of the same dedup gap as WO-PROVENANCE-01 step 4 (report-layer dedup — designed, never built).** The defect is the same shape at a different layer: no collapse of many signals/renderings of a single real-world event into one tracked object.
+
+- **Invariant:** one real-world event → one incident. A weather advisory, a wildfire, a match — repeated coverage or repeated advisories for the same event must correlate to the existing incident, not mint a new one.
+- **Relationship to this WO:** dedup and client-relevance are the two halves of incident quality — relevance decides *whether* an event becomes an incident; dedup decides that *one* event becomes *one* incident. Both must land before emit is wired, or the pipeline pages N times for one event, at a priority set by magnitude not pathway.
+- **Cross-ref:** WO-PROVENANCE-01 step 4 (report-layer dedup); this is its incident-layer sibling. Build them against a shared event-identity key.
