@@ -4109,32 +4109,42 @@ Deno.serve(async (req) => {
 
       // ──── P1.4 — Undispatched alerts ────────────────────────────────
       try {
-        const { data: undispatched } = await supabase
+        // FIX 2026-08-01: (a) COUNT query, not a row select — the old .select() with no .limit() returned at
+        // most 1000 rows, so the finding reported the PostgREST cap, not a real count. (b) status IN
+        // ('pending','sending') only — terminal ('superseded'/'failed'/'sent') is not a backlog. (c) exclude
+        // benchmark/test recipients + delivery_test_mode. Severity re-banded for the real (uncapped) number.
+        const graceIso = new Date(Date.now() - 30 * 60000).toISOString();
+        const liveUndispatched = () => supabase
           .from('alerts')
-          .select('id, created_at')
+          .in('status', ['pending', 'sending'])
           .is('sent_at', null)
-          .lt('created_at', new Date(Date.now() - 30 * 60000).toISOString())
-          .order('created_at', { ascending: true });
-
-        const count = (undispatched ?? []).length;
+          .lt('created_at', graceIso)
+          .or('delivery_test_mode.is.null,delivery_test_mode.is.false')
+          .not('recipient', 'ilike', '%benchmark%')
+          .not('recipient', 'ilike', '%.invalid');
+        const { count: undispCount } = await liveUndispatched().select('id', { count: 'exact', head: true });
+        const count = undispCount ?? 0;
         if (count > 0) {
-          const oldestMin = Math.floor(
-            (Date.now() - new Date(undispatched![0].created_at).getTime()) / 60000,
-          );
+          const { data: oldestRow } = await liveUndispatched()
+            .select('created_at').order('created_at', { ascending: true }).limit(1);
+          const oldestMin = oldestRow?.[0]?.created_at
+            ? Math.floor((Date.now() - new Date(oldestRow[0].created_at).getTime()) / 60000) : 0;
 
+          // Re-banded for the real (non-terminal, non-test) count. The tier-specific PAGEABLE probe below
+          // handles delivery-tier urgency at tight thresholds, so this general probe stays lenient.
           let sev: 'warning' | 'high' | 'critical' = 'warning';
-          if (count >= 10 || oldestMin >= 120) sev = 'critical';
-          else if (count >= 3) sev = 'high';
+          if (count >= 500 || oldestMin >= 1440) sev = 'critical';
+          else if (count >= 100) sev = 'high';
 
           missionFindings.push({
             category: 'mission_health',
             severity: sev,
-            title: `alert-delivery: ${count} undispatched alert(s) older than 30 min (oldest ${oldestMin} min)`,
-            analysis: `${count} rows in 'alerts' have sent_at IS NULL and were created over 30 minutes ago. ` +
-                      `alert-delivery cron runs every 15 min; allowing 2x interval as grace. ` +
-                      `Oldest undispatched alert is ${oldestMin} minutes old.`,
-            plainEnglish: `${count} alert(s) were generated but never delivered. The notification pipeline is failing silently.`,
-            action: 'Investigate alert-delivery function logs. Check whether channel credentials (Slack, email) are valid. Consider re-running alert-delivery manually.',
+            title: `alert-delivery: ${count} live undispatched alert(s) (pending/sending) older than 30 min (oldest ${oldestMin} min)`,
+            analysis: `${count} rows in 'alerts' with status IN ('pending','sending') have sent_at IS NULL and are >30 min old ` +
+                      `(terminal 'superseded'/'failed' and benchmark/test excluded). alert-delivery cron runs every 15 min. ` +
+                      `Oldest is ${oldestMin} min old. NOTE: log-tier alerts are never dispatched by design — confirm tier before treating as a delivery failure.`,
+            plainEnglish: `${count} alert(s) are queued but not yet delivered.`,
+            action: 'Check alert-delivery function logs + client_alert_recipients. Confirm tier (log-tier is queryable-not-dispatched by design).',
           });
         }
       } catch (p14Err) {
@@ -4167,6 +4177,8 @@ Deno.serve(async (req) => {
           .is('sent_at', null)
           .lt('created_at', intrCutoff)
           .not('recipient', 'like', 'unrouted:%')
+          .in('status', ['pending', 'sending'])   // FIX 2026-08-01: terminal (superseded/failed) is not undispatched
+          .not('client_id', 'is', null)           // FIX 2026-08-01: null-client broadcast = ratified boundary, not a delivery failure
           .order('created_at', { ascending: true });
 
         // Q2 — tier=notification stuck past 60 min window (real routing).
@@ -4177,6 +4189,8 @@ Deno.serve(async (req) => {
           .is('sent_at', null)
           .lt('created_at', notifCutoff)
           .not('recipient', 'like', 'unrouted:%')
+          .in('status', ['pending', 'sending'])   // FIX 2026-08-01: terminal (superseded/failed) is not undispatched
+          .not('client_id', 'is', null)           // FIX 2026-08-01: null-client broadcast = ratified boundary, not a delivery failure
           .order('created_at', { ascending: true });
 
         // Q3 — pageable-tier alerts whose recipient is a routing-failure
@@ -4189,6 +4203,11 @@ Deno.serve(async (req) => {
           .in('tier', ['interruption', 'notification'])
           .is('sent_at', null)
           .like('recipient', 'unrouted:%')
+          // FIX 2026-08-01: exclude terminal status (a superseded unrouted row is not a live routing failure)
+          // and null-client broadcasts (province-wide public-safety alerts — ratified as NOT Fortress's
+          // boundary 2026-07-31, INC-ALERT-DELIVERY). Count only LIVE unrouted pageable alerts for a REAL client.
+          .in('status', ['pending', 'sending'])
+          .not('client_id', 'is', null)
           .order('created_at', { ascending: true });
 
         const intrCount = (intrStuck ?? []).length;
@@ -4394,17 +4413,23 @@ Deno.serve(async (req) => {
       // deleted/deprovisioned, or frozen are contained-BY-DESIGN, not failures. Load the active set once
       // and reclassify any finding that names one — downgrade high/critical → info and annotate with the
       // WO reference, so intentional states stop surfacing as CRITICAL/chronic. Registry absence = no-op.
-      let containmentRegistry: Array<{ subject: string; state: string; wo_reference: string }> = [];
+      let containmentRegistry: Array<{ subject: string; state: string; wo_reference: string; aliases: string[] }> = [];
       try {
         const { data: cr } = await supabase.from('containment_registry')
-          .select('subject, state, wo_reference')
+          .select('subject, state, wo_reference, aliases')
           .in('state', ['contained_503', 'deleted', 'deprovisioned', 'frozen']);
         containmentRegistry = cr ?? [];
       } catch (_e) { /* registry optional — if missing, reclassification is simply skipped */ }
+      // Match by the subject string OR any registered alias — so a finding describing the SYMPTOM
+      // (e.g. "learning_profiles not updating") is recognized as contained, not only one that names
+      // the frozen store. Substring-on-text is still the mechanism; aliases widen what counts as naming it.
       const matchContainment = (title: string, analysis: string, job: string | null) => {
         if (!containmentRegistry.length) return null;
         const hay = `${title}\n${analysis}\n${job ?? ''}`.toLowerCase();
-        return containmentRegistry.find((c) => c.subject && hay.includes(c.subject.toLowerCase())) ?? null;
+        return containmentRegistry.find((c) => {
+          if (c.subject && hay.includes(c.subject.toLowerCase())) return true;
+          return Array.isArray(c.aliases) && c.aliases.some((a) => a && hay.includes(String(a).toLowerCase()));
+        }) ?? null;
       };
 
       const fingerprintsThisRun: string[] = [];
