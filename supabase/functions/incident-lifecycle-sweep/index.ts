@@ -40,7 +40,9 @@ Deno.serve(async (req) => {
       .eq('status', 'open')
       .is('superseded_by', null)
       .is('deleted_at', null)
-      .neq('is_test', true);
+      .neq('is_test', true)
+      // Operator-pinned reference/hold incidents are exempt from stale/expire (aging_exempt flag, 2026-08-01).
+      .eq('aging_exempt', false);
     if (incErr) throw incErr;
 
     const ids = (incidents || []).map((i: any) => i.id);
