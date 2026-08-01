@@ -13,6 +13,19 @@ The topical scorer ranks a threat with **zero** pathway to the client **above** 
 ## The gate makes a backwards metric WORSE, not better (2026-08-01)
 The WO-INCIDENT-QA gate tightens on `relevance_score` (raises the bar, adds a confidence floor). Applied to a **wrongly-ordered** metric, tightening **removes true positives faster than false ones**: the pitch invasion (rel 0.50, a true positive) is cut, while Russian FSB (rel 0.70, a false positive) survives. **Tightening a backwards metric is not a partial fix — it is a regression**: it improves the aggregate refusal rate while preferentially discarding exactly the client-specific material the product exists to surface. The gate must not be tuned tighter until the metric it gates on is re-ordered to client-pathway. Order first, threshold second.
 
+## UPSTREAM OF RELEVANCE — the platform has no concept of EVENTHOOD (operator grading, 2026-08-01)
+
+The inversion pair shows relevance is wrongly *ordered*. Operator grading of the residual queue shows something **larger and upstream**: **the platform has no concept of EVENTHOOD.** Presented with the 15 substantive open incidents — the residue **after** clearing benchmark, pattern, and weather noise, i.e. the best the queue had to offer — **the operator graded 0 of 15 as incidents.** Every one, *including the well-formed, genuinely client-relevant ones*, is a **signal**, not an incident:
+
+- open letters, campaigner statements, opinion pieces ("Social Sentiment…"), and **routine regulatory filings** (FortisBC waste-discharge amendment; an emissions report filed to the BCER) were all promoted to **P1**.
+- These are real, on-topic, client-relevant — and still not incidents. Nothing *occurred* that warrants tracked client response; they are the ambient activity of the client's world.
+
+**An incident requires three things, ALL of them:** (1) **something occurred** (an event, not a statement/filing/opinion), AND (2) a **pathway to this client** (asset/entity/operations), AND (3) **a decision is warranted** (tracked response). **Relevance is necessary and NOT sufficient.** The current pipeline has only a relevance gate; it has no eventhood test and no decision-warranted test — so it converts *client-relevant reading material* into P1 incidents.
+
+**Consequence for sequencing:** fixing the relevance *ordering* alone (the inversion) yields **correctly-ranked non-incidents** — the pitch invasion would out-rank the regulatory filing, but both would still be "incidents," and neither the filing nor most of the queue should be one at all. **Eventhood + decision-warranted are prerequisites, not follow-ons.** Ordering relevance is necessary; it is not the whole fix.
+
+- **Grading record (2026-08-01):** 15 substantive items, **0 graded as incidents.** Dispositions (operator): most = "not an incident"; several relevant ones = "awareness tier, not an incident"; one = "not client-relevant." **2 held for checks:** the Canada/Curaçao pitch invasion (LIVE, in-window — an actual occurrence at BC Place; the one item with genuine eventhood) and "Fracking the Peace" (worksite/personnel check: names no PECL worksite/facility/individual → fails). The 13 graded non-incidents were closed as `news_reclassified` (signal, not incident).
+
 ## Finding
 An incident's priority currently derives from **threat magnitude** (how severe the event is in general), not from **threat-to-this-client** (does it reach this client's assets, entities, or operations). The admission gate's `relevance_score >= 0.60` is a **topical keyword match**, so global cyber/crime news clears it for any client that monitors security terms — while a genuine, client-specific event can score *below* it.
 
