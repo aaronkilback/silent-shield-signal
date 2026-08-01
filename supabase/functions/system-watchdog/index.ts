@@ -3121,7 +3121,7 @@ Deno.serve(async (req) => {
         // = laundering. meta_json.review_queue holds the ids; report_evidence_sources.source_id
         // holds cited signal ids. Any overlap in the last 24h is a breach.
         const { data: recentReports } = await supabase.from('reports')
-          .select('id, meta_json, storage_url, rendered_persisted_at').eq('type', 'executive_intelligence')
+          .select('id, meta_json, storage_url, rendered_persisted_at, created_at').eq('type', 'executive_intelligence')
           .gte('created_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString());
         let launderedCites = 0;
         for (const r of (recentReports ?? [])) {
@@ -3167,7 +3167,13 @@ Deno.serve(async (req) => {
         }
         // (d) WO-REPORT-PERSIST-01 item 4 — any generated report with NULL storage_url is a Pillar-1
         // violation: its rendered body was not persisted and becomes unauditable (the 6027f0ac gap).
-        const unpersisted = (recentReports ?? []).filter((r: any) => !r.storage_url);
+        // SINCE-FIX CUTOFF (2026-07-31): the storage-upload capability went live in generate-executive-report
+        // at ~2026-07-30T18:00Z (first two reports persisted at 18:07/18:22). Reports generated BEFORE that
+        // predate the capability and must NOT be flagged — they are historical deploy-gap rows (271 pre-fix
+        // nulls incl. the 4 07-30 13:25–17:17 reports), not a live persistence failure. Only post-cutoff
+        // null-storage reports indicate the fix regressed or is unwired on some path.
+        const PERSIST_FIX_LIVE = '2026-07-30T18:00:00Z';
+        const unpersisted = (recentReports ?? []).filter((r: any) => !r.storage_url && String(r.created_at ?? '') >= PERSIST_FIX_LIVE);
         if (unpersisted.length > 0) {
           behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
             title: `Report persistence: ${unpersisted.length} report(s) generated in 24h with NULL storage_url`,
