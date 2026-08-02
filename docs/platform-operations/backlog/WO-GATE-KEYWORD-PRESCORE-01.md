@@ -31,6 +31,26 @@ The gate drops **~9,200 items/30d**. "Scored vs dropped-pre-score" can't be spli
 ## Root cause (operator's suspect confirmed: Gate 3 client-aware relevance)
 The client-selection gate is **keyword-exact-match and precedes relevance scoring**, so client context (the *reason* to score) is decided by literal string overlap, not meaning. Relevant cyber/OT/energy advisories that don't contain a client's exact keyword phrase are dropped before the AI ever assesses them.
 
+## RULING 2026-08-02: APPROVED, sequenced (no hot-swap). Progress:
+
+### Phase 1 — FALSE-POSITIVE AUDIT — DONE (fabrication confirmed at scale)
+Substring client-match doesn't just *miss* nexus, it *fabricates* it. Of **2,312** keyword-attributed signals (90d), **611 (26.4%) matched ONLY on a ≤5-char keyword** → fabricated. **609 to Kilbacks** (via "home"/"cabin"), 2 BC Place. Garbage-keyword volume: **"home" 544, "cabin" 104**. All 10 sampled were UNANCHORED — "home" matched inside `homelessness` / `hometown` / `Chomedey` (a place) / not in the signal text at all. **No deletions** (immutable chain); correction = superseding attribution (operator ruling pending).
+
+### Phase 4 — REGISTRY TRIAGE — DONE (108 → 92 active feeds)
+16 sources soft-removed (`status='paused'` + `config.registry_triage` tag; hard-delete avoided for FK-safety + provenance): **A** out-of-scope (9: FIFA×5, BC Lions, sports×2, TransLink), **B** dedup (6: Canadian Press ×2, Metro Vancouver ×3, NEB/CER ×1 — canonical kept), **C** broken-URL (1: US Wildfire → nifc.gov homepage). **Group D HELD** untouched pending the Phase-2 baseline (gate-blocked ≠ dead).
+
+### Watchdog — DONE (Phase-1 probe)
+`agent-sentinel` **Probe 2d** — fires a `high` `data_integrity` finding if any client-attributed signal in the last 24h matched ONLY on a ≤5-char substring keyword (the fabrication signature). To be re-verified after any matcher change.
+
+### Phase 2 — INSTRUMENT THE DROPS — PENDING (build → 72h forward-only run)
+Persist a drop record per item (source_id, title, url, stage reached [keyword-gate/scorer/insert], drop reason, relevance_score NULL-vs-numeric, client_id evaluated, ts). No backfill. Then re-run B: parsed vs reaching-scorer vs scored vs inserted, by source. This is the baseline the rebuild is measured against.
+
+### Phase 3 — SHADOW RUN — PENDING (build → 7-day parallel, no signals writes)
+Semantic client-match as a parallel path writing to a shadow table only. After 7 days: recall gain / false-positives removed / both-accept / new-gate volume per client per day. **Cutover ruling gated on: new-gate volume must not exceed ~3× old, else tighten first.**
+
+### Sequencing note
+This gate is **upstream of WO-OUTPERFORM** — the four-lane comparison does NOT start until Phase 3 cutover is ruled on (the harness only sees what the gate admits).
+
 ## Fix direction (design only — NOT built)
 - Move client-relevance to a **semantic** match (embed doc vs client profile/taxonomy) OR broaden keyword→concept expansion, so meaning decides client nexus, not verbatim phrases.
 - **Audit RSS drops** (write dropped items + reason + would-be score to a `filtered_signals`-equivalent) so this is measurable, not console-only — you cannot calibrate a gate whose rejections are invisible (fail-loud / measurability doctrines).

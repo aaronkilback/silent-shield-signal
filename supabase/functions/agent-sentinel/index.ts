@@ -188,6 +188,36 @@ Deno.serve(async (req) => {
       console.warn('[sentinel] SSRF guard canary error:', e?.message);
     }
 
+    // ── Probe 2d: client-match anchoring (WO-GATE-KEYWORD-PRESCORE-01 Phase 1) ──
+    // The RSS client-match gate matches client keywords/assets by exact SUBSTRING, so a generic
+    // short keyword (Kilbacks' "home"/"cabin") fabricates client nexus via matches inside larger
+    // words ("homelessness", "Chomedey", "cabinet"). Fire if any client-attributed signal in the
+    // last 24h matched ONLY on a <=5-char keyword. (Phase-1 audit: 26.4% of 90d attributions fabricated.)
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase.from('signals')
+        .select('id, title, raw_json').not('client_id', 'is', null).gte('created_at', since).limit(3000);
+      const strip = (k: string) => k.toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/, '');
+      const fab = (recent || []).filter((s: any) => {
+        const mk = s.raw_json?.matched_keywords;
+        if (!Array.isArray(mk) || mk.length === 0) return false;
+        const lens = mk.map((k: any) => strip(String(k)).length).filter((n: number) => n > 0);
+        return lens.length > 0 && Math.max(...lens) <= 5;
+      });
+      if (fab.length > 0) {
+        await recordFinding(supabase, {
+          category: 'data_integrity', severity: 'high',
+          title: `Fabricated client-match: ${fab.length} signal(s) in 24h attributed on a <=5-char substring keyword`,
+          analysis: `RSS client-match (process-intelligence-document) matches client monitoring_keywords/assets by exact SUBSTRING. ${fab.length} signal(s) in 24h were attributed to a client on a <=5-char keyword only (e.g. "home"→"homelessness"/"Chomedey", "cabin"→"cabinet") — fabricated nexus, not real relevance. Sample: ${fab.slice(0,5).map((s:any)=>`"${(s.title||'').slice(0,48)}"`).join(', ')}. See WO-GATE-KEYWORD-PRESCORE-01 (Phase 1: 26.4% of 90d attributions fabricated, 609 to Kilbacks).`,
+          plainEnglish: `${fab.length} signal(s) were tagged to a client today on a coincidental short-word match, not real relevance. Client-match needs anchoring (whole-word + min length).`,
+          action: 'Anchor client keyword matching (word-boundary + min token length; kill garbage keywords). Corrections via superseding attribution (no deletions). WO-GATE-KEYWORD-PRESCORE-01.',
+        });
+        report.findings_written++;
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] anchoring probe error:', e?.message);
+    }
+
     // ── Probe 3: Management API security advisor ingestion ──
     // Pulls the canonical Supabase security advisor (rls_disabled_in_public,
     // policy_exists_rls_disabled, security_definer_view, function_search_path_mutable, auth
