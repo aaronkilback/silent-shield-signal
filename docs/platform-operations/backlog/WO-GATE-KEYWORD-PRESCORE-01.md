@@ -80,6 +80,15 @@ where d.first_seen_at > now() - interval '72 hours'
 group by s.name order by parsed desc;
 ```
 
+### Auto-quarantine (forward-only) + pre-fix sweep — DONE 2026-08-02
+- **Born-quarantine at write time:** `process-intelligence-document` now writes any signal whose client attribution matched ONLY on a ≤5-char keyword as `quality_status='quarantined'`, `quarantine_reason='fabricated_client_match_auto'` (matcher unchanged; historical 611 untouched). Proven in prod: a synthetic doc matching only `asset:Home`/`asset:cabin` scored 0.9 (would have gone ACTIVE) and was born quarantined + excluded from client-facing fetch; fixture cleaned up.
+- **Probe 2d now scans ACTIVE rows only** (`.eq('quality_status','active')`) — a hit now means a fabricated match reached a client-facing row DESPITE the gate (born-quarantine failed), not noise on correctly-quarantined rows.
+- **Pre-fix sweep:** 4 pre-deploy active fabricated Kilbacks signals (cabin-crew / homeless junk) quarantined with `quarantine_reason='fabricated_client_match_phase1_gap'` (deploy-timing gap, not the Phase-3 correction). Probe 2d 24h count → **0**.
+- **KNOWN LIMITATION — ≤5-char false positive on legitimate short acronyms:** 2 active PECL signals matched only on real `LNG` (3 chars) were **left active** (legitimate LNG Canada coverage — not fabrication). The ≤5-char heuristic (both born-quarantine and Probe 2d) will misfire on short-but-real acronyms; needs a per-client short-acronym allowlist or the Phase-3 semantic matcher to resolve. Tracked in **WO-CLIENT-THRESHOLD-BYPASS-01**.
+
+### Adjacent defect — WO-CLIENT-THRESHOLD-BYPASS-01 (per-client threshold inert on RSS path)
+Score-scale resolution (Phase 2, item 2) surfaced that `process-intelligence-document` gates on a **hardcoded 0.3 (0–1)** for every client and **never reads per-client `min_relevance_score`** (0–100; PECL 30) — only `monitor-canadian-sources`/`agent-chat` do. So on the dominant RSS path, **client-aware relevance is client-aware in neither the match nor the threshold**. Separate fix from Phase 3 (semantic match decides WHICH client; this decides whether that client's threshold applies). Full scope: `docs/platform-operations/backlog/WO-CLIENT-THRESHOLD-BYPASS-01.md`.
+
 ### Phase 2 — original spec (PENDING → superseded by the above)
 Persist a drop record per item (source_id, title, url, stage reached [keyword-gate/scorer/insert], drop reason, relevance_score NULL-vs-numeric, client_id evaluated, ts). No backfill. Then re-run B: parsed vs reaching-scorer vs scored vs inserted, by source. This is the baseline the rebuild is measured against.
 

@@ -229,6 +229,10 @@ Key invariants: **`relevance_score` NULL = never scored, 0 = scored zero — NEV
 
 > **Deviation from the original spec (documented):** the unique index is `(source_id, content_hash, STAGE)`, not `(source_id, content_hash)` — the funnel analytics query counts rows *per stage*, so one-row-per-item would return zeros. One row per item **per stage**.
 
+**Auto-quarantine (forward-only):** `process-intelligence-document` born-quarantines any signal whose client attribution matched ONLY on a ≤5-char keyword (`quality_status='quarantined'`, `quarantine_reason='fabricated_client_match_auto'`) — the fabrication signature (e.g. Kilbacks `cabin`→"cabin crew", `home`→"homeless"). `agent-sentinel` Probe 2d scans **active rows only** and fires if such a match reaches a client-facing row despite the gate.
+
+> **Lockstep duplication (tech debt):** the short-keyword strip/length detection (`k.toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/,'')`, then `max(len) <= 5`) is duplicated in `process-intelligence-document` (born-quarantine) and `agent-sentinel` Probe 2d. **They MUST stay identical** or the probe and the write-path disagree. Extract to `_shared/` when convenient (same pattern as `_shared/safe-fetch.ts`). Known false positive: legitimate short acronyms (PECL `LNG`) — see WO-CLIENT-THRESHOLD-BYPASS-01.
+
 ---
 
 ### monitor-news-google — entity name queries
