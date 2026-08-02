@@ -265,6 +265,50 @@ Deno.serve(async (req) => {
       console.warn('[sentinel] ingest-funnel liveness probe error:', e?.message);
     }
 
+    // ── Probe 2f: anon-surface config invariants (audit 2026-08-02) ──
+    // Deterministic "the door is shut" checks. Each dangerous set must be EMPTY; non-empty = high.
+    // Logic + allowlist live in DB (public.security_anon_surface_scan() + security_anon_surface_allowlist)
+    // so adding an intentional exception is a reviewed INSERT, not a probe edit. One finding per
+    // non-empty invariant (attention doctrine), plus one low informational finding for RLS-on-no-policy.
+    try {
+      const { data: scan, error: scanErr } = await supabase.rpc('security_anon_surface_scan');
+      if (scanErr) throw scanErr;
+      const HIGH: Array<[string, string, string]> = [
+        ['rls_disabled', 'Table(s) in public with RLS DISABLED (not allowlisted)', 'A public table with RLS off is fully readable/writable by the anon key. Enable RLS or add to the allowlist with a reason.'],
+        ['anon_write_policies', 'Policy grants INSERT/UPDATE/DELETE to anon/public unconditionally', 'An anon/public write policy with USING/WITH CHECK true lets any internet user write. Re-scope TO service_role/authenticated.'],
+        ['anon_true_read_policies', 'Policy grants SELECT to anon/public with USING (true)', 'Unconditional anon/public read exposes all rows. Add a real predicate or re-scope the role.'],
+        ['anon_secdef_functions', 'SECURITY DEFINER function EXECUTE-able by anon (not allowlisted)', 'A SECURITY DEFINER function callable by anon bypasses RLS. REVOKE EXECUTE FROM anon,public; grant authenticated/service_role, or allowlist if auth.uid()-scoped.'],
+        ['anon_storage_read_policies', 'storage.objects SELECT policy grants anon read with no auth check', 'Re-scope the bucket policy to authenticated/tenant.'],
+        ['public_buckets', 'Storage bucket marked public=true (not allowlisted)', 'A public bucket serves objects to the anonymous internet. Make private + use signed URLs, or allowlist.'],
+      ];
+      for (const [key, title, action] of HIGH) {
+        const set = Array.isArray(scan?.[key]) ? scan[key] : [];
+        if (set.length > 0) {
+          await recordFinding(supabase, {
+            category: 'security_posture', severity: 'high',
+            title: `Anon-surface invariant breached: ${title} (${set.length})`,
+            analysis: `security_anon_surface_scan() returned a non-empty '${key}' set — the anon-facing attack surface has drifted open (RLS-at-Creation is load-bearing and this is the enforcement). Items: ${set.slice(0, 25).join(', ')}${set.length > 25 ? ` …+${set.length - 25}` : ''}.`,
+            plainEnglish: `A database misconfiguration just exposed something to the anonymous internet: ${title.toLowerCase()}.`,
+            action, job: 'security-anon-surface',
+          });
+          report.findings_written++;
+        }
+      }
+      const info = Array.isArray(scan?.INFO_rls_enabled_no_policy) ? scan.INFO_rls_enabled_no_policy : [];
+      if (info.length > 0) {
+        await recordFinding(supabase, {
+          category: 'security_posture', severity: 'low',
+          title: `RLS enabled but ZERO policies on ${info.length} public table(s) — deny-by-default (decision, not accident)`,
+          analysis: `These tables are RLS-enabled with no policy, so they deny all non-service-role access (safe). Flagged so it stays a deliberate choice: ${info.slice(0, 40).join(', ')}${info.length > 40 ? ` …+${info.length - 40}` : ''}.`,
+          plainEnglish: `${info.length} tables are locked down with no read/write policy — intentional deny-by-default. Review that none were meant to be reachable.`,
+          action: 'Confirm each is intentionally locked. Add a scoped policy where a non-service-role reader is required.', job: 'security-anon-surface',
+        });
+        report.findings_written++;
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] anon-surface invariant probe error:', e?.message);
+    }
+
     // ── Probe 3: Management API security advisor ingestion ──
     // Pulls the canonical Supabase security advisor (rls_disabled_in_public,
     // policy_exists_rls_disabled, security_definer_view, function_search_path_mutable, auth
