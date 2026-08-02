@@ -685,14 +685,28 @@ async function runVulnerabilityScan(supabase: any) {
   let criticalCount = 0;
   let highCount = 0;
   const allFindings: any[] = [];
+  // WO-WRAITH-SCOPE-01: a gateway/model error (e.g. the claude-opus-4-6 404) must NEVER be
+  // recorded as a clean 0-findings scan. Track per-file failures + truncation loudly.
+  const scanErrors: { file: string; error: string }[] = [];
+  const truncatedFiles: { file: string; from: number; to: number }[] = [];
+  let okCount = 0;
+  // Largest in-scope file is ingest-signal (~77 KB / ~19K tokens); 150 KB covers every current
+  // target fully in one context. Files above this are flagged as truncated (partial), never
+  // silently clipped — the prior substring(0, 8000) scanned 77 KB real files at ~10%.
+  const MAX_SCAN_CHARS = 150_000;
 
   for (const file of snapshotFiles) {
-    const source = (file.source_code || '').substring(0, 8000);
-    if (!source.trim()) continue;
+    const full = file.source_code || '';
+    if (!full.trim()) continue;
+    const source = full.substring(0, MAX_SCAN_CHARS);
+    if (full.length > MAX_SCAN_CHARS) {
+      truncatedFiles.push({ file: file.file_path, from: full.length, to: MAX_SCAN_CHARS });
+      console.warn(`[WRAITH] ${file.file_path} TRUNCATED ${full.length}->${MAX_SCAN_CHARS} chars — partial scan, needs chunking`);
+    }
 
     try {
       const aiResult = await callAiGateway({
-        model: 'claude-opus-4-6',
+        model: 'openai/gpt-5.2',
         messages: [
           { role: 'system', content: VULN_PROMPT },
           { role: 'user', content: `FILE: ${file.file_path}\n\n${source}` },
@@ -700,8 +714,15 @@ async function runVulnerabilityScan(supabase: any) {
         functionName: 'wraith-security-advisor',
       });
 
-      const parsed = parseWraithJSON(aiResult.content || '');
-      if (!parsed?.findings) continue;
+      // LOUD FAILURE: a gateway error or null content is a FAILED scan for this file, not a
+      // clean 0. A model 404 must never read as "no vulnerabilities".
+      if (aiResult.error || aiResult.content == null) {
+        throw new Error(`model call failed: ${aiResult.error ?? 'null content'}`);
+      }
+      const parsed = parseWraithJSON(aiResult.content);
+      if (!parsed || !Array.isArray(parsed.findings)) {
+        throw new Error(`unparseable model response (len=${aiResult.content.length})`);
+      }
 
       for (const finding of parsed.findings) {
         if (!finding.title || !finding.severity) continue;
@@ -721,10 +742,19 @@ async function runVulnerabilityScan(supabase: any) {
         if (finding.severity === 'critical') criticalCount++;
         if (finding.severity === 'high') highCount++;
       }
+      okCount++;
       console.log(`[WRAITH] ${file.file_path}: ${parsed.findings.length} findings`);
     } catch (err) {
-      console.error(`[WRAITH] Error scanning ${file.file_path}:`, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      scanErrors.push({ file: file.file_path, error: msg });
+      console.error(`[WRAITH] Error scanning ${file.file_path}:`, msg);
     }
+  }
+
+  // LOUD FAILURE at scan level: if every file failed, the scan FAILED — throw so the caller and
+  // cron.job_run_details record a failure, never a 200 with total_findings:0.
+  if (okCount === 0 && scanErrors.length > 0) {
+    throw new Error(`vulnerability scan FAILED: 0/${snapshotFiles.length} files scanned OK. First error: ${scanErrors[0].error}`);
   }
 
   // #256 Phase 4 (2026-05-23) — Auto-create signal for critical platform-
@@ -773,7 +803,12 @@ async function runVulnerabilityScan(supabase: any) {
 
   return {
     scan_id: scanId,
-    files_scanned: snapshotFiles.length,
+    files_attempted: snapshotFiles.length,
+    files_scanned_ok: okCount,
+    files_failed: scanErrors.length,
+    scan_status: scanErrors.length === 0 ? 'ok' : 'partial',
+    scan_errors: scanErrors.slice(0, 5),
+    truncated_files: truncatedFiles,
     total_findings: allFindings.length,
     critical: criticalCount,
     high: highCount,

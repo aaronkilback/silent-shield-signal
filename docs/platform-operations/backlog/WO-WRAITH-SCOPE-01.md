@@ -3,7 +3,15 @@
 **Logged:** 2026-08-02. **Status:** SCOPE + cost recorded; do not build. **Priority:** HIGH. Follows WO-WRAITH-VULN-SCAN-DEAD-01 (auth fixed Option A) — but the detection proof failed, which re-orders this WO.
 
 ## Two problems, in order
-### 0. DETECTION IS BROKEN — ROOT CAUSE FOUND: the model call 404s (fix first)
+### 0. DETECTION — FIXED + PROVEN 2026-08-02 ✅
+All three blockers fixed together and the adce9554 proof re-run **passed**:
+- **(a) Model:** `claude-opus-4-6` → **`openai/gpt-5.2`**. Why: the gateway has **no Anthropic provider** (OpenAI/Gemini/Perplexity only) and no `MODEL_NORMALIZATION` entry for either claude ID, so `claude-*` fell through to OpenAI → 404. `openai/gpt-5.2` is the project's current strong model (17 production call sites — proven routable); `gpt-4o-mini` is the weak workhorse, wrong for reasoning-heavy vuln analysis.
+- **(b) Truncation:** `substring(0, 8000)` → **`MAX_SCAN_CHARS = 150_000`** (covers every current target fully — largest in-scope `ingest-signal` is ~77 KB; the old cap scanned it at ~10%). Files above the cap are recorded in `truncated_files` and `console.warn`'d — flagged partial, never silently clipped.
+- **(c) Loud failure:** `aiResult.error || content == null` now **throws** per file (recorded in `scan_errors`, `files_failed`, `scan_status: partial`); if **all** files fail, the whole scan throws → non-200 → visible in `cron.job_run_details`. A 404 can no longer produce a clean `0`.
+- **PROOF:** re-ran with the adce9554 excerpt in scope → **it flagged both scanner-visible vulns**: `high` "query/operator injection via dynamic `.or()` filter" (the ilike injection) + `high` "Authorization/RLS reliance unclear for multi-tenant data" (the unscoped cross-tenant reads). It also surfaced real issues deep in the full-content production files (ingest-signal SSRF/prompt-injection, ai-decision-engine CORS/auth) that the 8000-char cap had hidden. **28 findings total** — the scanner detects. (Proof-run findings + the test snapshot row were deleted afterward; the scanner is not yet precision-validated, so those were not kept as real findings.)
+- **NEW RUNTIME FINDING:** the full-content 6-file scan **hit the 150s edge ceiling** (SIGKILLed before returning; no result row, no auto-signal). Confirms §1 below — full scope **must** use the budget/cursor pattern; even 6 files fully-scanned with gpt-5.2 exceeds one invocation.
+
+### 0-historical. Root cause (for the record): the model call 404'd
 Proven 2026-08-02 via a raw pre-parse diagnostic (`__diag_scan_raw`, since reverted): the scan's `callAiGateway({ model: 'claude-opus-4-6' })` returns:
 ```
 content_is_null: true

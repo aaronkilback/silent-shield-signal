@@ -52,8 +52,11 @@ Operator chose Option A (canonical internal gate). Applied + verified:
 - 2b — injected a verbatim `ai-tools-query@adce9554` excerpt (unscoped cross-tenant reads in `get_recent_signals`/`get_active_incidents` + `ilike` filter injection `.or(\`name.ilike.%${searchQuery}%\`)` in `search_entities`) into scope and scanned: **6 files scanned, `total_findings: 0`.** The scanner flagged **none** of the textbook instances of its own prompt's vuln classes #1 and #2. (Logs confirm the model *was* called — 21.5s execution — so it ran; it just returned/parsed 0.) The excerpt is an *easier* target than a 1000-line file, which makes the result stronger: it cannot flag an obvious injection in 34 lines.
 - **Conclusion:** reviving the cron was necessary but insufficient. **The scanner runs and detects nothing — a rubber stamp.** A clean report from it means "found nothing," not "nothing to find." Detection quality is a second, prerequisite fix (root-cause: model under-detection on the current single-shot prompt, or silent parse-drop of findings — needs investigation). Tracked in **WO-WRAITH-SCOPE-01**. `verify_jwt=false` is unscannable — it lives in `config.toml`, not `index.ts`.
 
+## STATUS 2026-08-02: auth FIXED + detection FIXED & PROVEN
+Both original blockers closed. Auth = Option A (internal-caller gate). Detection = model route (`openai/gpt-5.2`) + truncation (150 KB) + fail-loud; the adce9554 proof flagged the ilike injection + unscoped reads (28 findings). Remaining work is NOT "is it dead" but **scale + validation** → WO-WRAITH-SCOPE-01 (budget/cursor for full scope — the 6-file full scan hit the 150s ceiling; precision validation; register+heartbeat) and WO-WRAITH-DAILY-DIGEST-01 (coverage-explicit digest). This incident's core defect (dead scanner reporting clean) is resolved.
+
 ## Revised fix order
-0. **DETECTION (new, gating): the scanner returns 0 on known-vulnerable code — fix before trusting any output.** See WO-WRAITH-SCOPE-01.
+0. **DETECTION — DONE & PROVEN 2026-08-02** (model 404 + truncation + swallowed-error, all fixed; see WO-WRAITH-SCOPE-01 §0). Also generalized into the **Fail-Loud Doctrine** (`architecture-decisions/fail-loud-doctrine.md`).
 1. **Auth (task #111):** DONE — Option A applied 2026-08-02.
 2. Re-invoke; confirm `wraith_vulnerability_findings` gets ≥1 row (or explicit empty-scan record distinguishable from never-ran).
 3. **Prove detection on `ai-tools-query@adce9554`** (temporarily in scope): it must flag the tenant-isolation / filter-injection vulns, or the scanner is a rubber stamp.
