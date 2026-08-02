@@ -22,3 +22,28 @@ The classic blind spot (WO-REVERSE-PHANTOM-PROBE-01): **no `cron_job_registry` e
 2. **Register + heartbeat** it (Registry-is-a-Promise) so a future failure is visible.
 3. Decide whether `codebase_snapshots` growth should gate on the scan being alive (don't snapshot into a void).
 4. Confirm via measured post-condition: `wraith_vulnerability_findings` receives a row (or an explicit empty-scan record), and `cron.job_run_details` shows `succeeded` — not a 200-that-did-nothing.
+
+---
+
+## FIX ATTEMPT 2026-08-02 — layer 1 fixed, layer 2 exposed, STILL NOT WORKING
+
+**Layer 1 (URL) — FIXED.** Root cause confirmed: the scheduled `net.http_post` URL literal was split across a line with injected whitespace (`.../wraith-secur\n  ity-advisor`). Rescheduled with a clean single-line URL — migration `20260802150000_fix_wraith_vuln_scan_cron_url.sql`. The request now reaches the function.
+
+**Layer 2 (auth) — EXPOSED, BLOCKS THE SCAN.** Manual invoke (pg_net → `run_vulnerability_scan`) returned **HTTP 401 `{"error":"Authentication required"}`**. The gate accepts service-role only when the Bearer equals env `SUPABASE_SERVICE_ROLE_KEY` or `SERVICE_ROLE_JWT`; the cron sends `current_setting('app.settings.service_role_key')`, which does **not** match — the documented **task #111 wraith env-var key drift** (CLAUDE.md). The snapshot cron uses the same key but succeeds only because `wraith-snapshot-codebase` has **no auth gate**; `wraith-security-advisor` does. **So even with the URL fixed, the nightly scan still produces zero findings.**
+→ **NOT calling it fixed.** Layer 2 is an auth-alignment decision (align `app.settings.service_role_key` to the gate's env key, OR widen the gate) — **credential-adjacent, HELD for operator go** (no service-role secret changes without explicit confirmation).
+
+## SCOPE — 5 files, a sample not a scan (point 2)
+`scanTargets` is hardcoded to **5 files**: `ingest-signal`, `ai-decision-engine`, `correlate-entities`, `incident-action`, `_shared/handlers-signals-incidents` (`codebase_snapshots` confirms exactly these 5). Against ~351 deployed functions that is **~1.4% coverage** — a sample, not a scan. **`ai-tools-query` is NOT in `scanTargets`**, so the production scanner **structurally cannot flag `ai-tools-query@adce9554`** — it never reads the file, regardless of exit code.
+
+## Vuln classes (VULN_PROMPT) — correctly aimed, empirically unproven
+Opus, per file: (1) SQL/PostgREST injection via unsanitized input, (2) auth bypass / RLS bypass / service-role misuse, (3) prompt injection, (4) SSRF, (5) hardcoded secrets, (6) data exfiltration via logs/errors, (7) chained vulns. Returns JSON with `severity`, `cvss_score`, `cwe_id`. The documented `ai-tools-query@adce9554` vulns — unscoped cross-tenant reads, `.or(\`…ilike.%${query}%\`)` PostgREST filter injection, `verify_jwt=false` — fall under classes **1 + 2**, so the prompt **would target them**. But detection is **unproven**: (a) auth 401 blocks a live run, and (b) the file is out of scope. The prompt looking right is not proof the model flags it.
+
+## Verdict
+Still **non-functional**. Two blockers before a single finding: layer-2 auth (task #111) and — for the known-bad specifically — a scope that excludes it (and 346 other functions). Detection capability **unproven**; do not treat as a working control. `agent-sentinel` remains the only *functioning* security probe (posture, not code-vuln).
+
+## Revised fix order
+1. **Auth (task #111):** align the cron's key with the gate — operator decision (credential-adjacent).
+2. Re-invoke; confirm `wraith_vulnerability_findings` gets ≥1 row (or explicit empty-scan record distinguishable from never-ran).
+3. **Prove detection on `ai-tools-query@adce9554`** (temporarily in scope): it must flag the tenant-isolation / filter-injection vulns, or the scanner is a rubber stamp.
+4. **Scope:** make `scanTargets` a real inventory (all deployed functions, batched) or risk-ranked — not 5 hardcoded.
+5. Register + heartbeat (Registry-is-a-Promise) + a probe that reads `cron.job_run_details` failures (the one signal that showed this).

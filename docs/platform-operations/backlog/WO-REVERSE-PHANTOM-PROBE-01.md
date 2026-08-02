@@ -21,7 +21,7 @@ Of **~77 active cron jobs**: **~51 registered · 26 not.** Of the 26 unregistere
 ### Priority set (by consequence if silently broken)
 | job (function) | last dispatch | 7d dispatch | observable output (7d) | classification |
 |---|---|---|---|---|
-| **operator-alert-bridge-15min** (alert-operator-bridge) | 08-02 13:39 | 672 ok | **watermark STATIC since 2026-07-08 (25d)** — either genuinely quiet or silently not-delivering; can't tell | **should-register + PROBE** — high consequence, health *unconfirmed* |
+| **operator-alert-bridge-15min** (alert-operator-bridge) | 08-02 13:39 | 672 ok | **idle, not silently dropping** — 0 bridge-deliverable alerts since watermark (see below); but has **never delivered via itself** (send path unverified) + nullable-FK blind spot | **should-register + PROBE** — not-failing but not-confirmed |
 | **autonomous-threat-scan-30min** | 08-02 13:25 | 335 ok | `autonomous_scan_results` **+649/7d** ✓ | **should-register** (healthy) |
 | **data-quality-monitor-6h** | 08-02 12:15 | 28 ok | **persists NOTHING** (0 inserts/rpc/findings) — output goes only to the discarded HTTP response | **stale-like** — unobservable by construction; needs output-persistence + register |
 | **embed-signals-30min** (generate-embeddings) | 08-02 13:31 | 336 ok | **`global_chunks` = 0** (its documented target is empty); signals embed via `signals.content_embedding` (unverified) | **should-register + VERIFY** — global-doc embed path appears dead |
@@ -52,3 +52,10 @@ Of **~77 active cron jobs**: **~51 registered · 26 not.** Of the 26 unregistere
 1. Reverse-phantom probe RPC + watchdog finding (aggregated, one per run).
 2. Heartbeat-coverage companion (dispatch-vs-work).
 3. Re-triage: register the should-registers (+ add heartbeats); deregister redundant (generate-daily-briefing 0700?); fix/retire the stale (health-manager, wraith-vuln-scan, extract-predicted-events, data-quality-monitor output).
+
+## operator-alert-bridge — investigated 2026-08-02 (idle, not failing; but unconfirmed + latent leak)
+`operator_bridge_pending_alerts` selects `alerts` **INNER JOIN incidents INNER JOIN clients** WHERE `status='pending' AND sent_at IS NULL AND tier IN ('notification','interruption') AND (created_at,id) > watermark AND client active AND name NOT LIKE '\_%'`. Watermark = `2026-07-08 20:49`, `last_notified_id = 00000000-…-0000` (**zero sentinel — never advanced**).
+- **0 bridge-deliverable alerts** since the watermark. The 12 pageable alerts in the window: **2 interruptions** for `_benchmark_bcch` (test client — correctly excluded by `NOT LIKE '\_%'`, status superseded); **10 notifications with NULL `incident_id`** (8 superseded, 2 `sent` via another path). None were deliverable by the bridge.
+- **Conclusion: idle, NOT silently dropping real alerts.** The static watermark reflects genuine quiet.
+- **BUT two things remain open:** (a) the bridge has **never delivered via itself** (`last_notified_id` still the zero sentinel) — its send path (Resend, `RESEND_API_KEY`/`fromEmail`, 503-guarded) is **unverified in prod**; and (b) it **INNER-JOINs incidents**, so any pageable alert with `incident_id IS NULL` is **invisible to it** — the nullable-FK doctrine (INC-ALERTS-BRIDGE). 10/12 alerts in this window had null `incident_id`; the 2 that were delivered went via a different path *because* the bridge couldn't see them. A future **real-client** pageable alert with a null incident FK would be silently undeliverable by the bridge.
+- **Follow-up (not built):** LEFT JOIN + explicit null-incident handling in `operator_bridge_pending_alerts`; and a synthetic end-to-end delivery test (or first real page) to confirm the Resend path actually fires.
