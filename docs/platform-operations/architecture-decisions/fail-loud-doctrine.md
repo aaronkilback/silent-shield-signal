@@ -24,6 +24,14 @@ if (!parsed) return;           // recorded as "0 findings" — a 404 now reads a
 
 All three share one signature: **an error was caught (or returned-as-data) and converted into a plausible empty/default result.** None threw. None were visible. Each ran broken until someone manually looked.
 
+## Variant — the timestamp lie (a stale artifact with a current timestamp, no error)
+The four instances above returned an **empty default on a caught error**. A fifth, subtler shape returns **a stale artifact carrying a current timestamp and no error at all** — nothing is caught because nothing failed; the *copy* succeeded, the *content* is old.
+- **Instance (2026-08-02):** `codebase_snapshots.snapshotted_at` advanced to today on every nightly run while `source_code` stayed frozen at ~April — because the snapshot job re-copies a frozen storage bucket and stamps `snapshotted_at = now()` regardless of whether the content changed. A consumer (the vuln scanner) read "snapshotted today" as "current" and scanned 3-month-old code, emitting a **false critical**. No error was ever thrown — the timestamp itself was the lie.
+
+**Rule: a freshness field must derive from the CONTENT, not from the copy operation.** Any timestamp that can advance without the underlying thing changing is a lie by construction. Freshness that consumers trust as "the thing is current as of T" must be a function of the thing (content hash, source commit sha, generation input), not of the fact that a sync/copy/refresh ran. If you cannot prove the content changed, do not advance the freshness field — or carry a separate provenance field (git sha, content hash) that consumers check instead of the timestamp.
+
+**Audit for this shape:** anything that stamps `updated_at` / `snapshotted_at` / `synced_at` / `refreshed_at` / `last_ingested_at` / `last_checked_at` / heartbeat `completed_at` on a **copy, sync, refresh, or poll that may be a no-op** — where a downstream consumer reads that field as a staleness/currency signal. The stamp must be gated on an actual content change (or paired with a content-derived provenance field). Priorities: `codebase_snapshots` (fixed via `git_sha` + refuse-if-stale), `sources.last_ingested_at` (advances on every poll even when 0 items fetched → "polled" ≠ "fresh"), any `*_synced_at` on external mirrors, and any entity/report "freshness" column set on regeneration regardless of input change.
+
 ## Enforcement
 1. **Throw or flag — never swallow into a default.** If an operation can fail, the failure path must produce an observable failure (throw, non-200, `status:'failed'`, a finding), not a value that looks like a successful empty result.
 2. **Returned errors are errors.** If a helper returns `{ content, error }` (not throwing), the caller MUST check `error`/null-content and fail — treating `content || ''` as empty success is the trap.

@@ -5,7 +5,20 @@
 ## The gap
 `ingest-signal:653` does `fetch(url)` on a **caller-supplied** body field (`url: z.string().url()`), with **no scheme allowlist, no private-IP block, no metadata-range block, no redirect re-validation**. `zod.url()` only checks well-formedness — `http://169.254.169.254/latest/meta-data/`, `http://127.0.0.1/`, `http://10.x/` all pass. It is behind the F-026 auth gate (so *authenticated* SSRF, not anonymous), but still real. Grep confirms **no `_shared` SSRF-guard helper exists**. The 2026-07-31 fetch-url-content SSRF containment did not cover this — **partial containment confirmed**, and it will recur when fetch-url-content is restored.
 
-## Design — `_shared/safe-fetch.ts` (or `ssrf-guard.ts`)
+## STATUS 2026-08-02 — helper BUILT + negative-tested, NOT applied anywhere yet
+`_shared/safe-fetch.ts` is written and proven against a temp harness (since removed). Negative tests (all BLOCKED) + control (allowed):
+- `http://169.254.169.254/` → `private_ip` · `http://10.0.0.1/` → `private_ip`
+- `http://10.0.0.1.nip.io/` (DNS-rebind) → `resolves_to_private (… -> 10.0.0.1)` (confirms `Deno.resolveDns` works in the edge runtime, so it won't fail-closed on legit hostnames)
+- `https://httpbin.org/redirect-to?url=http://169.254.169.254/` (public→private redirect) → `private_ip` on the redirect hop
+- control `https://example.com/` → allowed.
+**Not adopted at any call site yet** — adoption is the next step, per the sequence below.
+
+### monitor-rss-sources SSRF chain (task-2 confirmation)
+Chain: `autonomous-source-discovery` (AI-suggested URL, inserted `status='active'` with **no relevance gate** until 2026-08-01's propose-path change) → `sources.config.url` → `monitor-rss-sources:122` (`select … where status='active'`) → `:172` (`feedUrl = config.feed_url||config.url`) → `:187` (`fetch(feedUrl)` **unguarded**). So yes — **any URL in an active rss/url_feed source is fetched server-side with no scheme/IP/metadata guard.**
+- **Does the propose-path change close it? Only partially.** `status='proposed'` stops *new* discovered sources from being active-and-fetched until promoted, shrinking the write vector. But it does **not** (a) add a fetch guard, nor (b) re-validate the **56 already-active discovered sources** — an already-active discovered source could still point anywhere. Containment scan today: 108 active feed sources, **0 non-https, 0 private/metadata** — structural gap, not currently exploited.
+- **Real closure = this guard applied at `monitor-rss-sources:187`** + re-validating existing active source URLs on read. The propose gate reduces surface; the SSRF guard closes the fetch.
+
+## Design — `_shared/safe-fetch.ts` (BUILT — see STATUS above)
 `assertPublicUrl(rawUrl)` + a `safeFetch(rawUrl, opts)` wrapper:
 1. **Scheme allowlist:** `http`/`https` only (reject `file:`, `gopher:`, `ftp:`, `data:`, etc.).
 2. **Host/IP block:** resolve DNS, then reject if the resolved IP is in any private/reserved range — RFC1918 (`10/8`, `172.16/12`, `192.168/16`), loopback (`127/8`, `::1`), link-local + **cloud metadata** (`169.254/16`, incl. `169.254.169.254`; IMDSv2 hop), CGNAT (`100.64/10`), ULA (`fc00::/7`), `0.0.0.0/8`, multicast. Block by *resolved IP*, not just hostname string (defeats `http://metadata.attacker.com` → 169.254).
