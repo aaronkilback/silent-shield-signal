@@ -25,7 +25,13 @@ Since **2026-04-08** (commit `87ed01d8`, "WRAITH security layer") — **~4 month
 ## Immediate context (2026-08-02)
 This path was nearly regressed today: WO-WRAITH-VULN-SCAN-DEAD-01 Option A gated `detect_prompt_injection` on the internal-caller secret. Without also sending `x-fortress-internal` from `dashboard-ai-assistant`, every call would have 404'd → **fail open → injection defence silently off**. The header was added in the same change, so reachability is preserved — but that near-miss is exactly why the fail-open design is a defect: a routine auth change came within one edit of disabling the control invisibly.
 
-## Fix (when authorized — do not build)
+## BUILT 2026-08-02
+Design accepted + implemented:
+- **Root cause found + fixed:** the gate used `claude-haiku-4-5-20251001` — **unmapped in the AI gateway → OpenAI 404** → always defaulted to `allowed`, `confidence 0` → never logged (the 4-month silence) → never blocked. It was never "no attacks"; it was a dead model. Model → `gpt-4o-mini`; on gateway error the gate now returns `analysis_ok:false, action:'error'` (never a fake `allowed`). Also fixed a latent `.insert().catch is not a function` that surfaced once the log path was reachable. **Proven:** blatant injection → `blocked:true, confidence:1, analysis_ok:true`.
+- **Fail-closed for destructive tools:** `dashboard-ai-assistant` now classifies the gate outcome (`blocked`/`checked_clean`/`analysis_error`/`http_*`/`timeout`/`network_error`). Not-a-clean-check on a `delete_*` tool → **blocked (fail-closed)**; non-destructive → fail-open but **recorded loudly** via `record_platform_finding` (no longer a bare `console.warn`).
+- **Gate-silence canary (the important half):** `agent-sentinel` (daily) sends a blatant known injection through `detect_prompt_injection` and asserts `analysis_ok && blocked`; if not, it raises a `high` platform finding. **4 months of zero log rows can no longer be silent** — the canary actively proves the gate blocks each day, independent of whether real attacks arrive.
+
+## Original fix design (now built) — do not re-build
 1. **Make fail-open loud, or fail-closed for the highest-risk tools.** At minimum, every fail-open MUST emit an operator-visible finding (not `console.warn`) — a security gate that skips must scream (attention doctrine + no-silent-caps). Consider fail-**closed** for `delete_*` / destructive tools (block on gate-unavailable rather than proceed).
 2. **Distinguish "checked, clean" from "not checked."** Today both look identical (tool proceeds). Record the gate outcome per high-risk dispatch (checked/blocked/skipped-error) so "no block" cannot be confused with "gate down."
 3. **Alert on gate silence.** A high-risk-tool surface whose injection log is empty for N days is either unused or broken — a probe should surface it (the 4-month silence should have been visible).

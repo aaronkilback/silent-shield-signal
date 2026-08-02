@@ -11513,15 +11513,17 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             const _isHighRisk = _wraithHighRiskTools.includes(toolCall.function.name) ||
               toolCall.function.name.startsWith("delete_");
             if (_isHighRisk) {
+              // WO-INJECTION-GATE-FAILOPEN-01: fail-CLOSED for destructive tools, fail-open-LOUD
+              // otherwise. A skipped injection gate must never look identical to a clean check.
+              const _isDestructive = toolCall.function.name.startsWith("delete_");
+              let _gateOutcome = "unknown";
               try {
                 const _wraithUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/wraith-security-advisor`;
                 const _wraithKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
                 const _wraithResp = await Promise.race([
                   fetch(_wraithUrl, {
                     method: "POST",
-                    // WO-WRAITH-VULN-SCAN-DEAD-01 (Option A): detect_prompt_injection is now an
-                    // operator-only action gated on the canonical internal-caller secret. Send it,
-                    // or this call 404s and the injection gate silently fails open.
+                    // detect_prompt_injection is operator-only (Option A) — send the internal secret.
                     headers: { "Authorization": `Bearer ${_wraithKey}`, "Content-Type": "application/json", "x-fortress-internal": Deno.env.get("FORTRESS_INTERNAL_SECRET") ?? "" },
                     body: JSON.stringify({ action: "detect_prompt_injection", message: _wraithCombined }),
                   }),
@@ -11529,19 +11531,38 @@ The user's message is just a conversational acknowledgment - respond in kind, do
                 ]) as Response;
                 if (_wraithResp.ok) {
                   const _wraithAiResult = await _wraithResp.json();
-                  if (_wraithAiResult?.blocked === true) {
-                    console.warn(`[WRAITH AI] Blocked high-risk tool: ${toolCall.function.name}`);
-                    return {
-                      tool_call_id: toolCall.id,
-                      role: "tool",
-                      name: toolCall.function.name,
-                      content: JSON.stringify({ success: false, error: "Request blocked by WRAITH AI: adversarial input detected in high-risk operation." }),
-                    };
-                  }
+                  if (_wraithAiResult?.blocked === true) _gateOutcome = "blocked";
+                  else if (_wraithAiResult?.analysis_ok === true) _gateOutcome = "checked_clean";
+                  else _gateOutcome = "analysis_error"; // reached but model/analysis failed
+                } else {
+                  _gateOutcome = `http_${_wraithResp.status}`;
                 }
               } catch (_wraithAiErr) {
-                // Timeout or network error — fail open, log and continue
-                console.warn(`[WRAITH AI] Check failed for ${toolCall.function.name}, continuing:`, _wraithAiErr);
+                _gateOutcome = (_wraithAiErr instanceof Error && _wraithAiErr.message === "timeout") ? "timeout" : "network_error";
+              }
+
+              if (_gateOutcome === "blocked") {
+                console.warn(`[WRAITH AI] Blocked high-risk tool: ${toolCall.function.name}`);
+                return { tool_call_id: toolCall.id, role: "tool", name: toolCall.function.name,
+                  content: JSON.stringify({ success: false, error: "Request blocked by WRAITH AI: adversarial input detected in high-risk operation." }) };
+              }
+
+              // Not a clean check (unavailable / errored / timed out): LOUD finding + fail-closed for destructive.
+              if (_gateOutcome !== "checked_clean") {
+                supabaseClient.rpc('record_platform_finding', {
+                  p_category: 'security_posture',
+                  p_severity: _isDestructive ? 'high' : 'medium',
+                  p_title: `Prompt-injection gate unavailable (${_gateOutcome}) on ${toolCall.function.name}`,
+                  p_analysis: `High-risk chat tool dispatched with injection-gate outcome=${_gateOutcome} (not a clean check). ${_isDestructive ? 'BLOCKED (fail-closed — destructive tool).' : 'Proceeded (fail-open — non-destructive).'} Chronic occurrences mean the gate is down — see WO-INJECTION-GATE-FAILOPEN-01. The agent-sentinel canary independently verifies gate health daily.`,
+                  p_plain_english: `The AI injection defence could not check a high-risk action (${toolCall.function.name}). ${_isDestructive ? 'It was blocked to be safe.' : 'It was allowed through.'}`,
+                  p_action: 'Check wraith-security-advisor detect_prompt_injection health (model route/auth). If chronic, treat the chat surface as unprotected.',
+                  p_affected_agent: 'dashboard-ai-assistant', p_affected_job: 'chat-tool-dispatch',
+                }).then(() => {}, (e: any) => console.warn('[WRAITH AI] gate-skip finding failed:', e?.message));
+                if (_isDestructive) {
+                  return { tool_call_id: toolCall.id, role: "tool", name: toolCall.function.name,
+                    content: JSON.stringify({ success: false, error: "Blocked: the prompt-injection safety check is unavailable and this is a destructive operation (fail-closed). Try again shortly." }) };
+                }
+                // non-destructive high-risk: fail open (proceed) — recorded loudly above.
               }
             }
             // ─────────────────────────────────────────────────────────────────────
