@@ -285,7 +285,9 @@ Deno.serve(async (req) => {
         const set = Array.isArray(scan?.[key]) ? scan[key] : [];
         if (set.length > 0) {
           await recordFinding(supabase, {
-            category: 'security_posture', severity: 'high',
+            // CRITICAL, not high: a live anon/authenticated exposure must bypass the daily digest and
+            // page immediately (system-watchdog: isCritical => forceEmail). A 24h wait is unacceptable.
+            category: 'security_posture', severity: 'critical',
             title: `Anon-surface invariant breached: ${title} (${set.length})`,
             analysis: `security_anon_surface_scan() returned a non-empty '${key}' set — the anon-facing attack surface has drifted open (RLS-at-Creation is load-bearing and this is the enforcement). Items: ${set.slice(0, 25).join(', ')}${set.length > 25 ? ` …+${set.length - 25}` : ''}.`,
             plainEnglish: `A database misconfiguration just exposed something to the anonymous internet: ${title.toLowerCase()}.`,

@@ -15,5 +15,9 @@ The anon key is **public by design** — it ships in *both* the marketing bundle
 4. **RLS-at-Creation on the new project** from day one (the doctrine that just proved load-bearing here).
 5. **Keep `/admin`'s guard server-side on the new project too** — the current email allowlist is client-side only; pair it with a real RLS/role gate on whatever tables the new admin reads.
 
+## RULING (operator, 2026-08-02) — CRM STAYS IN THE MARKETING PROJECT
+**The CRM tables (`orders`, `contact_messages`, `aegis_conversations`, `visitor_*`) stay in the marketing project `pwnzwxfzjkjsbfwtfyip`. Do NOT move them to Fortress prod (`kpuqukppbmwebiptqmog`).** Co-locating payment records + PII + sales conversation logs with tenant intelligence is exactly the coupling this WO removes. They already exist in `pwnzw` (created there with RLS + admin policies per the marketing repo migrations). The decouple work is therefore: **repoint the live apex bundle off Fortress prod and back onto the marketing project** (its intended home), so the public bundle stops carrying a Fortress-prod credential — NOT a data migration into Fortress prod.
+- `/admin` gating (Access vs separate host) + server-side role enforcement on the marketing project remain open design items (the marketing project has its own `app_role` enum: admin/moderator/user).
+
 ## Dependency / sequencing
 Independent of the Fortress-prod anon-surface hardening (already done). Can proceed on its own timeline. Until then, Fortress prod RLS is the load-bearing control and agent-sentinel Probe 2f guards it.
