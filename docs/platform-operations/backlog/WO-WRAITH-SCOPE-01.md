@@ -3,7 +3,10 @@
 **Logged:** 2026-08-02. **Status:** SCOPE + cost recorded; do not build. **Priority:** HIGH. Follows WO-WRAITH-VULN-SCAN-DEAD-01 (auth fixed Option A) — but the detection proof failed, which re-orders this WO.
 
 ## Two problems, in order
-### 0. DETECTION — FIXED + PROVEN 2026-08-02 ✅
+### 0.0 BLOCKER AHEAD OF EVERYTHING — the scanner scans STALE source (WO-SNAPSHOT-STALENESS-01)
+`codebase_snapshots` holds **~April source**, not what's deployed (`upload-codebase-snapshot.py` is manual + unautomated; the bucket froze ~2026-04-29; the nightly snapshot re-copies it, refreshing only the timestamp). **The scanner's first production output was a FALSE CRITICAL** — CWE-306 "auth bypass" on `ingest-signal`, which has been authenticated since F-026 (2026-05-14); the scanner read the pre-F-026 snapshot. **Until snapshots are fresh (git_sha-stamped, deploy-automated) and the scanner refuses stale source (fail-loud), no finding reflects reality.** This blocks §0/§1/§2 below. The 2026-08-02 run's 35 findings are marked `invalid_stale_source`.
+
+### 0. DETECTION — FIXED + PROVEN 2026-08-02 ✅ (but see 0.0 — proof used an injected fresh fixture, not the stale snapshot)
 All three blockers fixed together and the adce9554 proof re-run **passed**:
 - **(a) Model:** `claude-opus-4-6` → **`openai/gpt-5.2`**. Why: the gateway has **no Anthropic provider** (OpenAI/Gemini/Perplexity only) and no `MODEL_NORMALIZATION` entry for either claude ID, so `claude-*` fell through to OpenAI → 404. `openai/gpt-5.2` is the project's current strong model (17 production call sites — proven routable); `gpt-4o-mini` is the weak workhorse, wrong for reasoning-heavy vuln analysis.
 - **(b) Truncation:** `substring(0, 8000)` → **`MAX_SCAN_CHARS = 150_000`** (covers every current target fully — largest in-scope `ingest-signal` is ~77 KB; the old cap scanned it at ~10%). Files above the cap are recorded in `truncated_files` and `console.warn`'d — flagged partial, never silently clipped.

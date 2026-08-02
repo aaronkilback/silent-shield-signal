@@ -5,6 +5,9 @@
 ## Intent
 A daily operator-facing digest of `wraith_vulnerability_findings` (new/changed critical+high, by file, with CWE + recommendation), so the nightly code vuln scan produces an operator signal instead of silently filling a table nobody reads.
 
+## BLOCKED — precision + fresh-source not yet established
+**The precision-validation argument, in one line:** the scanner's *first* production output was a **false critical** (CWE-306 auth bypass on `ingest-signal`, authenticated since F-026) — caused by **stale source** (WO-SNAPSHOT-STALENESS-01). A digest that had emitted that would have paged a fixed vulnerability as a live platform critical. The digest stays blocked until (a) snapshots are fresh + git_sha-verified and the scanner refuses stale source, and (b) precision is validated on the known-bad fixture. Coverage-explicit reporting (below) is necessary but not sufficient; **source-freshness is a second denominator** — a scan of stale code is not a scan of the platform.
+
 ## BLOCKED — do not build until detection works
 The 2026-08-02 proof showed the scanner returns **0 findings on known-vulnerable code** (WO-WRAITH-SCOPE-01 §0). A digest over a scanner that detects nothing is worse than nothing: it manufactures **false assurance** — a daily "0 vulnerabilities" email that reads as "the platform is clean" when the truth is "the scanner is blind." Detection must be fixed and validated (non-zero recall on planted bugs) before this digest is allowed to emit.
 
