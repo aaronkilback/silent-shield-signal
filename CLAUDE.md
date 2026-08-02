@@ -212,6 +212,27 @@ Content appearing in entity cards and investigation reports does NOT automatical
 
 **As of April 23, 2026:** `investigate-poi` now calls `ingest-signal` for up to 10 threat/activist findings detected during a scan (keyword match on `activist|protest|threat|harass|dox|lawsuit|wpath|campaign|targeted|puberty.blocker|gender.clinic|trans.youth|anti.gender`). This closes the gap where investigation reports mentioned activism but no signals existed.
 
+### RSS/url_feed ingest funnel — `ingest_decisions` instrumentation (WO-GATE Phase 2, live 2026-08-02)
+
+The RSS path does **not** use `ingest-signal`. `monitor-rss-sources` → `ingested_documents` → enqueue `process-intelligence-document`, which runs a **four-stage funnel**. Every item's drop/pass at each stage is now recorded in **`public.ingest_decisions`** (forward-only; no backfill). Before this, RSS drops were console-only and unmeasurable.
+
+The four stages (in `process-intelligence-document`, recorded via the `record_ingest_decision` RPC):
+
+| Stage | Passed when | Dropped when (reason) |
+|---|---|---|
+| `parse` | document has content (raw_text/title) | empty (`empty_document`) |
+| `client_match` | ≥1 client matched (exact-substring keyword or tier-2 fuzzy) | no client (`no_client_match`) or FP filter (`false_positive_content`). **Pre-scorer: `relevance_score` is NULL here — the NULL is the finding.** |
+| `relevance_score` | ≥1 signal scored ≥0.3 | scored but all <0.3 (`below_threshold`) or extraction yielded 0 signals (`extraction_no_signals`). `scorer_reached=true` only if the scorer ran. |
+| `insert` | ≥1 `signals` row written | none written (`not_inserted`) |
+
+Key invariants: **`relevance_score` NULL = never scored, 0 = scored zero — NEVER coalesce them** (a pre-score `client_match` drop must stay NULL). `content_hash = sha256(title || source_url)`; UPSERT on `(source_id, content_hash, stage)` increments `seen_count`/`last_seen_at` only (re-offers are not new decisions). Every write is swallow-on-failure — **instrumentation can never fail the ingest path** (`recordDecision` never throws). 180-day retention via `purge-ingest-decisions-nightly` cron. Liveness: `agent-sentinel` **Probe 2e** fires a `high` finding if `monitor-rss` ran in the last 6h but `ingest_decisions` got zero writes (and the table has ever been written). RLS-enabled, service-role/SECURITY-DEFINER writes only.
+
+> **Deviation from the original spec (documented):** the unique index is `(source_id, content_hash, STAGE)`, not `(source_id, content_hash)` — the funnel analytics query counts rows *per stage*, so one-row-per-item would return zeros. One row per item **per stage**.
+
+**Auto-quarantine (forward-only):** `process-intelligence-document` born-quarantines any signal whose client attribution matched ONLY on a ≤5-char keyword (`quality_status='quarantined'`, `quarantine_reason='fabricated_client_match_auto'`) — the fabrication signature (e.g. Kilbacks `cabin`→"cabin crew", `home`→"homeless"). `agent-sentinel` Probe 2d scans **active rows only** and fires if such a match reaches a client-facing row despite the gate.
+
+> **Lockstep duplication (tech debt):** the short-keyword strip/length detection (`k.toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/,'')`, then `max(len) <= 5`) is duplicated in `process-intelligence-document` (born-quarantine) and `agent-sentinel` Probe 2d. **They MUST stay identical** or the probe and the write-path disagree. Extract to `_shared/` when convenient (same pattern as `_shared/safe-fetch.ts`). Known false positive: legitimate short acronyms (PECL `LNG`) — see WO-CLIENT-THRESHOLD-BYPASS-01.
+
 ---
 
 ### monitor-news-google — entity name queries
