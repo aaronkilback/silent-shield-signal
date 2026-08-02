@@ -33,6 +33,20 @@ Same class as:
 The pattern is the finding: **Fortress emits model-generated content wearing the authority of a real
 lookup/source.** This is a product-integrity failure, not a per-function bug.
 
+### FOURTH confirmed instance (2026-08-02) — `analyze_signal_threat_dna` (not a separate incident)
+Same class, second live surface active concurrently with `entity-deep-scan`. `wraith-security-advisor`'s
+`analyze_signal_threat_dna` stored **840 rows** in `wraith_signal_threat_scores` as "AI threat analysis"
+(`ai_generated_score`, `synthetic_intel_score`, `adversarial_score`, `verdict`) — **every one a byte-identical
+hardcoded default** (`0/0/0/clean/0.5`). Its model (`claude-haiku-4-5-20251001`) was **unmapped in the AI gateway
+→ 404**; the code swallowed the error and stored its default (see WO-FAIL-LOUD-AUDIT-01 + fail-loud-doctrine).
+- **Mechanism variant:** entity-deep-scan stores *real model output* under a lookup label; this stores a *default
+  when the model never ran*. Both present non-verified data under analysis authority — the same class.
+- **Fixed 2026-08-02:** routable model + fail-loud (throws, no fabricated row); 840 rows deleted; confirmed no
+  downstream consumer derived any score/severity/incident from them (see below). `detect_prompt_injection` shared
+  the same dead model and is also fixed.
+- **Reference this here, not as a new incident.** The product-integrity rule below applies identically: an
+  "analysis" verdict must not be stored unless the analysis actually ran.
+
 ## Scope (design targets — not yet implemented)
 - **No artifact may carry a lookup-implying label without a real lookup.** Labels like `sanctions_screening`,
   `criminal_records`, `public_records` are reserved for outputs of an actual external authority query.

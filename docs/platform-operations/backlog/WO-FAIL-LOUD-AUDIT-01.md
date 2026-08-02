@@ -7,6 +7,21 @@
 - **Fixed 2026-08-02:** model → `gpt-4o-mini`; **throws** on gateway error / null content / unparseable (no fabricated row; job-worker retries). Deleted the 840 fabricated rows.
 - **Twin fixed same commit:** `detect_prompt_injection` used the same 404 model → always `allowed`, `confidence 0` → never logged (the 4-month silence) → never blocked. Now `gpt-4o-mini` + returns `analysis_ok:false, action:'error'` on failure. **Proven:** a blatant injection now returns `blocked:true, confidence:1, analysis_ok:true`.
 
+### Cross-reference: fabricated-findings class (WO-FABRICATED-FINDINGS-01)
+This is **not just a fail-loud bug — it is the fabricated-findings class.** On the same day, **two independent
+systems were storing model-shaped defaults as analysis**: `analyze_signal_threat_dna` (840 default rows) and
+`entity-deep-scan` (sanctions/criminal/property "screening"). Recorded in WO-FABRICATED-FINDINGS-01 as the
+**fourth confirmed instance** of that class — a cross-reference, **not a separate incident**. The two doctrines
+meet here: fail-loud (don't swallow the error) + fabricated-findings (don't store non-verified data under
+analysis authority).
+
+### Downstream-consumption check of the 840 deleted defaults (DONE — inert, no residual effect)
+Deleting the rows only undoes the effect if nothing consumed them. Verified:
+- **No code reads `wraith_signal_threat_scores`** outside its writer (grep, edge functions) — no severity/incident derived from them.
+- **`signals.raw_json.wraith_threat_dna` = 0 rows** — the in-function warning-write (`ai_generated ≥ 0.76`) never fired (defaults were 0), so no signal was flagged.
+- **0 signals soft-deleted by WRAITH** — the adversarial soft-delete (`adversarial ≥ 0.85`) never fired (defaults were 0).
+- **Conclusion: the defaults were inert** — below every action threshold, read by nothing. Deletion is clean; no residual score/severity/incident to unwind. (The only "effect" was the fabricated rows themselves, now gone.)
+
 ## Gateway-model sweep (DONE) — every `callAiGateway` model ID vs the gateway's routing
 Gateway routes `google/*`/`gemini-*` → Gemini, `sonar*` → Perplexity, **everything else → OpenAI**; a `MODEL_NORMALIZATION` map rewrites a few. Any non-gpt / non-gemini / non-sonar model not in the map → OpenAI → 404.
 - **BROKEN (unmapped claude → 404):** `claude-haiku-4-5-20251001` (wraith detect_prompt_injection + analyze_signal_threat_dna) — **fixed**. `claude-opus-4-6` (wraith vuln scan) — fixed earlier (→ `openai/gpt-5.2`).
