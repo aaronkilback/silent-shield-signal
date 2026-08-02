@@ -850,22 +850,26 @@ async function analyzeSignalThreatDNA(supabase: any, body: { signal_id: string; 
     .select('verdict').eq('signal_id', signal_id).maybeSingle();
   if (existing) return { already_analyzed: true, verdict: existing.verdict };
 
-  let result: any = { ai_generated_score: 0, synthetic_intel_score: 0, adversarial_score: 0, confidence: 0.5, verdict: 'clean', threat_indicators: [] };
-
-  try {
-    const aiResult = await callAiGateway({
-      model: 'claude-haiku-4-5-20251001',
-      messages: [
-        { role: 'system', content: THREAT_DNA_PROMPT },
-        { role: 'user', content: `SIGNAL: ${signal_text.substring(0, 2000)}\nSOURCE: ${signal_source_url || 'none'}` },
-      ],
-      functionName: 'wraith-security-advisor',
-    });
-    const parsed = parseWraithJSON(aiResult.content || '');
-    if (parsed) result = { ...result, ...parsed };
-  } catch (err) {
-    console.error('[WRAITH] Threat DNA error:', err);
+  // Fail-Loud Doctrine: a model/gateway failure must NOT be stored as a fake 'clean' verdict.
+  // The prior claude-haiku-4-5-20251001 route 404'd (unmapped in the AI gateway), storing 840
+  // identical fabricated 'clean' rows and never once running the adversarial-signal block.
+  // Throw so the job-worker records a failure and retries — no fabricated score is written.
+  const aiResult = await callAiGateway({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: THREAT_DNA_PROMPT },
+      { role: 'user', content: `SIGNAL: ${signal_text.substring(0, 2000)}\nSOURCE: ${signal_source_url || 'none'}` },
+    ],
+    functionName: 'wraith-security-advisor',
+  });
+  if (aiResult.error || aiResult.content == null) {
+    throw new Error(`threat-DNA model call failed: ${aiResult.error ?? 'null content'}`);
   }
+  const parsed = parseWraithJSON(aiResult.content);
+  if (!parsed) {
+    throw new Error(`threat-DNA unparseable model response (len=${aiResult.content.length})`);
+  }
+  const result: any = { ai_generated_score: 0, synthetic_intel_score: 0, adversarial_score: 0, confidence: 0.5, verdict: 'clean', threat_indicators: [], ...parsed };
 
   await supabase.from('wraith_signal_threat_scores').insert({
     signal_id, ai_generated_score: result.ai_generated_score,
@@ -874,7 +878,7 @@ async function analyzeSignalThreatDNA(supabase: any, body: { signal_id: string; 
     confidence: result.confidence, verdict: result.verdict,
     threat_indicators: result.threat_indicators || [],
     model_fingerprints: [],
-    analysis_model: 'claude-haiku-4-5-20251001',
+    analysis_model: 'gpt-4o-mini',
   });
 
   if (result.verdict === 'blocked' || result.adversarial_score >= 0.85) {
@@ -929,23 +933,29 @@ async function detectPromptInjection(supabase: any, body: { message: string; ses
   const { message, session_id, user_id } = body;
   if (!message) return { error: 'message is required' };
 
-  let result: any = { is_injection: false, confidence: 0, injection_type: 'clean', action: 'allowed', indicators: [] };
-
-  try {
-    const aiResult = await callAiGateway({
-      model: 'claude-haiku-4-5-20251001',
-      messages: [
-        { role: 'system', content: INJECTION_PROMPT },
-        { role: 'user', content: `MESSAGE TO SCREEN:\n${message.substring(0, 1000)}` },
-      ],
-      functionName: 'wraith-security-advisor',
-    });
-    const parsed = parseWraithJSON(aiResult.content || '');
-    if (parsed) result = { ...result, ...parsed };
-  } catch (err) {
-    console.error('[WRAITH] Injection detection error:', err);
-    // Default allow on error — don't block legitimate users due to analysis failure
+  // WO-INJECTION-GATE-FAILOPEN-01 + Fail-Loud Doctrine: a model/gateway failure must be reported
+  // as an analysis failure (analysis_ok:false, action:'error'), NOT silently returned as
+  // 'allowed' — which is indistinguishable from a real clean verdict and is why this gate went
+  // silent for ~4 months (claude-haiku-4-5-20251001 404'd → default allow → confidence 0 →
+  // never logged, never blocked). The CALLER decides fail-closed vs fail-open on 'error'.
+  const aiResult = await callAiGateway({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: INJECTION_PROMPT },
+      { role: 'user', content: `MESSAGE TO SCREEN:\n${message.substring(0, 1000)}` },
+    ],
+    functionName: 'wraith-security-advisor',
+  });
+  if (aiResult.error || aiResult.content == null) {
+    console.error(`[WRAITH] injection detection FAILED (model): ${aiResult.error ?? 'null content'}`);
+    return { error: `analysis_unavailable: ${aiResult.error ?? 'null content'}`, action: 'error', analysis_ok: false, blocked: false };
   }
+  const parsed = parseWraithJSON(aiResult.content);
+  if (!parsed) {
+    console.error('[WRAITH] injection detection FAILED (unparseable response)');
+    return { error: 'unparseable_model_response', action: 'error', analysis_ok: false, blocked: false };
+  }
+  const result: any = { is_injection: false, confidence: 0, injection_type: 'clean', action: 'allowed', indicators: [], ...parsed };
 
   if (result.confidence >= 0.3 || result.is_injection) {
     supabase.from('wraith_prompt_injection_log').insert({
@@ -956,12 +966,12 @@ async function detectPromptInjection(supabase: any, body: { message: string; ses
       confidence: result.confidence,
       action_taken: result.action,
       indicators: result.indicators || [],
-      analysis_model: 'claude-haiku-4-5-20251001',
-    }).catch(() => {});
+      analysis_model: 'gpt-4o-mini',
+    }).then(() => {}, (e: any) => console.warn('[WRAITH] injection-log insert failed:', e?.message));
   }
 
   console.log(`[WRAITH] Injection check: ${result.action} (${result.injection_type}, confidence: ${result.confidence})`);
-  return { action: result.action, is_injection: result.is_injection, confidence: result.confidence, injection_type: result.injection_type, indicators: result.action !== 'allowed' ? result.indicators : [], blocked: result.action === 'blocked' };
+  return { action: result.action, is_injection: result.is_injection, confidence: result.confidence, injection_type: result.injection_type, indicators: result.action !== 'allowed' ? result.indicators : [], analysis_ok: true, blocked: result.action === 'blocked' };
 }
 
 // ─── JSON PARSER HELPER ────────────────────────────────────────────────────────
