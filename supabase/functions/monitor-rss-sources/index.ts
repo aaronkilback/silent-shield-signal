@@ -2,6 +2,7 @@ import { createServiceClient, corsHeaders, handleCors, successResponse, errorRes
 import { extractOGImage } from "../_shared/og-image.ts";
 import { extractYouTubeTranscript } from "../_shared/youtube-transcript.ts";
 import { enqueueJob } from "../_shared/queue.ts";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 1
 
 function isYouTubeUrl(url: string): boolean {
   return /(?:youtube\.com\/watch\?v=|youtu\.be\/)/.test(url);
@@ -184,7 +185,11 @@ Deno.serve(async (req) => {
         const userAgent = feedUrl.includes('reddit.com')
           ? 'FortressAI/1.0 (OSINT security monitoring; automated)'
           : 'Mozilla/5.0 (compatible; FortressAI/1.0; OSINT Monitor)';
-        const response = await fetch(feedUrl, {
+        // WO-SSRF-SHARED-GUARD-01 wave 1: feedUrl comes from the sources table, which
+        // autonomous-source-discovery can write. Guard it (scheme + private/metadata IP block +
+        // per-hop redirect re-validation). A blocked feed throws SsrfBlockedError → caught by the
+        // per-source catch below → recorded as a source error, run continues.
+        const response = await safeFetch(feedUrl, {
           headers: { 'User-Agent': userAgent },
           signal: AbortSignal.timeout(30000) // 30 second timeout
         });
