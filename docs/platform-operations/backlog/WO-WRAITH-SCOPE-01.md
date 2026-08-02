@@ -3,9 +3,16 @@
 **Logged:** 2026-08-02. **Status:** SCOPE + cost recorded; do not build. **Priority:** HIGH. Follows WO-WRAITH-VULN-SCAN-DEAD-01 (auth fixed Option A) — but the detection proof failed, which re-orders this WO.
 
 ## Two problems, in order
-### 0. DETECTION IS BROKEN (gating — fix first)
-Proven 2026-08-02: with auth fixed, a scan over 5 real files **and** an injected verbatim `ai-tools-query@adce9554` excerpt (unscoped cross-tenant reads + `.or(\`…ilike.%${query}%\`)` filter injection) returned **`total_findings: 0`** — the scanner flagged **none** of the textbook instances of its own prompt's classes #1/#2. The model was invoked (21.5s), so it ran; it returned/parsed nothing. **Widening scope over a scanner that detects nothing just scans more files and still finds nothing.** Fix detection before scaling.
-- Candidate root causes to investigate: single-shot `claude-opus-4-6` call with a broad 7-class prompt under-detects (needs per-class focused passes, few-shot exemplars of each CWE, or a smaller-chunk sliding window); OR findings are produced but silently dropped in JSON parse (`try/catch` swallows per-file). Instrument the per-file model output first (measurability), then tune with a labeled corpus (the adce9554 excerpt is a ready positive fixture). No "tune the prompt to pass a single case" — build a small labeled set (known-vuln + known-clean) and measure precision/recall.
+### 0. DETECTION IS BROKEN — ROOT CAUSE FOUND: the model call 404s (fix first)
+Proven 2026-08-02 via a raw pre-parse diagnostic (`__diag_scan_raw`, since reverted): the scan's `callAiGateway({ model: 'claude-opus-4-6' })` returns:
+```
+content_is_null: true
+gateway_error: "OPENAI_API_KEY 404: The model `claude-opus-4-6` does not exist or you do not have access to it"
+```
+**The vuln scanner requests `claude-opus-4-6`, which the gateway routes to the OpenAI endpoint (`OPENAI_API_KEY`) → 404.** Every model call fails, `content` is null, `parseWraithJSON('')` → null → 0 findings, and the error is *returned* (not thrown) so the per-file `catch` never fires — it silently records 0. **It is NOT a parser bug, NOT a prompt/guardrails issue, NOT truncation — the model invocation has never succeeded.** The 21.5s runtime was 6 failing calls.
+- **Scoped, clean root cause:** `claude-haiku-4-5-20251001` (used by `analyze_signal_threat_dna`) routes correctly and wrote 74 rows in 30d — so the gateway recognizes dated model IDs but not the undated `claude-opus-4-6`, defaulting it to OpenAI. **Fix = give the scan a gateway-routable model ID** (a properly-dated Opus ID the gateway maps to Anthropic, or whatever the gateway's model map expects). Verify the gateway's model→provider table.
+- **Second, separate latent bug (fix at the same time):** line 690 caps each file at `substring(0, 8000)` — even once the model works, the 5 real files (ingest-signal is 77 KB) are scanned at ~10% (imports/boilerplate only). Chunk the file (or raise the cap with chunking) so the vulnerable code is actually sent.
+- **Then** validate: with a routable model + the adce9554 fixture in scope, confirm it flags the `ilike` injection + unscoped reads (non-zero recall) before trusting any output. Build a small labeled corpus (known-vuln + known-clean), measure precision/recall — do not tune to pass one case.
 
 ### 1. SCOPE — 5 of 321 is 1.4%
 `scanTargets` is hardcoded to 5 files; **the snapshot is as narrow as the scan** — `wraith-snapshot-codebase` `SCAN_TARGETS` holds the *same* 5 hardcoded paths, and `codebase_snapshots` contains exactly those 5 rows. So the diff source is 1.4% too. **Widening the snapshot to all 321 is step one and is nearly free** (the storage bucket + `scripts/upload-codebase-snapshot.py` already run per deploy; the function just loops a list). Do this before/with detection tuning so there is material to scan.
