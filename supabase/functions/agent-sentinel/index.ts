@@ -18,6 +18,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 self-validation probe
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -152,6 +153,29 @@ Deno.serve(async (req) => {
         action: 'Check wraith-security-advisor availability + auth. See WO-INJECTION-GATE-FAILOPEN-01.',
       });
       report.findings_written++;
+    }
+
+    // ── Probe 2c: SSRF guard self-validation (WO-SSRF-SHARED-GUARD-01) ──
+    // _shared/safe-fetch guards 8 caller-supplied-URL fetch paths across 9 functions — incl.
+    // ingest-signal:653 (the C2 finding), og-image, media-capture, monitor-rss-sources. Assert
+    // the DEPLOYED guard still blocks a cloud-metadata target; a refactor that weakens/removes it
+    // fires this. safeFetch throwing on a blocked target = healthy (no finding).
+    try {
+      let ssrfBlocked = false;
+      try { await safeFetch('http://169.254.169.254/latest/meta-data/', { signal: AbortSignal.timeout(5000) }); }
+      catch { ssrfBlocked = true; }
+      if (!ssrfBlocked) {
+        await recordFinding(supabase, {
+          category: 'security_posture', severity: 'high',
+          title: 'SSRF guard did NOT block a cloud-metadata address (safe-fetch regressed)',
+          analysis: `_shared/safe-fetch.safeFetch() fetched http://169.254.169.254 instead of throwing SsrfBlockedError. The SSRF guard protecting ingest-signal:653 (C2), og-image, media-capture, monitor-rss-sources and other caller-supplied-URL fetches has been weakened or removed — server-side request forgery to internal/metadata endpoints is possible again.`,
+          plainEnglish: 'The protection that stops the platform being tricked into fetching internal/cloud addresses has stopped working. Restore _shared/safe-fetch.',
+          action: 'Restore the private/link-local/metadata IP block in _shared/safe-fetch.ts; re-run this canary until it blocks. See WO-SSRF-SHARED-GUARD-01.',
+        });
+        report.findings_written++;
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] SSRF guard canary error:', e?.message);
     }
 
     // ── Probe 3: Management API security advisor ingestion ──

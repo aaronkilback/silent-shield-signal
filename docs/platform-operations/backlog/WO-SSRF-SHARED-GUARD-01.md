@@ -52,5 +52,11 @@ Chain: `autonomous-source-discovery` (AI-suggested URL, inserted `status='active
   - **Re-scoped OUT:** `process-stored-document:24` — on inspection it is a generic **AI-API retry wrapper** (`fetchWithRetry(url, options, …, context='AI API')`), not a caller-supplied-URL fetch. Not SSRF-relevant; not guarded (would only add DNS latency to gateway calls). Flag if a document-URL fetch is later found there.
 - **Wave 3 (pending):** ingest-intelligence, incident-watch, voice-tool-executor-v2, dashboard-ai-assistant (verify-then-guard).
 
+### Wave-2 production proof + self-validation (2026-08-02)
+- **C2 RESOLVED — proven in production, not just the diff.** A tripwire against the DEPLOYED guard (the exact `safeFetch` ingest-signal:653 calls, and the og-image `extractOGImage` path) blocked in ~1ms and allowed a public control:
+  - metadata `169.254.169.254` → **BLOCKED** `private_ip` · link-local `169.254.1.1` → **BLOCKED** · RFC-1918 `10.0.0.1` → **BLOCKED** · `extractOGImage(metadata)` → **null** (no fetch) · control `https://example.com` → **ALLOWED 200**.
+- **process-stored-document:24 descope CONFIRMED** — all 4 callers pass a **literal** endpoint (`api.openai.com/v1/responses`, `/v1/chat/completions`, plus vision/pro variants); `context='AI API'`. Not caller-supplied → not guarded. Descope stands.
+- **Watchdog updated:** `agent-sentinel` **Probe 2c** = daily SSRF-guard self-validation canary (raises a `high` finding if `safeFetch` stops blocking metadata); `_shared/safe-fetch` added to the CLAUDE.md shared-helpers KB (the session-loaded knowledge base) with the no-raw-fetch-of-external-URL rule.
+
 ## Sequence
 Build the shared guard → apply to the "confirmed" set first (starting `ingest-signal:653`) → the "verify" set → the source-table set. Wire it into fetch-url-content **before** that capability is restored. Track coverage explicitly (which fetch sites are guarded vs not) — an un-guarded caller-URL fetch is a finding.

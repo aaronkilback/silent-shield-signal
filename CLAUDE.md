@@ -615,6 +615,17 @@ try {
 await recordHeartbeat(supabase, 'my-job-hourly', 'completed', { signals_created: 5 });
 ```
 
+### Outbound fetch of a caller-/source-supplied URL (`_shared/safe-fetch.ts`) — SSRF guard
+
+**NEVER `fetch()` a URL that comes from a request body, a `sources`/signal row, an LLM, or any external input directly.** Use the SSRF guard. It allows only `http`/`https`, blocks private / loopback / link-local / **cloud-metadata (`169.254.169.254`)** / CGNAT ranges **by resolved IP** (defeats hostname→private, e.g. `10.0.0.1.nip.io`), and re-validates **every redirect hop** (a public host cannot 3xx to a private one).
+
+```ts
+import { safeFetch } from "../_shared/safe-fetch.ts";
+const resp = await safeFetch(url, { headers, signal });   // throws SsrfBlockedError on a private/metadata target
+```
+
+Adopted (WO-SSRF-SHARED-GUARD-01, 2026-08-02): `monitor-rss-sources`, `ingest-signal` (C2), `_shared/og-image`, `_shared/media-capture`, `backfill-signal-media`, `ingest-expert-media`, `osint-web-search`, `test-osint-source-connectivity`. **`agent-sentinel` runs a daily self-validation canary** (Probe 2c) that raises a `high` finding if the guard stops blocking metadata. Only **fixed first-party API endpoints** (e.g. `api.openai.com` via the AI gateway / retry wrappers) may use raw `fetch()`. Wave 3 (ingest-intelligence, incident-watch, voice-tool-executor-v2, dashboard-ai-assistant) pending.
+
 ### Storage URLs (`_shared/storage.ts`)
 
 **NEVER call `getPublicUrl()` directly.** All Fortress buckets are private. Use the shared helper.
