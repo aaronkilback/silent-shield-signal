@@ -1,5 +1,6 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 2
 
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_ARTICLE_LENGTH = 15000; // chars to keep from fetched articles
@@ -30,7 +31,7 @@ async function fetchArticleContent(url: string, fallbackSnippet: string): Promis
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; FortressBot/1.0; +https://fortress.ai)',

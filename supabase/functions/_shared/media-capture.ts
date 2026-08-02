@@ -3,6 +3,7 @@
 
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { getSignedUrl, BUCKETS } from "./storage.ts";
+import { safeFetch } from "./safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 2
 
 export interface MediaFile {
   url: string;
@@ -131,7 +132,7 @@ export async function downloadAndStoreMedia(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
     
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': '*/*',

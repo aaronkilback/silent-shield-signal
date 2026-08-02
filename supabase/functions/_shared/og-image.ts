@@ -2,10 +2,12 @@
  * OG Image Extraction
  * Fetches a URL and extracts the og:image or twitter:image meta tag.
  */
+import { safeFetch } from "./safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 2
+
 export async function extractOGImage(url: string): Promise<string | null> {
   if (!url) return null;
   try {
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FortressIntelligence/1.0)' },
       signal: AbortSignal.timeout(8000),
     });

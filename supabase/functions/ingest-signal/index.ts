@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 2 (C2)
 import { z } from "npm:zod@3.22.4";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { isTestContent, scoreSignalRelevance } from '../_shared/signal-relevance-scorer.ts';
@@ -650,7 +651,7 @@ Deno.serve(async (req) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);
         
-        const websiteResponse = await fetch(url, {
+        const websiteResponse = await safeFetch(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; SOCBot/1.0)',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

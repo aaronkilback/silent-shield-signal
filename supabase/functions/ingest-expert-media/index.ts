@@ -14,6 +14,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 2
 
 interface IngestRequest {
   url?: string;                  // Single URL to ingest
@@ -636,7 +637,7 @@ async function fetchLinkedInViaSearch(
 // ── Generic page fetcher ────────────────────────────────────────────────────
 async function fetchPageContent(url: string): Promise<{ title: string; text: string }> {
   try {
-    const resp = await fetch(url, {
+    const resp = await safeFetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SecurityBot/1.0)' },
       signal: AbortSignal.timeout(12000),
     });

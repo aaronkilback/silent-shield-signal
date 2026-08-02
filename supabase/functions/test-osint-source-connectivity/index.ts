@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 2
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -46,7 +47,7 @@ Deno.serve(async (req) => {
     const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
     try {
-      const testResponse = await fetch(url, {
+      const testResponse = await safeFetch(url, {
         method: 'HEAD',
         signal: controller.signal,
         headers: {

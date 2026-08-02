@@ -46,5 +46,11 @@ Chain: `autonomous-source-discovery` (AI-suggested URL, inserted `status='active
 **Lower risk / likely fine (host-constrained or fixed govt/API endpoints) — audit but not primary:**
 - `job-worker:109` (host-pinned to `${SUPABASE_URL}/functions/v1/...`), the weather/wildfire/arcgis/open-meteo/fwi govt-API fetches, `system-ops:464` (HEAD uptime check).
 
+## Adoption progress
+- **Wave 1 (DONE 2026-08-02):** `monitor-rss-sources:187`. 108-feed re-validation through the guard → 0 rejected.
+- **Wave 2 (DONE 2026-08-02):** `ingest-signal:653` **(C2 — RESOLVED: the one hand-confirmed finding from the whole scanner run is now guarded)**, `_shared/og-image.ts`, `_shared/media-capture.ts`, `backfill-signal-media` (×2), `ingest-expert-media`, `osint-web-search`, `test-osint-source-connectivity`. Shared helpers (og-image, media-capture) went live by redeploying their consumers (monitor-news-google, monitor-rss-sources; monitor-instagram, monitor-facebook).
+  - **Re-scoped OUT:** `process-stored-document:24` — on inspection it is a generic **AI-API retry wrapper** (`fetchWithRetry(url, options, …, context='AI API')`), not a caller-supplied-URL fetch. Not SSRF-relevant; not guarded (would only add DNS latency to gateway calls). Flag if a document-URL fetch is later found there.
+- **Wave 3 (pending):** ingest-intelligence, incident-watch, voice-tool-executor-v2, dashboard-ai-assistant (verify-then-guard).
+
 ## Sequence
 Build the shared guard → apply to the "confirmed" set first (starting `ingest-signal:653`) → the "verify" set → the source-table set. Wire it into fetch-url-content **before** that capability is restored. Track coverage explicitly (which fetch sites are guarded vs not) — an un-guarded caller-URL fetch is a finding.
