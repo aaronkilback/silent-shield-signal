@@ -42,7 +42,19 @@ Substring client-match doesn't just *miss* nexus, it *fabricates* it. Of **2,312
 ### Watchdog — DONE (Phase-1 probe)
 `agent-sentinel` **Probe 2d** — fires a `high` `data_integrity` finding if any client-attributed signal in the last 24h matched ONLY on a ≤5-char substring keyword (the fabrication signature). To be re-verified after any matcher change.
 
-### Phase 2 — INSTRUMENT THE DROPS — PENDING (build → 72h forward-only run)
+### SUPPRESSION (ruling 2026-08-02) — DONE, PROVEN
+The 611 fabricated-match signals are **flagged + excluded from every client-facing surface, not deleted** (immutable chain).
+- **Flag:** `signals.quality_status = 'quarantined'` + `signals.quarantine_reason = 'fabricated_client_match_phase1 …'` (the existing benchmark/quarantine mechanism). 611 rows set (609 Kilbacks, 2 BC Place). Rows remain in the chain.
+- **Retrieval paths (all now filter `quality_status='active'`):** frontend dashboards (`SignalHistory` via `_shared`/`src/lib` signal-query-filters) ✓ · `generate-executive-report:287` ✓ · AEGIS `dashboard-ai-assistant:6294` ✓ · **`generate-report` — patched** (added `.eq('quality_status','active')`, deployed; it previously filtered relevance but not quarantine). `ai-tools-query` no longer reads `signals` (refactored) — not a path.
+- **Proof:** client-facing fetch for Kilbacks (`client_id + quality_status='active'`) → **0 of 611 flagged returned** (706 legit active remain); generate-report filter → **0 flagged**.
+
+### CORRECTION (ruling 2026-08-02) — HELD until Phase 3
+Do NOT write superseding attribution records yet — the 611 were flagged by the same matcher being replaced. After the Phase-3 shadow run, correct **once from evidence**: for each of the 611, did the semantic matcher also reject (confirmed fabrication) or accept on semantic grounds (right answer, wrong reason)?
+
+### REGISTRY (ruling 2026-08-02) — leave soft-removed
+The 16 stay `paused` + `registry_triage` tagged. No hard-delete of Group A — a paused row explains itself; a deleted row doesn't. Better artifact for the provenance-scored comparison.
+
+### Phase 2 — INSTRUMENT THE DROPS — PENDING (build → 72h forward-only run) — NEXT SESSION
 Persist a drop record per item (source_id, title, url, stage reached [keyword-gate/scorer/insert], drop reason, relevance_score NULL-vs-numeric, client_id evaluated, ts). No backfill. Then re-run B: parsed vs reaching-scorer vs scored vs inserted, by source. This is the baseline the rebuild is measured against.
 
 ### Phase 3 — SHADOW RUN — PENDING (build → 7-day parallel, no signals writes)

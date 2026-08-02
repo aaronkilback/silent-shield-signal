@@ -122,6 +122,9 @@ Deno.serve(async (req) => {
       .lte('received_at', periodEnd.toISOString())
       .neq('status', 'archived')
       .neq('status', 'false_positive')
+      // WO-GATE-KEYWORD-PRESCORE-01 suppression: exclude quarantined signals (incl. the 611
+      // fabricated-client-match rows). Mirrors generate-executive-report + the analyst filter.
+      .eq('quality_status', 'active')
       .not('category', 'eq', 'industrial_flaring')
       .not('normalized_text', 'ilike', '%industrial flaring%')
       .not('normalized_text', 'ilike', '%thermal anomaly%flaring%')
