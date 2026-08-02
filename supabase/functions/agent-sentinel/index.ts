@@ -195,8 +195,13 @@ Deno.serve(async (req) => {
     // last 24h matched ONLY on a <=5-char keyword. (Phase-1 audit: 26.4% of 90d attributions fabricated.)
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      // ACTIVE ROWS ONLY: as of WO-GATE Phase 2 auto-quarantine, fabricated (<=5-char) matches are
+      // born quality_status='quarantined'. This probe must ignore them (they are correctly handled) —
+      // it fires only if a fabricated match reaches a CLIENT-FACING (active) row, which now means the
+      // born-quarantine write path failed. Without this filter the probe would fire on every correctly
+      // quarantined row daily and become noise.
       const { data: recent } = await supabase.from('signals')
-        .select('id, title, raw_json').not('client_id', 'is', null).gte('created_at', since).limit(3000);
+        .select('id, title, raw_json').eq('quality_status', 'active').not('client_id', 'is', null).gte('created_at', since).limit(3000);
       const strip = (k: string) => k.toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/, '');
       const fab = (recent || []).filter((s: any) => {
         const mk = s.raw_json?.matched_keywords;
@@ -207,10 +212,10 @@ Deno.serve(async (req) => {
       if (fab.length > 0) {
         await recordFinding(supabase, {
           category: 'data_integrity', severity: 'high',
-          title: `Fabricated client-match: ${fab.length} signal(s) in 24h attributed on a <=5-char substring keyword`,
-          analysis: `RSS client-match (process-intelligence-document) matches client monitoring_keywords/assets by exact SUBSTRING. ${fab.length} signal(s) in 24h were attributed to a client on a <=5-char keyword only (e.g. "home"→"homelessness"/"Chomedey", "cabin"→"cabinet") — fabricated nexus, not real relevance. Sample: ${fab.slice(0,5).map((s:any)=>`"${(s.title||'').slice(0,48)}"`).join(', ')}. See WO-GATE-KEYWORD-PRESCORE-01 (Phase 1: 26.4% of 90d attributions fabricated, 609 to Kilbacks).`,
-          plainEnglish: `${fab.length} signal(s) were tagged to a client today on a coincidental short-word match, not real relevance. Client-match needs anchoring (whole-word + min length).`,
-          action: 'Anchor client keyword matching (word-boundary + min token length; kill garbage keywords). Corrections via superseding attribution (no deletions). WO-GATE-KEYWORD-PRESCORE-01.',
+          title: `Fabricated client-match LEAKED TO ACTIVE: ${fab.length} signal(s) in 24h on a <=5-char keyword escaped auto-quarantine`,
+          analysis: `As of WO-GATE Phase 2, process-intelligence-document born-quarantines any client-match on a <=5-char keyword only (quality_status='quarantined', reason='fabricated_client_match_auto'). This probe scans ACTIVE signals only, so a hit means ${fab.length} fabricated-match signal(s) reached a client-facing (active) row in 24h DESPITE the auto-quarantine gate — the born-quarantine write path is not firing (matcher output shape changed, or the detection drifted from the probe's). Sample: ${fab.slice(0,5).map((s:any)=>`"${(s.title||'').slice(0,48)}"`).join(', ')}. WO-GATE-KEYWORD-PRESCORE-01 (Phase 1: 26.4% of 90d attributions fabricated, 609 to Kilbacks).`,
+          plainEnglish: `${fab.length} signal(s) tagged to a client today on a coincidental short-word match slipped past the auto-quarantine and are visible to the client. The born-quarantine gate has a hole.`,
+          action: 'Verify the born-quarantine detection in process-intelligence-document still matches this probe\'s strip/length logic (they must stay identical). Do NOT delete; re-quarantine the leaked rows. WO-GATE-KEYWORD-PRESCORE-01 Phase 2.',
         });
         report.findings_written++;
       }

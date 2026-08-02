@@ -1044,6 +1044,17 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
         };
         const derivedCategory = signalTypeToCategory[signal.signal_type] || 'general';
 
+        // ── WO-GATE Phase 2 (auto-quarantine): born-quarantine a fabricated client-match ──
+        // Same signature Probe 2d flags: the attribution matched ONLY on a <=5-char keyword
+        // (e.g. "home" inside "homelessness"). Forward-only; matcher unchanged; historical 611
+        // untouched. Strip logic is IDENTICAL to Probe 2d so the probe (on active rows) finds zero.
+        const stripKw = (k: string) => String(k).toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/, '');
+        const _mkLens = (clientMatch.matchedKeywords || []).map((k: string) => stripKw(k).length).filter((n: number) => n > 0);
+        const matchedOnlyShortKw = _mkLens.length > 0 && Math.max(..._mkLens) <= 5;
+        if (matchedOnlyShortKw) {
+          console.log(`[AutoQuarantine] Born-quarantined (<=5-char keyword only): "${signal.title?.slice(0,60)}" kw=${JSON.stringify(clientMatch.matchedKeywords)}`);
+        }
+
         const { data: newSignal, error: signalError } = await supabase
           .from('signals')
           .insert({
@@ -1062,6 +1073,9 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
             location: signal.location,
             status: 'new',
             is_test: false,
+            // WO-GATE Phase 2 auto-quarantine: born-quarantined if fabricated (<=5-char kw only).
+            quality_status: matchedOnlyShortKw ? 'quarantined' : 'active',
+            quarantine_reason: matchedOnlyShortKw ? 'fabricated_client_match_auto' : null,
             client_id: clientMatch.clientId,
             event_date: eventDate?.toISOString() || null,
             // Propagate media and social data from document to signal
