@@ -5,7 +5,7 @@
 ## Rationale (record in KB)
 **Watchdog (agent-sentinel) proves the door is shut. WRAITH detects whether anyone came through.** Closing the 5 mis-scoped INSERT policies does not tell us what happened during the window they were open, and the next misconfiguration will be caught by watchdog only *after* it exists. WRAITH is the behavioral backstop.
 
-The 2026-08-02 forensic pass on the 5 formerly-anon-writable tables (monitoring_proposals, signal_updates, edge_function_errors, briefing_sessions, itinerary_scan_history) found **no evidence of injection** (all rows attributable to known service-role writers; 0 orphan/null FKs; no injection-burst day). But attribution is *self-reported* — an attacker could set `proposed_by_agent='CRUCIBLE'`. WRAITH is what would catch that.
+The 2026-08-02 forensic pass on the 5 formerly-anon-writable tables (monitoring_proposals, signal_updates, edge_function_errors, briefing_sessions, itinerary_scan_history) found **no evidence of contamination** — deliberately NOT "proven clean." The anon-write window was open since **Feb 2026** (policy creation) and all rows postdate it, so the window covers the entire table lifetime. The attribution matched known writer patterns, BUT **attribution is self-reported** — an attacker could set `proposed_by_agent='CRUCIBLE'`. The **strongest evidence is the smooth daily histogram** (busiest day only ~3–4× the average, no injection burst — an exfiltration/injection dump would spike), NOT the attribution. Absence of a detection ≠ proof of absence. WRAITH is what would actually catch a blended-in injection.
 
 ## Items
 ### 7 — Unattributed pipeline writes = candidate injection
