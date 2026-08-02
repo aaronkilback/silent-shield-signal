@@ -92,8 +92,23 @@ Score-scale resolution (Phase 2, item 2) surfaced that `process-intelligence-doc
 ### Phase 2 — original spec (PENDING → superseded by the above)
 Persist a drop record per item (source_id, title, url, stage reached [keyword-gate/scorer/insert], drop reason, relevance_score NULL-vs-numeric, client_id evaluated, ts). No backfill. Then re-run B: parsed vs reaching-scorer vs scored vs inserted, by source. This is the baseline the rebuild is measured against.
 
-### Phase 3 REQUIREMENT — word-boundary matching retires the length heuristic (2026-08-02)
-The ≤5-char rule is a **short-keyword detector, not a fabrication detector** — it conflates two different failures. The durable fix is **word-boundary / whole-token matching, not keyword length**: `"home"` inside `homelessness` is a **boundary violation** (fabrication); `"LNG"` in `"LNG Canada"` is a **whole-token match** (legitimate). The Phase-3 semantic matcher **must anchor on token boundaries**. Once it does, BOTH the ≤5-char length heuristic AND its `SHORT_KW_ALLOWLIST` (seeded with `lng`, applied in `process-intelligence-document` + Probe 2d, lockstep) **retire** — they are transitional scaffolding, not the fix. Acceptance: a boundary-anchored matcher needs no length rule and no acronym allowlist.
+### ROOT-CAUSE CORRECTION — it's ASSET-LABEL free-text matching, not keyword config (2026-08-02)
+The 611 (and the 4, and the 6) matched on **`asset:Home` / `asset:cabin`** — those are `high_value_assets` entries, **not** `monitoring_keywords`. The matcher pushes `asset:${asset}` and matches it by `lowerText.includes(asset)` against the **article body** (`index.ts` ~L345). So the root cause is **asset labels matched as free text**, not keyword configuration. **Kilbacks took ~99% of the damage because their asset list is domestic property with common-noun names (`Home`, `cabin`).** PECL was spared because its assets are **proper nouns** (`Kitimat`, `PAN-OS`, `LNG Canada`) that don't collide with ordinary English.
+
+**Implication — PECL's clean config is NOT evidence the system is safe.** Any future client with an asset named **Ranch, Lodge, Shop, Yard, Plant, Mill, Camp, Site, Barn, Well** reproduces the full failure on **day one**. This is a latent defect gated only by the current clients' asset-naming luck, not by any control.
+
+### Phase 3 REQUIREMENT — word-boundary matching retires the length heuristic, but is NOT sufficient alone (2026-08-02)
+The ≤5-char rule is a **short-keyword detector, not a fabrication detector**. Word-boundary / whole-token matching retires the length heuristic AND its `SHORT_KW_ALLOWLIST` (seeded `lng`, applied lockstep in `process-intelligence-document` + Probe 2d — transitional scaffolding): `"home"` inside `homelessness` is a **boundary violation**; `"LNG"` in `"LNG Canada"` is a **whole-token match**.
+
+**But word-boundary matching ALONE does NOT fix the asset-label problem.** `Home` **as a whole token** still appears in thousands of unrelated articles ("... at home ...", "Home Depot", "home team"). The semantic matcher must **distinguish an asset label used as a proper noun (this client's named asset) from the same string as a common noun.** Options to evaluate in the shadow run:
+- **Geo/entity co-occurrence:** asset labels only match when co-occurring with a client geo/entity anchor (e.g. `cabin` counts only near "Kaleden" / "White Lake Road" / a Kilback name).
+- **Specificity threshold:** asset labels below a specificity threshold (common-noun / high corpus frequency) are **excluded from text matching entirely** and used only for **geo/spatial correlation**.
+- **Per-asset match-mode flag:** each asset tagged `text-matchable` vs `spatial-only`; common-noun assets are spatial-only.
+
+Acceptance: a boundary-anchored + proper-noun-aware matcher needs no length rule and no acronym allowlist, and a `Ranch`/`Lodge`/`Plant` asset does not fabricate nexus on day one.
+
+### PRE-ONBOARDING CHECKLIST ITEM (process, not code) — 2026-08-02
+**Audit every existing client's `high_value_assets` for common-noun labels, and add asset-list review to the client-onboarding checklist.** Before any new client goes live, flag any asset whose label is an ordinary English common noun (Home, cabin, Ranch, Lodge, Shop, Yard, Plant, Mill, Camp, Site, Well, Barn, …) — those must be geo/spatial-only or anchored, never free-text matched. This is a standing pre-onboarding gate, independent of the Phase-3 matcher work.
 
 ### KNOWN GAP — fabrication counts only cover ≤5-char matches (2026-08-02)
 Every fabrication figure to date — the **611** (Phase 1), the **4** (phase1_gap sweep), the **6** (all-time active audit) — was found by the **≤5-char signature ONLY**. **Fabrications on 6+ char keywords have never been searched for.** A multi-word keyword can still fabricate nexus by substring (e.g. a keyword appearing inside an unrelated longer phrase, or matching an off-topic sense). This is a blind spot in the current audit, not a proven absence. **Quantify during the Phase-3 shadow run** (compare semantic verdict vs keyword match for ALL attributions, not just short-keyword ones) — NOT now.
