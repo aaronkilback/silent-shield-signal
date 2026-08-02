@@ -202,12 +202,18 @@ Deno.serve(async (req) => {
       // quarantined row daily and become noise.
       const { data: recent } = await supabase.from('signals')
         .select('id, title, raw_json').eq('quality_status', 'active').not('client_id', 'is', null).gte('created_at', since).limit(3000);
+      // SHORT_KW_ALLOWLIST: legitimate short acronyms that are real whole-token client keywords and
+      // must NOT be treated as fabrication (e.g. PECL 'LNG'). LOCKSTEP with process-intelligence-document
+      // — this set AND the strip/anchor logic must stay identical in both, or probe and write-path disagree.
+      const SHORT_KW_ALLOWLIST = new Set(['lng']);
       const strip = (k: string) => k.toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/, '');
       const fab = (recent || []).filter((s: any) => {
         const mk = s.raw_json?.matched_keywords;
         if (!Array.isArray(mk) || mk.length === 0) return false;
-        const lens = mk.map((k: any) => strip(String(k)).length).filter((n: number) => n > 0);
-        return lens.length > 0 && Math.max(...lens) <= 5;
+        const stripped = mk.map((k: any) => strip(String(k))).filter((k: string) => k.length > 0);
+        // Legitimate anchor = any matched keyword >5 chars OR an allowlisted short acronym.
+        const hasLegitAnchor = stripped.some((k: string) => k.length > 5 || SHORT_KW_ALLOWLIST.has(k));
+        return stripped.length > 0 && !hasLegitAnchor;
       });
       if (fab.length > 0) {
         await recordFinding(supabase, {

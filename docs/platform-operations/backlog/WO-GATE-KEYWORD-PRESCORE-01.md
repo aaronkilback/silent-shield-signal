@@ -92,6 +92,12 @@ Score-scale resolution (Phase 2, item 2) surfaced that `process-intelligence-doc
 ### Phase 2 — original spec (PENDING → superseded by the above)
 Persist a drop record per item (source_id, title, url, stage reached [keyword-gate/scorer/insert], drop reason, relevance_score NULL-vs-numeric, client_id evaluated, ts). No backfill. Then re-run B: parsed vs reaching-scorer vs scored vs inserted, by source. This is the baseline the rebuild is measured against.
 
+### Phase 3 REQUIREMENT — word-boundary matching retires the length heuristic (2026-08-02)
+The ≤5-char rule is a **short-keyword detector, not a fabrication detector** — it conflates two different failures. The durable fix is **word-boundary / whole-token matching, not keyword length**: `"home"` inside `homelessness` is a **boundary violation** (fabrication); `"LNG"` in `"LNG Canada"` is a **whole-token match** (legitimate). The Phase-3 semantic matcher **must anchor on token boundaries**. Once it does, BOTH the ≤5-char length heuristic AND its `SHORT_KW_ALLOWLIST` (seeded with `lng`, applied in `process-intelligence-document` + Probe 2d, lockstep) **retire** — they are transitional scaffolding, not the fix. Acceptance: a boundary-anchored matcher needs no length rule and no acronym allowlist.
+
+### KNOWN GAP — fabrication counts only cover ≤5-char matches (2026-08-02)
+Every fabrication figure to date — the **611** (Phase 1), the **4** (phase1_gap sweep), the **6** (all-time active audit) — was found by the **≤5-char signature ONLY**. **Fabrications on 6+ char keywords have never been searched for.** A multi-word keyword can still fabricate nexus by substring (e.g. a keyword appearing inside an unrelated longer phrase, or matching an off-topic sense). This is a blind spot in the current audit, not a proven absence. **Quantify during the Phase-3 shadow run** (compare semantic verdict vs keyword match for ALL attributions, not just short-keyword ones) — NOT now.
+
 ### Phase 3 — SHADOW RUN — PENDING (build → 7-day parallel, no signals writes)
 Semantic client-match as a parallel path writing to a shadow table only. After 7 days: recall gain / false-positives removed / both-accept / new-gate volume per client per day. **Cutover ruling gated on: new-gate volume must not exceed ~3× old, else tighten first.**
 

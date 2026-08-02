@@ -1047,10 +1047,15 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
         // ── WO-GATE Phase 2 (auto-quarantine): born-quarantine a fabricated client-match ──
         // Same signature Probe 2d flags: the attribution matched ONLY on a <=5-char keyword
         // (e.g. "home" inside "homelessness"). Forward-only; matcher unchanged; historical 611
-        // untouched. Strip logic is IDENTICAL to Probe 2d so the probe (on active rows) finds zero.
+        // untouched. SHORT_KW_ALLOWLIST + strip/anchor logic are IDENTICAL to agent-sentinel Probe 2d
+        // and MUST move together (lockstep) — else a real short acronym is silently born-quarantined.
+        // Allowlist = legitimate short acronyms that are real whole-token client keywords (e.g. PECL 'LNG').
+        const SHORT_KW_ALLOWLIST = new Set(['lng']);
         const stripKw = (k: string) => String(k).toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/, '');
-        const _mkLens = (clientMatch.matchedKeywords || []).map((k: string) => stripKw(k).length).filter((n: number) => n > 0);
-        const matchedOnlyShortKw = _mkLens.length > 0 && Math.max(..._mkLens) <= 5;
+        const _mkStripped = (clientMatch.matchedKeywords || []).map((k: string) => stripKw(k)).filter((k: string) => k.length > 0);
+        // Legitimate anchor = any matched keyword >5 chars OR an allowlisted short acronym.
+        const _hasLegitAnchor = _mkStripped.some((k: string) => k.length > 5 || SHORT_KW_ALLOWLIST.has(k));
+        const matchedOnlyShortKw = _mkStripped.length > 0 && !_hasLegitAnchor;
         if (matchedOnlyShortKw) {
           console.log(`[AutoQuarantine] Born-quarantined (<=5-char keyword only): "${signal.title?.slice(0,60)}" kw=${JSON.stringify(clientMatch.matchedKeywords)}`);
         }
