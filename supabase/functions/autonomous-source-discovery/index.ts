@@ -221,7 +221,11 @@ Return ONLY the JSON array, no other text.`;
               discovered_by: "autonomous-source-discovery",
               rationale: suggestion.rationale,
             },
-            status: "active",
+            // WO-SOURCE-DISCOVERY-RELEVANCE-01: propose, do not auto-activate.
+            // Discovered sources land as 'proposed' (inert — monitor-rss-sources filters
+            // status='active') until an operator promotes them. Minimal propose gate until
+            // the durable fix (client-scoped candidates + real relevance score) is built.
+            status: "proposed",
             monitor_type: suggestion.monitor_type || "monitor-rss",
           });
 
