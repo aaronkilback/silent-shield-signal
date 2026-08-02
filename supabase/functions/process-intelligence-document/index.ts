@@ -4,6 +4,56 @@ import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
 import { enqueueJob } from "../_shared/queue.ts";
 
+// ── WO-GATE-KEYWORD-PRESCORE-01 Phase 2: forward-only ingest-funnel instrumentation ──
+// Records per-item drop/pass decisions at each of the four stages (parse | client_match |
+// relevance_score | insert). content_hash = sha256(title || url). NULL relevance_score means
+// "never scored" and MUST survive (never coalesced to 0). Every write is swallow-on-failure:
+// instrumentation can never fail the ingest path. See docs/.../WO-GATE-KEYWORD-PRESCORE-01.md.
+async function decisionSha256(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+interface DecisionArgs {
+  runId: string;
+  sourceId: string;
+  title?: string | null;
+  url?: string | null;
+  contentHash: string;
+  stage: "parse" | "client_match" | "relevance_score" | "insert";
+  outcome: "passed" | "dropped";
+  dropReason?: string | null;
+  scorerReached?: boolean;
+  relevanceScore?: number | null; // NULL = never scored. Never coalesce.
+  clientsEvaluated?: string[] | null;
+  clientMatched?: string | null;
+  matchedKeyword?: string | null;
+}
+
+// NEVER throws — a thrown error here cannot propagate into the ingest path (spec §3, non-negotiable).
+async function recordDecision(supabase: any, a: DecisionArgs): Promise<void> {
+  try {
+    await supabase.rpc("record_ingest_decision", {
+      p_run_id: a.runId,
+      p_source_id: a.sourceId,
+      p_item_title: a.title ?? null,
+      p_item_url: a.url ?? null,
+      p_content_hash: a.contentHash,
+      p_stage: a.stage,
+      p_outcome: a.outcome,
+      p_drop_reason: a.dropReason ?? null,
+      p_scorer_reached: a.scorerReached ?? false,
+      p_relevance_score: a.relevanceScore ?? null,
+      p_clients_evaluated: a.clientsEvaluated ?? null,
+      p_client_matched: a.clientMatched ?? null,
+      p_matched_keyword: a.matchedKeyword ?? null,
+    });
+  } catch (e) {
+    // Swallow — log and continue. Ingest must never fail because instrumentation failed.
+    console.error("[ingest_decisions] write failed (swallowed, ingest continues):", (e as Error)?.message ?? e);
+  }
+}
+
 // Canonical DB entity_type enum (public.entity_type). The extraction prompt is
 // constrained to these values, but a model can still emit an out-of-vocab type;
 // any such value maps to 'other' so downstream `.eq('type', …)` lookups and the
@@ -128,7 +178,8 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     documentId = body.documentId;
-    
+    const decisionRunId = crypto.randomUUID(); // WO-GATE Phase 2: one run_id per invocation
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -374,11 +425,42 @@ Deno.serve(async (req) => {
     if (clientMatches.length === 0) {
       clientMatches = matchClientKeywords(document.raw_text || '', clients || []);
     }
-    
+
+    // ── WO-GATE Phase 2: funnel instrumentation setup + parse-stage decision ──
+    const decisionHash = resolvedSourceId
+      ? await decisionSha256(`${document.title || ''}${document.source_url || document.metadata?.url || ''}`)
+      : null;
+    const decisionCtx = {
+      runId: decisionRunId,
+      sourceId: resolvedSourceId as string,
+      title: (document.title ?? null) as string | null,
+      url: (document.source_url || document.metadata?.url || null) as string | null,
+      contentHash: (decisionHash || '') as string,
+    };
+    const decisionClientsEvaluated = Array.isArray(clients) ? clients.map((c: any) => c.id) : [];
+    // Only instrument when we have a valid source_id (FK) + a hash. RSS/url_feed docs have source_id;
+    // social docs without one are outside this WO's scope and are simply not recorded.
+    const canRecordDecision = !!(resolvedSourceId && decisionHash);
+    // Funnel accumulators — settled once, after the signal loop:
+    let dScorerRan = false;
+    let dAnyPassedRelevance = false;
+    let dAnyInserted = false;
+    let dMaxScore: number | null = null; // NULL = never scored (must survive; never coalesced)
+    if (canRecordDecision) {
+      const hasContent = !!((document.raw_text && document.raw_text.trim()) || (document.title && document.title.trim()));
+      await recordDecision(supabase, {
+        ...decisionCtx,
+        stage: 'parse',
+        outcome: hasContent ? 'passed' : 'dropped',
+        dropReason: hasContent ? null : 'empty_document',
+      });
+    }
+
     // PRIORITY 3: Filter out known false positive content patterns
     const documentText = document.raw_text || document.title || '';
     if (isFalsePositiveContent(documentText)) {
       console.log(`[FP Filter] Rejecting false positive content: ${documentText.substring(0, 100)}...`);
+      if (canRecordDecision) await recordDecision(supabase, { ...decisionCtx, stage: 'client_match', outcome: 'dropped', dropReason: 'false_positive_content', scorerReached: false, relevanceScore: null, clientsEvaluated: decisionClientsEvaluated });
       await supabase
         .from('ingested_documents')
         .update({
@@ -400,6 +482,7 @@ Deno.serve(async (req) => {
     // Skip processing if no client matches at all
     if (clientMatches.length === 0) {
       console.log('No client matches found (entity or keyword), skipping document');
+      if (canRecordDecision) await recordDecision(supabase, { ...decisionCtx, stage: 'client_match', outcome: 'dropped', dropReason: 'no_client_match', scorerReached: false, relevanceScore: null, clientsEvaluated: decisionClientsEvaluated });
       await supabase
         .from('ingested_documents')
         .update({
@@ -419,6 +502,7 @@ Deno.serve(async (req) => {
     }
     
     console.log(`Matched ${clientMatches.length} client(s):`, clientMatches.map(m => m.clientName).join(', '));
+    if (canRecordDecision) await recordDecision(supabase, { ...decisionCtx, stage: 'client_match', outcome: 'passed', clientMatched: clientMatches[0]?.clientId ?? null, matchedKeyword: clientMatches[0]?.matchedKeywords?.[0] ?? null, clientsEvaluated: decisionClientsEvaluated });
 
     // Fetch learning profiles
     const { data: approvedPatterns } = await supabase
@@ -823,11 +907,18 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
     for (const signal of intelligence.signals || []) {
       try { // ← per-signal isolation: a crash here skips THIS signal, not all remaining ones
       // HARD RELEVANCE GATE: Skip signals the AI scored below 0.3
+      // WO-GATE Phase 2: the scorer produced a value → funnel reached the relevance stage.
+      dScorerRan = true;
+      {
+        const _rs = (typeof signal.relevance_score === 'number') ? signal.relevance_score : null;
+        if (_rs !== null) dMaxScore = (dMaxScore === null) ? _rs : Math.max(dMaxScore, _rs);
+      }
       if ((signal.relevance_score || 0) < 0.3) {
         console.log(`[RelevanceGate] Skipping low-relevance signal (${signal.relevance_score}): ${signal.title}`);
         continue;
       }
-      
+      dAnyPassedRelevance = true; // WO-GATE Phase 2: ≥1 signal cleared the 0.3 threshold
+
       // REFUSAL GATE: Skip if the AI returned a refusal message instead of real content
       if (isAiRefusal(signal.title) || isAiRefusal(signal.description)) {
         console.log(`[RefusalGate] Skipping AI refusal signal: ${(signal.title || '').slice(0, 80)}`);
@@ -1003,6 +1094,7 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
 
         if (!signalError && newSignal) {
           results.signals_created++;
+          dAnyInserted = true; // WO-GATE Phase 2: ≥1 signal row written for this doc
 
           // Link signal to document
           await supabase
@@ -1116,6 +1208,28 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
         results.errors = (results.errors || 0) + 1;
       }
     } // closes for (const signal of intelligence.signals)
+
+    // ── WO-GATE Phase 2: relevance_score + insert stage decisions (client matched → scorer path) ──
+    // Only reached when a client matched (this block is inside the matched branch). If the scorer
+    // ran, record the post-scorer outcome with the ACTUAL max score; if extraction produced no
+    // signals, the scorer never ran → relevance_score stays NULL (the finding), scorer_reached=false.
+    if (canRecordDecision) {
+      await recordDecision(supabase, {
+        ...decisionCtx,
+        stage: 'relevance_score',
+        scorerReached: dScorerRan,
+        outcome: dScorerRan ? (dAnyPassedRelevance ? 'passed' : 'dropped') : 'dropped',
+        dropReason: dScorerRan ? (dAnyPassedRelevance ? null : 'below_threshold') : 'extraction_no_signals',
+        relevanceScore: dMaxScore, // NULL if never scored; actual numeric (incl. 0) if scored
+      });
+      await recordDecision(supabase, {
+        ...decisionCtx,
+        stage: 'insert',
+        outcome: dAnyInserted ? 'passed' : 'dropped',
+        dropReason: dAnyInserted ? null : 'not_inserted',
+        relevanceScore: dMaxScore,
+      });
+    }
 
     // Mark document as processed
     await supabase

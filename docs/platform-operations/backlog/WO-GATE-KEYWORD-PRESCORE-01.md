@@ -54,7 +54,33 @@ Do NOT write superseding attribution records yet — the 611 were flagged by the
 ### REGISTRY (ruling 2026-08-02) — leave soft-removed
 The 16 stay `paused` + `registry_triage` tagged. No hard-delete of Group A — a paused row explains itself; a deleted row doesn't. Better artifact for the provenance-scored comparison.
 
-### Phase 2 — INSTRUMENT THE DROPS — PENDING (build → 72h forward-only run) — NEXT SESSION
+### Phase 2 — INSTRUMENT THE DROPS — DONE 2026-08-02 (forward-only, live). 72h clock started **2026-08-02T19:36:11Z** → B re-run **~2026-08-05T19:36Z**
+Per-item funnel recorder `public.ingest_decisions` (RLS-enabled) + RPC `record_ingest_decision` (upsert-increment on `(source_id, content_hash, stage)`; content_hash = sha256(title||source_url)). `process-intelligence-document` instrumented at all four stages (parse · client_match {drop: `no_client_match`/`false_positive_content`, pass} · relevance_score · insert). **`relevance_score` NULL-vs-numeric survives the whole path — NEVER coalesced** (pre-score client_match drops stay NULL; that's the finding). Every write is swallow-on-failure (`recordDecision` never throws → cannot fail ingest). 180-day nightly purge cron `purge-ingest-decisions-nightly` (active). `agent-sentinel` **Probe 2e** = high finding if monitor-rss ran in 6h but `ingest_decisions` got 0 writes (gated on table-ever-written to avoid day-one false positive). RPC locked to `service_role` only.
+
+**Proof (captured live 2026-08-02):**
+- **(a)** table has 17 cols, RLS=on, 5 indexes (pkey + `item_stage_uq` unique + source/first_seen + stage/outcome + first_seen), 2 CHECK constraints (stage, outcome).
+- **(b)** diff: +120 lines process-intelligence-document (helper + 4 stage writes + accumulators), +36 agent-sentinel (Probe 2e).
+- **(c)** first-window sample: **8 client_match/dropped rows ALL with relevance_score=NULL, scorer_reached=false, clients_evaluated=9** (Calgary fire, Midland shooting, Montreal, In-N-Out, Pear Lake wildfire, Meta protest…); relevance_score/passed rows carry the **numeric** score (0.5, scorer_reached=true); insert/passed rows written. Real semantic-adjacency example: "Dozens protest Meta data centre" matched client via **tier-2 fuzzy** (`natural gas,grid+alberta`) → scored 0.5 → inserted.
+- **(d)** upsert dedupe proven: repeated doc → seen_count 3→4, original decision unchanged.
+- **(e)** Probe 2e deployed + first scan ran clean (200, 7 findings — none the ingest-silent finding; correctly silent with 24 writes/6h).
+- **(f)** deploy timestamp **2026-08-02T19:36:11Z**.
+
+**Deviation flagged:** unique index is `(source_id, content_hash, STAGE)` not `(source_id, content_hash)` — the §8 funnel query counts per stage; one-row-per-item would return zeros. One row per item per stage.
+
+**§8 B re-run query — DO NOT RUN NOW; run at T+72h (~2026-08-05T19:36Z):**
+```sql
+select s.name,
+  count(*) filter (where stage='parse' and outcome='passed')            as parsed,
+  count(*) filter (where stage='client_match' and outcome='dropped')    as dropped_pre_score,
+  count(*) filter (where stage='client_match' and outcome='passed')     as reached_scorer,
+  count(*) filter (where stage='relevance_score' and outcome='dropped') as dropped_low_score,
+  count(*) filter (where stage='insert' and outcome='passed')           as inserted
+from ingest_decisions d join sources s on s.id = d.source_id
+where d.first_seen_at > now() - interval '72 hours'
+group by s.name order by parsed desc;
+```
+
+### Phase 2 — original spec (PENDING → superseded by the above)
 Persist a drop record per item (source_id, title, url, stage reached [keyword-gate/scorer/insert], drop reason, relevance_score NULL-vs-numeric, client_id evaluated, ts). No backfill. Then re-run B: parsed vs reaching-scorer vs scored vs inserted, by source. This is the baseline the rebuild is measured against.
 
 ### Phase 3 — SHADOW RUN — PENDING (build → 7-day parallel, no signals writes)

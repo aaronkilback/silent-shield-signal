@@ -218,6 +218,42 @@ Deno.serve(async (req) => {
       console.warn('[sentinel] anchoring probe error:', e?.message);
     }
 
+    // ── Probe 2e: ingest-funnel instrumentation liveness (WO-GATE-KEYWORD-PRESCORE-01 Phase 2) ──
+    // ingest_decisions must receive writes whenever the RSS pipeline runs. Fire high if monitor-rss
+    // ran (succeeded) in the last 6h but ingest_decisions got ZERO writes in that window — the
+    // instrumentation (or the ingest path it measures) is dead and the funnel baseline is going blind.
+    try {
+      const sixHrsAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+      const { data: rssRuns } = await supabase.from('cron_heartbeat')
+        .select('job_name, status, completed_at')
+        .ilike('job_name', 'monitor-rss%')
+        .in('status', ['succeeded', 'completed'])
+        .gte('completed_at', sixHrsAgo)
+        .limit(1);
+      const rssRan = Array.isArray(rssRuns) && rssRuns.length > 0;
+      // Only meaningful once instrumentation has EVER written — an empty table means "just deployed",
+      // not "went dead". Once ≥1 row exists, "0 in 6h" is a real liveness failure.
+      const { count: everWrites } = await supabase.from('ingest_decisions')
+        .select('id', { count: 'exact', head: true });
+      if (rssRan && (everWrites || 0) > 0) {
+        const { count: decisionWrites } = await supabase.from('ingest_decisions')
+          .select('id', { count: 'exact', head: true })
+          .gte('last_seen_at', sixHrsAgo);
+        if ((decisionWrites || 0) === 0) {
+          await recordFinding(supabase, {
+            category: 'data_integrity', severity: 'high',
+            title: 'Ingest-funnel instrumentation silent: 0 ingest_decisions writes in 6h while monitor-rss ran',
+            analysis: `monitor-rss-sources completed in the last 6h but ingest_decisions received ZERO writes in the same window. Either process-intelligence-document is not running (ingest path stalled) or the Phase-2 instrumentation has been removed/broken. The keyword-gate funnel baseline (WO-GATE-KEYWORD-PRESCORE-01 Phase 2) is going blind — drops are unmeasured again.`,
+            plainEnglish: 'The RSS monitor ran but nothing recorded how items moved through the ingest funnel. The drop-measurement instrumentation appears dead.',
+            action: 'Check job-worker / process-intelligence-document invocation and the record_ingest_decision RPC. WO-GATE-KEYWORD-PRESCORE-01 Phase 2.',
+          });
+          report.findings_written++;
+        }
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] ingest-funnel liveness probe error:', e?.message);
+    }
+
     // ── Probe 3: Management API security advisor ingestion ──
     // Pulls the canonical Supabase security advisor (rls_disabled_in_public,
     // policy_exists_rls_disabled, security_definer_view, function_search_path_mutable, auth
