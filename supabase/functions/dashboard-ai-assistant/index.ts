@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 3
 import { callAiGateway, callAiGatewayStream, getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 import { classifyUserSafeError, redactProviderLeak } from "../_shared/user-safe-errors.ts";
 import { validateMessages } from "../_shared/input-validation.ts";
@@ -81,12 +82,12 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     }
   }
 
-  // Non-AI-gateway URLs: standard fetch with timeout
+  // Non-AI-gateway URLs: SSRF-guarded fetch with timeout — WO-SSRF-SHARED-GUARD-01 wave 3
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       ...options,
       signal: controller.signal,
     });

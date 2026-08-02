@@ -17,7 +17,9 @@ export async function extractOGImage(url: string): Promise<string | null> {
       || html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i)?.[1]
       || html.match(/<meta[^>]*name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i)?.[1]
       || null;
-  } catch {
+  } catch (e) {
+    // WO-SSRF-SHARED-GUARD-01: surface a swallowed guard block (fail-loud) instead of a silent null.
+    console.warn('[og-image] fetch blocked/failed:', (e as Error)?.message);
     return null;
   }
 }

@@ -18,7 +18,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
-import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 self-validation probe
+import { safeFetch, SsrfBlockedError } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 self-validation probe
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -161,16 +161,26 @@ Deno.serve(async (req) => {
     // the DEPLOYED guard still blocks a cloud-metadata target; a refactor that weakens/removes it
     // fires this. safeFetch throwing on a blocked target = healthy (no finding).
     try {
-      let ssrfBlocked = false;
+      // (i) direct: a literal metadata address must be blocked.
+      let directBlocked = false;
       try { await safeFetch('http://169.254.169.254/latest/meta-data/', { signal: AbortSignal.timeout(5000) }); }
-      catch { ssrfBlocked = true; }
-      if (!ssrfBlocked) {
+      catch { directBlocked = true; }
+      // (ii) redirect: a public host 302→metadata must be blocked ON THE HOP, not followed. If safeFetch
+      // RETURNS a response it followed the redirect to the private target = regression. A non-SSRF throw
+      // (e.g. httpbin unreachable) is inconclusive → treated as pass. SsrfBlockedError = healthy.
+      let redirectFollowed = false, redirectSsrf = false;
+      try {
+        await safeFetch('https://httpbin.org/redirect-to?url=http://169.254.169.254/&status_code=302', { signal: AbortSignal.timeout(6000) });
+        redirectFollowed = true;
+      } catch (re) { redirectSsrf = re instanceof SsrfBlockedError; }
+
+      if (!directBlocked || redirectFollowed) {
         await recordFinding(supabase, {
           category: 'security_posture', severity: 'high',
-          title: 'SSRF guard did NOT block a cloud-metadata address (safe-fetch regressed)',
-          analysis: `_shared/safe-fetch.safeFetch() fetched http://169.254.169.254 instead of throwing SsrfBlockedError. The SSRF guard protecting ingest-signal:653 (C2), og-image, media-capture, monitor-rss-sources and other caller-supplied-URL fetches has been weakened or removed — server-side request forgery to internal/metadata endpoints is possible again.`,
-          plainEnglish: 'The protection that stops the platform being tricked into fetching internal/cloud addresses has stopped working. Restore _shared/safe-fetch.',
-          action: 'Restore the private/link-local/metadata IP block in _shared/safe-fetch.ts; re-run this canary until it blocks. See WO-SSRF-SHARED-GUARD-01.',
+          title: 'SSRF guard regressed (safe-fetch no longer blocks a private/metadata target)',
+          analysis: `_shared/safe-fetch self-check FAILED: direct-address block=${directBlocked ? 'ok' : 'FAILED (fetched 169.254.169.254)'}, redirect-hop=${redirectFollowed ? 'FOLLOWED a public→private 302 to the metadata endpoint' : (redirectSsrf ? 'ok (SsrfBlockedError on hop)' : 'inconclusive')}. The guard protecting ingest-signal:653 (C2), og-image, media-capture, monitor-rss-sources and other caller-supplied-URL fetches has been weakened or removed — SSRF to internal/metadata endpoints is possible again.`,
+          plainEnglish: 'The protection that stops the platform being tricked into fetching internal/cloud addresses (directly or via a redirect) has stopped working. Restore _shared/safe-fetch.',
+          action: 'Restore the private/link-local/metadata IP block + per-hop redirect re-validation in _shared/safe-fetch.ts; re-run this canary. See WO-SSRF-SHARED-GUARD-01.',
         });
         report.findings_written++;
       }

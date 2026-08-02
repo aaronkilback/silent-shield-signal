@@ -1,5 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createHash } from "https://deno.land/std@0.177.0/node/crypto.ts";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 3
 
 const CHUNK_SIZE = 4000; // characters per chunk
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
@@ -24,9 +25,9 @@ Deno.serve(async (req) => {
       case 'url':
         const url = sourceData.url;
         title = url;
-        
+
         try {
-          const response = await fetch(url);
+          const response = await safeFetch(url); // WO-SSRF-SHARED-GUARD-01 wave 3 (caller-supplied sourceData.url)
           const html = await response.text();
           
           // Basic HTML text extraction (strip tags)
