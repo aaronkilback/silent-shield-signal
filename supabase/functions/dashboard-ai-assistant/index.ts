@@ -11519,7 +11519,10 @@ The user's message is just a conversational acknowledgment - respond in kind, do
                 const _wraithResp = await Promise.race([
                   fetch(_wraithUrl, {
                     method: "POST",
-                    headers: { "Authorization": `Bearer ${_wraithKey}`, "Content-Type": "application/json" },
+                    // WO-WRAITH-VULN-SCAN-DEAD-01 (Option A): detect_prompt_injection is now an
+                    // operator-only action gated on the canonical internal-caller secret. Send it,
+                    // or this call 404s and the injection gate silently fails open.
+                    headers: { "Authorization": `Bearer ${_wraithKey}`, "Content-Type": "application/json", "x-fortress-internal": Deno.env.get("FORTRESS_INTERNAL_SECRET") ?? "" },
                     body: JSON.stringify({ action: "detect_prompt_injection", message: _wraithCombined }),
                   }),
                   new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),

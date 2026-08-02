@@ -108,7 +108,10 @@ Deno.serve(async (req) => {
     const invokeTarget = async (url: string, payload: unknown): Promise<Response> => {
       const doFetch = (bearer: string) => fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearer}` },
+        // WO-WRAITH-VULN-SCAN-DEAD-01 (Option A): job-worker is an internal dispatcher; send the
+        // canonical internal-caller secret so functions gated on requireInternalCaller (e.g. wraith
+        // analyze_signal_threat_dna) accept it. Ignored by functions that don't check it.
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearer}`, 'x-fortress-internal': Deno.env.get('FORTRESS_INTERNAL_SECRET') ?? '' },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(JOB_TIMEOUT_MS),
       });

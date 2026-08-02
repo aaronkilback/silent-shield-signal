@@ -41,8 +41,20 @@ Opus, per file: (1) SQL/PostgREST injection via unsanitized input, (2) auth bypa
 ## Verdict
 Still **non-functional**. Two blockers before a single finding: layer-2 auth (task #111) and — for the known-bad specifically — a scope that excludes it (and 346 other functions). Detection capability **unproven**; do not treat as a working control. `agent-sentinel` remains the only *functioning* security probe (posture, not code-vuln).
 
+## OPTION A APPLIED 2026-08-02 — auth FIXED, but detection is BROKEN (deeper finding)
+Operator chose Option A (canonical internal gate). Applied + verified:
+- **Auth root cause (final):** not key drift — `app.settings.service_role_key` (the GUC the cron read) was **unset**, so the cron sent an empty bearer. The vault `service_role_key` (every other cron's key) **also** 401s against wraith's env-exact gate. No DB-accessible key satisfies it.
+- **Fix:** gated the 3 operator-only actions (`run_vulnerability_scan`, `analyze_signal_threat_dna`, `detect_prompt_injection`) on the canonical `checkInternalCaller` (`x-fortress-internal`, constant-time, fail-closed) — used, not forked; returns 404 for indistinguishability. User actions untouched. Cron migration `20260802160000` sends `x-fortress-internal` from vault (mirrors source-discovery). **Blast radius:** the two internal callers were updated to send the header — `dashboard-ai-assistant` (detect_prompt_injection; would have failed **open**) and `job-worker` (analyze_signal_threat_dna via the queue). All deployed.
+- **Auth now works:** manual invoke → **HTTP 200**, 5 files scanned. The cron will produce.
+
+**BUT the detection proof FAILED (the important finding):**
+- 2a — 5-file scan: **`total_findings: 0`.**
+- 2b — injected a verbatim `ai-tools-query@adce9554` excerpt (unscoped cross-tenant reads in `get_recent_signals`/`get_active_incidents` + `ilike` filter injection `.or(\`name.ilike.%${searchQuery}%\`)` in `search_entities`) into scope and scanned: **6 files scanned, `total_findings: 0`.** The scanner flagged **none** of the textbook instances of its own prompt's vuln classes #1 and #2. (Logs confirm the model *was* called — 21.5s execution — so it ran; it just returned/parsed 0.) The excerpt is an *easier* target than a 1000-line file, which makes the result stronger: it cannot flag an obvious injection in 34 lines.
+- **Conclusion:** reviving the cron was necessary but insufficient. **The scanner runs and detects nothing — a rubber stamp.** A clean report from it means "found nothing," not "nothing to find." Detection quality is a second, prerequisite fix (root-cause: model under-detection on the current single-shot prompt, or silent parse-drop of findings — needs investigation). Tracked in **WO-WRAITH-SCOPE-01**. `verify_jwt=false` is unscannable — it lives in `config.toml`, not `index.ts`.
+
 ## Revised fix order
-1. **Auth (task #111):** align the cron's key with the gate — operator decision (credential-adjacent).
+0. **DETECTION (new, gating): the scanner returns 0 on known-vulnerable code — fix before trusting any output.** See WO-WRAITH-SCOPE-01.
+1. **Auth (task #111):** DONE — Option A applied 2026-08-02.
 2. Re-invoke; confirm `wraith_vulnerability_findings` gets ≥1 row (or explicit empty-scan record distinguishable from never-ran).
 3. **Prove detection on `ai-tools-query@adce9554`** (temporarily in scope): it must flag the tenant-isolation / filter-injection vulns, or the scanner is a rubber stamp.
 4. **Scope:** make `scanTargets` a real inventory (all deployed functions, batched) or risk-ranked — not 5 hardcoded.

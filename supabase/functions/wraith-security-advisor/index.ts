@@ -28,6 +28,7 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getUserFromRequest } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import type { WraithSecurityAction, DomainRequest } from "../_shared/types.ts";
+import { checkInternalCaller } from "../_shared/require-internal-caller.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -45,8 +46,6 @@ Deno.serve(async (req) => {
     const newKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const legacyKey = Deno.env.get('SERVICE_ROLE_JWT');
     const isServiceRole = !!token && (token === newKey || token === legacyKey);
-    const { userId } = isServiceRole ? { userId: 'service_role' } : await getUserFromRequest(req);
-    if (!userId) return errorResponse('Authentication required', 401);
 
     const body = await req.json() as DomainRequest<WraithSecurityAction>;
     const { action, input, email } = body as any;
@@ -78,9 +77,25 @@ Deno.serve(async (req) => {
       'run_vulnerability_scan',
       'detect_prompt_injection',
     ]);
-    if (OPERATOR_ONLY_ACTIONS.has(action) && !isServiceRole) {
-      console.warn(`[WraithSecurityAdvisor] privileged action "${action}" rejected for non-service-role caller (userId=${userId}) — returning 404 for indistinguishability`);
-      return errorResponse('Action not found', 404);
+    // WO-WRAITH-VULN-SCAN-DEAD-01 (Option A): operator-only actions are authorized by the
+    // canonical internal-caller gate (_shared/require-internal-caller.ts, WO-CHECK5) — the
+    // x-fortress-internal shared secret, constant-time, fail-closed. This REPLACES the prior
+    // service-role-key exact-match, which the cron could never satisfy (task #111 key drift).
+    // We use checkInternalCaller (do NOT fork it) but return 404 rather than its 401/403 to
+    // preserve analyst indistinguishability (Aaron 2026-05-23): privileged-denied must be
+    // byte-identical to unknown-action. User-facing actions keep user/service-role auth.
+    let userId: string | null = null;
+    if (OPERATOR_ONLY_ACTIONS.has(action)) {
+      const internal = checkInternalCaller(req.headers);
+      if (!internal.ok) {
+        console.warn(`[WraithSecurityAdvisor] privileged action "${action}" rejected (internal-caller ${internal.status}) — returning 404 for indistinguishability`);
+        return errorResponse('Action not found', 404);
+      }
+      userId = 'internal';
+    } else {
+      const u = isServiceRole ? { userId: 'service_role' } : await getUserFromRequest(req);
+      userId = u.userId;
+      if (!userId) return errorResponse('Authentication required', 401);
     }
 
     console.log(`[WraithSecurityAdvisor] Dispatching action: ${action}`);
