@@ -8,6 +8,15 @@
 
 **Env-var durability (operator ruling 2026-08-03) — DO NOT "clean up":** the marketing repo now ships a **deliberately committed** `.env.production` (force-added past `.gitignore`, commit `765d181` on `feat/crm-slice1`) holding all four public `VITE_*` values (Fortress-prod URL + publishable key, CRM URL + anon key). This is intentional, not a leak: anon/publishable keys are public by design and already ship in the browser bundle; RLS is the control. It exists because the site's prior build environment (Lovable account) is **gone** — committing the public values removes the dependency so any build (CF Pages / local wrangler / CI) inlines the correct backend. Real env vars still override the file. **Nobody may delete this file or "fix" it by removing the keys** — doing so re-introduces the risk that the next deploy loses these values and the site 500s. Header comment in the file forbids ever adding a `service_role`/Stripe/server-side secret there.
 
+## Slice 2.1 — BUILT, awaiting deploy (2026-08-03) — handle normalisation
+
+Branch `feat/crm-slice2.1` (`759828b`), stacked on `feat/crm-slice2`. Pasted mobile-Share profile URLs (90+ chars, `?igsh=`/`?utm_*`) were breaking the Today list (overlapping Dismiss, deep link built from a URL). All frontend + a one-time data backfill — **no schema migration**.
+- `normalizeHandle()` on save: extracts the bare handle from `linkedin.com/in/<h>` · `instagram.com/<h>` · `x.com`/`twitter.com/<h>`, stripping protocol/www/query/trailing-path/slash/leading-@; unknown patterns kept as typed.
+- `inferPlatform()` sets the platform button automatically from a pasted URL.
+- `shortHandle()` caps row display at ~24 chars + ellipsis (full on hover) so nothing pushes Dismiss off.
+- Backfill (data): `20260803180000_crm_slice2_1_handle_backfill.sql` — two seed rows by id → `miss_junglejayne` / `iamdavisnguyen`. Runnable any time (fixes the live app immediately, independent of the frontend deploy).
+- Proven: truth table (10 cases incl. both real URLs+query, X/twitter, no-query, trailing slash, bare, @handle, name w/ spaces, unknown domain). Build clean.
+
 ## Slice 2 — BUILT, awaiting deploy (2026-08-03)
 
 Branch `feat/crm-slice2` (`b429bb2`), off main. Playbook prompts (RULES ONLY, no AI) + qualification capture. Migration `20260803170000_crm_slice2_playbook_prompts.sql` — **run in the CRM project BEFORE the frontend deploy** (adds columns/functions/view; safe/idempotent).
