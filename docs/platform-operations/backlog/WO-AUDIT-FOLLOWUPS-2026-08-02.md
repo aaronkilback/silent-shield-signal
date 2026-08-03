@@ -5,8 +5,13 @@ The P1 anon-surface fix revoked anon EXECUTE on the parameterized auth-graph ora
 
 **Fix (do not build now):** replace the parameterized variants used inside RLS with **`auth.uid()`-scoped** versions (no `_user_id` parameter — they answer only about the *caller*), so they self-limit regardless of signup state. Callers inside RLS already pass `auth.uid()`, so this is mechanical; audit for any call site passing a non-`auth.uid()` id (those are the actual privilege checks and need the operator/Ops seam, not a public RPC). Retire the parameterized overloads from the PostgREST-exposed schema (or move to a non-exposed schema). Acceptance: no authenticated user can query the auth graph for a user_id other than their own.
 
-## FU-2 — CRITICAL-only SMS alert channel via Twilio (Item 4, SCOPE)
-**Ruled:** SMS via Twilio (already wired — MFA uses `TWILIO_ACCOUNT_SID/AUTH_TOKEN/PHONE`), critical only, volume near-zero so it never gets muted. Not built.
+## FU-2 — CRITICAL-only SMS alert channel via Twilio — ✅ BUILT + LIVE 2026-08-03
+Function `dispatch-critical-sms` (internal-gated, reuses the MFA Twilio creds) + cron `dispatch-critical-sms-15min` (every 15 min) + `sms_alert_log` (dedupe/cap/audit). Pages the operator's on-file MFA number for **NEW `security_posture` CRITICAL** findings only, dedupe by fingerprint (recurrence never re-pages), **cap 3/day** with overflow logged `skipped_cap` (email digest covers it). Operational criticals stay on email.
+- **Proof:** test page delivered — Twilio SID `SM3dcc34a04b73a125800829ed7ab35116`, `to_last4=4544`, logged in `sms_alert_log`.
+- **Replay (last 30d against the live rule):** `pages_that_would_have_fired = 0` — matches the scoped answer exactly (no drift). Normal run no-ops clean (`paged:0, evaluated:0`), heartbeat `completed`.
+- **Guardrail:** if steady-state volume ever exceeds ~1/month, the scope drifted (something mis-tagged `security_posture`/`critical`) — fix the tagging, don't mute.
+
+### (original scope, for reference)
 
 **Volume reality (last 30d):** 11 distinct critical findings fired — but mostly operational: 4 same-day secret-age warnings, recurring registry-phantoms, alert-delivery routing (one with 20 recurrences). Paging on *all* criticals ≈ 11/30d → would get muted. **The scope must be narrow.**
 
