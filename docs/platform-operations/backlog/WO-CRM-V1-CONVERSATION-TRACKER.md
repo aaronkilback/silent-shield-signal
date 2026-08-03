@@ -1,6 +1,8 @@
 # WO-CRM-V1-CONVERSATION-TRACKER — manual sales-conversation tracker (Phase-1 plan, items 4 + 6)
 
-**Status:** PLAN ONLY — build nothing until operator rules. **Target project:** the marketing project `pwnzwxfzjkjsbfwtfyip` (CRM stays there per WO-DECOUPLE ruling), UI in the marketing repo (`/admin`). **V1 = manual entry, no platform integrations.**
+**Status:** Slice 1 BUILT + team-model RLS proven on staging (three-user), awaiting operator to create the new project + run the migration. **Target project:** a NEW dedicated CRM Supabase project (operator-created, option 2) — **NOT** pwnzw. `pwnzw` is DELETED (not in operator's Supabase account, Lovable account gone); the "CRM stays in pwnzw" ruling is **VOID**. UI = marketing repo route `/conversations` (NOT `/admin`), behind Cloudflare Access. **V1 = manual entry, no platform integrations.**
+
+**Team model (operator Correction, Phase-2 ruling):** ships WITH Slice 1, not after. `org_id` on both CRM tables; roles `rep`/`manager`/`admin`; reps see their own-assigned, managers see all in org, admin sees all; `assigned_to` separate from `created_by`; handoff (`crm_assign`) moves assignment + writes an `assigned` event. Proven three-user on staging 2026-08-03 (rep A / rep B / manager — rep-isolation, manager-visibility, handoff-moves-visibility, event-logged all green). Migration: marketing repo `supabase/migrations/20260803140000_crm_slice1_conversation_tracker.sql`. Frontend: `src/pages/Conversations.tsx` on branch `feat/crm-slice1` (dedicated CRM client via `VITE_CRM_SUPABASE_URL`/`VITE_CRM_SUPABASE_ANON_KEY`, inline CRM login).
 
 **Governing constraint:** logging must be fast enough to do daily. If one entry > ~10s, it fails. So: one-action capture, one-tap everything, everything optional except the 3 fields that open a conversation. **The TODAY list is the product; metrics are below the fold.**
 
