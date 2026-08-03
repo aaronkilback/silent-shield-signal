@@ -8,6 +8,16 @@
 
 **Env-var durability (operator ruling 2026-08-03) — DO NOT "clean up":** the marketing repo now ships a **deliberately committed** `.env.production` (force-added past `.gitignore`, commit `765d181` on `feat/crm-slice1`) holding all four public `VITE_*` values (Fortress-prod URL + publishable key, CRM URL + anon key). This is intentional, not a leak: anon/publishable keys are public by design and already ship in the browser bundle; RLS is the control. It exists because the site's prior build environment (Lovable account) is **gone** — committing the public values removes the dependency so any build (CF Pages / local wrangler / CI) inlines the correct backend. Real env vars still override the file. **Nobody may delete this file or "fix" it by removing the keys** — doing so re-introduces the risk that the next deploy loses these values and the site 500s. Header comment in the file forbids ever adding a `service_role`/Stripe/server-side secret there.
 
+## Slice 2 — BUILT, awaiting deploy (2026-08-03)
+
+Branch `feat/crm-slice2` (`b429bb2`), off main. Playbook prompts (RULES ONLY, no AI) + qualification capture. Migration `20260803170000_crm_slice2_playbook_prompts.sql` — **run in the CRM project BEFORE the frontend deploy** (adds columns/functions/view; safe/idempotent).
+- **exchange_count** — increments on BOTH `crm_mark_contacted` and `crm_mark_replied` (what the 9-rule measures); shown on the row.
+- **Qualification fields** — current_state/desired_state/roadblock/urgency(1-5)/fit(yes/no/maybe), set via `crm_set_qualification` from a collapsed phone-friendly "Qualify" panel.
+- **offer_made_at** — stamped once on first entry to `offer_made` (drives #5/#6 "N days").
+- **Today view PINS open offers** (`stage=offer_made AND awaiting_reply`) regardless of cadence (F2 ruling) — hottest rows never fall out of view.
+- **Prompt engine** (`computePrompt`, client-side): guard #8 (fit=no / unqualified → none), then rules 1–7 top-down first-match. Wording operator-approved ("state the action, not the theory"). One muted line per row, a nudge not an alert.
+- **Proven:** prompt truth table (13 cases incl. #6-beats-#7 priority + both guards) + staging DB fixture (exchange both-direction, offer stamp-once, qualification write, view-pin + offer-specific control) all green; staging wiped. Build clean; prompt/RPC strings inlined.
+
 ## Slice 1.5 — ✅ LIVE (2026-08-03)
 
 Deployed via `main` merge `0acf1a5`; live bundle `index-DSANpo3v.js` verified `outbound_dm`/`profile_visit`/`ig.me/m`/CRM-ref all ≥1, strategy doc still 0. Constraint confirmed live (7 source values). Branch `feat/crm-slice1.5` (`2833e35`), off main. Two additions:
