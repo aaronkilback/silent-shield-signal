@@ -1,6 +1,23 @@
-# WO-AEGIS-PRICING-CANONICAL-TIERS — align AEGIS pricing to the 7 canonical tiers (both sides, deploy neither)
+# WO-AEGIS-PRICING-CANONICAL-TIERS — align AEGIS pricing to the 7 canonical tiers
 
-**Status:** PREPARED — do not ship either side until the create-checkout mapping is verified against Stripe. Blocked on `pwnzw` (marketing project) access to read/deploy `create-checkout`.
+**Status:** ✅ SHIPPED 2026-08-03 (payment-links approach, operator ruling). AEGIS pricing rewritten to the 7 canonical tiers using the LIVE Stripe payment links (byte-identical to protection.silentshieldsecurity.com, verified). `create-checkout` is **no longer invoked** by the marketing funnel (AegisChat + SnapshotResult) — it is now **UNUSED in `pwnzw`; review before any future use.** Deployed to the apex (CF Pages `2c385ba6`, commit `2b416e3`); build clean (1801 modules); live-verified: counter 0, old tiers 0, create-checkout 0, 6 links present, Sovereign→phone. The original two-Stripe-surface plan below is SUPERSEDED — one surface (payment links), one source of truth.
+
+## ⚠ ATTRIBUTION GAP (report — scope only): conversation→payment link is broken
+Dropping `create-checkout` means **no `orders` row is written on purchase** and the Stripe payment (via `buy.stripe.com` link) carries **no reference back to the `aegis_conversations` record**.
+
+**What AEGIS captures into `aegis_conversations` at handoff today (preserved):** the full conversation log + name/email/phone; `saveConversation("payment_initiated", formData)` stamps a status marker + the form data (name/email/phone/address/notes); `send-notification(qualified_lead)` emails the operator with the product/tier + captured fields. So **intent** (who was offered which tier, with contact + conversation) is captured. **What's LOST:** the hard link to the *completed payment* — the `orders` row, `stripe_session_id`, and the CRM funnel "Customer" stage no longer auto-populate from Stripe.
+
+**Cheapest ways to restore conversation→payment attribution (pick one, scope only):**
+1. **`client_reference_id` on the payment link (recommended, cheapest robust).** Append `?client_reference_id=<aegis_conversation_id>` (and `?prefilled_email=`) when AEGIS opens the link. Stripe carries it into the Checkout Session + webhook. A small webhook (or extend the protection page's existing Stripe verification) records `session.client_reference_id → conversation` and marks it paid. ~1 line client-side + a lightweight webhook. Ties the ACTUAL payment.
+2. **Log the handoff event (intent only).** Extend `saveConversation` to write `handoff_tier` + `handoff_at` + the link clicked onto the `aegis_conversations` row. Trivial, but confirms *intent*, not *purchase* (no payment signal without a webhook).
+3. **Both** — client_reference_id (payment truth) + handoff log (funnel intent) = full fidelity.
+
+Recommendation: **#1** (client_reference_id) restores the payment link cheaply while keeping one Stripe surface; add #2 if the CRM funnel needs the intent stage. Neither built.
+
+---
+
+## (SUPERSEDED) original two-surface plan
+Kept for history. The ruling chose payment links, not create-checkout.
 
 ## Why both sides move together
 `AegisChat.tsx` invokes `create-checkout` with **`product_key: selectedProduct`**. `create-checkout` (in the marketing project `pwnzwxfzjkjsbfwtfyip`) maps that key → a Stripe **price ID** server-side. So:
