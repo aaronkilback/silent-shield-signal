@@ -1,0 +1,14 @@
+# WO-SYNTHETIC-ACTIVITY-REMOVAL — retire the engineered-to-look-like-work agent pulse (SCOPE, do not build)
+
+**Ruling 2026-08-04 (operator).** `agent-activity-scanner` writes `autonomous_scan_results` whose **documented purpose is to move agents from idle to standby on a display** — a number engineered to look like work, decoupled from work. Same defect class as the `247,832` homepage counter removed 2026-08-03. Diagnostic: `docs/platform-operations/incidents/DIAG-2026-08-04-dr-backup-and-quarantine.md` §3.
+
+## Scope (build later, separate ruling)
+
+1. **Repoint the display to the real-work table.** The **Live Activity panel** (`useScanPulses`) and the **scan counter** (`useScanCount`, the "96 scans" figure) currently read `autonomous_scan_results`. Repoint them to **`signal_agent_analyses`** — the same real-work table the status panel + watchdog were switched to on 2026-05-10 — or relabel them explicitly.
+2. **Retire `agent-activity-scanner` if it has no purpose beyond animating a display.** Its only output is a synthetic per-agent pulse + a 120-word AI blurb about the shared environment. If nothing consumes it for real decisions, delete the function + its cron + registry entry (Registry-is-a-Promise). Confirm no other consumer first.
+3. **If any part is genuinely useful, it MUST be labeled synthetic on the display** — never presented as agent work. A "liveness pulse" badge, visually distinct from real reasoning output. No unlabeled synthetic number in a place the operator reads to decide what's working.
+4. **`alerts_generated` misattribution.** `agent-activity-scanner` stores `alerts_generated = critCount + highCount` of the **whole** signal environment against **one** round-robin agent. That is misattribution (environment-wide severity counts presented as that agent's output). Fix (attribute to nothing / the platform) or remove the field from per-agent display.
+
+## KB pattern to record (half-applied fix)
+
+On **2026-05-10** the watchdog + the constellation *status* panel were correctly switched off `autonomous_scan_results` because it "inflated active to 42/48 while the pipeline was 100% broken" (May 9 TDZ incident) and onto `signal_agent_analyses`. **The *display* (Live Activity panel + scan counter) was never switched.** A **half-applied fix left the misleading number in the place the operator actually looks.** Lesson: when a metric is found untrustworthy and its *source* is changed, every surface reading the old source must be migrated in the same change — a partial migration is worse than none, because the honest and the misleading numbers now sit side by side and the operator can't tell which is which. Class: **displayed metric decoupled from the work it claims to represent** (see also the `247,832` counter, the DR heartbeat gap, monitor-news 0-vs-370).
