@@ -113,6 +113,18 @@ Acceptance: a boundary-anchored + proper-noun-aware matcher needs no length rule
 ### KNOWN GAP — fabrication counts only cover ≤5-char matches (2026-08-02)
 Every fabrication figure to date — the **611** (Phase 1), the **4** (phase1_gap sweep), the **6** (all-time active audit) — was found by the **≤5-char signature ONLY**. **Fabrications on 6+ char keywords have never been searched for.** A multi-word keyword can still fabricate nexus by substring (e.g. a keyword appearing inside an unrelated longer phrase, or matching an off-topic sense). This is a blind spot in the current audit, not a proven absence. **Quantify during the Phase-3 shadow run** (compare semantic verdict vs keyword match for ALL attributions, not just short-keyword ones) — NOT now.
 
+### Phase 3 REQUIREMENT (2) — RSS path MUST score + dispatch, not just match (2026-08-04, finding-of-the-week)
+
+**`process-intelligence-document` is now implicated in FOUR defects — one function starving the platform's second pillar (agent reasoning):**
+1. keyword string-overlap client matching (this WO).
+2. per-client `min_relevance_score` never read (WO-CLIENT-THRESHOLD-BYPASS-01).
+3. asset-label collision producing fabricated attributions (born-quarantine, DIAG-2026-08-04 §2).
+4. **never writes `composite_confidence`** → **84% of signal volume (RSS, 273/324 in a 7d sample, 0% scored) bypasses `ai-decision-engine` and `review-signal-agent` entirely** → tier-2 reasoning starved → `signal_agent_analyses` 0/24h → "fleet dormant." Diagnosis: `DIAG-2026-08-04-dr-backup-and-quarantine.md` §3b. Evidence: composite_confidence scored-rate fell 85.7% (May) → 0% (this week); `signal_agent_analyses`/day 104 (Jul 17) → 0 (Aug 4).
+
+**Scope change:** Phase 3 **cannot just replace the matcher.** The RSS path must ALSO **score (`composite_confidence`) and dispatch through `ai-decision-engine`** on the **same terms as the `ingest-signal` path**, or the semantic gate will feed agents that still never run. A better matcher that admits more signals, all unscored, still yields 0 reasoning. **Requirement:** RSS-path signals receive `composite_confidence` and route through `ai-decision-engine` (→ tier-2 `review-signal-agent` dispatch) identically to `ingest-signal`-path signals. This closes the pillar-2 starvation, not just the attribution defects.
+
+**Timing:** Phase 2 **B-query re-run ~2026-08-05T19:36Z** (72h clock from 2026-08-02T19:36:11Z); **Phase 3 follows it.** Do not build before then.
+
 ### Phase 3 — SHADOW RUN — PENDING (build → 7-day parallel, no signals writes)
 Semantic client-match as a parallel path writing to a shadow table only. After 7 days: recall gain / false-positives removed / both-accept / new-gate volume per client per day. **Cutover ruling gated on: new-gate volume must not exceed ~3× old, else tighten first.**
 
