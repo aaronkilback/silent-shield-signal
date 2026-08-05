@@ -48,5 +48,22 @@ But the harder truth for the **public homepage** case: a no-login public chat **
 3. If a data-capable chat must ever be public, it needs per-request tenant binding from an authenticated session — which means it's not really public.
 Recommendation to rule on later: homepage gets (1) or nothing; never re-expose the tenant-tool loop unauthenticated. Every restore also lands the real function in git (closes the deploy-drift orphan).
 
+## The POI/entity workflow — the real capability loss (item 3)
+
+The entire **assess → deep-scan → investigate → report** entity-intelligence pipeline has been off since 2026-07-31 while CLAUDE.md describes it as live. What each did + what's lost + how to restore:
+
+| Function | What it did | Lost capability | Containment reason | Safe restore |
+|---|---|---|---|---|
+| **assess-entity** | "Assess" button → AI threat assessment written to `ai_assessment` (Risk Assessment tab) | can't generate/refresh an entity's AI threat assessment | verify_jwt=false, no gate → unauth read ANY entity + write `ai_assessment` (incl legal-hold) — cross-tenant read+write | **`getCallerIdentity` + `userCanAccessClient(entity.client_id)`** — the **same clientId-scoping** fix. **Unblockable now** (no new dependency). |
+| **entity-deep-scan** | deep OSINT (academic/social/dark-web), writes `entity_content` | no deep OSINT enrichment; Content tab won't populate | verify_jwt=false → unauth OSINT spend + wrote `entity_content` incl fabricated sanctions/criminal/property rows (WO-FABRICATED-FINDINGS-01) on ANY entity incl legal-hold, no subject gate | **`requireInternalCaller` AND WO-SUBJECT-GATE-01 (BOTH)** — clientId scoping **plus a new subject-of-interest gate that doesn't exist yet.** Blocked on WO-SUBJECT-GATE-01. |
+| **investigate-poi** | POI OSINT + HIBP + creates threat signals; writes `entity_content` + `signals` | the core POI investigation workflow — no dossier building, no HIBP, no threat-signal creation | unauth OSINT + writes | `getCallerIdentity` **+ WO-SUBJECT-GATE-01.** Blocked on the subject gate. |
+| **generate-poi-report** | POI report/dossier (sourcing, live HIBP, relationships) | can't produce the client-facing POI dossier | unauth POI dossier read | `getCallerIdentity` + entity→client membership **+ WO-SUBJECT-GATE-01.** Blocked on the subject gate. |
+
+**Is it the same clientId problem or narrower?** Split:
+- **`assess-entity` is the same clientId-scoping problem and nothing more** — apply the shared `getCallerIdentity`/`userCanAccessClient` gate and it's restorable **today**. It's the quick win.
+- **The three OSINT-*writing* ones (`entity-deep-scan`, `investigate-poi`, `generate-poi-report`) are narrower-but-harder:** beyond clientId scoping they each require **WO-SUBJECT-GATE-01** — a subject-of-interest gate (lawful-basis / legal-hold check on the *person being scanned*) that **does not yet exist**. They spend external money and write findings on real people, so they can't be re-opened on caller-scoping alone. **Restoring the POI workflow = build WO-SUBJECT-GATE-01 first**, then gate + restore the three together; `assess-entity` can come back independently before that.
+
+**Does `compute-client-relevance` being off contribute to the composite_confidence starvation (DIAG-08-04 §3b)? NO.** It wrote `signals.gate3` (a different field, not `composite_confidence`), and its only "caller" is the disabled `dr-storage-backup` — i.e. **no live caller.** The composite starvation is entirely the RSS-path bypass (`process-intelligence-document` doesn't score). Unrelated.
+
 ## Related: the $300 bill lever — `monitor-social-unified` produces NOTHING
 30d: **0 signals** (its own heartbeat claims 0 across 164 runs), while burning ~900 OpenAI calls/day + the CSE queries driving the bill. **The fix is turning it off, not a rate cap.** See DIAG-2026-08-05-google-300-bill.md.
