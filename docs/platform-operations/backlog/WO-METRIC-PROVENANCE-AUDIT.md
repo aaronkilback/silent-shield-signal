@@ -24,6 +24,10 @@
 
 Read from: `signals` (×4), `incidents`, `autonomous_scan_results` 🚩 (proxy — appears here too), `autonomous_actions_log`, `expert_knowledge`, `cron_heartbeat`, `agent_accuracy_tracking`, `predictive_incident_scores`, `entities`, `ai_assistant_messages`, `watchdog_learnings`, `implicit_feedback_events`, `signal_clusters`, `auto_escalation_rules`. **`autonomous_scan_results` is consumed on the God's-Eye/health dashboards too** — the synthetic pulse has more than one display surface; the audit must catch all of them.
 
+## Non-LLM API spend is invisible (added 2026-08-05)
+
+`compute-llm-daily-cost-30min` / `llm_daily_cost` track **LLM tokens only** (OpenAI + Gemini). **Google Custom Search, Maps/Geocoding, Vision, and every other non-LLM API spend is invisible to it** — proven by the $300 Google bill sitting next to a tracker showing ~$0 Gemini (DIAG-2026-08-05-google-300-bill.md). Same class as this week's other findings: **a monitor reporting on a narrower scope than its name implies** ("LLM cost" reads as "AI cost," but the real Google spend is CSE). **Audit requirement:** the metric sweep must include *spend* surfaces, not just activity counters — flag every cost/usage display that covers only a subset of billed APIs, and add non-LLM API spend (CSE query volume, Maps calls) to a cost view before "AI/API cost" is presented as complete. Prerequisite substrate: there is currently **no CSE/Maps spend tracking table at all**.
+
 ## Remaining scope (the full sweep — this WO's deliverable)
 
 Every component under `src/components/` + `src/pages/` that renders a number: trace each to its query, classify work-derived vs proxy, flag proxies, and for each proxy decide relabel / repoint / remove. Priority surfaces: God's-Eye dashboard, Fortress health, Learning dashboard, Monitoring diagnostics, any "counter"/"stat"/"score" tile. Deliverable = a complete table like the one above, one row per displayed number. **No fix in this WO — enumeration + proxy flags only.**
