@@ -28,6 +28,18 @@ Read from: `signals` (×4), `incidents`, `autonomous_scan_results` 🚩 (proxy �
 
 `compute-llm-daily-cost-30min` / `llm_daily_cost` track **LLM tokens only** (OpenAI + Gemini). **Google Custom Search, Maps/Geocoding, Vision, and every other non-LLM API spend is invisible to it** — proven by the $300 Google bill sitting next to a tracker showing ~$0 Gemini (DIAG-2026-08-05-google-300-bill.md). Same class as this week's other findings: **a monitor reporting on a narrower scope than its name implies** ("LLM cost" reads as "AI cost," but the real Google spend is CSE). **Audit requirement:** the metric sweep must include *spend* surfaces, not just activity counters — flag every cost/usage display that covers only a subset of billed APIs, and add non-LLM API spend (CSE query volume, Maps calls) to a cost view before "AI/API cost" is presented as complete. Prerequisite substrate: there is currently **no CSE/Maps spend tracking table at all**.
 
+## NAMED ANTI-PATTERN (2026-08-05): "LLM/synthetic value overwriting a persisted measurement before display"
+
+The audit must **find every instance of this shape, not just catalogue proxies.** Shape: **the real value exists and is persisted, then something plausible replaces it at the display layer, and the plausible one is what the operator reads.** It is more dangerous than a plain proxy because the truth is *right there* in the store — the overwrite actively discards it.
+
+**Confirmed instances (this class recurs):**
+- **`system-watchdog:4615-4616`** — `platform_findings.severity` is persisted (`:4355`), then an LLM (`callAI(VERIFICATION_PROMPT)`) overwrites `analysis.severity` + `analysis.findings`, and the **email renders the LLM's rewrite** while the panel shows the persisted rows. Same finding, two severities. (WO-WATCHDOG-FINDING-DISCIPLINE rule 5.)
+- **`agent-activity-scanner` → `autonomous_scan_results`** — a synthetic round-robin pulse displayed as agent work, overwriting the real-work signal (`signal_agent_analyses`) on the Live Activity panel. (WO-SYNTHETIC-ACTIVITY-REMOVAL.)
+- **fleet-dormancy "KNOWN STRATEGIC" mislabel** — a plausible narrative ("capability configured beyond adoption") displayed over the real cause (pipeline break). (DIAG-2026-08-04 §3b.)
+- **`247,832` homepage counter** — a fabricated incrementing number displayed as a live measurement (removed 2026-08-03).
+
+**Detection rule for the sweep:** for every displayed number, ask not only "proxy or work-derived?" but **"is there a persisted measurement this display *overwrites or replaces* with a computed/LLM/synthetic value?"** If yes → flag: the display must render the persisted value; any LLM/synthetic layer may add prose or annotation, never replace the measurement. **One measurement, one value, everywhere it appears.**
+
 ## Remaining scope (the full sweep — this WO's deliverable)
 
 Every component under `src/components/` + `src/pages/` that renders a number: trace each to its query, classify work-derived vs proxy, flag proxies, and for each proxy decide relabel / repoint / remove. Priority surfaces: God's-Eye dashboard, Fortress health, Learning dashboard, Monitoring diagnostics, any "counter"/"stat"/"score" tile. Deliverable = a complete table like the one above, one row per displayed number. **No fix in this WO — enumeration + proxy flags only.**
