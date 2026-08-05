@@ -124,8 +124,10 @@ parity). Watch item: the 4 tenant-data tables must never receive an open (non-te
 
 ---
 
-## LOG A — 15 contained 503 stubs needing resolution (fix-and-restore OR de-provision)
+## LOG A — contained 503 stubs needing resolution (fix-and-restore OR de-provision)
 Decision driver per the "does anything consume this?" doctrine: verify a live consumer before choosing.
+
+**Count reconciliation (2026-08-05):** **19 disabled-containment stubs** in the codebase = these **17** (below) + `aegis-chat` + `assess-entity` (batch 1, §"Batch 1 outcome"). 18 return **503** (INC-AITOOLS-XTENANT); **`query-fortress-data` returns 403** and is from a *different* incident (Generic Tool Path Clearance Phase A1, 2026-06-12) — it sits in this hand-rolled-auth ledger but predates the XTENANT batch. Prior versions of this table listed only 15 — **missing `entity-deep-scan` + `correlate-entities`** (now rows 16–17). Enforced going forward by `scripts/check-containment-ledger.mjs` (fails if the actual disabled-containment-stub set diverges from this ledger; counts 403+503 stubs carrying a containment marker).
 
 | # | Stub | Why contained | Recommendation |
 |---|---|---|---|
@@ -144,6 +146,8 @@ Decision driver per the "does anything consume this?" doctrine: verify a live co
 | 13 | reingest-spin-workbook | unauth tenant read/write (one-shot) | **De-provision** (one-shot job complete) OR fix behind service-role if reuse expected |
 | 14 | sync-buzzsprout | unauth write episodes | **FIX+restore** auth gate IF podcast sync used; else **de-provision** |
 | 15 | webhook-dispatcher | unauth spoofable dispatch | **FIX+restore** internal-secret gate (alert-delivery pattern) IF used; else **de-provision** |
+| 16 | entity-deep-scan | verify_jwt=false, no gate: unauth `entity_id` → OSINT collection (external spend) + wrote `entity_content` incl fabricated sanctions/criminal/property rows (WO-FABRICATED-FINDINGS-01) onto ANY entity incl legal-hold, no subject gate | **FIX+restore** ONLY after BOTH `requireInternalCaller` AND WO-SUBJECT-GATE-01 (was missing from this ledger until 2026-08-05) |
+| 17 | correlate-entities | verify_jwt=false, no gate: pipeline intake auto-creates entities above a confidence threshold with NO subject gate → unauth invocation grows the entity population (closed under legal hold) | **FIX+restore** after `requireInternalCaller` + WO-SUBJECT-GATE-01 (was missing from this ledger until 2026-08-05) |
 
 Every restore must land the real function in git (closes the deploy-drift orphan too).
 
