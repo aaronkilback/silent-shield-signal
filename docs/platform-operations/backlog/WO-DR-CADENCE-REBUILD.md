@@ -35,6 +35,35 @@ Neither depends on the new function behaving well: one removes the collision fro
 
 **Provisioning prerequisites before code (all operator-side, none are "be careful"):** (i) confirm/enable **Versioning + Object Lock** on ss-fortress-dr (or create a lock-enabled successor + copy the 2026-07-06 snapshot in); (ii) mint an **Object R/W token scoped to ss-fortress-dr only**; (iii) decide the **source-read mechanism** (signed-GET-URL minter vs read-only Storage key) and provision it; (iv) the acceptance gate (two scheduled successes + a post-2026-07-06 restore test) is unchanged.
 
+## Object Lock resolution (2026-08-05) — read the state, and a discovery that avoids the copy
+
+### Step 1 — actual state of ss-fortress-dr today (read via `wrangler r2 bucket info` + `bucket lock list`)
+- **Object Lock / bucket-lock: OFF** — `wrangler r2 bucket lock list ss-fortress-dr` → "There are no lock rules." No WORM today.
+- **object_count = 522 · size = 1.85 GB** (created 2026-07-06, WNAM). ⚠ **Discrepancy: the documented 2026-07-06 snapshot was 498 objects / ~1.5 GB — the bucket now holds 24 MORE (0.35 GB).** Source unknown (smoke-test round-trips? manual test-fires? the snapshot was larger?). **Must be reconciled before anything is locked or trusted** — list all 522, confirm each sits under an expected prefix (`investigation-files/feff5c44…`, `hostile-evidence/0aaaaaaa…`, `archival-documents/_unresolved/`, `tenant-files/_system/`), and identify/clean strays. Once locked indefinitely, strays can't be removed.
+- **Versioning:** not exposed by wrangler; read it at **Cloudflare dashboard → R2 → ss-fortress-dr → Settings**, or S3 `GetBucketVersioning`. **Moot if we use bucket lock** (a lock rule blocks overwrite regardless of versioning).
+
+### Discovery — R2 bucket lock is addable to an EXISTING bucket → the new-bucket copy is NOT required
+`wrangler r2 bucket lock add <bucket> [name] [prefix]` supports `--retention-days` / `--retention-date` / `--retention-indefinite`. **R2's native bucket lock can be applied to ss-fortress-dr in place** (prefix `""` = all objects), making the existing 522 objects (incl. the snapshot) **immutable — no delete, no overwrite — for the retention period, without moving them.** This is strictly safer than copying the only backup (a copy carries its own risk), and it's free. Additive-only then becomes a true **bucket property** (the lock), exactly as required, and it's compatible with the function's additive writes (new date-partitioned keys are created; existing keys can't be overwritten/deleted). One semantic to confirm before relying on it: that a newly-added rule protects **already-uploaded** objects (retention measured from object upload time) — verify on one test object before trusting it for all 522.
+
+### RECOMMENDED sequence (in-place lock — avoids risking the only backup)
+1. **Reconcile the 522** (list, confirm prefixes, identify the mystery 24, clean strays).
+2. `wrangler r2 bucket lock add ss-fortress-dr snapshot-worm "" --retention-indefinite` (or a long `--retention-days`) → snapshot + all future backup objects immutable in place. Verify with `bucket lock list`.
+3. Mint an **Object R/W token scoped to ss-fortress-dr only** (the lock, not the token, is what forbids destruction).
+4. Provision the signed-GET source-read minter.
+5. THEN write the function; incrementals write to `incremental/<date>/…` (new keys only).
+6. Acceptance unchanged: two consecutive scheduled successes in `cron_heartbeat` + a restore test on an object created after 2026-07-06.
+
+### ALTERNATIVE — new lock-enabled bucket + copy (if you prefer clean separation)
+- **New bucket** `ss-fortress-dr-worm` (create; lock rule added AFTER verified copy, so a bad copy can be redone before locking).
+- **Move the 522** with **rclone** (best for R2, preserves metadata + hash): `rclone copy r2src:ss-fortress-dr r2dst:ss-fortress-dr-worm --checksum` (two R2 S3 remotes; needs R2 S3 access key/secret + `https://<acct>.r2.cloudflarestorage.com`).
+- **Verify BEFORE touching the original:** (a) `wrangler r2 bucket info ss-fortress-dr-worm` → object_count == 522, size == 1.85 GB; (b) `rclone check r2src:… r2dst:… --checksum` → 0 differences (hashes every object); (c) spot **sha256** on one object per prefix + the largest (~12 MB) downloaded from both, compared.
+- **Only after** verification passes: add the indefinite lock rule to the new bucket, point the function at it. **Original is RETAINED untouched** until the new function passes acceptance (two successes + restore test); only then retire it (or keep as a cheap second cold copy).
+
+### Cost delta of two copies during transition
+R2 storage = **$0.015/GB-month**. 1.85 GB × 2 = 3.7 GB ≈ **$0.056/month**. One-time copy ops (522 reads + 522 writes) ≈ **< $0.01**. Negligible either way — cost is not a reason to avoid the copy; *risk to the only backup* is the reason to prefer in-place lock.
+
+**My read:** Object Lock is OFF, but it does **not** require a new bucket — R2 bucket lock applies in place, which protects the snapshot without ever copying the only backup. Recommend the in-place path after reconciling the 522. New-bucket path is fully specified above if you'd rather have clean separation. Your call.
+
 ## Scope (build later, on a separate ruling)
 
 1. **Rebuild the function properly:**
