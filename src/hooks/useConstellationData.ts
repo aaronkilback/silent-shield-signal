@@ -1285,7 +1285,6 @@ export function useCronHealth() {
 // sync with the duplicate in supabase/functions/system-watchdog.
 export const CRON_TO_AGENT: Record<string, string> = {
   'monitor-wildfires':              'WILDFIRE',
-  'monitor-social-unified':         'RYAN-INTEL',
   'monitor-social-hourly':          'RYAN-INTEL',
   'monitor-twitter':                'RYAN-INTEL',
   'monitor-twitter-30min':          'RYAN-INTEL',

@@ -2986,7 +2986,7 @@ Deno.serve(async (req) => {
       const { data: socialHeartbeats } = await supabase
         .from('cron_heartbeat')
         .select('job_name, result_summary, completed_at')
-        .in('job_name', ['monitor-social-unified', 'monitor-social-hourly', 'monitor-social', 'monitor-instagram-2h', 'monitor-instagram'])
+        .in('job_name', ['monitor-social-hourly', 'monitor-social', 'monitor-instagram-2h', 'monitor-instagram'])
         .gte('completed_at', new Date(Date.now() - 24 * 3600000).toISOString())
         .order('completed_at', { ascending: false })
         .limit(20);
@@ -2999,8 +2999,8 @@ Deno.serve(async (req) => {
 
       // Known STRUCTURAL DEFERRALS — 0-signal BY RULING, not a regression. Reframe as a
       // known limitation (low), never a recurring behavioral defect.
+      // monitor-social-unified RETIRED 2026-08-05 (0 signals/30d, cron+registry removed — DIAG-2026-08-05-google-300-bill.md).
       const KNOWN_DEFERRED_SOCIAL: Record<string, string> = {
-        'monitor-social-unified': 'keyword-CSE structural deferral (docs .../social-enrich-deferred.md, 2026-07-15) — Facebook/Instagram CSE returns nothing by design; the keyword-CSE approach was validation-failed and deferred by ruling. Successor: actor-list collection.',
         'monitor-social-hourly': 'legacy social monitor, superseded by the deferred social-enrich track.',
         'monitor-social': 'legacy social monitor, superseded by the deferred social-enrich track.',
         'monitor-instagram-2h': 'Instagram keyword-CSE deferral (social audit 2026-07-15) — same class as social-unified; returns nothing by design. Successor: actor-list collection.',
@@ -3290,7 +3290,6 @@ Deno.serve(async (req) => {
         'monitor-journey-checkins',
       ]);
       const SOCIAL_ALREADY_CHECKED = new Set([
-        'monitor-social-unified',
         'monitor-social-hourly', 'monitor-social',
       ]);
 
@@ -4397,7 +4396,6 @@ Deno.serve(async (req) => {
         // those jobs, so the mapping had nothing to dispatch.
         const CRON_TO_AGENT: Record<string, string> = {
           'monitor-wildfires':              'WILDFIRE',
-          'monitor-social-unified':         'RYAN-INTEL',
           'monitor-social-hourly':          'RYAN-INTEL',
           'snapshot-bcws-ratings-daily':    'WILDFIRE',
           'monitor-cisa-kev-12h':           'NEO',
