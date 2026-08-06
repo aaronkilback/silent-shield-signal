@@ -2,6 +2,23 @@
 
 **Ruling 2026-08-04 (operator):** treat DR as an **open gap, not a job to restart.** Do NOT re-enable `dr-storage-backup` as it stands — it was disabled for cause (INC-AITOOLS-XTENANT-2026-07-30: orphan deploy, `verify_jwt=false`, compromised `x-smoke-key` with cross-tenant read + R2 delete). Restarting it to fix a backup gap would reopen a cross-tenant exposure. Diagnostic: `docs/platform-operations/incidents/DIAG-2026-08-04-dr-backup-and-quarantine.md`.
 
+## ⚠ Admin-token exposure undermines the WORM (2026-08-06) — the lock is worth less while these exist
+The R2 tokens page shows **~5 standing tokens with Admin Read & Write on ALL buckets, active, no expiry** — every one can delete `ss-fortress-dr` (the only backup). Two share the name "Edit Cloudflare Workers" (indistinguishable). The correctly-scoped exception is the **2026-07-06 Object-R/W token scoped to ss-fortress-dr only** — that one is right; the admin-all tokens are the problem.
+
+**LOAD-BEARING consequence:** an **Admin** token can manage bucket config — including **removing a bucket-lock rule**. So WORM-via-bucket-lock is only absolute if R2 retention **cannot be removed/shortened even by an Admin token** (compliance-mode WORM). My earlier remove-rule test was inconclusive (wrangler non-interactive). **This must be verified before relying on the lock:** if Admin can remove the rule, these tokens defeat WORM (remove lock → delete); if retention is truly irrevocable, the lock holds and the tokens "only" risk everything else. **Either way, cut the admin-all tokens to least privilege — that is the real control; the lock is secondary.**
+
+**Usage mapping (from repo/CI grep; last-used NOT readable via API without an API-Tokens-Read token — read the dashboard "Last used" column):**
+| Token (as listed) | Used by | Revoke breaks | Right scope |
+|---|---|---|---|
+| **silent-shield-signal build** (User, Mar 4) | almost certainly the `CLOUDFLARE_API_TOKEN` GitHub secret → **only `deploy-frontend-staging.yml`** (staging frontend deploy). Prod `deploy-frontend.yml` does NOT consume it. | staging frontend CI deploy (401) | Workers Scripts Edit + Pages Edit — **no R2 at all** |
+| **Edit Cloudflare Workers** (User, Apr 30) ×2 | `wrangler login` OAuth — the delivery `deploy-*.sh` (wrangler deploy) + interactive wrangler (incl. my DR lock test). The **duplicate = two logins** (2 machines / re-login). | the ACTIVE one → wrangler CLI on that machine until `wrangler login` re-auths; the **stale duplicate → safe** if last-used is old | Workers Scripts Edit (+ R2 scoped only if that machine does R2 ops) |
+| **floral-fire-d819** (Account, Apr 29) | **no repo/CI reference found** — unknown, likely orphan | probably nothing — confirm last-used first | delete if unused |
+| *(2026-07-06 R2 Object R/W, ss-fortress-dr only)* | the DR backup fn creds (`R2_*` Supabase secrets) | the DR backup (once built) | **already correct — the model** |
+
+**Does anything need Admin-on-ALL-buckets? NO.** Frontend deploy = Workers+Pages edit (zero R2). Delivery `wrangler deploy` = Workers Scripts Edit (the R2 binding is config; at most R2-read on the one bucket, never admin-all). R2 bucket/lock management = R2 admin **scoped to the specific bucket**. DR backup = Object R/W scoped to ss-fortress-dr (exists). **Every use case works with a least-privilege scoped token; the admin-all grant is unjustified on all of them.**
+
+**Recommendation (do not revoke yet — operator ruled report-first):** (1) read the dashboard **Last used** per token; (2) for tokens in use, **replace-then-revoke** (mint the scoped replacement, update the GitHub secret / re-`wrangler login`, verify a deploy, then revoke the admin one); (3) revoke `floral-fire-d819` + the stale "Edit Cloudflare Workers" duplicate once last-used confirms they're idle; (4) add **expiry** to every remaining token; (5) resolve the Admin-can-remove-lock question before trusting WORM. **Track as its own hygiene item, gating the DR go-live** — locking the bucket while admin-all keys can unlock+delete it is theatre.
+
 ## Six design answers (2026-08-05, before any code) — every guarantee STRUCTURAL, not "the code is careful"
 
 **1. Scope enforcement — explicit prefix allowlist, hard STOP outside it (never a skip).**
