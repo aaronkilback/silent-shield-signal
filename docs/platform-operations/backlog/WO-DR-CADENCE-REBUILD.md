@@ -45,6 +45,35 @@ Neither depends on the new function behaving well: one removes the collision fro
 ### Discovery — R2 bucket lock is addable to an EXISTING bucket → the new-bucket copy is NOT required
 `wrangler r2 bucket lock add <bucket> [name] [prefix]` supports `--retention-days` / `--retention-date` / `--retention-indefinite`. **R2's native bucket lock can be applied to ss-fortress-dr in place** (prefix `""` = all objects), making the existing 522 objects (incl. the snapshot) **immutable — no delete, no overwrite — for the retention period, without moving them.** This is strictly safer than copying the only backup (a copy carries its own risk), and it's free. Additive-only then becomes a true **bucket property** (the lock), exactly as required, and it's compatible with the function's additive writes (new date-partitioned keys are created; existing keys can't be overwritten/deleted). One semantic to confirm before relying on it: that a newly-added rule protects **already-uploaded** objects (retention measured from object upload time) — verify on one test object before trusting it for all 522.
 
+### STEP 3 (2026-08-06) — VERIFIED on a throwaway bucket: a lock rule added AFTER upload protects the already-uploaded object
+Test on throwaway `dr-lock-test2` (nothing on ss-fortress-dr touched):
+1. `wrangler r2 object put dr-lock-test2/probe.txt --file … --remote` → content `original-content-v1` (confirmed remote).
+2. `wrangler r2 bucket lock add dr-lock-test2 r1 "" --retention-days 1 -y` → rule added AFTER the upload.
+3. `wrangler r2 object delete … --remote` and `object put …(v2)… --remote` → **read-back still returns `original-content-v1`** across repeated attempts. **The pre-existing object was neither deleted nor overwritten → the lock protects already-uploaded objects. CONFIRMED.**
+
+**Two tooling traps found (both = "CLI reports success while the real thing didn't happen" — the week's pattern, at the tool layer):**
+- **`wrangler r2 object` defaults to a LOCAL simulator; you MUST pass `--remote`.** Without it, put/get/delete hit Miniflare and *report success* while the real bucket is untouched (my first test run was silently local). The DR function must never use a local-defaulting path.
+- **`wrangler r2 object delete` printed "Delete complete." (exit 0) even though the locked object survived.** The CLI success is a lie under a lock. **Ground truth is read-back, not exit code** — which is exactly why the function's cursor advances only on read-after-write verification (design #5), never on a call's reported success.
+- (Not cleanly settled: removing a rule to un-protect — wrangler's non-interactive `lock remove` wouldn't execute. Moot for the threat model: the function's token is **Object R/W**, which cannot manage bucket lock rules at all — only an Admin token/dashboard can — so no function code path can shorten or remove the lock.)
+
+### STEP 2 (2026-08-06) — retention: fixed vs indefinite, extend-not-shorten, recommendation
+- **Fixed period (`--retention-days N` / `--retention-date YYYY-MM-DD`):** objects are immutable until the retention end; **after it lapses, protection ends and objects become deletable/overwritable again.** Continuous protection requires **extending before expiry.**
+- **`--retention-indefinite`:** never lapses — unrecoverable if the wrong thing is locked. (Operator ruled this OUT for the first attempt.)
+- **Extend, not shorten:** R2 lock retention (WORM model) can be **lengthened, never reduced below the current protection**; the function's Object-R/W token cannot touch rules at all. So a fixed period is safe to raise later and cannot be silently cut.
+- **Retention is measured from object age (upload time), not rule-creation** — so on a 30-day-old snapshot, `--retention-days 90` protects it for only ~60 more days. **Use `--retention-date` (an explicit end date) for a predictable window regardless of object age.**
+- **Recommended first lock:** `--retention-date` set to **~90 days out** (a quarter). Long enough that there's no near-term lapse risk, short enough that a wrong-lock mistake self-heals in ≤90 days (not "stuck forever"), and freely extendable as confidence grows. Document a calendar reminder to extend at ~T-14 days. Escalate to a longer rolling window (or indefinite) only after the pipeline has proven itself.
+
+### STEP 1 (2026-08-06) — reconcile the 522: wrangler CANNOT list objects; here is exactly what to run
+`wrangler r2 object` only has get/put/delete (single-key) — **no list.** The full 522-object inventory needs the R2 **S3 API** with a token. Exact steps (read-only is sufficient — least privilege):
+1. **Cloudflare → R2 → Manage R2 API Tokens → Create** → permission **Object Read only**, scope **ss-fortress-dr only** → note the **Access Key ID + Secret** and your **S3 endpoint** `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
+2. Configure aws CLI (`aws configure` with those keys, region `auto`), then:
+   - **Full listing (key · size · last-modified · total):** `aws s3 ls s3://ss-fortress-dr --recursive --summarize --endpoint-url https://<ACCT>.r2.cloudflarestorage.com`
+   - **Group by top-level prefix:** pipe the above to `awk '{n=$4; split(n,a,"/"); c[a[1]]++; b[a[1]]+=$3} END{for(k in c) printf "%-30s %6d objs  %d bytes\n", k, c[k], b[k]}'`
+   - **★ Anything written AFTER 2026-07-06 (the key query — identifies the 24 + any post-snapshot additions):** `aws s3api list-objects-v2 --bucket ss-fortress-dr --endpoint-url https://<ACCT>.r2.cloudflarestorage.com --query "Contents[?LastModified>='2026-07-07T00:00:00Z'].{Key:Key,When:LastModified,Size:Size}" --output table`
+3. **Reconcile** the per-prefix counts against the proven 2026-07-06 tally (`investigation-files/feff5c44…`=61 · `hostile-evidence/0aaaaaaa…`=1 · `archival-documents/_unresolved/`=365 · `tenant-files/_system/`=71 = **498**). The extra **24** will appear either as post-2026-07-06 timestamps (the snapshot was added to — the ledger's 498 is stale) or as objects outside the four prefixes (smoke-test artefacts / test-fires / partial uploads to purge **before** locking). **Send me the post-2026-07-06 query output and the per-prefix grouping and I'll classify each.** I can run these for you if you paste a read-only R2 token — but I did **not** create one or read object contents; nothing on ss-fortress-dr was touched.
+
+> **Throwaway cleanup:** the test created buckets `dr-lock-test2` (holds `probe.txt` under a 1-day lock — cleanable after ~2026-08-07 once retention lapses) and `dr-lock-semantic-test` (local-only uploads + a stray rule). I'll delete both after the retention expires; flagging so the two extra buckets aren't a surprise.
+
 ### RECOMMENDED sequence (in-place lock — avoids risking the only backup)
 1. **Reconcile the 522** (list, confirm prefixes, identify the mystery 24, clean strays).
 2. `wrangler r2 bucket lock add ss-fortress-dr snapshot-worm "" --retention-indefinite` (or a long `--retention-days`) → snapshot + all future backup objects immutable in place. Verify with `bucket lock list`.
