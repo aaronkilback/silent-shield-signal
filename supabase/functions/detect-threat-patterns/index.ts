@@ -51,16 +51,16 @@ Deno.serve(async (req) => {
 
   // WO-CHECK5-BURNDOWN-01: machine-only (cron + auto-orchestrator). Internal-caller gate BEFORE
   // service-role client + body. Joins the batch-1 cutover group (deploy with FORTRESS_INTERNAL_SECRET wired).
-  const gate = requireInternalCaller(req);
-  if (gate) return gate;
+  // Record the ATTEMPT before the gate (Mode 2 — WO-OUTPUT-ASSERTION-MONITORING): a rejected
+  // invocation must be distinguishable from never-invoked. attempt -> gate -> outcome.
+  const supabase = createServiceClient();
+  const hbClient: any = supabase;
+  const hb: any = await startHeartbeat(supabase, 'fortress-detect-patterns-6h');
 
-  // hb handles outside try so the catch can fail the heartbeat. job_name matches cron_job_registry + cron jobname.
-  let hbClient: any = null;
-  let hb: any = null;
+  const gate = requireInternalCaller(req);
+  if (gate) { try { await failHeartbeat(supabase, hb, new Error("rejected: internal-caller gate")); } catch (_) { /* best-effort */ } return gate; }
+
   try {
-    const supabase = createServiceClient();
-    hbClient = supabase;
-    hb = await startHeartbeat(supabase, 'fortress-detect-patterns-6h');
     const body = await req.json().catch(() => ({}));
     const targetClientId: string | undefined = body.client_id;
 

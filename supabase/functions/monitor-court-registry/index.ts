@@ -12,12 +12,13 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
-  // WO-CHECK5-BURNDOWN-01: cron-only monitor. Internal-caller gate before service-role client.
-  const gate = requireInternalCaller(req);
-  if (gate) return gate;
-
+  // Record the ATTEMPT before the gate (Mode 2 — WO-OUTPUT-ASSERTION-MONITORING): a rejected
+  // invocation must be distinguishable from never-invoked. attempt -> gate -> outcome.
   const supabaseClient = createServiceClient();
   const hb = await startHeartbeat(supabaseClient, 'monitor-court-registry-4h');
+
+  const gate = requireInternalCaller(req);
+  if (gate) { await failHeartbeat(supabaseClient, hb, new Error("rejected: internal-caller gate")); return gate; }
 
   try {
     console.log('Starting court registry monitoring scan');

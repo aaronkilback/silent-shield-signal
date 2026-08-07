@@ -68,17 +68,17 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
-  // WO-CHECK5-BURNDOWN-01: cron/internal only. Internal-caller gate BEFORE service-role client + body.
-  const gate = requireInternalCaller(req);
-  if (gate) return gate;
+  // Record the ATTEMPT before the gate (Mode 2 — WO-OUTPUT-ASSERTION-MONITORING): a rejected
+  // invocation must be distinguishable from never-invoked. attempt -> gate -> outcome.
+  // job_name matches cron_job_registry + cron jobname.
+  const supabase = createServiceClient();
+  const hbClient: any = supabase;
+  const hb: any = await startHeartbeat(supabase, 'source-discovery-weekly');
 
-  // hb handles outside try so the catch can fail the heartbeat. job_name matches cron_job_registry + cron jobname.
-  let hbClient: any = null;
-  let hb: any = null;
+  const gate = requireInternalCaller(req);
+  if (gate) { try { await failHeartbeat(supabase, hb, new Error("rejected: internal-caller gate")); } catch (_) { /* best-effort */ } return gate; }
+
   try {
-    const supabase = createServiceClient();
-    hbClient = supabase;
-    hb = await startHeartbeat(supabase, 'source-discovery-weekly');
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const { client_id, dry_run = false } = body;
 

@@ -46,22 +46,24 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
-  // ── 1. AUTHORIZATION FIRST — before any client/db/provider/outbound work ──
-  const auth = authorizeInternal(req.headers, Deno.env.get("ALERT_DELIVERY_INTERNAL_SECRET"));
-  if (!auth.ok) return json({ error: auth.error }, auth.status);
-
-  // Sender is FIXED server config and must be configured (verified domain). No DB/body override.
-  const fromEmail = Deno.env.get("ALERT_FROM_EMAIL");
-  if (!fromEmail) return json({ error: "sender_unconfigured" }, 503);
-
-  // NOTE: the request body is intentionally NOT read — callers cannot specify recipients or any
-  // delivery configuration. This function only drains the claimed email queue.
-
+  // Record the ATTEMPT before the auth gate (Mode 2 — WO-OUTPUT-ASSERTION-MONITORING): a rejected
+  // invocation must be distinguishable from never-invoked. attempt -> gate -> outcome.
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const worker = crypto.randomUUID();
   // Heartbeat (INC-ALERT-DELIVERY remediation): a delivery pipeline with no heartbeat was the
   // 10-month blind spot. It ends structurally — every drain records success/failure.
   const hb = await startHeartbeat(supabase, 'alert-delivery-v2-email');
+
+  // ── 1. AUTHORIZATION — after the attempt heartbeat, before any db/provider/outbound work ──
+  const auth = authorizeInternal(req.headers, Deno.env.get("ALERT_DELIVERY_INTERNAL_SECRET"));
+  if (!auth.ok) { await failHeartbeat(supabase, hb, new Error("rejected: " + auth.error)); return json({ error: auth.error }, auth.status); }
+
+  // Sender is FIXED server config and must be configured (verified domain). No DB/body override.
+  const fromEmail = Deno.env.get("ALERT_FROM_EMAIL");
+  if (!fromEmail) { await failHeartbeat(supabase, hb, new Error("sender_unconfigured")); return json({ error: "sender_unconfigured" }, 503); }
+
+  // NOTE: the request body is intentionally NOT read — callers cannot specify recipients or any
+  // delivery configuration. This function only drains the claimed email queue.
 
   // Atomic claim. The RPC also reconciles lease-expired 'sending' rows that are at/past the
   // DB-authoritative idempotency cutoff into 'requires_reconciliation' (never returned for resend).
