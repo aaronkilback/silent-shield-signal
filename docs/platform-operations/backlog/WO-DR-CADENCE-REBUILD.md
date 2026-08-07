@@ -2,6 +2,9 @@
 
 **Ruling 2026-08-04 (operator):** treat DR as an **open gap, not a job to restart.** Do NOT re-enable `dr-storage-backup` as it stands — it was disabled for cause (INC-AITOOLS-XTENANT-2026-07-30: orphan deploy, `verify_jwt=false`, compromised `x-smoke-key` with cross-tenant read + R2 delete). Restarting it to fix a backup gap would reopen a cross-tenant exposure. Diagnostic: `docs/platform-operations/incidents/DIAG-2026-08-04-dr-backup-and-quarantine.md`.
 
+## Bucket-lock DEMOTED + admin-token cleanup (ratified 2026-08-07)
+**Bucket-lock is demoted from "the backup's guarantee" to "a layer that defends against the DR function's own Object-R/W token (and accidental non-admin deletes), once admin is scoped"** — proven admin-removable (decisive test below). **Admin-token cleanup is the primary control.** Cleanup sequence executing 2026-08-07, replace-then-revoke, one at a time, verify-before-revoke: (1) `floral-fire-d819` orphan-revoke, (2) `silent-shield-signal build` → replace with Workers+Pages-Edit (no R2), verify staging deploy, revoke, (3) `Edit Cloudflare Workers` ×2 → re-`wrangler login`, verify delivery deploy, revoke both, (4) expiry on all remaining, (5) research compliance-mode Object Lock. **Division of labor: token create/revoke = operator (dashboard — the agent has no token-write capability and must not hold one); verification (deploys, run-watching) = agent.**
+
 ## ⚠ Admin-token exposure undermines the WORM (2026-08-06) — the lock is worth less while these exist
 The R2 tokens page shows **~5 standing tokens with Admin Read & Write on ALL buckets, active, no expiry** — every one can delete `ss-fortress-dr` (the only backup). Two share the name "Edit Cloudflare Workers" (indistinguishable). The correctly-scoped exception is the **2026-07-06 Object-R/W token scoped to ss-fortress-dr only** — that one is right; the admin-all tokens are the problem.
 
