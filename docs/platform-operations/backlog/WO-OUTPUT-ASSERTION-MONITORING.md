@@ -14,6 +14,21 @@ A green heartbeat on a producer that produced nothing is a **false all-clear**. 
 
 **Sequence: ABOVE `WO-METRIC-PROVENANCE-AUDIT`.** The audit tells us which numbers *currently* lie (retrospective cleanup). This stops *new* lies forming (prospective — every producer must declare and be asserted). Fix the factory before cataloguing the defects.
 
+## Three invisibility modes (added 2026-08-07) — the coverage boundary, not just the check
+The produced-leg probe assumed a job is registered with a declared schedule. This week surfaced **three distinct ways a producer goes invisible** — the probe as originally scoped catches only the third:
+
+1. **NO EXPECTATION DECLARED — benchmark.** Triggered by a CI deploy hook, never in `cron_job_registry` → nothing to compare against → its silence is unobservable. *The watchdog can only see jobs that declared a schedule.*
+2. **FAILS BEFORE INSTRUMENTATION — source-discovery-weekly.** The heartbeat write sits **after** `requireInternalCaller` (gate L72 < heartbeat L81), so an auth rejection is identical to never-invoked (0 heartbeats either way). **Audit (2026-08-07): 9 of 38 heartbeat-emitting functions have this pattern** — `alert-delivery` · `auto-enrich-entities` · `auto-summarize-incident` · `autonomous-source-discovery` · `detect-threat-patterns` · `dispatch-critical-sms` · `knowledge-synthesizer` · `monitor-community-outreach` · `monitor-court-registry` (gate line < heartbeat-call line in each).
+3. **EXPECTATION DECLARED, OUTPUT NEVER CHECKED — dr-storage-backup, monitor-social-unified, monitor-instagram.** Registered + "active" with zero production, indefinitely. *(The leg this WO originally scoped.)*
+
+## Added requirements
+- **(Mode 1) Every scheduled producer is in `cron_job_registry` regardless of trigger.** A CI hook is not a schedule. If it should run weekly, the registry says so and the probe checks it. Registration is non-optional — a producer can't ship without a registry entry + output contract (same spirit as RLS-at-Creation / Two-Successes-Before-Close). Prefer converting deploy/hook-triggered producers to real cron; if a hook must trigger, still register the expectation so absence is observable.
+- **(Mode 2) Record the ATTEMPT before any auth/precondition gate.** `startHeartbeat(status='attempted')` **first**, then the gate, then the outcome (`succeeded`/`failed`/`rejected`). A rejected invocation must be distinguishable from no invocation. **Fix the 9 audited functions:** move `startHeartbeat` above `requireInternalCaller` (record attempt → gate → complete/fail).
+- **(Mode 3) Assert production, not execution** (the original produced-leg model below).
+
+## Meta-point (record) — the real limit is the registry, not the probes
+**The watchdog cannot report on what was never declared. Its coverage is bounded by `cron_job_registry`, which is maintained by hand.** Every probe is downstream of a human remembering to register the expectation. The systemic fix is not a better probe — it's making declaration structurally non-optional at ship time, and periodically **auditing the registry against reality** (Registry-is-a-Promise, extended: not only "registered jobs kept their promise" but "every real producer is registered at all"). Until then, board completeness = registry hygiene.
+
 ## Core model — an output contract per scheduled producer
 Each scheduled job declares **what it produces**, not just that it ran:
 - `output_table` / `output_metric` — where production lands (`signals`, `signal_agent_analyses`, an R2 object count, `entities`, a scored-rate, …).
