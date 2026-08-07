@@ -45,13 +45,17 @@ Gated on: recall gain is real (not noise), false-positives acceptable, **volume 
 This is item (a) of the recorded build order; (b) synthetic-activity-removal, (c) watchdog-discipline, (d) metric-audit, (e) DR follow. **WO-OUTPERFORM stays gated behind the benchmark rebuild (separate ruling).**
 
 ## Build status
-**GO ruled 2026-08-07** (operator: "GO on WO-GATE-PHASE3-SHADOW-PLAN with three changes" → the three changes are folded in above as operator change 1/2/3 → "start the Phase 3 shadow build"). Build order:
-1. **`ingest_shadow` substrate table** — RLS-at-creation, forward-only, 30-day retention. *(this slice)*
-2. Shadow matcher module (`_shared/shadow-matcher.ts`) — token-boundary + semantic + asset-geo(fail-closed) — pure, no writes.
-3. Shadow scorer (`computeComposite` replica + tier-2 eligibility) + severity recalibration (corroboration-gated critical).
-4. Wire the shadow into `process-intelligence-document` (path='rss') **and** `ingest-signal` (path='ingest_signal'), each after its live gate, swallow-on-failure, no `signals` write, no live `ai-decision-engine` call.
-5. 30-day purge cron (`purge-ingest-shadow-nightly`, mirrors `purge-ingest-decisions-nightly`).
-6. 611-fabrication batch pass (separate from the live stream).
-7. 7-day compare query → operator cutover ruling.
+**GO ruled 2026-08-07** (operator: "GO on WO-GATE-PHASE3-SHADOW-PLAN with three changes" → the three changes are folded in above as operator change 1/2/3 → "start the Phase 3 shadow build"). Build order + status:
+1. ✅ **`ingest_shadow` substrate table** — RLS-at-creation, forward-only, 30-day retention. Applied prod, RLS verified.
+2. ✅ Shadow matcher module (`_shared/shadow-matcher.ts`) — token-boundary + injectable semantic + asset-geo(fail-closed geo_pending) — pure, no writes.
+3. ✅ Shadow scorer (`_shared/shadow-scorer.ts`) — canonical `computeComposite` + tier-2 eligibility + severity recalibration (corroboration-gated critical).
+4a. ✅ Wire the **deterministic** shadow into `process-intelligence-document` (path='rss'), every item at client_match, write-isolated + swallow-on-failure. Deployed. **+ durable swallowed-failure counter** (`edge_function_errors` `error_code='phase3_shadow_swallowed'`) so broken ≠ idle. Empirically write-isolated (signals grew only by live insert passes).
+4b. ✅ **Semantic recall leg** = `classify-shadow-semantic-nightly` (registered cron 09:15 UTC, attempt-first heartbeat, output assertion, ITEM_CAP=2000 + $1.00/run spend ceiling, **measured** spend logged). 100% coverage, off the hot path, LLM multi-class (gpt-4o-mini). Deployed + test-fired green. **TODO: report actual spend vs $3/mo estimate on the first real run** (operator ruling 3, 2026-08-07).
+    - *Remaining 4b detail:* live per-item model severity + corroboration capture for matched RSS items (currently null / corroboration=0).
+5. ✅ 30-day purge cron (`purge-ingest-shadow-nightly`, 04:23 UTC, pure-SQL, mirrors `purge-ingest-decisions-nightly`). Retention decided up front.
+6. ⏳ 611-fabrication batch pass (separate from the live stream) — **held for after the 48h report** (operator sequencing).
+7. ⏳ 7-day compare query → operator cutover ruling — **held for after the 48h report**.
 
-No `signals` writes at any step until the operator rules cutover.
+**Also (ruling 1, 2026-08-07):** `monitor-community-outreach` DE-REGISTERED (phantom; never had a prod cron) — registry row deleted, heartbeat allowlisted as retired. Re-register deliberately with an output contract if it matters later.
+
+**HOLD state (2026-08-07):** deterministic legs burning in; deliver the 48h report (~2026-08-09 15:00 UTC: fabrication kill per client, geo_pending per client, rows/swallowed/ratio, signals==insert parity) + first-real-run spend, THEN continue slices 6–7. No `signals` writes at any step until the operator rules cutover.
