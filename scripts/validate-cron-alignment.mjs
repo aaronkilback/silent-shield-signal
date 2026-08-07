@@ -160,10 +160,15 @@ const HEARTBEAT_NO_CRON_ALLOWLIST = new Set([
   // which is why this entry is here. Do NOT re-add a cron without a real yield fix
   // (CSE-only zero-yield was the structural cause — see project_social_monitor_dryup).
   'monitor-social-unified',
-  // NOTE (deliberately NOT allowlisted): monitor-community-outreach. It writes a
-  // heartbeat but has no active prod cron (phantom found in the 2026-07-29
-  // Registry-is-a-Promise triage). That MISS is a REAL finding awaiting an operator
-  // ruling — schedule it or de-register it — and must stay loud, not be silenced here.
+  // DE-REGISTERED 2026-08-07 (operator ruling; migration
+  // 20260807150000_deregister_monitor_community_outreach_phantom.sql). Phantom found in the
+  // 2026-07-29 Registry-is-a-Promise triage: it never had an active prod cron, so it never ran.
+  // Ruling: de-register rather than schedule — a function nobody has missed does not earn a slot,
+  // and adding a cron to it is how phantoms become real spend. The cron_job_registry row was
+  // deleted; the function file is kept as inventory and still writes this heartbeat, which is why
+  // the entry is here. If community-outreach monitoring matters later, re-register it DELIBERATELY
+  // with an output contract (WO-OUTPUT-ASSERTION-MONITORING) — do not just re-add a schedule.
+  'monitor-community-outreach',
 ]);
 
 // ── Check 1: Heartbeat name matches a cron job name ────────────────────────
