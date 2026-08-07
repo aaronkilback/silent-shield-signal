@@ -64,6 +64,7 @@ async function recordRssShadow(supabase: any, args: {
     content_hash: args.contentHash,
     item_title: args.title,
     item_url: args.url,
+    item_text: (args.itemText || "").slice(0, 2000), // bounded body for the nightly semantic classifier (slice 4b)
     last_seen_at: new Date().toISOString(),
     live_matched: args.liveMatched,
     live_client_id: args.liveClientId,
