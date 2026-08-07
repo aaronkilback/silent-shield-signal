@@ -55,7 +55,10 @@ async function recordRssShadow(supabase: any, args: {
     corroborationCount: 0,          // corroboration wiring is slice 4b (cross-source/incident linkage)
   });
 
-  await supabase.from("ingest_shadow").upsert({
+  // NOTE: supabase-js does NOT throw on a failed write — it returns { error }. We must inspect it and
+  // THROW, or a broken write (RLS/constraint/type) is silently dropped and a broken shadow becomes
+  // indistinguishable from an idle one. The caller's catch then records it to the durable counter.
+  const { error: upsertErr } = await supabase.from("ingest_shadow").upsert({
     path: "rss",
     source_id: args.sourceId,
     content_hash: args.contentHash,
@@ -78,6 +81,7 @@ async function recordRssShadow(supabase: any, args: {
     shadow_severity_basis: verdict.matched ? sev.basis : null,
     shadow_corroboration_count: 0,
   }, { onConflict: "path,content_hash", ignoreDuplicates: false });
+  if (upsertErr) throw new Error(`ingest_shadow upsert failed: ${upsertErr.message}`);
 }
 
 interface DecisionArgs {
@@ -543,7 +547,22 @@ Deno.serve(async (req) => {
           modelSeverity: null, // live per-item model severity is computed downstream; captured in 4b
         });
       } catch (e) {
-        console.warn('[phase3-shadow][rss] swallowed:', e instanceof Error ? e.message : String(e));
+        const _msg = e instanceof Error ? e.message : String(e);
+        console.warn('[phase3-shadow][rss] swallowed:', _msg);
+        // DURABLE swallowed-failure counter (operator directive): the shadow swallows errors by design
+        // so it cannot break ingest — which means a BROKEN shadow looks identical to an IDLE one. This
+        // makes them distinguishable: query edge_function_errors where error_code='phase3_shadow_swallowed'.
+        // A high count next to few ingest_shadow rows = broken; both low = genuinely idle. Best-effort;
+        // never fails the live path.
+        try {
+          await supabase.from('edge_function_errors').insert({
+            function_name: 'process-intelligence-document',
+            error_code: 'phase3_shadow_swallowed',
+            error_message: _msg.slice(0, 500),
+            severity: 'low',
+            request_context: { subsystem: 'phase3_shadow', path: 'rss', content_hash: decisionCtx.contentHash },
+          });
+        } catch (_) { /* last-resort console only */ }
       }
     }
 
