@@ -5,7 +5,7 @@
 // Internal-only (x-fortress-internal). Reuses the MFA Twilio credentials.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
-import { recordHeartbeat } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const OPERATOR_UID = "d7edb69f-66e8-4776-9e5d-7ac54b401cfb"; // ak@silentshieldsecurity.com
 const DAILY_CAP = 3;
@@ -27,10 +27,12 @@ async function sendTwilioSms(to: string, bodyText: string): Promise<{ ok: boolea
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
-  const denied = requireInternalCaller(req);
-  if (denied) return denied;
-
+  // Record the ATTEMPT before the gate so an auth rejection is visible, not indistinguishable from
+  // never-invoked (Mode 2 — WO-OUTPUT-ASSERTION-MONITORING). attempt -> gate -> outcome.
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const hb = await startHeartbeat(supabase, "dispatch-critical-sms-15min");
+  const denied = requireInternalCaller(req);
+  if (denied) { await failHeartbeat(supabase, hb, new Error("rejected: internal-caller gate")); return denied; }
   const body = await req.json().catch(() => ({}));
   const isTest = body?.test === true;
 
@@ -39,7 +41,7 @@ Deno.serve(async (req) => {
     .select("phone_number, phone_verified").eq("user_id", OPERATOR_UID)
     .order("updated_at", { ascending: false }).limit(1).maybeSingle();
   const to = settings?.phone_number as string | undefined;
-  if (!to) return new Response(JSON.stringify({ error: "no operator phone on file" }), { status: 412, headers: cors });
+  if (!to) { await completeHeartbeat(supabase, hb, { skipped: "no_operator_phone" }); return new Response(JSON.stringify({ error: "no operator phone on file" }), { status: 412, headers: cors }); }
   const last4 = to.slice(-4);
 
   // Daily cap counts REAL (non-test) sends since UTC midnight.
@@ -50,6 +52,7 @@ Deno.serve(async (req) => {
   if (isTest) {
     const r = await sendTwilioSms(to, "[TEST] Fortress critical-alert SMS channel is live. You will receive this only for security_posture CRITICAL findings (cap 3/day). This is a one-off test.");
     await supabase.from("sms_alert_log").insert({ is_test: true, status: r.ok ? "test" : "failed", twilio_sid: r.sid, to_number_last4: last4, finding_title: "[test page]" });
+    await completeHeartbeat(supabase, hb, { test: true, ok: r.ok });
     return new Response(JSON.stringify({ test: true, ok: r.ok, sid: r.sid, error: r.error, to_last4: last4 }), { status: r.ok ? 200 : 502, headers: cors });
   }
 
@@ -78,6 +81,6 @@ Deno.serve(async (req) => {
     results.push({ fingerprint: f.fingerprint, status: r.ok ? "sent" : "failed", sid: r.sid });
   }
   const pagedCount = results.filter((r) => r.status === "sent").length;
-  await recordHeartbeat(supabase, "dispatch-critical-sms-15min", "completed", { paged: pagedCount, evaluated: (due || []).length });
+  await completeHeartbeat(supabase, hb, { paged: pagedCount, evaluated: (due || []).length });
   return new Response(JSON.stringify({ paged: pagedCount, evaluated: (due || []).length, results }), { status: 200, headers: cors });
 });
