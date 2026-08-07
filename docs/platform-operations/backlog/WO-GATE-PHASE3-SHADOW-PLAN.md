@@ -44,4 +44,14 @@ Gated on: recall gain is real (not noise), false-positives acceptable, **volume 
 ## Sequencing
 This is item (a) of the recorded build order; (b) synthetic-activity-removal, (c) watchdog-discipline, (d) metric-audit, (e) DR follow. **WO-OUTPERFORM stays gated behind the benchmark rebuild (separate ruling).**
 
-**AWAITING OPERATOR RULING ON THIS PLAN BEFORE BUILDING.**
+## Build status
+**GO ruled 2026-08-07** (operator: "GO on WO-GATE-PHASE3-SHADOW-PLAN with three changes" → the three changes are folded in above as operator change 1/2/3 → "start the Phase 3 shadow build"). Build order:
+1. **`ingest_shadow` substrate table** — RLS-at-creation, forward-only, 30-day retention. *(this slice)*
+2. Shadow matcher module (`_shared/shadow-matcher.ts`) — token-boundary + semantic + asset-geo(fail-closed) — pure, no writes.
+3. Shadow scorer (`computeComposite` replica + tier-2 eligibility) + severity recalibration (corroboration-gated critical).
+4. Wire the shadow into `process-intelligence-document` (path='rss') **and** `ingest-signal` (path='ingest_signal'), each after its live gate, swallow-on-failure, no `signals` write, no live `ai-decision-engine` call.
+5. 30-day purge cron (`purge-ingest-shadow-nightly`, mirrors `purge-ingest-decisions-nightly`).
+6. 611-fabrication batch pass (separate from the live stream).
+7. 7-day compare query → operator cutover ruling.
+
+No `signals` writes at any step until the operator rules cutover.
