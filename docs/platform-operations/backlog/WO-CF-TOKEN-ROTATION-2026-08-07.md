@@ -38,6 +38,20 @@ Division of labor: **operator does all token create/revoke ops in the CF dashboa
 - **Environment secret** in GitHub environment `staging-preview` (added ~2 mo ago). **Orphan: zero references repo-wide; no workflow declares any `environment:` block**, so it is unreachable by any job. Likely a half-finished migration to environment-scoped secrets that never wired `environment: staging-preview` into the workflow.
 - **DO NOT delete yet** (operator ruling + agent's own trap): an orphaned *GitHub secret* does not mean a safe-to-revoke *CF token*. Two GitHub secrets can hold the same CF token value, and the underlying CF token may be used outside this repo. **Gate: establish the CF-token mapping (by last-used + created date) first**, confirm the CF token behind it isn't also the live one / used elsewhere, THEN delete the GitHub secret and (if safe) revoke its CF token.
 
+## CF token inventory (operator read the list w/ names + last-used, 2026-08-07)
+| Token | Date | Disposition |
+|---|---|---|
+| `silent-shield-signal-ci-deploy` | Aug 7 (last-used today) | **KEEP** — wired to repo secret `CLOUDFLARE_API_TOKEN`, ran today's green staging deploy (audit 08:43), minimal scope (Scripts+Routes Edit, Zone Read, no R2) |
+| `pages-read-ci` | Jul 30 | **KEEP** — `ci.yml` E2E |
+| `silent-shield-staging-github-actions` | Jun 24 (created) | **RETIRE** — a scoped staging token that predates mine; almost certainly the value in the orphan env secret `STAGING_CLOUDFLARE_API_TOKEN` (both ~June, both staging-CI-named, and the repo secret's pre-today "updated ~April" predates Jun 24 → repo secret never held it). Confirm its **last-used** is stale/never, then revoke it together with the orphan env secret. |
+| `Edit Cloudflare Workers` #1 | last-used **Jul 10** | **REVOKE** — the pre-Aug-1 prod-frontend deploy credential (Jul 10 = the frontend-release-2026-07-10 manual prod deploy). Superseded by this machine's Aug-1 OAuth. **Note: Jul 10 is >7 days back — this is exactly the blind spot the operator flagged; the Last-used column, not the 7-day audit, resolved it.** |
+| `Edit Cloudflare Workers` #2 | never | **REVOKE** — never used |
+| `silent-shield-signal build token` | Mar 4 | **REVOKE** — dead since creation |
+
+**Resolution of the "did I create a duplicate?" question:** functionally yes — a scoped staging token (`silent-shield-staging-github-actions`, Jun 24) already existed, but it appears **orphaned** (its likely home is the unwired env secret `STAGING_CLOUDFLARE_API_TOKEN`, which no workflow reads). So it was never actually doing the job; the new token is the first one wired to the *working* repo-secret path and proven green. **End state = ONE scoped staging token: keep `silent-shield-signal-ci-deploy`, retire the Jun-24 one + its orphan env secret in one pass.** Final live CF tokens after cleanup: `silent-shield-signal-ci-deploy` + `pages-read-ci`.
+
+**This also closes the earlier orphan-secret gate:** `STAGING_CLOUDFLARE_API_TOKEN` ≈ `silent-shield-staging-github-actions` (Jun 24). Confirm via that token's last-used, then delete the GitHub env secret + revoke the token together.
+
 ## CF token mapping — how to establish (agent cannot; values are opaque both sides)
 - GitHub secret values are write-only; the CF token list shows only name / permissions / **last-used** / created — never the value. No code path maps value→token.
 - **Method:** the CF token behind repo `CLOUDFLARE_API_TOKEN` shows last-used aligning with recent staging deploy runs; the token behind the orphan env secret shows no CI usage. Cross-check created dates vs GitHub secret ages (repo secret 4 mo, env secret 2 mo). Operator to read the CF list (names + last-used + created) → agent helps match before any revoke.
