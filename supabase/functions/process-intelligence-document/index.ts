@@ -3,6 +3,8 @@ import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
 import { enqueueJob } from "../_shared/queue.ts";
+import { matchItemToClients, type ShadowClient } from "../_shared/shadow-matcher.ts";
+import { shadowComposite, tier2Eligible, shadowSeverity, type Severity } from "../_shared/shadow-scorer.ts";
 
 // ── WO-GATE-KEYWORD-PRESCORE-01 Phase 2: forward-only ingest-funnel instrumentation ──
 // Records per-item drop/pass decisions at each of the four stages (parse | client_match |
@@ -12,6 +14,70 @@ import { enqueueJob } from "../_shared/queue.ts";
 async function decisionSha256(input: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ── WO-GATE-PHASE3 shadow (slice 4a — RSS path) ──────────────────────────────────────────────
+// Write-isolated: computes what the NEW matcher/scorer WOULD decide and writes ONLY to
+// public.ingest_shadow (path='rss'). No signals write, no live ai-decision-engine call, and it can
+// NEVER fail the live ingest (swallow-on-failure). This FIRST cut runs the DETERMINISTIC legs only
+// (token-boundary + asset-geo anchor + geo_pending counter) — the semantic recall leg (an AI call
+// per item) is DEFERRED to slice 4b and its absence is logged, not silently capped. Because there is
+// no live per-item relevance/AI score for items the keyword gate DROPPED, shadow composite uses the
+// matcher confidence as the documented relevance/AI proxy (see shadow-scorer.ts).
+async function recordRssShadow(supabase: any, args: {
+  contentHash: string;
+  sourceId: string | null;
+  title: string | null;
+  url: string | null;
+  itemText: string;
+  clients: any[];
+  liveMatched: boolean;
+  liveClientId: string | null;
+  liveOutcome: string;      // 'passed_client_match' | 'no_client_match' | 'false_positive_content'
+  modelSeverity: Severity | null;   // the live model severity if known, else null
+}): Promise<void> {
+  const shadowClients: ShadowClient[] = (args.clients || []).map((c: any) => ({
+    id: c.id,
+    name: c.name,
+    monitoring_keywords: c.monitoring_keywords,
+    competitor_names: c.competitor_names,
+    high_value_assets: c.high_value_assets,
+    locations: c.locations,
+  }));
+
+  // Deterministic-only first cut: no `semantic` injected. Logged (no silent cap).
+  const verdict = await matchItemToClients(args.itemText, shadowClients /*, { semantic: <deferred 4b> } */);
+
+  const composite = verdict.matched ? shadowComposite({ matchConfidence: verdict.match_confidence }) : null;
+  const sev = shadowSeverity({
+    modelSeverity: args.modelSeverity,
+    compositeConfidence: composite,
+    corroborationCount: 0,          // corroboration wiring is slice 4b (cross-source/incident linkage)
+  });
+
+  await supabase.from("ingest_shadow").upsert({
+    path: "rss",
+    source_id: args.sourceId,
+    content_hash: args.contentHash,
+    item_title: args.title,
+    item_url: args.url,
+    last_seen_at: new Date().toISOString(),
+    live_matched: args.liveMatched,
+    live_client_id: args.liveClientId,
+    live_outcome: args.liveOutcome,
+    live_severity: args.modelSeverity,
+    shadow_matched: verdict.matched,
+    shadow_client_ids: verdict.client_ids,
+    shadow_match_basis: verdict.basis,
+    shadow_match_confidence: verdict.match_confidence,
+    shadow_geo_suppressed: verdict.geo_suppressed,
+    shadow_asset_label: verdict.asset_label,
+    shadow_composite_confidence: composite,
+    shadow_tier2_eligible: verdict.matched ? tier2Eligible(composite) : false,
+    shadow_severity: verdict.matched ? sev.severity : null,
+    shadow_severity_basis: verdict.matched ? sev.basis : null,
+    shadow_corroboration_count: 0,
+  }, { onConflict: "path,content_hash", ignoreDuplicates: false });
 }
 
 interface DecisionArgs {
@@ -251,7 +317,7 @@ Deno.serve(async (req) => {
     // Fetch all active clients and their keywords
     const { data: clients } = await supabase
       .from('clients')
-      .select('id, name, industry, monitoring_keywords, competitor_names, high_value_assets')
+      .select('id, name, industry, monitoring_keywords, competitor_names, high_value_assets, locations')
       .eq('status', 'active');
 
     // IMPROVED: Match document against client keywords with weighted scoring
@@ -458,6 +524,29 @@ Deno.serve(async (req) => {
 
     // PRIORITY 3: Filter out known false positive content patterns
     const documentText = document.raw_text || document.title || '';
+
+    // ── WO-GATE-PHASE3 shadow (slice 4a): run for EVERY item at the client_match stage — matched,
+    //    no-match, AND fp-dropped — before any early return. Write-isolated, swallow-on-failure. ──
+    if (canRecordDecision) {
+      try {
+        const _fp = isFalsePositiveContent(documentText);
+        await recordRssShadow(supabase, {
+          contentHash: decisionCtx.contentHash,
+          sourceId: decisionCtx.sourceId ?? null,
+          title: decisionCtx.title,
+          url: decisionCtx.url,
+          itemText: documentText,
+          clients: clients || [],
+          liveMatched: !_fp && clientMatches.length > 0,
+          liveClientId: (!_fp && clientMatches[0]?.clientId) ? clientMatches[0].clientId : null,
+          liveOutcome: _fp ? 'false_positive_content' : (clientMatches.length > 0 ? 'passed_client_match' : 'no_client_match'),
+          modelSeverity: null, // live per-item model severity is computed downstream; captured in 4b
+        });
+      } catch (e) {
+        console.warn('[phase3-shadow][rss] swallowed:', e instanceof Error ? e.message : String(e));
+      }
+    }
+
     if (isFalsePositiveContent(documentText)) {
       console.log(`[FP Filter] Rejecting false positive content: ${documentText.substring(0, 100)}...`);
       if (canRecordDecision) await recordDecision(supabase, { ...decisionCtx, stage: 'client_match', outcome: 'dropped', dropReason: 'false_positive_content', scorerReached: false, relevanceScore: null, clientsEvaluated: decisionClientsEvaluated });
