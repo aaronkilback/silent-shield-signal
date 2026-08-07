@@ -1,6 +1,6 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
-import { recordHeartbeat } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 import { enqueueJob } from "../_shared/queue.ts";
 import { toProbability } from "../_shared/signal-scores.ts";
 
@@ -182,11 +182,15 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
-  // WO-CHECK5-BURNDOWN-01: cron-only monitor. Internal-caller gate before service-role client.
-  const gate = requireInternalCaller(req);
-  if (gate) return gate;
-
+  // WO-CHECK5-BURNDOWN-01: cron-only monitor. Record the ATTEMPT before the gate (Mode 2 —
+  // WO-OUTPUT-ASSERTION-MONITORING): converted from end-of-run recordHeartbeat (Pattern B — same
+  // blind spot as monitor-social-unified: a crash / early exit was silent) to attempt -> gate -> outcome.
   const supabase = createServiceClient();
+  const hb = await startHeartbeat(supabase, 'monitor-community-outreach-hourly');
+
+  const gate = requireInternalCaller(req);
+  if (gate) { await failHeartbeat(supabase, hb, new Error("rejected: internal-caller gate")); return gate; }
+
   const googleApiKey = Deno.env.get('GOOGLE_SEARCH_API_KEY');
   const googleEngineId = Deno.env.get('GOOGLE_SEARCH_ENGINE_ID');
 
@@ -507,8 +511,8 @@ Deno.serve(async (req) => {
 
     console.log(`Community outreach monitoring complete. Created ${signalsCreated} signals from ${sourcesProcessed.length} sources.`);
 
-    // Heartbeat
-    await recordHeartbeat(supabase, 'monitor-community-outreach-hourly', 'completed', { signals_created: signalsCreated, items_scanned: itemsScanned, sources: sourcesProcessed });
+    // Heartbeat — complete the attempt started before the gate.
+    await completeHeartbeat(supabase, hb, { signals_created: signalsCreated, items_scanned: itemsScanned, sources: sourcesProcessed });
 
     // Update monitoring history
     if (historyEntry) {
@@ -543,6 +547,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Community outreach monitoring error:', error);
+    await failHeartbeat(supabase, hb, error instanceof Error ? error : new Error(String(error)));
 
     if (historyEntry) {
       await supabase

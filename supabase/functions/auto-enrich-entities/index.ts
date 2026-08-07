@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
-import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { startHeartbeat, completeHeartbeat, failHeartbeat, recordHeartbeat } from "../_shared/heartbeat.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,7 +32,17 @@ Deno.serve(async (req) => {
 
   // WO-CHECK5-BURNDOWN-01: cron/internal only. Internal-caller gate BEFORE service-role client + body.
   const gate = requireInternalCaller(req);
-  if (gate) return gate;
+  if (gate) {
+    // Mode 2 (WO-OUTPUT-ASSERTION-MONITORING): a rejected invocation must be distinguishable from
+    // never-invoked. This is a lightweight SEPARATE record — a TERMINAL 'failed' row, NOT the 'running'
+    // startHeartbeat below — precisely so the deliberate after-validation heartbeat placement (no orphan
+    // on 400/parse) is left untouched. Best-effort; never blocks the rejection.
+    try {
+      const rejClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      await recordHeartbeat(rejClient, 'auto-enrich-entities-nightly', 'failed', { rejected: 'internal-caller gate' });
+    } catch (_) { /* best-effort */ }
+    return gate;
+  }
 
   // Heartbeat handles declared outside the try so the catch can fail the heartbeat (block-scoped
   // consts inside try are NOT visible in catch). job_name MUST match cron_job_registry + the cron jobname.

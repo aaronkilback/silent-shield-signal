@@ -16,14 +16,16 @@ Deno.serve(async (req) => {
   const cors = handleCors(req);
   if (cors) return cors;
 
-  // WO-CHECK5-BURNDOWN-01: cron + internal-fn callers only. Internal-caller gate before service-role client.
+  // Record the ATTEMPT before the gate (Mode 2 — WO-OUTPUT-ASSERTION-MONITORING): a rejected
+  // invocation must be distinguishable from never-invoked. supabase + hb are in OUTER scope so the
+  // catch fails the REAL handle (previously a synthetic {id:null} handle that mis-recorded failures).
+  const supabase = createServiceClient();
+  const hb = await startHeartbeat(supabase, 'knowledge-synthesizer-nightly');
+
   const gate = requireInternalCaller(req);
-  if (gate) return gate;
+  if (gate) { try { await failHeartbeat(supabase, hb, new Error("rejected: internal-caller gate")); } catch (_) { /* best-effort */ } return gate; }
 
   try {
-    const supabase = createServiceClient();
-
-    const hb = await startHeartbeat(supabase, 'knowledge-synthesizer-nightly');
 
     // RUN-TIMEOUT / stuck-run guard (WO-LEARNING-LOOP Step 3): an edge isolate that hangs is
     // platform-killed at ~150s before completeHeartbeat, leaving a 'running' row forever. We
@@ -74,7 +76,7 @@ Deno.serve(async (req) => {
     if (agent_call_sign) query = query.eq('expert_name', `agent:${agent_call_sign}`);
 
     const { data: entries, error: loadErr } = await query.limit(300);
-    if (loadErr) return errorResponse(loadErr.message, 500);
+    if (loadErr) { await failHeartbeat(supabase, hb, new Error(loadErr.message)); return errorResponse(loadErr.message, 500); }
 
     // ── Load human expert entries (practitioners, ingest-expert-media) ──
     // These are NOT grouped by agent — instead they are matched to agents
@@ -96,6 +98,7 @@ Deno.serve(async (req) => {
     }
 
     if (!entries?.length && !humanEntries.length) {
+      await completeHeartbeat(supabase, hb, { entries_checked: 0, note: 'no entries to synthesize' });
       return successResponse({ message: 'No entries to synthesize', entries_checked: 0 });
     }
 
@@ -315,7 +318,7 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error('[knowledge-synthesizer] Error:', err);
-    await failHeartbeat(createServiceClient(), { id: null, jobName: 'knowledge-synthesizer-nightly', startedAt: Date.now() }, err);
+    await failHeartbeat(supabase, hb, err instanceof Error ? err : new Error(String(err)));
     return errorResponse(err instanceof Error ? err.message : 'Unknown error', 500);
   }
 });
