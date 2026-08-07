@@ -91,7 +91,18 @@ Test on throwaway `dr-lock-test2` (nothing on ss-fortress-dr touched):
 
 > **Throwaway cleanup:** the test created buckets `dr-lock-test2` (holds `probe.txt` under a 1-day lock — cleanable after ~2026-08-07 once retention lapses) and `dr-lock-semantic-test` (local-only uploads + a stray rule). I'll delete both after the retention expires; flagging so the two extra buckets aren't a surprise.
 
-### RECOMMENDED sequence (in-place lock — avoids risking the only backup)
+### DECISIVE TEST (2026-08-07) — an Admin token CAN remove an active R2 bucket-lock rule → R2 bucket-lock is NOT admin-proof WORM
+Empirical, on a throwaway bucket (now deleted): uploaded an object under an **active** "after 1 day" lock rule → confirmed protected (delete blocked, object survived) → then, with an **Admin**-capable credential (the `wrangler login` "Edit Cloudflare Workers" token): `wrangler r2 bucket lock remove <bucket> --name r1` → **"Lock rule removed"**, `lock list` → **"no lock rules"** → deleted the object → **gone.** So R2 `bucket lock` is a **live bucket-level condition, not an irrevocable per-object retention** — removing the rule un-protects everything immediately.
+
+**Answer to "is the lock worth setting at all":**
+- **Against the DR function's own credential: YES.** The backup fn's token is **Object R/W**, which **cannot manage lock rules** — so the lock genuinely stops the function (or a compromise of its scoped token) from deleting/overwriting the backup. That protection is real.
+- **Against an Admin credential: NO.** Any Admin-all token (the ~5 exposed ones) — and the account owner — can `lock remove` then delete. The lock is **theatre against exactly the threat the exposed tokens represent.**
+- **Therefore the ordering inverts:** **cutting the admin-token sprawl is the PRIMARY control; the bucket-lock is a secondary layer that only becomes meaningful AFTER admin is scoped** (then it defends against the function + accidents). Setting the lock first, while 5 admin keys live, protects nothing they can't undo.
+- **For true admin-proof immutability** (protection even from account-admin), R2 `bucket lock` is insufficient. That needs **S3 Object Lock in COMPLIANCE mode** — a *different* mechanism, enabled at **bucket creation** (⇒ new bucket + copy), and only if R2 supports compliance-mode object-lock (**verify before relying**). Absent that, accept that account-admin can always delete and mitigate with least-privilege + a second independent copy + delete-alerting.
+
+**Revised go-live gate:** (1) **cut/scope the admin-all tokens** (WO section above) — this is now the load-bearing control; (2) decide bucket-lock (sufficient once admin scoped; defends against the fn) vs compliance-mode Object Lock (new bucket, admin-proof, if supported); (3) then the rest of the sequence. Do not treat the in-place bucket-lock as the backup's guarantee.
+
+### RECOMMENDED sequence (in-place lock — avoids risking the only backup) — REVISED: valid only AFTER admin-token cleanup (see decisive test above)
 1. **Reconcile the 522** (list, confirm prefixes, identify the mystery 24, clean strays).
 2. `wrangler r2 bucket lock add ss-fortress-dr snapshot-worm "" --retention-indefinite` (or a long `--retention-days`) → snapshot + all future backup objects immutable in place. Verify with `bucket lock list`.
 3. Mint an **Object R/W token scoped to ss-fortress-dr only** (the lock, not the token, is what forbids destruction).
