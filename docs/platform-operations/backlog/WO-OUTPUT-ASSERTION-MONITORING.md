@@ -23,8 +23,25 @@ The produced-leg probe assumed a job is registered with a declared schedule. Thi
 
 ## Added requirements
 - **(Mode 1) Every scheduled producer is in `cron_job_registry` regardless of trigger.** A CI hook is not a schedule. If it should run weekly, the registry says so and the probe checks it. Registration is non-optional — a producer can't ship without a registry entry + output contract (same spirit as RLS-at-Creation / Two-Successes-Before-Close). Prefer converting deploy/hook-triggered producers to real cron; if a hook must trigger, still register the expectation so absence is observable.
-- **(Mode 2) Record the ATTEMPT before any auth/precondition gate.** `startHeartbeat(status='attempted')` **first**, then the gate, then the outcome (`succeeded`/`failed`/`rejected`). A rejected invocation must be distinguishable from no invocation. **Fix the 9 audited functions:** move `startHeartbeat` above `requireInternalCaller` (record attempt → gate → complete/fail).
+- **(Mode 2) Record the ATTEMPT before any auth/precondition gate.** `startHeartbeat(status='attempted')` **first**, then the gate, then the outcome (`succeeded`/`failed`/`rejected`). A rejected invocation must be distinguishable from no invocation. **Fixed the 9 audited functions 2026-08-07 — see "Mode 2 resolution" below.**
 - **(Mode 3) Assert production, not execution** (the original produced-leg model below).
+
+## Mode 2 resolution (2026-08-07) — the pattern is not "always move the heartbeat"
+All 9 audited functions are now handled, deployed to prod. **The fix is NOT mechanical.** Operator ruling: *"an invocation that arrives must be distinguishable from one that never happened"* — and there is **more than one correct way to satisfy that.** Blanket-moving `startHeartbeat` above the gate would have **broken two working designs**. Two of the nine were deliberate placements with real reasons, **not defects**:
+
+| Function | Disposition | Why |
+|---|---|---|
+| `dispatch-critical-sms` | FIXED (attempt-before-gate) | commit `f56d256d` |
+| `autonomous-source-discovery` | FIXED | `a4f86067` |
+| `detect-threat-patterns` | FIXED | `a4f86067` |
+| `monitor-court-registry` | FIXED | `a4f86067` |
+| `alert-delivery` | FIXED | `a4f86067` (attempt hb before `authorizeInternal`) |
+| `knowledge-synthesizer` | FIXED (careful pass) | `b2e23c42` — also fixed a pre-existing `loadErr` orphan + a catch using a synthetic `{id:null}` handle that mis-recorded every failure; reap-guard + INC-LEARN-CONTAM freeze-skip both already terminate the running row |
+| `monitor-community-outreach` | FIXED (Pattern-B → A) | `b2e23c42` — end-of-run `recordHeartbeat` was the exact silent-crash shape that hid `monitor-social-unified` |
+| **`auto-enrich-entities`** | **LEAVE + lightweight write** | Deliberate design: `startHeartbeat` sits **after** input validation on purpose, so a 400 / JSON-parse error never orphans a `'running'` row (the nightly cron always sends `batch_mode`, so its path always heartbeats). Moving it up would re-introduce the orphan. **Ruling: do not reshape.** Added only a separate best-effort **terminal `'failed'` `recordHeartbeat`** on the gate-deny path (`b2e23c42`) — records that a rejected invocation arrived, without a `'running'` orphan. This was the cheap option; taken. |
+| **`auto-summarize-incident`** | **LEAVE (known gap logged)** | The heartbeat is written only inside `if (batch_mode)`, and `batch_mode` is a **post-gate body field**. A rejected **non-cron** call must **NOT** write the cron heartbeat (that would fabricate a cron run that never happened). Correct long-term answer: the **cron path gets its own attempt record keyed to the cron**, independent of the body field — deferred, not fixed today. **Known gap, recorded here, intentionally left.** |
+
+**Doctrine recorded:** the Mode-2 pattern is *"an invocation that arrives must be distinguishable from one that never happened,"* **not** *"always move the heartbeat above the gate."* The satisfying mechanism varies: attempt-before-gate for machine-only cron functions; a separate terminal rejection record where the normal-path heartbeat placement is load-bearing (`auto-enrich`); a cron-keyed attempt record where the existing heartbeat legitimately carries post-gate data (`auto-summarize`, deferred). A blanket transform would have created orphans and fabricated cron runs. Two of nine were **correct as written** and only needed an *additive* visibility hook, not a restructure.
 
 ## Meta-point (record) — the real limit is the registry, not the probes
 **The watchdog cannot report on what was never declared. Its coverage is bounded by `cron_job_registry`, which is maintained by hand.** Every probe is downstream of a human remembering to register the expectation. The systemic fix is not a better probe — it's making declaration structurally non-optional at ship time, and periodically **auditing the registry against reality** (Registry-is-a-Promise, extended: not only "registered jobs kept their promise" but "every real producer is registered at all"). Until then, board completeness = registry hygiene.
