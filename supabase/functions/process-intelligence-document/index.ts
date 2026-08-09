@@ -366,11 +366,18 @@ Deno.serve(async (req) => {
         'wildfire', 'evacuation alert', 'evacuation order',
       ],
     };
+    // DIAG-2026-08-08 / operator 2026-08-09 — BROAD provinces/regions REMOVED. The tier-2 fuzzy match
+    // accepted province-level geography as a proxy for asset PROXIMITY: a wildfire anywhere in
+    // "british columbia"/"canada" was attributed to every BC energy client (665 PECL no-anchor signals,
+    // 382 broad-geo wildfire). Only NAMED places near client assets remain, so tier-2 now fires on real
+    // proximity (wildfire+Fort St. John / +Montney / +Kitimat), never "wildfire+BC". Region-as-proxy-for-
+    // proximity anti-pattern; PECL had 18 locations + 7 assets — proximity was computable the whole time.
+    // Removed: canada, british columbia, bc, alberta, saskatchewan, northwest territories, yukon,
+    // first nation(s). Kept: named PECL/NE-BC places.
     const REGIONAL_ANCHORS = [
-      'canada', 'british columbia', 'bc ', ' bc\\.', 'alberta', 'saskatchewan',
-      'northwest territories', 'yukon', 'kitimat', 'fort st. john', 'fort st john',
+      'kitimat', 'fort st. john', 'fort st john',
       'prince rupert', 'haida gwaii', 'peace river', 'montney', 'duvernay',
-      'wet\'suwet\'en', 'first nation', 'first nations',
+      'wet\'suwet\'en',
     ];
 
     function matchClientKeywords(text: string, clients: any[]) {
