@@ -84,8 +84,15 @@ So *"B.C. declares state of emergency due to wildfires"* → `tier2:wildfire+bri
    for each, does the NEW matcher accept or reject. Correct ONCE, from the semantic verdict.
 3. **DISCLOSURE** — raise with PECL + CRT **after cutover, not before** (the conversation is materially
    different with the fix live vs validating). Target: within a week of Phase 3 cutover. Prepare nothing
-   yet; when there, want the floor/ceiling framing + the July regression traced to commit + shadow
-   evidence. Recorded as operator position.
+   yet; when there, want the floor/ceiling framing + shadow evidence + the accurate causal statement
+   (below). Recorded as operator position.
+
+**Accurate causal statement for disclosure (operator, 2026-08-09) — there is NO July regression:**
+*"A rule accepted province-level geography as a proxy for asset proximity, and the consequence became
+visible when fire season arrived."* The broad-anchor rule has been live since **2026-05-12** (f8cbe3a5,
+d28dd1a7); fire season made a **pre-existing defect measurable**, it did not introduce one. Do NOT frame
+it as "we shipped a bug in July." PECL had 18 locations + 7 assets — **proximity was computable the whole
+time; it was never computed.**
 
 ## Disposition
 Numbers only, per operator — **no corrections/quarantine yet.** Phase 3's stricter matcher
