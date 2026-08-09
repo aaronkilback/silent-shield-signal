@@ -84,7 +84,7 @@ export function tokenBoundaryMatch(haystackLower: string, phrase: string): boole
 /** A distinctive term is safe to match on token boundary alone (proper noun, acronym, or phrase).
  *  A single all-lowercase word, or a known common noun, is treated as a common-noun asset that
  *  needs a geo/entity anchor. */
-function isCommonNounAsset(assetRaw: string): boolean {
+export function isCommonNounAsset(assetRaw: string): boolean {
   const a = (assetRaw || "").trim();
   if (!a) return false;
   const tokens = a.split(/\s+/);

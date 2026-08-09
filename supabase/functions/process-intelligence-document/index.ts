@@ -3,7 +3,7 @@ import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
 import { enqueueJob } from "../_shared/queue.ts";
-import { matchItemToClients, type ShadowClient } from "../_shared/shadow-matcher.ts";
+import { matchItemToClients, tokenBoundaryMatch, isCommonNounAsset, type ShadowClient } from "../_shared/shadow-matcher.ts";
 import { shadowComposite, tier2Eligible, shadowSeverity, type Severity } from "../_shared/shadow-scorer.ts";
 
 // ── WO-GATE-KEYWORD-PRESCORE-01 Phase 2: forward-only ingest-funnel instrumentation ──
@@ -380,8 +380,18 @@ Deno.serve(async (req) => {
       'wet\'suwet\'en',
     ];
 
-    function matchClientKeywords(text: string, clients: any[]) {
+    function matchClientKeywords(text: string, clients: any[], deterministic: boolean) {
       const lowerText = text.toLowerCase();
+
+      // WO-GATE-PHASE3 deterministic cutover (2026-08-09, operator-approved). When `deterministic`:
+      //  • whole-TOKEN matching (kills substring fabrications — home->"homeless", cabin->"cabin crew"
+      //    only as a real token), via tokenBoundaryMatch;
+      //  • common-noun asset labels ("Home"-class) RETIRED from text matching entirely (they produced
+      //    the geo_pending noise — ruling 2026-08-09);
+      //  • tier-2 anchors already tightened to named places.
+      // When false, the LEGACY .includes() path runs unchanged — the kill switch
+      // (feature_flags.deterministic_matcher_enabled=false) reverts instantly without a redeploy.
+      const hit = (term: string) => deterministic ? tokenBoundaryMatch(lowerText, term) : lowerText.includes(term.toLowerCase());
 
       interface ClientScore {
         clientId: string;
@@ -396,13 +406,13 @@ Deno.serve(async (req) => {
         let score = 0;
         const matchedKeywords: string[] = [];
 
-        if (lowerText.includes(client.name.toLowerCase())) {
+        if (client.name && hit(client.name)) {
           score += 1000 + client.name.length;
           matchedKeywords.push(`client_name:${client.name}`);
         }
 
         for (const keyword of (client.monitoring_keywords || [])) {
-          if (keyword && lowerText.includes(keyword.toLowerCase())) {
+          if (keyword && hit(keyword)) {
             const wordCount = keyword.split(/\s+/).length;
             const keywordScore = keyword.length + (wordCount * 10);
             score += keywordScore;
@@ -411,14 +421,17 @@ Deno.serve(async (req) => {
         }
 
         for (const competitor of (client.competitor_names || [])) {
-          if (competitor && lowerText.includes(competitor.toLowerCase())) {
+          if (competitor && hit(competitor)) {
             score += competitor.length + 5;
             matchedKeywords.push(`competitor:${competitor}`);
           }
         }
 
         for (const asset of (client.high_value_assets || [])) {
-          if (asset && lowerText.includes(asset.toLowerCase())) {
+          if (!asset) continue;
+          // Deterministic cutover: common-noun asset labels are retired from text matching entirely.
+          if (deterministic && isCommonNounAsset(asset)) continue;
+          if (hit(asset)) {
             score += asset.length + 5;
             matchedKeywords.push(`asset:${asset}`);
           }
@@ -429,8 +442,8 @@ Deno.serve(async (req) => {
         if (score === 0) {
           const industry = (client.industry || '').toLowerCase();
           const tierKeywords = INDUSTRY_TIER_KEYWORDS[industry] || [];
-          const tierHits = tierKeywords.filter(k => lowerText.includes(k));
-          const anchorHits = REGIONAL_ANCHORS.filter(a => lowerText.includes(a));
+          const tierHits = tierKeywords.filter(k => hit(k));
+          const anchorHits = REGIONAL_ANCHORS.filter(a => hit(a));
           if (tierHits.length > 0 && anchorHits.length > 0) {
             // Low-confidence match — pass to AI gate to make the call.
             score = 10;
@@ -499,9 +512,18 @@ Deno.serve(async (req) => {
       }
     }
     
-    // PRIORITY 2: If no entity client, use keyword matching
+    // PRIORITY 2: If no entity client, use keyword matching.
+    // WO-GATE-PHASE3 cutover kill switch: read feature_flags.deterministic_matcher_enabled per run.
+    // Flip to false to instantly revert to the legacy .includes() matcher without a redeploy.
+    // Default false (legacy) if the flag can't be read — fail SAFE to the known-good path.
     if (clientMatches.length === 0) {
-      clientMatches = matchClientKeywords(document.raw_text || '', clients || []);
+      let deterministicMatcher = false;
+      try {
+        const { data: flag } = await supabase
+          .from('feature_flags').select('enabled').eq('key', 'deterministic_matcher_enabled').maybeSingle();
+        deterministicMatcher = flag?.enabled === true;
+      } catch (_) { deterministicMatcher = false; }
+      clientMatches = matchClientKeywords(document.raw_text || '', clients || [], deterministicMatcher);
     }
 
     // ── WO-GATE Phase 2: funnel instrumentation setup + parse-stage decision ──
