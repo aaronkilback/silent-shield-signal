@@ -17,6 +17,19 @@ Alarm: "BC Place joined Trent Reznor as invisible; both remediation notes point 
 3. **Genuine zero-coverage** is confined to fixtures + any real client with 0 keywords AND 0 entities (Trent Reznor — confirm it's a fixture). **No real client is dropped by the cap. PECL is covered.**
 4. **Watch:** BC Place trending down (95/30d but 7/7d, last 08-07) — monitor; may be news-cycle, not a gap.
 
+### A.1 — ACTIONS TAKEN 2026-08-09 (fixture demotion, operator GO)
+Demoted **5** fixtures `status active → inactive` (verified by id): `_qa_cipher_test_env`, `_invariant_client_a`, `_invariant_client_b`, `Trent Reznor`, `_demo_prospect_alpha`. **HELD `__platform_security__`** — it is NOT a test fixture: `wraith-security-advisor` (L774-780) looks it up with `.eq('status','active')` and **skips security-signal emission if not found active**. Demoting it would break WRAITH security-findings routing. It is an *internal* client, not a customer — the correct way to exclude it from *customer* metrics is an `is_internal` flag, not demotion (deferred; flagged to operator).
+- **Active clients now = 4:** PECL (784/30d), Kilbacks (605), BC Place (95) = **3 real customers** + `__platform_security__` (0, internal WRAITH sentinel).
+- **What changes 9→4:** `monitor-news`/`monitor-news-google` iterate `status='active'` → they stop generating search queries for the 5 demoted fixtures (all had 0 signals/30d → zero coverage loss, less API waste). Any dashboard/health metric computed over active clients now reflects 3 real customers instead of 9 diluted by scaffolding.
+
+### A.2 — PECL keyword cleanup (item 1): monitoring_keywords are CLEAN — correction
+Investigated per operator hypothesis "PECL's monitoring_keywords include generic terms (energy/pipeline/lng)." **They do NOT.** PECL's 42 keywords are all specific/well-formed (`Petronas Canada`, `LNG Canada`, `Coastal GasLink`, `Montney gas`, `Wet'suwet'en`, `Northeast BC wildfire threat`, …). **There is nothing generic to remove.** (This corrects an inaccurate earlier statement that the residual was "generic direct keywords energy/pipeline/lng" — it is not.)
+- **30d no-anchor = 567**, composed of: **535 broad-`tier2:` compounds** (`wildfire+canada/BC`, `pipeline+alberta`) — **already fixed by the deployed anchor tighten** (they stop going forward) — **+ 29 competitor-name matches** + 3 other.
+- The 29 come from **`competitor_names`** (PECL has 9: Shell, Imperial, Suncor, CNRL, Cenovus, Ovintiv, ARC, Tourmaline, Paramount), matched directly. **The only remaining lever is competitor handling** — should competitor mentions surface as PECL's *own* signals (no PECL nexus), or be labeled/separated? That is a config decision, not a keyword removal, and not what Phase 3 addresses. Report-only; no change.
+
+### A.3 — WATCH: BC Place decline (real client)
+BC Place 95/30d but only **7/7d**, last signal 2026-08-07. Real client, real decline — its own look once the above lands (news-cycle vs a genuine coverage gap; check its keyword/feed matching).
+
 ## B. Knowledge freshness — 84% stale is a FINDING, filed as "success"
 Alarm: audit reports **837/1000 stale, avg decayed confidence 0.46, filed as successful remediation.**
 
