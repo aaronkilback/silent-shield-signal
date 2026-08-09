@@ -55,4 +55,23 @@ This is item (a) of the recorded build order; (b) synthetic-activity-removal, (c
 
 **Also (ruling 1, 2026-08-07):** `monitor-community-outreach` DE-REGISTERED (phantom; never had a prod cron) — registry row deleted, heartbeat allowlisted as retired. Re-register deliberately with an output contract if it matters later.
 
-**HOLD state (2026-08-07):** deterministic legs burning in; deliver the 48h report (~2026-08-09 15:00 UTC: fabrication kill per client, geo_pending per client, rows/swallowed/ratio, signals==insert parity) + first-real-run spend, THEN continue slices 6–7. No `signals` writes at any step until the operator rules cutover.
+## 48h RESULTS + CUTOVER RECOMMENDATION (2026-08-09, 54h window, 870 rows)
+| Criterion | Threshold | Result | Met? |
+|---|---|---|---|
+| 1. Recall gain (real vs noise) | real, low-noise | 12 recalls, ALL semantic; **low precision** (7 B.C. Lions game recaps, 1 junior-hockey mis-attribution) | **NO** |
+| 2. False-positive rate | acceptable | semantic recall majority not genuine security nexus | **NO** (semantic leg) |
+| 3. Both-accept agreement | — | 2 both-matched | n/a |
+| 4. Volume ceiling ≤ ~3× old | ≤3× | shadow admits **14 vs live 105 = 0.13×** (stricter, not looser) | **YES** |
+| 5. Severity dist ~18% high+crit | ~18% | **untestable** — all 14 shadow-matched are semantic-recovered w/ no model severity → 100% 'low' | **NO (untestable)** |
+| 6. Composite coverage ~100% + tier-2 proj | ~100% | 14/14 composite-scored, 14/14 tier-2-eligible (projection on small n) | **YES (projection)** |
+| 7. ★ 611/665 semantic verdict | each accept/reject | **batch pass NOT BUILT** (slice 6) | **NO** |
+
+Also: **fabrication kill 103** (PECL 54, Kilbacks 49); **geo_pending 24, 100% "Home"/Kilbacks → "Home-is-noise" read HOLDS**; **swallowed 0**; write-isolation intact (shadow 870 rows → **0 signals**).
+
+**RECOMMENDATION — PARTIAL cutover, not full (not rounding toward go):**
+- **CUTOVER the DETERMINISTIC matcher** (token-boundary + geo-anchor + retire common-noun asset labels like "Home"). This is proven: kills fabrication (103/54h), volume far under ceiling, isolation clean, geo-noise confirmed. The anchor tighten (already live) is the first piece of this.
+- **HOLD the SEMANTIC leg from the live gate** — precision too low (recovers sports recaps + a hockey miss); tune before it may ADD to live matching.
+- **Severity recalibration: not yet trustable** — no representative sample (all matched were semantic-recovered/low). Needs matched items carrying model severity before criterion 5 can be judged.
+- **Build slice 6 (611/665 batch pass) BEFORE the correction lands** — criterion 7 is unmet; the evidence-based verdict requires running the matcher (deterministic + semantic) over those stored sets. Do not correct the 611/665 until then.
+
+## HOLD state (2026-08-07):** deterministic legs burning in; deliver the 48h report (~2026-08-09 15:00 UTC: fabrication kill per client, geo_pending per client, rows/swallowed/ratio, signals==insert parity) + first-real-run spend, THEN continue slices 6–7. No `signals` writes at any step until the operator rules cutover.
