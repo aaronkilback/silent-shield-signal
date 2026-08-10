@@ -34,5 +34,13 @@ Then Kilbacks needs only its `client_geo_assets` rows (already stored: house/cab
 - Facility **operational thresholds** (FRP/HFI/FACILITY_MATCH_KM) assume a gas plant.
 - "Reputational and operational exposure" language — a family faces a life-safety threat, not reputational exposure.
 
+## BUILD STATUS (greenlit 2026-08-10)
+- ✅ **Item 1 — flaring gate DONE + PROVEN (live).** `classifyHotspot` now takes `{assetType, seasonOverride}`; `isIndustrialAssetType()` — default/unknown = industrial (PECL bbox behaviour UNCHANGED, byte-identical); a **non-industrial (household) context returns `wildfire` before ANY industrial heuristic** (off-season override, flare-signature, FIRMS-static, facility proximity all bypassed). Self-test `?selftest=household_flaring` (emits nothing): a hotspot 5 km from the Kaleden house, off-season, HFI 1500 → **household context = wildfire (emits); legacy default = industrial_flaring (suppressed); PASS=true.** The exact suppression danger, neutralized for households, provable, PECL unaffected. Deployed prod.
+- ⏳ **Item 2 — geography from `client_geo_assets` via `ST_DWithin`** (retire OPS_BBOX / ZONE_LOCATION_KEYWORDS / hardcoded facilities; fold PECL's 9 gas plants into `client_geo_assets` as industrial rows). **PECL PARITY is the hard gate — same signals, same attribution, before/after, or it doesn't cut over.** NEXT.
+- ⏳ **Item 3 — framing by asset_type** (household = life-safety/evac/access; industrial = operational/reputational).
+- ⏳ **Item 4 — output contract** (BCWS order/alert in a client's radius + nothing emitted = FAILURE; registered cron; attempt heartbeat before gate).
+- ⏳ **Item 5 — enable Kilbacks** (geo rows already stored — the easy part once 1-4 land).
+- **Verification owed:** PECL count+attribution before/after same window; Kilbacks live run of all 3 sources against real coords (or plainly "quiet, nothing active within 30 km today"); the synthetic test (done, item 1).
+
 ## Recommendation — ONE client-agnostic engine, off the shared substrate
 Generalize `monitor-wildfires`: geography + attribution from `client_geo_assets` (`ST_DWithin`), flaring/industrial logic gated to industrial `asset_type`, framing by asset type. Retire `OPS_BBOX` / `ZONE_LOCATION_KEYWORDS` / the duplicated `INDUSTRIAL_FACILITIES` (fold PECL's facilities into `client_geo_assets` as industrial-typed rows). Reuse the client-agnostic core that already exists (`bcws.ts`, CWFIS WFS). Output contract (operator): BCWS ORDER within a client's radius + nothing emitted = FAILURE. **This serves Kilbacks AND PECL from one path — do not build a parallel household monitor.** SCOPE recorded; build on approval.

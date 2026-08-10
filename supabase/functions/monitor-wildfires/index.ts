@@ -331,11 +331,36 @@ interface Classification {
   note?: string;
 }
 
+// WO-WILDFIRE-GENERALIZE item 1 (2026-08-10, operator): an asset_type is INDUSTRIAL if it is a gas
+// plant / pipeline / LNG / operations / facility / corridor / HQ. Anything else (residence, school,
+// household) is NON-industrial. Default (no asset_type known — the legacy PECL bbox scan) is treated
+// as industrial to PRESERVE current PECL behaviour exactly. The whole point: a NON-industrial asset's
+// thermal anomaly must NEVER be reclassified as industrial under ANY code path (off-season override,
+// flare-signature, FIRMS-static, facility proximity) — that path could suppress a real fire near a home.
+function isIndustrialAssetType(assetType?: string | null): boolean {
+  if (!assetType) return true; // legacy/default = industrial (PECL bbox) — unchanged behaviour
+  return /gas_plant|pipeline|lng|operations|facility|corridor|hq|industrial|refinery|terminal|plant|well|compressor/i.test(assetType);
+}
+
 function classifyHotspot(
   hs: CWFISHotspot,
   firmsStaticSources: Array<{ lat: number; lon: number }> = [],
+  opts?: { assetType?: string | null; seasonOverride?: ReturnType<typeof getFireSeason> },
 ): Classification {
-  const season = getFireSeason();
+  const season = opts?.seasonOverride ?? getFireSeason();
+
+  // ── WO-WILDFIRE-GENERALIZE item 1 — HOUSEHOLD SAFETY GATE (before ALL industrial heuristics) ──
+  // If this hotspot is being evaluated in the context of a NON-industrial asset (a home, a school),
+  // NO industrial reclassification may apply. A household has no flare stacks; an off-season low-HFI
+  // reading near a house is a real fire until proven otherwise, never an "industrial source". This
+  // makes suppression of a household-proximate anomaly IMPOSSIBLE by construction.
+  if (!isIndustrialAssetType(opts?.assetType)) {
+    return {
+      type: 'wildfire',
+      confidence: 'high',
+      note: `Non-industrial asset context (${opts?.assetType}) — industrial reclassification disabled (WO-WILDFIRE-GENERALIZE item 1). A thermal anomaly near a household is treated as a real fire; ${season.label}.`,
+    };
+  }
 
   // FIRMS overlay: if NASA FIRMS MODIS has classified this lat/lon as type=2
   // (static land source / gas flare) within the last 24h, that is authoritative
@@ -773,6 +798,23 @@ function buildFlaringSignalText(opts: {
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
+
+  // ── WO-WILDFIRE-GENERALIZE item 1 SELF-TEST — proves the household flaring gate; EMITS NOTHING ──
+  // ?selftest=household_flaring : a synthetic hotspot 5 km from the Kaleden house, OFF-SEASON, HFI 1500
+  // (would trip the off-season industrial override L408). Shows household context -> wildfire (emits)
+  // vs legacy/default context -> industrial_flaring (suppressed). The contrast proves the gate.
+  if (new URL(req.url).searchParams.get('selftest') === 'household_flaring') {
+    const offSeason = { isFireSeason: false, isShoulder: false, label: 'off-season (Nov–Mar)' };
+    const hs: any = { lat: 49.416, lon: -119.622, frp: 60, hfi: 1500, fwi: 3, rh: 55, temp: -5, ws: 5, wd: 180, pcp: 0 };
+    const household = classifyHotspot(hs, [], { assetType: 'residence', seasonOverride: offSeason });
+    const legacyDefault = classifyHotspot(hs, [], { seasonOverride: offSeason }); // no assetType = legacy PECL bbox default
+    return new Response(JSON.stringify({
+      test: 'household flaring gate — off-season, HFI 1500, 5km from Kaleden house (49.371377,-119.622725)',
+      household_residence: { type: household.type, emits_signal: household.type !== 'industrial_flaring', note: household.note },
+      legacy_default: { type: legacyDefault.type, emits_signal: legacyDefault.type !== 'industrial_flaring', note: legacyDefault.note },
+      PASS: household.type === 'wildfire' && legacyDefault.type === 'industrial_flaring',
+    }, null, 2), { headers: { 'Content-Type': 'application/json' } });
+  }
 
   try {
     const supabase = createServiceClient();
