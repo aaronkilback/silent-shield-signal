@@ -882,8 +882,9 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
     const intelligence = JSON.parse(toolCall.function.arguments);
 
     const results = {
-      entities_extracted: 0,
-      entities_confirmed: 0,
+      entities_extracted: 0,   // retained for output-shape compat; extraction no longer writes entities
+      entities_confirmed: 0,   // retired: extraction no longer auto-confirms (WO-ENTITY-EXTRACTION-POLLUTION #4)
+      entities_proposed: 0,    // NEW: entities proposed to the review queue (entity_suggestions)
       signals_created: 0,
       mentions_created: 0
     };
@@ -942,88 +943,39 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
     
     console.log(`[EntityDedup] ${(intelligence.entities || []).length} raw → ${dedupedEntities.length} after intra-batch dedup`);
     
-    // 2. Process deduped entities against DB
+    // 2. Process deduped entities.
+    // WO-ENTITY-EXTRACTION-POLLUTION #1 + #4 (operator GO 2026-08-10):
+    //   • Extraction NEVER writes `entities` directly and NEVER auto-confirms.
+    //     No entity is born active. The old flow (INSERT 'suggested' active +
+    //     UPDATE 'confirmed' on any fuzzy substring match) IS the bypass that
+    //     produced 4,720 unreviewed PECL "entities" and the auto-confirm-on-
+    //     second-mention that made 'confirmed' mean "seen twice", not "reviewed".
+    //   • Extraction now PROPOSES to `entity_suggestions` (the existing operator
+    //     review queue), deduped so it does not flood the backlog.
+    //   • Only a REVIEWED/CURATED entity is a real link target — an 'extracted'
+    //     row must NOT confirm or re-link (it is being retired).
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const docTenantId = (document as any)?.tenant_id ?? (document as any)?.metadata?.tenant_id ?? null;
+    const docClientId = clientMatches[0]?.clientId ?? null;
     for (const entity of dedupedEntities) {
-      let entityId = entity.matched_entity_id;
-      
-      // Validate matched_entity_id is a real UUID
-      if (entityId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entityId)) {
-        entityId = undefined;
-      }
-      
-      // Cross-DB dedup: try exact match, then normalized match
+      let entityId = (entity.matched_entity_id && UUID_RE.test(entity.matched_entity_id))
+        ? entity.matched_entity_id : undefined;
+
+      // Match against a REVIEWED/CURATED entity only (real link target).
       if (!entityId) {
         const { data: exact } = await supabase
           .from('entities')
-          .select('id, confidence_score')
+          .select('id')
           .ilike('name', entity.name)
           .eq('type', entity.type)
+          .in('visibility_class', ['reviewed', 'curated'])
           .limit(1)
           .maybeSingle();
-        
-        if (exact) {
-          entityId = exact.id;
-        } else {
-          // Fuzzy: search broader and compare normalized names
-          const searchTerm = entity.name.split(/\s+/)[0]; // first word
-          if (searchTerm.length >= 3) {
-            const { data: candidates } = await supabase
-              .from('entities')
-              .select('id, name, confidence_score')
-              .eq('type', entity.type)
-              .ilike('name', `%${searchTerm}%`)
-              .limit(20);
-            
-            if (candidates) {
-              for (const c of candidates) {
-                const cNorm = normalizeEntityName(c.name);
-                const eNorm = normalizeEntityName(entity.name);
-                // Check containment or high word overlap
-                if (cNorm === eNorm || cNorm.includes(eNorm) || eNorm.includes(cNorm)) {
-                  entityId = c.id;
-                  console.log(`[EntityDedup] Cross-DB match: "${entity.name}" → existing "${c.name}"`);
-                  break;
-                }
-              }
-            }
-          }
-        }
-        
-        if (entityId) {
-          // Update confidence on match
-          await supabase
-            .from('entities')
-            .update({ 
-              confidence_score: Math.min(entity.confidence, 1),
-              entity_status: 'confirmed'
-            })
-            .eq('id', entityId);
-          results.entities_confirmed++;
-        }
+        if (exact) entityId = exact.id;
       }
 
-      // Create new entity only if truly novel
-      if (!entityId) {
-        const { data: newEntity, error: entityError } = await supabase
-          .from('entities')
-          .insert({
-            name: entity.name,
-            type: entity.type,
-            confidence_score: entity.confidence,
-            entity_status: 'suggested',
-            is_active: true
-          })
-          .select('id')
-          .single();
-
-        if (!entityError && newEntity) {
-          entityId = newEntity.id;
-          results.entities_extracted++;
-        }
-      }
-
-      // Create mention (with dedup check)
       if (entityId) {
+        // Real (reviewed/curated) entity → keep the mention link. No status write.
         const { data: existingMention } = await supabase
           .from('document_entity_mentions')
           .select('id')
@@ -1031,7 +983,6 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
           .eq('document_id', documentId)
           .limit(1)
           .maybeSingle();
-        
         if (!existingMention) {
           await supabase
             .from('document_entity_mentions')
@@ -1040,11 +991,47 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
               document_id: documentId,
               mention_text: entity.mention_text || entity.name,
               position_start: entity.position_start || 0,
-              confidence: entity.confidence
+              confidence: entity.confidence,
             })
             .then(() => results.mentions_created++);
         }
+        continue;
       }
+
+      // Novel (or only an 'extracted' row exists) → PROPOSE to the review queue,
+      // deduped: skip if a pending/approved suggestion OR any entity already covers it.
+      const { data: dupSug } = await supabase
+        .from('entity_suggestions')
+        .select('id')
+        .ilike('suggested_name', entity.name)
+        .eq('suggested_type', entity.type)
+        .in('status', ['pending', 'approved'])
+        .limit(1)
+        .maybeSingle();
+      if (dupSug) continue;
+      const { data: dupEnt } = await supabase
+        .from('entities')
+        .select('id')
+        .ilike('name', entity.name)
+        .eq('type', entity.type)
+        .limit(1)
+        .maybeSingle();
+      if (dupEnt) continue;
+
+      const { error: propErr } = await supabase
+        .from('entity_suggestions')
+        .insert({
+          suggested_name: entity.name,
+          suggested_type: entity.type,
+          source_type: 'archival_document',
+          source_id: documentId,
+          confidence: Math.min(entity.confidence ?? 0, 1),
+          context: entity.mention_text || null,
+          client_id: docClientId,
+          tenant_id: docTenantId,
+          // status defaults to 'pending' — awaits operator review (no active entity born).
+        });
+      if (!propErr) results.entities_proposed = (results.entities_proposed ?? 0) + 1;
     }
 
     // Process signals - create one per matched client
