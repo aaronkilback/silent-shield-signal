@@ -75,16 +75,23 @@ Deno.serve(async (req) => {
     // service-role POST is the proven path and surfaces the real response body on error).
     const SB_URL = Deno.env.get("SUPABASE_URL")!;
     const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const emit = async (body: any) => {
+    const emit = async (body: any): Promise<string | null> => {
       try {
         const r = await fetch(`${SB_URL}/functions/v1/ingest-signal`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SB_KEY}`, "apikey": SB_KEY },
           body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
         });
-        if (!r.ok) { emitErrors++; if (emitErrDetails.length < 3) emitErrDetails.push(`${r.status}: ${(await r.text()).slice(0, 180)}`); return; }
+        if (!r.ok) { emitErrors++; if (emitErrDetails.length < 3) emitErrDetails.push(`${r.status}: ${(await r.text()).slice(0, 180)}`); return null; }
         emitted++;
-      } catch (e) { emitErrors++; if (emitErrDetails.length < 3) emitErrDetails.push("throw: " + (e instanceof Error ? e.message : String(e)).slice(0, 180)); }
+        const j = await r.json().catch(() => ({} as any));
+        return j?.signal_id ?? null;
+      } catch (e) { emitErrors++; if (emitErrDetails.length < 3) emitErrDetails.push("throw: " + (e instanceof Error ? e.message : String(e)).slice(0, 180)); return null; }
+    };
+    // A household evacuation ORDER is life-safety and MUST be critical (operator rule) — ingest-signal's
+    // classifier downgrades it, so force it directly. Non-negotiable for households in an order area.
+    const forceCritical = async (signalId: string | null) => {
+      if (signalId) { try { await supabase.from("signals").update({ severity: "critical" }).eq("id", signalId); } catch (_) { /* best-effort */ } }
     };
 
     for (const p of points) {
@@ -96,20 +103,52 @@ Deno.serve(async (req) => {
         ? (order ? "LIFE-SAFETY: prepare to evacuate. Confirm your route and go-bag." : "Be ready to leave on short notice; watch official BCWS/EmergencyInfoBC updates.")
         : "Operational/reputational exposure — assess indirect impact and brief upward.";
 
-      // 1. BCWS evacuations
-      for (const e of await findBCWSEvacuationsNear(lat, lng, radius)) {
-        if (e.status === "Order") ordersInRadius++; else if (e.status === "Alert") alertsInRadius++;
-        findings.push({ kind: "evac", status: e.status, name: e.event_name, km: e.distance_km, asset: p.asset_name, client: p.client_name });
-        await emit({
-          text: `BCWS Evacuation ${e.status}: ${e.event_name || e.order_alert_name || "affected area"} — ${e.distance_km} km from ${noun}. Agency: ${e.issuing_agency || "n/a"}.${e.homes ? " " + e.homes + " homes." : ""} ${frame(e.status === "Order")}`,
-          client_id: p.client_id, location: `${p.asset_name} (${lat},${lng})`, skip_relevance_gate: true,
-          severity: e.status === "Order" ? "critical" : "high", fallback_severity: e.status === "Order" ? "critical" : "high",
-          fallback_category: e.status === "Order" ? "active_threat" : "natural_disaster",
-          source_url: "https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/Evacuation_Orders_and_Alerts/FeatureServer",
-          raw_json: { signal_origin: "monitor-geo-wildfire", source: "BCWS_evacuation", asset_type: p.asset_type,
-            proximity: { asset: p.asset_name, distance_km: e.distance_km, radius_km: radius }, evac_status: e.status, sys_id: e.sys_id,
-            is_threat_relevant: true, severity_hint: e.status === "Order" ? "critical" : "high" },
-        });
+      // 1. BCWS evacuations — ORDER vs ALERT must never be ambiguous for a household (life-safety):
+      //    a household gets ONE aggregated signal reporting the HIGHEST status within radius, naming
+      //    every Order and Alert area with distance. Any Order in radius ⇒ severity critical, Order-led.
+      const EVAC_SRC = "https://services6.arcgis.com/ubm4tcTYICKBpist/arcgis/rest/services/Evacuation_Orders_and_Alerts/FeatureServer";
+      const evacs = await findBCWSEvacuationsNear(lat, lng, radius);
+      const orders = evacs.filter((e) => e.status === "Order");
+      const alerts = evacs.filter((e) => e.status === "Alert");
+      ordersInRadius += orders.length; alertsInRadius += alerts.length;
+      const areaLabel = (e: any) => `${e.order_alert_name || e.event_name || "affected area"} (${e.distance_km} km${e.issuing_agency ? ", " + e.issuing_agency : ""})`;
+
+      if (evacs.length > 0) {
+        if (household) {
+          const hasOrder = orders.length > 0;
+          const sev = hasOrder ? "critical" : "high";
+          const nearestKm = evacs[0].distance_km;
+          const lead = hasOrder
+            ? `🚨 EVACUATION ORDER active within ${radius} km of your ${p.asset_name} — if you are in an ORDER area, LEAVE NOW. ORDER: ${orders.map(areaLabel).join("; ")}.${alerts.length ? ` Also under ALERT (prepare to leave): ${alerts.map(areaLabel).join("; ")}.` : ""}`
+            : `EVACUATION ALERT within ${radius} km of your ${p.asset_name} — be ready to leave on short notice. ALERT: ${alerts.map(areaLabel).join("; ")}.`;
+          findings.push({ kind: "evac_household", highest: hasOrder ? "Order" : "Alert", orders: orders.length, alerts: alerts.length, nearest_km: nearestKm, asset: p.asset_name, client: p.client_name });
+          const sid = await emit({
+            text: `${lead} Nearest evacuation ${nearestKm} km. Verify + get routes at emergencyinfobc.gov.bc.ca.`,
+            client_id: p.client_id, location: `${p.asset_name} (${lat},${lng})`, skip_relevance_gate: true,
+            severity: sev, fallback_severity: sev, fallback_category: hasOrder ? "active_threat" : "natural_disaster",
+            source_url: EVAC_SRC,
+            raw_json: { signal_origin: "monitor-geo-wildfire", source: "BCWS_evacuation", asset_type: p.asset_type,
+              proximity: { asset: p.asset_name, nearest_km: nearestKm, radius_km: radius }, highest_status: hasOrder ? "Order" : "Alert",
+              orders: orders.map((e) => ({ area: e.order_alert_name || e.event_name, km: e.distance_km, agency: e.issuing_agency, sys_id: e.sys_id })),
+              alerts: alerts.map((e) => ({ area: e.order_alert_name || e.event_name, km: e.distance_km, agency: e.issuing_agency, sys_id: e.sys_id })),
+              is_threat_relevant: true, severity_hint: sev },
+          });
+          if (hasOrder) await forceCritical(sid); // household Order = critical, non-negotiable
+        } else {
+          // Industrial: per-polygon (unchanged during the parallel window; PECL framing).
+          for (const e of evacs) {
+            findings.push({ kind: "evac", status: e.status, name: e.event_name, km: e.distance_km, asset: p.asset_name, client: p.client_name });
+            await emit({
+              text: `BCWS Evacuation ${e.status}: ${e.event_name || e.order_alert_name || "affected area"} — ${e.distance_km} km from ${noun}. Agency: ${e.issuing_agency || "n/a"}.${e.homes ? " " + e.homes + " homes." : ""} ${frame(e.status === "Order")}`,
+              client_id: p.client_id, location: `${p.asset_name} (${lat},${lng})`, skip_relevance_gate: true,
+              severity: e.status === "Order" ? "critical" : "high", fallback_severity: e.status === "Order" ? "critical" : "high",
+              fallback_category: e.status === "Order" ? "active_threat" : "natural_disaster", source_url: EVAC_SRC,
+              raw_json: { signal_origin: "monitor-geo-wildfire", source: "BCWS_evacuation", asset_type: p.asset_type,
+                proximity: { asset: p.asset_name, distance_km: e.distance_km, radius_km: radius }, evac_status: e.status, sys_id: e.sys_id,
+                is_threat_relevant: true, severity_hint: e.status === "Order" ? "critical" : "high" },
+            });
+          }
+        }
       }
 
       // 2. BCWS active fires
