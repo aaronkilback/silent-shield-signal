@@ -451,11 +451,14 @@ Deno.serve(async (req) => {
 
     console.log(`Content length: ${content.length} characters`);
 
-    // Fetch existing entities for context
+    // Fetch existing entities for context.
+    // WO-ENTITY-EXTRACTION-POLLUTION (2026-08-10): reviewed/curated ONLY — never
+    // feed extraction-born rows back into the extraction prompt (feedback loop).
     const { data: existingEntities } = await supabase
       .from('entities')
       .select('id, name, type, aliases')
       .eq('is_active', true)
+      .in('visibility_class', ['reviewed', 'curated'])
       .limit(100);
     
     const entityContext = (existingEntities || []).map(e => 

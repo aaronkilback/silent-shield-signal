@@ -805,11 +805,14 @@ Return the full extracted text and/or description.`
 
     console.log(`Text content ready for AI analysis (${textContent.length} chars)`);
 
-    // Fetch existing entities for matching (limit to most relevant ones)
+    // Fetch existing entities for matching (limit to most relevant ones).
+    // WO-ENTITY-EXTRACTION-POLLUTION (2026-08-10): reviewed/curated ONLY — never
+    // feed extraction-born rows back into the extraction prompt (feedback loop).
     const { data: existingEntities } = await supabase
       .from('entities')
       .select('id, name, type, aliases')
       .eq('is_active', true)
+      .in('visibility_class', ['reviewed', 'curated'])
       .order('created_at', { ascending: false })
       .limit(50); // Only send most recent 50 entities to keep prompt size manageable
     

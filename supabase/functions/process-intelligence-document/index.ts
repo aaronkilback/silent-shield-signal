@@ -307,11 +307,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fetch existing entities for context
+    // Fetch existing entities for context.
+    // WO-ENTITY-EXTRACTION-POLLUTION (2026-08-10): read ONLY operator-reviewed /
+    // curated entities. Extraction-born rows (visibility_class='extracted') must
+    // NOT feed the extraction prompt — that is the feedback loop that let 4,720
+    // auto-extracted PECL "entities" (NFL QBs, Trump, "firefighters") steer what
+    // the system believes PECL is about. Breaks the loop at the context edge.
     const { data: existingEntities } = await supabase
       .from('entities')
       .select('id, name, type, aliases, entity_status')
       .eq('is_active', true)
+      .in('visibility_class', ['reviewed', 'curated'])
       .limit(200);
 
     const entityContext = (existingEntities || [])
