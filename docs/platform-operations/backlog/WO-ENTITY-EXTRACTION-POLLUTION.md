@@ -55,6 +55,33 @@ The claim "client entities require operator approval before they become active" 
 
 **This changes the fix (as the operator predicted the two cases would):** not "work the backlog" (that is the separate `entity_suggestions` stream). The fix is **route extraction THROUGH the existing queue** — `process-intelligence-document` / `process-stored-document` / `process-security-report` propose to `entity_suggestions` instead of direct-inserting into `entities`; `entityContext` reads **`visibility_class='reviewed'` / operator-curated only**. The mechanism already exists (Path A) — extraction simply doesn't use it. This is exactly the operator's lean: entity lists operator-curated only, extraction proposes to a review queue rather than writing directly.
 
+## GO EXECUTED 2026-08-10 — status of the 5 items
+1. **Write path (LIVE):** `process-intelligence-document` now PROPOSES to `entity_suggestions` (deduped), never inserts `entities`, never auto-confirms. It was the SOLE direct-writer of the three named functions (`process-stored-document` + `process-security-report` already propose). **New finding:** 3 more direct-writers to scope — `extract-predicted-events` (automated 'event' entities, same class), `osint-entity-scan` (`is_active:false`, less harmful), `agent-chat` `create_entity` (operator-initiated, legitimate — tag `visibility_class='curated'`).
+2. **entityContext scoped (LIVE):** all 3 read `visibility_class IN ('reviewed','curated')` — 96 rows, not 4,732 extracted. Loop broken at the context edge. Deployed.
+3. **4,720 NOT purged** — inert now that context is scoped. Curated list below for operator approval.
+4. **Auto-confirm RETIRED** (#4): the `UPDATE entity_status='confirmed'` on fuzzy substring match is gone. `'confirmed'` no longer means "seen twice." (Rename/retire the value itself — see below.)
+
+## #3 REPORT — proposed curated PECL list (operator approves; no rule guesses)
+**Existing curated set = 25 (all human-created), already the trusted core** — real PECL people + operational locations:
+- **People (12):** Brian Plontke, Mark Fitzgerald, Rodney Stephenson, Joe Leonard, Kelly Prevost, Mazuwin Bt A Karim, Nick Vashouk, Olga MacBeath, Shannon Young, Ephreim Capitulo, Ashley Callingbull (Indigenous activist), Amber Bracken (photojournalist, CGL/Wet'suwet'en coverage).
+- **Locations (12):** PECL operational sites — Camp 132, Royal Camp 109, Mile 132 Road, 109 Road, b-32-b Compressor, D-035-D Water Facility, well-pad grid refs.
+- **Org (1):** "Tourmailne" → **fix spelling** to Tourmaline (a peer producer; belongs as competitor).
+
+**Propose PROMOTING from the extracted pile (genuine, PECL-specific orgs):** LNG Canada (PECL's own project — currently fragmented across 3 rows, 81 mentions), Petronas (parent, 17), TC Energy (23), Coastal GasLink, Trans Mountain (14), Peace River Regional District (15), BC Energy Regulator (14). → **~7 orgs.**
+
+**Proposed list ≈ 32 entities. Under 50, as expected.** For approval — I will not auto-apply.
+
+**Explicitly EXCLUDE (the noise, made vivid by mention count):** the MOST-mentioned "PECL entities" are `BC Lions` (58), `2026 FIFA World Cup` (48), `WestJet` (34), `Danielle Smith` (104), `Mark Carney` (98), `David Eby` (63), `Donald Trump` (18) — sports/travel/national-politics. "BC Lions" and "FIFA World Cup" outrank "Petronas" (17) itself in the current list. News orgs (National Observer, The Narwhal, CBC) are SOURCES, not entities.
+
+## #5 REPORT — the 5,831 pending queue: revive with 3 mechanical fixes, or it stays unusable
+**What it is:** 5,831 pending but only **888 distinct names** (6.5× duplication); **1,347 duplicate an existing entity**; by type: person 3,189, **domain 1,242 + other 1,185 (42% are NOT entities** — `personal.com`, `pers0nal.com`, `default.jpg`, `i.cbc.ca`, `@LAM_Mustangs`, partial fragments `Prime Minister Mark`). A queue nobody opened since 2026-06-15 — and if extraction now proposes into it unfiltered, it grows faster than review.
+
+**What makes it tractable (design — build after approval):**
+1. **Auto-reject obvious non-entities (deterministic, no LLM):** `suggested_type IN ('domain','other')` matching a URL/hostname/filename pattern (`.com/.ca/.jpg`, `www.`, leading `@`) → auto-reject. Kills ~40% immediately. Partial-title fragments ("Prime Minister Mark") → auto-reject/merge.
+2. **Collapse duplicates:** dedup to one review item per `(normalized_name, type)` → 5,831 → ~888. Auto-resolve the 1,347 that already match an entity (link or drop; never re-review).
+3. **Batch approval by pattern:** group the remainder by `type + client + source` → "42 PECL well-pad locations — approve all as infrastructure" is one click, not 42. 
+Net: 5,831 → a few hundred distinct real decisions, batchable to minutes. **Also add these same guards at PROPOSE time** (in the write path just shipped) so the queue never re-inflates — auto-reject non-entities and skip dup names before insert. Without (1)-(3) the queue is documentation, not a control — the very defect this WO records.
+
 ## Priority
 Higher than a hygiene chore: entities are injected into the extraction prompt (soft loop is live) and are the intended anchor for future proximity/social layers ([[WO-SOCIAL-PROXIMITY-LAYER]] fire-name tracking, [[WO-PRINCIPAL-LOCATION-TRACKING]]). A polluted entity list cannot be trusted as an anchor until cleaned + the loop gated. **Blocks entity-as-anchor adoption.**
 
