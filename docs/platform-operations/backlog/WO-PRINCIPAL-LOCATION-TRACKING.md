@@ -55,4 +55,19 @@ Two options, both over the existing Twilio SMS channel:
 - No mobile app. No background/continuous capture. No standing location store.
 - Response tied to `event_id`, hard-purged on event closure + tail.
 
-**Deliverable = this position paper. No code. The phishing answer (§3) is the ship-gate; the retention invariant (§4) is the "did we accidentally rebuild continuous tracking" gate. Both must hold or it doesn't ship.**
+## REFINEMENTS (operator, 2026-08-10) — accepted, mandatory
+
+### Onboarding solves most of the phishing problem (record in scope)
+AEGIS is added to the principal's contacts at onboarding, so requests arrive under a **known name** and the **protocol is pre-agreed**. This also *teaches the right instinct*: **AEGIS always appears as AEGIS — an unknown number asking where you are is hostile by definition.** Onboarding scope MUST include: (a) saving the AEGIS contact; (b) agreeing the protocol; (c) being told the **fixed domain** (below); (d) being told explicitly that **we will never ask for location without naming why.**
+
+> **That last line is the product.** A location request that explains itself is protective intelligence; one that does not is the thing we protect them from.
+
+Two gaps onboarding does NOT close — both mandatory:
+1. **SPOOFING.** SMS sender IDs can be forged and can display under a saved contact. So the message must carry something an attacker cannot reproduce: **the triggering event, stated specifically and independently verifiable.** *"Evacuation order issued for Kaleden at 14:20"* is checkable against BCWS; *"where are you"* is not, regardless of sender. **RULE: a location request must always name its trigger.**
+2. **THE LINK.** If the request carries a geolocation URL, that link is the attack surface. **Fixed domain given at onboarding; no shorteners; no per-message domains.** State it in the protocol so a principal can be told: *the link is always this domain — anything else is not us.*
+
+### Two additions before it ever builds
+1. **RETENTION MUST BE STRUCTURAL, NOT A RULE.** "Responses never accumulate into a history" decays into a `location_responses` table someone queries by principal in six months. **Design so the history is IMPOSSIBLE:** response row keyed to the `event_id`, **purged when the event closes**, and **no query path that returns responses by principal across events** (no principal_id index for cross-event assembly; responses reachable only through their event; a CI/guard test that asserts no join can reconstruct a track). **If the schema permits assembling a track, the invariant is decorative.**
+2. **CODEWORD ROTATION.** A static onboarding codeword is a shared secret with an indefinite lifetime. **Scope rotation** — per-event (a fresh codeword minted with each triggering event, shown in the alert) OR periodic, with the new value delivered through a channel the principal already trusts (e.g. in-app / the prior verified session), never a fresh unsolicited SMS (which would reintroduce the phishing surface).
+
+**Deliverable = this position paper. No code. The phishing answer (§3 + onboarding + name-the-trigger + fixed-domain) is the ship-gate; the STRUCTURAL retention invariant (§4, impossible-not-just-forbidden) is the "did we accidentally rebuild continuous tracking" gate. Both must hold or it doesn't ship.**
