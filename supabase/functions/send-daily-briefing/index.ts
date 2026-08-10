@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
       { data: recentActions },
       { data: activeSequences },
     ] = await Promise.all([
-      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence, client_id')
+      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence, client_id, raw_json')
         .gte('created_at', cutoff24h)
         .neq('status', 'false_positive')
         .neq('is_test', true)
@@ -86,21 +86,54 @@ Deno.serve(async (req) => {
         .limit(10),
     ]);
 
-    // Filter signals for briefing quality: exclude historical, low-quality, and low-relevance
+    // DOCTRINE: severity and proximity are not tie-breakers (2026-08-10). The delivery
+    // layer was ranking/filtering by relevance_score — a keyword-relevance PROXY — so a
+    // critical, proximity-verified BCWS evacuation Order 4.3 km from the operator's
+    // children's school (relevance 0.4) was buried under higher-relevance provincewide
+    // news during fire season. Same cheap-proxy substitution as the ingest-signal severity
+    // downgrade and region-as-proxy-for-proximity, now in the delivery layer.
+    // Rule: severity is the PRIMARY sort key; a critical / proximity-verified /
+    // authoritative-source signal BYPASSES the quality & relevance floors entirely;
+    // relevance breaks ties ONLY.
+    const AUTH_SOURCE_RE = /^(bcws|cwfis|naad|cap|cisa|court)/i;  // WO-AUTHORITATIVE-SOURCE-PRECEDENCE feeds
+    const isProximityVerified = (s: any): boolean => {
+      const rj = s.raw_json || {};
+      return !!(rj.proximity && (rj.proximity.nearest_km != null || rj.proximity.radius_km != null))
+        || rj.signal_origin === 'monitor-geo-wildfire' || rj.signal_origin === 'monitor-wildfires';
+    };
+    const isAuthoritative = (s: any): boolean => {
+      const rj = s.raw_json || {};
+      return rj.authoritative_source === true
+        || (typeof rj.source === 'string' && AUTH_SOURCE_RE.test(rj.source));
+    };
+    const bypassesFloor = (s: any): boolean =>
+      s.severity === 'critical' || isProximityVerified(s) || isAuthoritative(s);
+    const SEV_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+    // Filter signals for briefing quality: exclude historical + stale; floors bypassed for critical/proximity/authoritative.
     const briefingSignals = (recentSignals || []).filter((s: any) => {
-      // Exclude historical signals
       if (s.triage_override === 'historical') return false;
-      // Exclude signals with event dates > 90 days old
       if (s.event_date) {
         const eventDate = new Date(s.event_date);
         const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000);
-        if (eventDate < ninetyDaysAgo) return false;
+        if (eventDate < ninetyDaysAgo) return false;   // historical is a correctness filter — applies to all
       }
-      // Exclude low quality signals
+      if (bypassesFloor(s)) return true;               // critical / proximity / authoritative: never dropped by a relevance proxy
       if (s.quality_score !== null && s.quality_score < 0.4) return false;
-      // Exclude low relevance signals
       if (s.relevance_score !== null && s.relevance_score < 0.4) return false;
       return true;
+    });
+
+    // Severity-first ordering; proximity/authoritative next; relevance is the TIE-BREAK only.
+    briefingSignals.sort((a: any, b: any) => {
+      const ra = SEV_RANK[a.severity] ?? 4, rb = SEV_RANK[b.severity] ?? 4;
+      if (ra !== rb) return ra - rb;
+      const pa = (isProximityVerified(a) || isAuthoritative(a)) ? 0 : 1;
+      const pb = (isProximityVerified(b) || isAuthoritative(b)) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      const rela = a.relevance_score ?? 0, relb = b.relevance_score ?? 0;
+      if (relb !== rela) return relb - rela;           // relevance breaks ties ONLY
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
     // Risk score formula — was previously just `recentScans?.[0]?.risk_score`,
@@ -259,7 +292,7 @@ Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h}
 Structure:
 1. SITUATION OVERVIEW (2-3 sentences — open with BLUF, then overall posture and trajectory)
 2. KEY METRICS (bullet-style numbers with context, not just raw counts)
-3. PRIORITY SIGNALS (top 3-5 actionable signals with specifics: what, where, severity, and why it matters)
+3. PRIORITY SIGNALS (top 3-5 actionable signals with specifics: what, where, severity, and why it matters). The ACTIONABLE SIGNALS below are pre-sorted by severity then proximity — any critical-severity, proximity-verified, or authoritative-source (BCWS/CAP/CISA/court) signal MUST lead this section and MUST NOT be omitted in favour of a lower-severity but broader item. A specific evacuation Order near an asset outranks a provincewide advisory.
 4. EMERGING PATTERNS (any trends or clusters with DEDUCTIONS: label — if none, say "No significant activity in this category during the reporting period.")
 5. RECOMMENDED POSTURE (specific actions with named owner role and timeframe — not generic advice)
 
