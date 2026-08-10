@@ -82,6 +82,14 @@ The claim "client entities require operator approval before they become active" 
 3. **Batch approval by pattern:** group the remainder by `type + client + source` → "42 PECL well-pad locations — approve all as infrastructure" is one click, not 42. 
 Net: 5,831 → a few hundred distinct real decisions, batchable to minutes. **Also add these same guards at PROPOSE time** (in the write path just shipped) so the queue never re-inflates — auto-reject non-entities and skip dup names before insert. Without (1)-(3) the queue is documentation, not a control — the very defect this WO records.
 
+## GO EXECUTED PART 2 (2026-08-10) — triage shipped; watch-list move BLOCKED by legal hold
+
+- **Queue triage DONE:** propose-time non-entity guard live (before backlog clearance) → backlog auto-reject 1,307 → **dedup-collapse 3,646**. Pending **5,831 → 878 distinct**. Batch-review RPCs shipped (`entity_suggestion_batches()` + `approve_entity_suggestion_batch()`, both anon-revoked). The 878 resolve to ~12 reviewable batches.
+- **Curated list SIGNED OFF = 27** (operator): 7 PECL staff + Mark Fitzgerald + 12 locations + Tourmaline (spelling fixed) + 6 org promotions (Trans Mountain OUT). Applied where possible.
+- **Relabel:** 1,211 `confirmed`→`auto_extracted`; 161 held rows respected.
+- **⚠ BLOCKED — the 4 investigation subjects (Vashouk, Bracken, Callingbull, Plontke):** operator ruled them → `entity_watch_list` + out of `entityContext`. **Both writes are blocked by legal hold INC-AITOOLS-XTENANT-2026-07-30** — de-curation directly, and the watch-list insert via its `trigger_watch_list_entity_scan` side-effect (priority-scan request UPDATEs the held rows). **Not overridden.** Material finding: the hold covers **788 PECL entities incl. ALL 12 curated persons** (the 8 staff too), so an "exclude held from context" rule would over-remove legitimate staff anchors. **Interim honest state: the 4 remain curated and still steer extraction** until the hold clears or the operator authorizes a scoped mechanism. This is the SEVENTH instance ([[feedback_cheap_proxy_for_expensive_correct_signal]]): a purpose-built control (`entity_watch_list`) sat empty (0 rows) while the wrong mechanism (`visibility_class='curated'`) carried the load.
+- **Follow-ups:** LNG Canada 4 residual extracted dup rows (merge); the batch-approve UI wiring; when INC-AITOOLS-XTENANT lifts, complete the 4-subject watch-list move + set them non-curated.
+
 ## Priority
 Higher than a hygiene chore: entities are injected into the extraction prompt (soft loop is live) and are the intended anchor for future proximity/social layers ([[WO-SOCIAL-PROXIMITY-LAYER]] fire-name tracking, [[WO-PRINCIPAL-LOCATION-TRACKING]]). A polluted entity list cannot be trusted as an anchor until cleaned + the loop gated. **Blocks entity-as-anchor adoption.**
 
