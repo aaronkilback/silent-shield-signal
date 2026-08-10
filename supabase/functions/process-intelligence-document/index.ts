@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { isFalsePositiveContent } from '../_shared/keyword-matcher.ts';
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { checkWatchListHits, applyWatchListBoosts } from "../_shared/watch-list.ts";
+import { isObviousNonEntity } from "../_shared/entity-suggestion-guard.ts";
 import { enqueueJob } from "../_shared/queue.ts";
 import { matchItemToClients, tokenBoundaryMatch, isCommonNounAsset, type ShadowClient } from "../_shared/shadow-matcher.ts";
 import { shadowComposite, tier2Eligible, shadowSeverity, type Severity } from "../_shared/shadow-scorer.ts";
@@ -997,6 +998,12 @@ IMPORTANT: Cross-check the SOURCE URL DOMAIN against the content. If the domain 
         }
         continue;
       }
+
+      // PROPOSE-TIME GUARD (WO-ENTITY-EXTRACTION-POLLUTION #5): drop obvious
+      // non-entities (domains, URLs, image/doc files, bare handles) before they
+      // ever reach the queue — so it cannot re-inflate with junk. Deterministic,
+      // provably zero person/org false-drops.
+      if (isObviousNonEntity(entity.name, entity.type)) continue;
 
       // Novel (or only an 'extracted' row exists) → PROPOSE to the review queue,
       // deduped: skip if a pending/approved suggestion OR any entity already covers it.
