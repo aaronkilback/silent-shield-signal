@@ -311,6 +311,31 @@ Deno.serve(async (req) => {
       console.warn('[sentinel] anon-surface invariant probe error:', e?.message);
     }
 
+    // ── Probe 2g: stale containments (INC-AITOOLS Amendment 11 / feedback_untracked_containment) ──
+    // A containment (legal hold / store freeze / contained_503) with no scheduled review becomes
+    // permanent by inattention — the belief freeze (75d) and the entity legal hold (unreviewed 11d
+    // until it blocked routine work) are the motivating cases. containment_stale_check() returns
+    // active containments overdue or never scheduled. ONE aggregated finding (attention doctrine),
+    // LOW severity — these are contained (safe) but untracked; the risk is ossification, not exposure.
+    try {
+      const { data: stale, error: staleErr } = await supabase.rpc('containment_stale_check');
+      if (staleErr) throw staleErr;
+      const rows = Array.isArray(stale) ? stale : [];
+      if (rows.length > 0) {
+        const oldest = Math.round(Math.max(...rows.map((r: any) => Number(r.days_since_review) || 0)));
+        await recordFinding(supabase, {
+          category: 'data_integrity', severity: 'low',
+          title: `${rows.length} containment(s) with no scheduled review (oldest ${oldest}d)`,
+          analysis: `containment_stale_check() returned ${rows.length} active containment(s) (frozen / contained_503) overdue or never scheduled for review — a hold with no lift plan becomes permanent by inattention. Subjects: ${rows.slice(0, 20).map((r: any) => `${r.subject} (${r.stale_reason}, ${Math.round(Number(r.days_since_review) || 0)}d)`).join('; ')}${rows.length > 20 ? ` …+${rows.length - 20}` : ''}.`,
+          plainEnglish: `${rows.length} freezes/holds/kill-switches have no scheduled review — decide their fate or set a review date; don't let containment ossify into a permanent unowned default.`,
+          action: 'For each: set next_review_at + owner in containment_registry, or lift/de-provision. A deferral needs an owner and a date.', job: 'containment-registry',
+        });
+        report.findings_written++;
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] containment stale probe error:', e?.message);
+    }
+
     // ── Probe 3: Management API security advisor ingestion ──
     // Pulls the canonical Supabase security advisor (rls_disabled_in_public,
     // policy_exists_rls_disabled, security_definer_view, function_search_path_mutable, auth
