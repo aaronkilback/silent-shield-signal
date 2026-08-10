@@ -100,6 +100,7 @@ Deno.serve(async (req) => {
         .from('entities')
         .select('id, name, attributes')
         .eq('type', 'event')
+        .in('visibility_class', ['reviewed', 'curated'])  // link only to REAL events, not extracted (WO-ENTITY-EXTRACTION-POLLUTION #3)
         .ilike('name', `%${eventName.slice(0, 40).replace(/[%_]/g, ' ')}%`)
         .limit(1);
 
@@ -126,36 +127,42 @@ Deno.serve(async (req) => {
         }).then(() => {}, (e: unknown) => console.warn('[events] mention insert failed', e));
         eventsLinked++;
       } else {
-        const { error: insertErr } = await supabase.from('entities').insert({
-          name: eventName,
-          type: 'event',
-          client_id: sig.client_id ?? null,
-          attributes,
-          active_monitoring_enabled: true,
-          risk_level: 'unknown',
-        });
-        if (insertErr) {
-          skipped.push(`${sig.id}:entity_insert_failed:${insertErr.message}`);
-          continue;
-        }
-        // Look up the new entity id and link the source signal
-        const { data: newEnt } = await supabase
-          .from('entities')
+        // WO-ENTITY-EXTRACTION-POLLUTION #3 (2026-08-10): PROPOSE the novel event to
+        // the review queue instead of creating an active, auto-monitored 'event'
+        // entity. No entity is born active; no monitoring starts without review.
+        const { data: dupSug } = await supabase
+          .from('entity_suggestions')
           .select('id')
-          .eq('name', eventName)
-          .eq('type', 'event')
-          .order('created_at', { ascending: false })
+          .ilike('suggested_name', eventName)
+          .eq('suggested_type', 'event')
+          .in('status', ['pending', 'approved'])
           .limit(1)
           .maybeSingle();
-        if (newEnt?.id) {
-          await supabase.from('entity_mentions').insert({
-            entity_id: newEnt.id,
-            signal_id: sig.id,
-            confidence: eventConfidence,
-            context: 'predicted_event_extraction',
-          }).then(() => {}, (e: unknown) => console.warn('[events] mention insert failed', e));
+        if (dupSug) { eventsLinked++; continue; }   // already proposed/known — no dup
+        // tenant_id so the suggestion passes the review-UI read filter; skip if underivable.
+        let tenantIdForSuggestion: string | null = null;
+        if (sig.client_id) {
+          const { data: clientRow } = await supabase
+            .from('clients').select('tenant_id').eq('id', sig.client_id).maybeSingle();
+          tenantIdForSuggestion = clientRow?.tenant_id ?? null;
         }
-        eventsCreated++;
+        const { error: propErr } = await supabase.from('entity_suggestions').insert({
+          suggested_name: eventName,
+          suggested_type: 'event',
+          source_type: 'signal',
+          source_id: sig.id,
+          confidence: eventConfidence,
+          context: 'predicted_event_extraction',
+          suggested_attributes: attributes,
+          client_id: sig.client_id ?? null,
+          tenant_id: tenantIdForSuggestion,
+          // status defaults to 'pending' — awaits operator review.
+        });
+        if (propErr) {
+          skipped.push(`${sig.id}:event_propose_failed:${propErr.message}`);
+          continue;
+        }
+        eventsCreated++;  // counts as "proposed" now
       }
     }
 

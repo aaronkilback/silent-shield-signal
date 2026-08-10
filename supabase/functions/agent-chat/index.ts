@@ -1901,6 +1901,10 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               aliases: args.aliases || [],
               risk_level: args.risk_level || 'medium',
               client_id: authoritativeClientId, // Wave 1: bind writes to the authoritative client
+              // WO-ENTITY-EXTRACTION-POLLUTION #3 (2026-08-10): operator-initiated
+              // create_entity is legitimate curation — tag 'curated' so operator-created
+              // entities are forever distinguishable from 'extracted' ones.
+              visibility_class: 'curated',
             })
             .select('id, name')
             .single();
