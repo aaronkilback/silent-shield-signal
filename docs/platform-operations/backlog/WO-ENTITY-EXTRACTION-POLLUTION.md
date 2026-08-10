@@ -34,6 +34,27 @@
 4. **Provenance on entities:** record extraction source (`source_signal_id` / basis) so a future audit can trace which signals generated which entities — the entity twin of the signal attribution ledger.
 5. **Same audit for Kilbacks + BC Place** before any entity-as-anchor use — both show the auto-extraction pattern at small scale.
 
+## THE GATE IS BYPASSED — verified against code + data (operator challenge 2026-08-10)
+
+The claim "client entities require operator approval before they become active" is **FALSE.** There are TWO paths to an `entities` row; the dominant one has no gate.
+
+**Path A — reviewed (real, audited, ~dormant):** `entity_suggestions` → `EntitySuggestionsPanel.approveMutation` → INSERT into `entities` with `visibility_class='reviewed'`, and stamps `entity_suggestions.reviewed_by` + `reviewed_at`. This gate is REAL and WAS used — but barely: **55 approvals ever, by 3 reviewers, 2026-04-05 → 2026-06-15, then dormant** (~2 months silent). The queue holds **5,831 PENDING** suggestions never reviewed.
+
+**Path B — bypass (dominant, ungated):** `process-intelligence-document/index.ts:1001` INSERTs **directly into `entities`** — `is_active:true` at birth (line 1008), `entity_status:'suggested'`, and **auto-promotes to `'confirmed'` on any second fuzzy-name mention** (line 992, `ilike %name%` containment — so "Reid"→"Reid Hoffman"). No reviewer, no timestamp, no `entity_suggestions` row. Same direct-write in `process-stored-document` + `process-security-report`.
+
+**The data proves B dominates:**
+| Measure | Value |
+|---|---|
+| PECL entities by `visibility_class` | **`extracted` (bypass): 4,720 · `curated`: 25** — 99.5% never reviewed |
+| PECL auto (`created_by=NULL`) that are `is_active=true` | **3,879** (active at birth) |
+| PECL auto `entity_status='confirmed'` with NO human creator | **1,376** (auto-confirmed on second-mention) |
+| `entity_suggestions` ever approved via UI | 55 (3 reviewers, Apr 5–Jun 15 2026, then dormant) |
+| PECL share of ALL 4,828 entities in the system | **~98%** (the table is essentially PECL extraction exhaust) |
+
+**Answer to "enforced-and-unused, or bypassed?" → BYPASSED.** The review queue is real but governs a *parallel* stream (`entity_suggestions`, 5,831 pending); the extraction writer skips it and creates **active, auto-confirmed** entities directly in `entities`. There is **no `approved_by`/`approved_at` column on `entities`** — the "gate" persists no decision ([[feedback_no_unauditable_gates]] violation). And `'confirmed'` gates nothing downstream (no consumer filters on `entity_status='confirmed'`) — so the live harm is not the status, it is that **any non-rejected `entities` row (incl. `suggested`) feeds `entityContext` into 3 extraction prompts.** Pollution is NOT inert.
+
+**This changes the fix (as the operator predicted the two cases would):** not "work the backlog" (that is the separate `entity_suggestions` stream). The fix is **route extraction THROUGH the existing queue** — `process-intelligence-document` / `process-stored-document` / `process-security-report` propose to `entity_suggestions` instead of direct-inserting into `entities`; `entityContext` reads **`visibility_class='reviewed'` / operator-curated only**. The mechanism already exists (Path A) — extraction simply doesn't use it. This is exactly the operator's lean: entity lists operator-curated only, extraction proposes to a review queue rather than writing directly.
+
 ## Priority
 Higher than a hygiene chore: entities are injected into the extraction prompt (soft loop is live) and are the intended anchor for future proximity/social layers ([[WO-SOCIAL-PROXIMITY-LAYER]] fire-name tracking, [[WO-PRINCIPAL-LOCATION-TRACKING]]). A polluted entity list cannot be trusted as an anchor until cleaned + the loop gated. **Blocks entity-as-anchor adoption.**
 
