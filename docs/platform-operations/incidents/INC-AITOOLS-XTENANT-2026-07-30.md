@@ -392,7 +392,21 @@ dimension** may apply and is noted as open.
 ### Classification (unchanged)
 Per the note: sourcing does not alter classification. Whatever the origin, these were personal information under Fortress's control and within the exposure scope. **Open: 3Si contractual dimension** (added to §6 open items of the RESPONSE record).
 
+## Amendment 11 2026-08-10 — the legal hold is UNTRACKED (disposition-tracking gap; surfaced during unrelated work)
+
+The hold was encountered from the outside 11 days after enactment — it blocked a **routine entity reclassification** during WO-ENTITY-EXTRACTION-POLLUTION (moving 4 investigation subjects out of the extraction-context anchor set). Investigating why produced a finding about the hold itself:
+
+- **The hold carries NO disposition metadata.** The only hold-related column on `entities`/`entity_photos`/`investigations` is a bare `legal_hold` boolean. There is **no `legal_hold_reason`, no `set_by`, no `set_at`, no `next_review_at`, no lift-condition, no owner.** Who/why/when-to-revisit are unrecorded.
+- **Nothing tracks the lift.** No probe, WO, or cron watches it. The RESPONSE "Open" items (PIPEDA decision pending counsel; third-party review *planned*) are the implicit gating events but are **not linked to a hold-lift action** and have no owner or date.
+- **It has not been reviewed since enactment.** All **788** held entities (+ **15** `entity_photos` + **2** investigations = **805** records) show `updated_at = 2026-07-30T21:26:43` and nothing since (`distinct_update_days = 1`). Frozen, untouched, 11 days.
+- **This is a finding, not housekeeping:** a containment that becomes **permanent by inattention** — the same shape as the INC-LEARN-CONTAM belief-writes freeze (measured in thousands of hours), and structurally worse here because this hold records no disposition at all. See [[feedback_untracked_containment_becomes_permanent]].
+- **Interim entity-pollution state (recorded honestly per operator):** the 4 investigation subjects (`162e91c6` Vashouk, `a9a4047c` Bracken, `1e506c55` Callingbull, `05fba139` Plontke) **remain `visibility_class='curated'` and still steer the extraction prompt.** The operator ruled Option 1 — WAIT for the hold to lift; do NOT authorize a trigger exception; do NOT build an exclusion list. **Not resolved, not worked around — blocked by this hold, awaiting its lift.** The interim exposure is 4 names primed into an extraction prompt (no client-facing harm), which the operator weighed against the principle that a hold suspendable for convenience is not a hold.
+
+### Recommended (operator decision — NOT built; Option 1 = wait was chosen)
+A hold is not a decision, it is a deferral — and a deferral needs an owner and a review date. Minimum: a `next_review_at` + `reason` + `set_by` on the hold, and a probe that surfaces any `legal_hold=true` set > N days ago with no review. Deferred pending operator direction (consistent with "wait").
+
 ## Open
 - ai-tools-query re-enable stays gated behind the caller→scope gate (Generic Tool Path Clearance Phase B).
 - Item 4 (full triage of the 232 verify_jwt=false functions + the ~25 request-client-scoped list) pending.
 - Notify CRT (vinced) and consider customer disclosure per PIPEDA — operator decision.
+- **Legal-hold disposition (Amendment 11):** no lift condition / owner / review date recorded; 805 records frozen since 2026-07-30, unreviewed. Untracked containment.
