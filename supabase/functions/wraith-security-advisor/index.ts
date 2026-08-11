@@ -29,6 +29,7 @@ import { createServiceClient, corsHeaders, handleCors, successResponse, errorRes
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import type { WraithSecurityAction, DomainRequest } from "../_shared/types.ts";
 import { checkInternalCaller } from "../_shared/require-internal-caller.ts";
+import { startHeartbeat, completeHeartbeat } from "../_shared/heartbeat.ts";  // WO-WRAITH-VULN-SCAN-DEAD-01 point 5
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -664,6 +665,12 @@ Return ONLY valid JSON:
 async function runVulnerabilityScan(supabase: any) {
   console.log('[WRAITH] Starting vulnerability scan...');
   const scanId = crypto.randomUUID();
+  // WO-WRAITH-VULN-SCAN-DEAD-01 point 5 + Mode-2 doctrine: write the heartbeat at the START so
+  // invocation is visible even when the scan hits the ~150s edge kill ceiling before finishing
+  // (an end-only heartbeat never writes on a SIGKILLed run; a 'running' row is distinguishable
+  // from never-invoked, and a stuck 'running' is itself the failure signal). The scan ran DEAD
+  // 113 days precisely because nothing recorded that it started. completeHeartbeat below on success.
+  const hb: any = await startHeartbeat(supabase, 'wraith-vuln-scan-nightly').catch(() => null);
 
   const scanTargets = [
     'supabase/functions/ingest-signal/index.ts',
@@ -800,6 +807,12 @@ async function runVulnerabilityScan(supabase: any) {
       });
     }
   }
+
+  // Mark the run complete (only reached if the scan finished under the kill ceiling).
+  if (hb) await completeHeartbeat(supabase, hb, {
+    total_findings: allFindings.length, files_scanned_ok: okCount, files_failed: scanErrors.length,
+    critical: criticalCount, high: highCount,
+  }).catch(() => {});
 
   return {
     scan_id: scanId,

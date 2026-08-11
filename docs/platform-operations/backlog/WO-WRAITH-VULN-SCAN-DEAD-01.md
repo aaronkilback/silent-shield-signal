@@ -1,6 +1,6 @@
 # WO-WRAITH-VULN-SCAN-DEAD-01 — the security vulnerability scanner has never run
 
-**Logged:** 2026-08-02. **Status:** SCOPE — bug confirmed, fix HELD for operator. **Priority:** P1 (the platform's own vulnerability scanner is dead; a security control that has never produced output). Surfaced via WO-REVERSE-PHANTOM-PROBE-01.
+**Logged:** 2026-08-02. **Status: CLOSED 2026-08-11** — scanner revived (322 findings, 9/9 nightly) + registered + heartbeated; acceptance run and passed. Scale/precision -> WO-WRAITH-SCOPE-01. **Priority:** P1 (the platform's own vulnerability scanner is dead; a security control that has never produced output). Surfaced via WO-REVERSE-PHANTOM-PROBE-01.
 
 ## The finding
 `wraith-vuln-scan-nightly` (cron) → `wraith-security-advisor` (writes `wraith_vulnerability_findings`).
@@ -62,3 +62,13 @@ Both original blockers closed. Auth = Option A (internal-caller gate). Detection
 3. **Prove detection on `ai-tools-query@adce9554`** (temporarily in scope): it must flag the tenant-isolation / filter-injection vulns, or the scanner is a rubber stamp.
 4. **Scope:** make `scanTargets` a real inventory (all deployed functions, batched) or risk-ranked — not 5 hardcoded.
 5. Register + heartbeat (Registry-is-a-Promise) + a probe that reads `cron.job_run_details` failures (the one signal that showed this).
+
+## CLOSED 2026-08-11 — acceptance RUN and PASSED (points 2 + 5)
+Ran the WO's own acceptance criteria (not "the next step is done"):
+- **Point 2/4 — findings + cron success (measured):** `wraith_vulnerability_findings` = **322 rows** (was 0 ever), 226 in the last 7d, latest today; `cron.job_run_details` for `wraith-vuln-scan-nightly` = **9 runs, 9 succeeded, 0 failed since 2026-08-02** (was 114 failed / 0 ok for 113 days). The dead scanner is alive and producing nightly.
+- **Point 5 — Registry-is-a-Promise (the fix for the 113-day invisibility):**
+  - **Registered** in `cron_job_registry` (`wraith-vuln-scan-nightly`, 1440m, critical).
+  - **Heartbeat added + PROVEN.** Moved to a **start-heartbeat** (Mode-2): `startHeartbeat` at the top of `runVulnerabilityScan` (visible on invocation even if a run hits the ~150s ceiling — an end-only heartbeat wouldn't write on a killed run), `completeHeartbeat` at the end. Verified live: a triggered run wrote a `running` row within ~1s of invocation, and a completed run wrote `completed` with `{critical, high, total_findings}`. A future failure is now visible (stuck `running` / missing heartbeat), which is precisely the signal whose absence hid this for 113 days.
+- The `cron.job_run_details`-failure probe (broader class) remains [[WO-REVERSE-PHANTOM-PROBE-01]]; registration means the standard registry-phantom/Registry-is-a-Promise probes now watch this job.
+
+**This WO's defect — "the security vulnerability scanner has never run / dead scanner reporting clean" — is RESOLVED and proven.** Remaining work is NOT "is it alive" but **scale + precision** (5-file/1.4% scope; ~170s runtime near the ceiling; per-finding validation) → tracked in [[WO-WRAITH-SCOPE-01]], and the coverage-explicit operator digest → [[WO-WRAITH-DAILY-DIGEST-01]]. WO CLOSED.
