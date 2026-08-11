@@ -6,7 +6,7 @@
 |---|---|---|---|
 | monitor-social-unified | 164 successful runs | **0 signals/30d** | healthy |
 | monitor-instagram-2h | runs | **never produced a signal** | healthy |
-| dr-storage-backup | (cron fires) | **34 days of 503s, 0 backups** | registry: active |
+| dr-storage-backup | (cron fires) | **ran+copied daily 07-07→07-31 with 0 heartbeats, then ~11-day 503 gap** [corrected 2026-08-11] | registry: active |
 | aegis-chat | — | **5-day 503 outage** | invisible |
 | composite_confidence scorer | runs | **85% → 0% over 3 months** | "dormant fleet" |
 
@@ -47,7 +47,7 @@ All 9 audited functions are now handled, deployed to prod. **The fix is NOT mech
 **The watchdog cannot report on what was never declared. Its coverage is bounded by `cron_job_registry`, which is maintained by hand.** Every probe is downstream of a human remembering to register the expectation. The systemic fix is not a better probe — it's making declaration structurally non-optional at ship time, and periodically **auditing the registry against reality** (Registry-is-a-Promise, extended: not only "registered jobs kept their promise" but "every real producer is registered at all"). Until then, board completeness = registry hygiene.
 
 ## PROVING CASE (2026-08-10) — an output contract caught a real silent-failure on its FIRST run
-The new `monitor-geo-wildfire` shipped with the contract from §"The probe": *BCWS order/alert within a client's radius + 0 emitted = FAILURE.* On its **first real run** the emit path was broken (`ingest-signal` rejected an unregistered `source_key`, then `functions.invoke` returned non-2xx), and the function would otherwise have **completed 'succeeded' having produced nothing** — the exact invisible failure mode this WO exists to kill (monitor-social 164 green runs/0 signals; dr-backup 34 days/0 backups; composite scorer 85%→0%). Instead it **failed loudly**: `"6 order(s)+4 alert(s) in radius but 0 emitted (errors=15)"`, with the captured cause. It fired on attempt #1, before a single quiet day could hide it. **This is the reference implementation of the doctrine: the producer asserts its own production, in-band, and refuses to report success while producing nothing.** Every scheduled producer's contract should look like this.
+The new `monitor-geo-wildfire` shipped with the contract from §"The probe": *BCWS order/alert within a client's radius + 0 emitted = FAILURE.* On its **first real run** the emit path was broken (`ingest-signal` rejected an unregistered `source_key`, then `functions.invoke` returned non-2xx), and the function would otherwise have **completed 'succeeded' having produced nothing** — the exact invisible failure mode this WO exists to kill (monitor-social 164 green runs/0 signals; dr-backup (ran+copied 3wk with 0 heartbeats, then ~11-day real gap — corrected 2026-08-11); composite scorer 85%→0%). Instead it **failed loudly**: `"6 order(s)+4 alert(s) in radius but 0 emitted (errors=15)"`, with the captured cause. It fired on attempt #1, before a single quiet day could hide it. **This is the reference implementation of the doctrine: the producer asserts its own production, in-band, and refuses to report success while producing nothing.** Every scheduled producer's contract should look like this.
 
 ## Core model — an output contract per scheduled producer
 Each scheduled job declares **what it produces**, not just that it ran:
@@ -69,7 +69,7 @@ Extend `cron_job_registry` (or a new `job_output_contract` table) with: `output_
 
 ## What each finding's contract would have caught
 - monitor-social-unified / monitor-instagram-2h → `rate: signals ≥1/24h` → fired months ago (→ retire, which we just did for social).
-- dr-storage-backup → `rate: R2 objects ≥1/24h` → fired on day 1 of the 34-day gap (needs the non-LLM/R2 spend+object tracking from WO-METRIC too).
+- dr-storage-backup → `rate: R2 objects ≥1/24h` → an R2-object assertion would have shown the truth the heartbeat hid BOTH ways: green (objects landing) 07-07→07-31, then red (0 objects) from the 07-31 503 — instead of the heartbeat's flat 'never', which read as a 34-day gap that was really ~11 days (corrected 2026-08-11). Needs the non-LLM/R2 spend+object tracking from WO-METRIC.
 - composite_confidence scorer → `rate: scored-rate ≥ (declared floor)/24h` → fired as it slid 85%→0%, not 3 months later as "dormant fleet."
 - review-signal-agent → `conditional: analyses ≥ 1 when eligible>0` → fired the day scoring stopped feeding it, correctly silent while genuinely no eligible input.
 - aegis-chat → **not** this WO (request-driven, not scheduled) → `WO-PUBLIC-ENDPOINT-UPTIME`. Boundary noted so nothing falls between them.
