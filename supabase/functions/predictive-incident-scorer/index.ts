@@ -23,12 +23,15 @@ Deno.serve(async (req) => {
     if (batch_mode) {
       // Score all unscored recent signals
       const cutoff = new Date(Date.now() - 24 * 3600000).toISOString();
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('signals')
         .select('id, normalized_text, category, severity, location, entity_tags, confidence, created_at, client_id')
         .gte('created_at', cutoff)
         .order('created_at', { ascending: false })
         .limit(50);
+      // WO-FAIL-LOUD-AUDIT-01: a failed query must NOT read as "no signals to score" —
+      // that silently disables predictive scoring while looking like a clean empty batch.
+      if (error) throw new Error(`predictive-incident-scorer: batch signal fetch failed: ${error.message}`);
       signalsToScore = data || [];
     } else if (signal_id) {
       const { data } = await supabase

@@ -88,12 +88,15 @@ export async function countCorroboration(supabase: any, signal: any, windowDays 
     : [];
   if (entityIds.length === 0) return 0;
   const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('entity_mentions')
     .select('signal_id')
     .in('entity_id', entityIds)
     .neq('signal_id', signal.id)
     .gte('created_at', windowStart);
+  // WO-FAIL-LOUD-AUDIT-01: a failed corroboration lookup must NOT read as zero
+  // corroboration — that silently mis-scores the incident-creation gate. Fail loud.
+  if (error) throw new Error(`countCorroboration: entity_mentions query failed: ${error.message}`);
   const distinct = new Set((data || []).map((r: any) => r.signal_id));
   return distinct.size;
 }
