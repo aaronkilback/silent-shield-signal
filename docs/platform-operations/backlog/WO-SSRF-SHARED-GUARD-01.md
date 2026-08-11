@@ -1,6 +1,6 @@
 # WO-SSRF-SHARED-GUARD-01 — one shared SSRF guard, applied at every caller-supplied-URL fetch
 
-**Logged:** 2026-08-02. **Status:** SCOPE — do not build yet. **Priority:** HIGH. Origin: C2 of the WRAITH ingest-signal review (authenticated SSRF, confirmed by hand). **Scope it as a shared helper, not a point fix** — the same class recurs across many fetch sites and there is **no shared guard today**.
+**Logged:** 2026-08-02. **Status: CLOSED 2026-08-11** — shared guard built + applied at every caller/source-supplied fetch (Waves 1–4); full coverage sweep clean. **Priority:** HIGH. Origin: C2 of the WRAITH ingest-signal review (authenticated SSRF, confirmed by hand). **Scope it as a shared helper, not a point fix** — the same class recurs across many fetch sites and there is **no shared guard today**.
 
 ## The gap
 `ingest-signal:653` does `fetch(url)` on a **caller-supplied** body field (`url: z.string().url()`), with **no scheme allowlist, no private-IP block, no metadata-range block, no redirect re-validation**. `zod.url()` only checks well-formedness — `http://169.254.169.254/latest/meta-data/`, `http://127.0.0.1/`, `http://10.x/` all pass. It is behind the F-026 auth gate (so *authenticated* SSRF, not anonymous), but still real. Grep confirms **no `_shared` SSRF-guard helper exists**. The 2026-07-31 fetch-url-content SSRF containment did not cover this — **partial containment confirmed**, and it will recur when fetch-url-content is restored.
@@ -64,3 +64,20 @@ Chain: `autonomous-source-discovery` (AI-suggested URL, inserted `status='active
 
 ## Sequence
 Build the shared guard → apply to the "confirmed" set first (starting `ingest-signal:653`) → the "verify" set → the source-table set. Wire it into fetch-url-content **before** that capability is restored. Track coverage explicitly (which fetch sites are guarded vs not) — an un-guarded caller-URL fetch is a finding.
+
+## CLOSED 2026-08-11 — Wave 4 (the coverage sweep the acceptance requires) + closure
+The genuine-closure discipline caught that this was NOT at ~90%: a full sweep of **every** raw `fetch()` on a non-literal URL (the WO's own acceptance — "an un-guarded caller-URL fetch is a finding") found sites Waves 1–3 never enumerated. Classified all of them:
+
+**Guarded now (Wave 4) — genuinely caller/user-supplied host:**
+- `dashboard-ai-assistant:10851` — `attachUrl` (a user chat-attachment URL fetched for vision). The sharpest gap; caller-supplied.
+- `webhook-management:165` — `webhook.url` (user-configured outbound webhook; safeFetch blocks a webhook pointed at 169.254/private, allows public).
+- `ingest-expert-media:373` — `channelUrl` (semi-supplied YouTube channel URL in the resolve path).
+All three deployed; the try/catch at each site handles `SsrfBlockedError` gracefully (skip / fail the webhook test / return null).
+
+**Re-scoped OUT (verified NOT caller-supplied — no guard needed):**
+- **Hardcoded developer-controlled lists:** `monitor-news` (Direct-Canadian-news const array), `monitor-community-outreach` (`RSS_SOURCES`, `bandSites`), `monitor-regional-apac` (`APAC_SOURCES`).
+- **Env-var / operator-configured:** `execute-approved-action` (`SLACK_ONCALL_WEBHOOK_URL`).
+- **Fixed first-party / govt API hosts** (host literal, only query varies): all Google-CSE callers (`monitor-news-google`, `monitor-entity-proximity`, `scan-entity-content`, `osint-web-search:152`, `osint-entity-scan`, `perform-external-web-search`, `traveller-aegis-chat`, `monitor-regional-apac:236`), Meta Graph (`monitor-social-unified`, `monitor-instagram`), Twilio (`send-mfa-code`, `send-sms`), govt feeds (`monitor-weather`=weather.gc.ca, `monitor-cisa-kev`/`visibility-gap-scanner`=CISA KEV), `monitor-github`=raw.githubusercontent, AI-gateway retry wrapper (`process-stored-document`), internal (`dashboard-ai-assistant:11525`=wraith, `job-worker`=SUPABASE_URL-pinned), `system-ops:464`=uptime HEAD.
+- **Host-constrained by a validator:** `monitor-rss-sources:36` — `jsonUrl` is only fetched after `isRedditPostUrl(postUrl)` passes (host pinned to Reddit).
+
+**Coverage is now complete: every caller/source-supplied-URL fetch is behind `safeFetch`; every remaining raw `fetch()` is a fixed host, a hardcoded list, an env var, or validator-host-constrained.** The `agent-sentinel` Probe 2c self-validation canary (direct + redirect metadata block) remains the standing guarantee the guard keeps working. WO CLOSED.

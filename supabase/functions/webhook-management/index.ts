@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { safeFetch } from "../_shared/safe-fetch.ts";  // WO-SSRF-SHARED-GUARD-01 Wave 4: webhook.url is user-configured
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -162,7 +163,7 @@ Deno.serve(async (req) => {
         }
 
         try {
-          const response = await fetch(webhook.url, {
+          const response = await safeFetch(webhook.url, {
             method: 'POST',
             headers,
             body: JSON.stringify(testPayload),

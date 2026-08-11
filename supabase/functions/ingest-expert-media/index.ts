@@ -370,7 +370,7 @@ async function resolveChannelId(channelUrl: string): Promise<string | null> {
 
   // Fetch channel page to extract channelId from page data
   try {
-    const resp = await fetch(channelUrl, {
+    const resp = await safeFetch(channelUrl, {  // WO-SSRF-SHARED-GUARD-01 Wave 4: channelUrl semi-supplied
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SecurityBot/1.0)' },
       signal: AbortSignal.timeout(10000),
     });

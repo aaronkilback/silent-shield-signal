@@ -10848,7 +10848,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             if (isPdfUrl) {
               // PDFs MUST use base64 data URLs — signed/public URLs are NOT supported by the AI gateway
               try {
-                const pdfResp = await fetch(attachUrl);
+                const pdfResp = await safeFetch(attachUrl);  // WO-SSRF-SHARED-GUARD-01 Wave 4: attachUrl is caller-supplied
                 if (pdfResp.ok) {
                   const pdfBytes = new Uint8Array(await pdfResp.arrayBuffer());
                   const base64 = base64FromBytes(pdfBytes);
