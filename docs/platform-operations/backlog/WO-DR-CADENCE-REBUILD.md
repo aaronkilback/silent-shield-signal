@@ -147,3 +147,30 @@ R2 storage = **$0.015/GB-month**. 1.85 GB × 2 = 3.7 GB ≈ **$0.056/month**. On
 ## Companion: watchdog probe (scope, part of the standing rule below)
 
 **Probe:** a registered **critical** `cron_job_registry` job with **zero `cron_heartbeat` rows after 48h of registration** fires a **HIGH** finding (currently `registry_phantom_check()` reports `ever_succeeded=false` but the fleet-dormancy-style handling buried DR as one row; this probe makes "registered-critical + never-once-ran past 48h" its own loud finding). This is the enforcement arm of the standing rule — a cadence job that never produces a first heartbeat must scream, not sit as a muted "last: never."
+
+## RECONCILIATION COMPLETE (2026-08-11) — the 522 explained, and a corrected premise
+
+Read-only Object-RO token (ss-fortress-dr, ~1h TTL), staged to `~/.r2dr.env` (never chat), boto3 S3 listing via `scripts/dr-reconcile-r2.py`. Token revoked + creds file removed after.
+
+**Result: 522 objects / 1.852 GB. ZERO strays — every key under an expected prefix.**
+| prefix | objs | vs 2026-07-06 baseline |
+|---|---|---|
+| archival-documents | 365 | Δ0 |
+| investigation-files | 61 | Δ0 |
+| hostile-evidence | 1 | Δ0 |
+| tenant-files | 95 | **Δ+24** |
+| cipher-evidence | 0 | Δ0 |
+
+**The +24 are ALL daily system briefing MP3s** under `tenant-files/_system/briefings/system/`, one per day **2026-07-07 → 2026-07-31**, then nothing. (Post-cutoff query returned 25 files titled July 6–30; the ledger baseline 498 was over by 1 → true pre-snapshot was 497. Immaterial.) Benign, `_system`-scoped, not cross-tenant. **Nothing to purge before locking.**
+
+### The corrected premise (this is the real finding)
+The briefing pipeline (`generate-briefing-audio`) writes to **Supabase Storage `tenant-files`**, not R2; **no code references ss-fortress-dr** except the disabled DR function. The 24 MP3s land in R2 at **08:23 UTC daily** — exactly the `dr-storage-backup-daily` cron schedule (`23 8 * * *`, still `active=true`) — from 07-07 until the **2026-07-31 containment 503'd the function.** Therefore:
+- **`dr-storage-backup` WAS running daily and copying the incremental delta (the one thing that changed each day — the briefing MP3) from 2026-07-07 → 07-31.** It was NOT "dead for a month."
+- **`cron_heartbeat` has 0 rows for it — the function ran and copied but never recorded a heartbeat.** The "believed-closed-for-a-month backup gap" was an **instrumentation illusion**: the health signal was absent, not the work. Ground truth = the R2 objects, not the heartbeat. (Same class as the geo-wildfire false-broken finding, at the object layer: a healthy thing reporting broken because the signal, not the work, was missing.)
+- **The REAL backup gap is 2026-07-31 → now (~11 days)**, since the 503 — not 34 days. Incremental briefing backups happened for the three weeks prior.
+- **The cron is still active, firing daily into the 503'd function** — a live cron pointed at a contained endpoint (hygiene: pause it, or it keeps hitting the wall until rebuild).
+
+### Implications for the rebuild (not blockers to the lock)
+1. **Safe to lock** — no strays, all benign. The `--retention-date ~90d` in-place lock can proceed on operator ruling.
+2. **The copy logic was not the broken part** — it demonstrably worked (24 verified incrementals). What was broken: (a) heartbeat instrumentation (0 rows), (b) security posture (verify_jwt=false + compromised smoke key → the containment cause). The rebuild's acceptance gate (2 scheduled heartbeat successes) targets exactly the instrumentation that was missing.
+3. **Decide whether ephemeral briefing MP3s belong in DR at all** — they're regenerable daily audio; low restore value. If they're excluded, the daily delta drops to ~0 and the WO's object/byte caps (#3) tighten. (Scope note, not a reconciliation blocker.)
