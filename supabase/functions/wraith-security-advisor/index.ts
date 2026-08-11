@@ -945,6 +945,11 @@ async function detectPromptInjection(supabase: any, body: { message: string; ses
       { role: 'user', content: `MESSAGE TO SCREEN:\n${message.substring(0, 1000)}` },
     ],
     functionName: 'wraith-security-advisor',
+    // WO-INJECTION-GATE-FAILOPEN-01 (red-team pass 2026-08-11): the gate intermittently returned
+    // analysis_ok:false because gpt-4o-mini sometimes emitted non-JSON that parseWraithJSON couldn't
+    // parse (~2/5 benign inputs in a run). Force JSON mode so the model MUST return parseable JSON —
+    // the analysis path is now deterministic, not prose-dependent. INJECTION_PROMPT already asks for JSON.
+    extraBody: { response_format: { type: 'json_object' } },
   });
   if (aiResult.error || aiResult.content == null) {
     console.error(`[WRAITH] injection detection FAILED (model): ${aiResult.error ?? 'null content'}`);
