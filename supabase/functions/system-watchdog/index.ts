@@ -3327,7 +3327,9 @@ Deno.serve(async (req) => {
         'monitor-cisa-kev-hourly': ['CISA KEV'],
         'monitor-naad-alerts-15min': ['naad_emergency_alerts'],
         'monitor-rss-sources': ['canadian_news_rss', 'rss_feed', 'rss'],
-        'monitor-wildfires': ['bcws_active_fire'],
+        // monitor-wildfires REMOVED 2026-08-11 (WO-WILDFIRE-GENERALIZE cutover): cron 178
+        // paused, PECL wildfire coverage now off monitor-geo-wildfire-30min (proximity, not
+        // OPS_BBOX region). Old entry was dormant once paused (loop gates on >=3 recent runs).
         // 2026-08-11: added after a false "NEVER produced HIGH" fired on this working
         // fire-season monitor. Tags verified against actual DB rows (raw_json.source):
         // BCWS_active_fire / BCWS_evacuation / CWFIS_hotspots. Note the CASING differs from
@@ -3411,6 +3413,16 @@ Deno.serve(async (req) => {
       // year-suffixes services like BCWS_ActiveFires_PublicView_2026,
       // breaking our fixed URL). Catch that explicitly so the operator
       // doesn't notice it weeks later via an empty report.
+      //
+      // ⚠ DORMANT since 2026-08-11 (WO-WILDFIRE-GENERALIZE cutover): monitor-wildfires
+      // (cron 178) is PAUSED, so this block reads <3 heartbeats and is skipped — no false
+      // finding, BUT BCWS reachability is no longer monitored. The successor
+      // monitor-geo-wildfire-30min does NOT yet emit bcws_fires_fetch_ok/bcws_evacs_fetch_ok
+      // (findBCWSActiveFiresNear/findBCWSEvacuationsNear in _shared/bcws.ts swallow fetch
+      // errors → []). RE-INSTRUMENTATION GAP tracked in WO-WILDFIRE-GENERALIZE follow-ons:
+      // expose fetch-ok from _shared/bcws.ts, write the booleans in monitor-geo-wildfire, and
+      // re-key the query below to 'monitor-geo-wildfire-30min'. Kept keyed on monitor-wildfires
+      // so it reactivates cleanly if the old cron is ever un-paused.
       const { data: wildfireHeartbeats } = await supabase
         .from('cron_heartbeat')
         .select('result_summary, completed_at')
@@ -4401,7 +4413,10 @@ Deno.serve(async (req) => {
         // No cron → watchdog will never generate a finding naming
         // those jobs, so the mapping had nothing to dispatch.
         const CRON_TO_AGENT: Record<string, string> = {
-          'monitor-wildfires':              'WILDFIRE',
+          // monitor-wildfires (cron 178) paused 2026-08-11 (WO-WILDFIRE-GENERALIZE cutover);
+          // WILDFIRE now owns the proximity successor. Same pattern as the PROD-M twitter removal
+          // above — a cron-less job never yields a finding, so this redirect is for the live job.
+          'monitor-geo-wildfire-30min':     'WILDFIRE',
           'monitor-social-hourly':          'RYAN-INTEL',
           'snapshot-bcws-ratings-daily':    'WILDFIRE',
           'monitor-cisa-kev-12h':           'NEO',

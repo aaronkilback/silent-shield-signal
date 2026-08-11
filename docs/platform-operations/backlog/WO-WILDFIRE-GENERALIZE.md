@@ -1,13 +1,24 @@
 # WO-WILDFIRE-GENERALIZE — assess the existing wildfire engine before building a Kilbacks path (ASSESSMENT, do not build)
 
-> **STATUS 2026-08-11 — PARKED, correctly NOT closed. Refusing to close this was worth more than closing it.**
-> The new `monitor-geo-wildfire` (off `client_geo_assets`) is built + live + verified (Kilbacks got real signals). But the WO's hard gate — **PECL PARITY** — is **NOT met**, so cutover is not authorized:
-> - **The 9 gas plants were never folded into `client_geo_assets`.** PECL has only **5** geo-assets today (Montney, Horn River, LNG terminal, Calgary HQ, CGL corridor) — measured 2026-08-11. The old `monitor-wildfires` knew **9 specific gas plants** + `OPS_BBOX`. So the new function can miss fires near the 7 plants no asset radius covers. That is an **unproven coverage gap, not parity.**
-> - **Parity must be proven by HISTORICAL REPLAY** against past PECL-region fires (reproduce the old function's `bcws_active_fire`/evac/hotspot signals from the substrate and confirm same-signals/same-attribution). A live wait proves nothing — PECL wildfire volume is ~0 in any 7-day window.
-> - **The prior "70%" was doc-optimism** — the same failure as WO-SSRF-SHARED-GUARD-01's mis-reported "90%": a percentage asserted from "we built the function," never measured against the acceptance criterion. See KB `feedback_wo_percent_only_meaningful_if_measured`.
-> - **Nothing is lost meanwhile:** old `monitor-wildfires` cron stays LIVE in parallel (NOT paused, NOT deleted). Coverage is unchanged until parity is proven.
+> **STATUS 2026-08-11 — ✅ CLOSED (cluster 4 of 5). Cutover DONE + acceptance CORRECTED + proven.**
 >
-> **Real remaining work to close:** (1) fold PECL's 9 gas plants into `client_geo_assets` as industrial rows; (2) historical-replay parity proof (same signals, same attribution); (3) only then pause the old `monitor-wildfires` cron and retire the `/wildfire` viewer — as a separate, deliberate step.
+> **Acceptance criterion CORRECTED by operator (2026-08-11):** the gate was set as "same-signals parity" — that was **wrong, and the operator revised it** (their call to make, not mine). Passing same-signals parity would have required **reproducing the over-attribution**. The right test is **correct-subset**: the proximity function must catch 100% of genuinely-proximate fires and **drop** distant non-threats. (Recorded: KB `feedback-acceptance-criterion-correct-subset`. I held the cutover when the criterion changed rather than interpreting around it — see also the number-vs-intent divergence below.)
+>
+> **What was done:**
+> 1. **D2 radii** (already in place, re-confirmed): HQ 25km, operations_point 50km, LNG terminal 30km. CGL corridor **15 → 30km** (operator: a 670km linear asset carries a wider buffer than a point; recovers fires at 21–28km).
+> 2. **9 gas plants folded** into `client_geo_assets` as `asset_type='gas_plant'`, `buffer_km=30` (McMahon, Younger, Jedney, Caribou, Lily, Sunrise, Aitken Creek, Fort Nelson, Taylor). PECL now 14 geo-assets. These do real work — 5 covered fires would have been missed without them.
+> 3. **Old `monitor-wildfires` cron (jobid 178) PAUSED** (`cron.alter_job(178, active:=false)` — schedule row kept, code kept, reversible). **De-registered** from `cron_job_registry` (else Registry-is-a-Promise phantom). `monitor-geo-wildfire-30min` (jobid 237) is **sole PECL wildfire authority**.
+> 4. **Watchdog references trimmed** (system-watchdog, deployed): removed stale `MONITOR_SOURCE_MAP` + `CRON_TO_AGENT` entries, redirected agent-dispatch to `monitor-geo-wildfire-30min`.
+>
+> **Replay proof (30 historical PECL BCWS fires, centroid-based):** 30 → **18 COVERED** (nearest 5.2km → 45.5km, all within an asset buffer) / **12 DROPPED** (35km … **208km**). The dropped set is regional over-attribution the old function made via `explicit_client_override` with the AI recording *"proximity Infinity km"* — see the 208km finding (`project-geo-anchoring-208km-overinclusion`). New function catches every genuinely-proximate fire; drops only distant non-threats. **Correct-subset parity: PROVEN.**
+>
+> **Number-vs-intent divergence (recorded, `feedback-operator-number-vs-intent-divergence`):** operator ruled "widen to 25km" AND "recover R11011 (27.6km)" in the same sentence — 27.6 > 25, so 25km can't do it. The pre-pause verification gate caught it (16→17, not the specified 18); surfaced the divergence rather than silently picking the number or the intent; operator confirmed intent (30km). Verified 18/12 at 30km, nothing ≥35km moved.
+>
+> **Customer-visible change (disclosure — goes with the 635 conversation):** PECL **stops receiving fire signals for fires 20–208km away**. This is a reduction in volume and an increase in accuracy.
+>
+> **Follow-on (NOT a new WO per Rule 1 — tracked here):** BCWS-endpoint-health re-instrumentation. The 2b watchdog probe (BCWS FeatureServer reachability) is DORMANT post-cutover — `monitor-geo-wildfire` doesn't emit `bcws_fires_fetch_ok`/`bcws_evacs_fetch_ok` because `_shared/bcws.ts` swallows fetch errors. To restore: expose fetch-ok from `_shared/bcws.ts`, write the booleans in `monitor-geo-wildfire`, re-key the probe to `monitor-geo-wildfire-30min`. Also: the `/wildfire` VIEWER retirement stays scoped (separate, deliberate). And `operations_point`-at-50km is still a point-proxy for an area — the polygon fix (WO-GEO-ASSET-AREA-GEOMETRY) stays scoped.
+>
+> **Reversal path:** `cron.alter_job(178, active:=true)` + re-INSERT the `cron_job_registry` row (`monitor-wildfires`, 15min, critical) + revert the watchdog trims.
 
 
 **Operator 2026-08-10:** before building a household wildfire path, assess whether the existing `/wildfire` engine generalizes. It does **not** as-is — it is a PECL/NE-BC/industrial feature carrying its own geography — but its data-source core is reusable, and the right build is to make it client-agnostic off `client_geo_assets`, NOT a parallel path. (I removed the parallel `monitor-household-wildfire` I had started — never committed/deployed.)
