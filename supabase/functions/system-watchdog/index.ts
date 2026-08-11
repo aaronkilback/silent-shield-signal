@@ -3328,6 +3328,12 @@ Deno.serve(async (req) => {
         'monitor-naad-alerts-15min': ['naad_emergency_alerts'],
         'monitor-rss-sources': ['canadian_news_rss', 'rss_feed', 'rss'],
         'monitor-wildfires': ['bcws_active_fire'],
+        // 2026-08-11: added after a false "NEVER produced HIGH" fired on this working
+        // fire-season monitor. Tags verified against actual DB rows (raw_json.source):
+        // BCWS_active_fire / BCWS_evacuation / CWFIS_hotspots. Note the CASING differs from
+        // monitor-wildfires' lowercase 'bcws_active_fire' — a monitor's source tags must be
+        // verified against what it actually writes, not assumed. WO-OUTPUT-ASSERTION-MONITORING.
+        'monitor-geo-wildfire-30min': ['BCWS_active_fire', 'BCWS_evacuation', 'CWFIS_hotspots'],
       };
 
       for (const [jobName, runs] of monitorByJob) {

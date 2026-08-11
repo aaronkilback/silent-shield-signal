@@ -76,3 +76,34 @@ Extend `cron_job_registry` (or a new `job_output_contract` table) with: `output_
 
 ## Anti-fatigue
 Findings aggregate (one per producer per run, not per missing row), severity-banded, and route per surface (public-facing → SMS critical; internal producer → email/dashboard). Consistent with the attention doctrine and `WO-WATCHDOG-FINDING-DISCIPLINE` (ruled findings don't re-escalate; intermittent-declared producers never page).
+
+## The assertion must work in BOTH directions (operator ruling 2026-08-11 — INC-GEO-WILDFIRE-FALSE-BROKEN)
+Every other output-assertion failure this week was **a broken thing reporting healthy** — a monitor that runs but produces nothing, discovered late. `monitor-geo-wildfire-30min` is the **inverse case: a healthy thing reporting broken.** A working fire-season monitor (emitting every 30 min, the operator's household evacuation Order live and active, the output contract proven firing on the real bug window) drew a **false "NEVER produced a signal — likely structurally broken" HIGH**, because the watchdog's behavioral-health check keyed on **assumed contracts** the function doesn't follow:
+1. **Field name:** the check counts `result_summary.signals_created`; the function wrote `signals_emitted`. It read a field the function never writes → 0.
+2. **Source-tag map:** the signals-table backstop (`MONITOR_SOURCE_MAP`) had no entry for the job → no tags → 0. Both 0 → the loudest branch.
+
+**Same root cause as the broken-reporting-healthy failures — a check keying on an assumed contract rather than on what the function actually writes — failing the OTHER direction.** And it is not harmless: **a false "structurally broken HIGH" on a working household fire-season monitor teaches the operator to discount the board.** A watchdog that cries wolf on a healthy monitor is as corrosive to attention as one that stays silent on a broken one ([[feedback_protect_attention_like_critical_infrastructure]]).
+
+### RULE (add to the assertion contract)
+**A monitor's health check must key on what the function ACTUALLY WRITES, verified once against a real emit — not on an assumed field name or an assumed source tag.** The assertion has to work in both directions (broken-reads-broken AND healthy-reads-healthy) or the doctrine only catches half the failures. Wiring a new monitor into the health check is not done until: (a) the check's expected `result_summary` field matches what the function writes, and (b) the source-tag map matches the function's actual `raw_json.source`, **both confirmed against one real emitted row.**
+
+### Fix applied 2026-08-11 (defense in depth)
+- `monitor-geo-wildfire` writes `signals_created` (alias of `signals_emitted`) → the heartbeat check reads it.
+- `MONITOR_SOURCE_MAP['monitor-geo-wildfire-30min'] = ['BCWS_active_fire','BCWS_evacuation','CWFIS_hotspots']` (tags verified against real DB rows) → the signals-table backstop finds it.
+- False finding resolved; verified `ever_produced=true` (backstop finds 4 signals) and the next scheduled run clears the check entirely.
+
+## MONITOR_SOURCE_MAP audit (2026-08-11, operator-requested — report, do not fix)
+The check depends on TWO drift-prone hand-maintained contracts (field name + exact-match `raw_json.source` tag map). No monitor false-fires *today* after the geo fix, but the map has real defects that could mask a partial failure or invent a false one:
+
+**Field-name contract (`result_summary.signals_created`):**
+- `monitor-geo-wildfire-30min` — wrote `signals_emitted` (FIXED).
+- **`monitor-journey-checkins-5min` — writes NEITHER `signals_created` nor `signals_emitted`.** The heartbeat check can't count it. Verify whether it is meant to produce signals (if yes → mis-instrumented; if no → it should not be in the behavioral-check monitor set). **LATENT.**
+- All other monitors write `signals_created` ✓.
+
+**Source-tag map contract (exact-match `.eq(raw_json->>source, tag)`):**
+- **Dead tags (0 signals — the map hunts a tag nothing carries):** `monitor-csis-6h → 'CSIS'` (0; saved by `'Canadian Centre for Cyber Security'`=19); `monitor-rss-sources → 'rss'`(0) + `'rss_feed'`(0) (saved by `'canadian_news_rss'`=24). Non-fatal cruft, but each dead tag is a place a partial failure could hide.
+- **Format/casing splits (function emits ≥2 variants; map has one):** CISA KEV mapped `'CISA KEV'`(37) but data also has **`'cisa-kev'`(12) unmapped**; Google News mapped `'google_news_api'`(370) but also **`'Google News API'`(19) unmapped**; wildfire **`'bcws_active_fire'`(59, lowercase) vs `'BCWS_active_fire'`(2, uppercase)** — two casings; geo mapped `'CWFIS_hotspots'`(1) but data also has **`'CWFIS VIIRS'`(2) — geo may emit both; map misses it.**
+- **Truncated-prefix entries can't exact-match:** `monitor-community-outreach-hourly` maps `'Google News: ("First Nations" OR …'` (a truncated string) but `.eq` needs the FULL source value; the real 62-signal tag likely never matches (saved by `'Energetic City News'`=35).
+- **Unmapped real tags that belong to some producer:** `multi_platform_search`(41), `security_report`(12), `github-code-search`(2), `Channel News Asia`, `Rigzone`.
+
+**Structural conclusion:** the map is a hand-maintained, exact-match, casing-sensitive attribution layer that has already drifted in ≥6 places. It is the same class as the incident it just caused. The durable fix (scope, not this WO) is to **stop hand-maintaining tag strings**: attribute signals to a producer by a stable `raw_json.signal_origin` the function sets (geo already sets `signal_origin='monitor-geo-wildfire'`) rather than a free-text `source` tag map — one canonical producer key, set by the function, verified once. Until then, every new monitor needs both contracts checked against a real emit (the RULE above).

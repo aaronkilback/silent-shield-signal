@@ -186,7 +186,13 @@ Deno.serve(async (req) => {
     }
 
     const summary = { geo_points: points.length, evac_orders_in_radius: ordersInRadius, evac_alerts_in_radius: alertsInRadius,
-      fires_in_radius: firesInRadius, signals_emitted: emitted, emit_errors: emitErrors, emit_err_details: emitErrDetails, findings };
+      // signals_created: the watchdog behavioral-health "never produced" check keys on
+      // result_summary.signals_created (system-watchdog). This function's native counter is
+      // `emitted` → expose it under BOTH names so the health check reads what we actually write,
+      // not an assumed field. (2026-08-11: a false "NEVER produced HIGH" fired on this working
+      // fire-season monitor because the check read a field name we never wrote — WO-OUTPUT-ASSERTION-MONITORING.)
+      fires_in_radius: firesInRadius, signals_emitted: emitted, signals_created: emitted,
+      emit_errors: emitErrors, emit_err_details: emitErrDetails, findings };
 
     // OUTPUT CONTRACT: an ORDER or ALERT in radius with nothing emitted = FAILURE.
     if ((ordersInRadius + alertsInRadius) > 0 && emitted === 0) {
