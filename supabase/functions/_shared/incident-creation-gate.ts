@@ -19,6 +19,8 @@
 // rolling week (see project ledger: null on ~84% of signals as of 2026-07-28), drop the
 // corroboration fallback and enforce confidence >= 0.65 primarily.
 
+import { tokenBoundaryMatch } from "./shadow-matcher.ts";
+
 export const HAZARD_CLASSES = new Set<string>([
   'civil_emergency', 'wildfire', 'weather', 'natural_disaster', 'health_concern', 'amber_alert',
 ]);
@@ -34,6 +36,7 @@ export interface GateResult {
   branch:
     | 'pattern_excluded'
     | 'hazard_no_pathway'
+    | 'no_pathway'
     | 'relevance_below'
     | 'confidence_below'
     | 'confidence_null_uncorroborated'
@@ -59,6 +62,89 @@ function isPatternSignal(signal: any): boolean {
 export function isHazardSignal(signal: any): boolean {
   return HAZARD_CLASSES.has(String(signal?.category || '')) ||
     signal?.signal_origin === 'monitor-naad-alerts';
+}
+
+// ── D6 / WO-CLIENT-THREAT-RELEVANCE: universal client-pathway test ──────────────
+// The pathway test that already existed for HAZARD classes (asset-geo) generalized to
+// ALL categories, because priority must derive from threat-to-THIS-client, not magnitude.
+// A signal has a pathway if ANY leg fires; no leg → awareness only (never an incident).
+// Behind feature_flags.pathway_gate_enabled — off = legacy hazard-only behavior, instant revert.
+export type PathwayLeg = 'asset' | 'entity' | 'operations' | null;
+export interface PathwayResult { has_pathway: boolean; leg: PathwayLeg; reasoning: string; }
+
+// Operations leg is a CATEGORY-ELIGIBILITY filter keyed on client-config `industry` —
+// NEVER an industry keyword matched against signal text. It only decides whether the
+// operating-area (location∈clients.locations) test is allowed to run for this category.
+const OPERATIONS_ELIGIBLE: Record<string, Set<string>> = {
+  energy:          new Set(['regulatory','operational','infrastructure','environmental']),
+  venue_security:  new Set(['operational','event','crowd','infrastructure']),
+};
+function operationsCategoryEligible(category: string | null, industry: string | null): boolean {
+  const set = OPERATIONS_ELIGIBLE[String(industry || '').toLowerCase()];
+  return !!set && !!category && set.has(String(category));
+}
+
+export async function isPathwayGateEnabled(supabase: any): Promise<boolean> {
+  try {
+    const { data } = await supabase.from('feature_flags').select('enabled')
+      .eq('key', 'pathway_gate_enabled').maybeSingle();
+    return data?.enabled === true;
+  } catch (_) { return false; }
+}
+
+// Evaluate the three legs. Read-only; each leg fails safe to "no pathway" on error.
+export async function evaluateClientPathway(supabase: any, signal: any): Promise<PathwayResult> {
+  const clientId = signal?.client_id;
+  if (!clientId) return { has_pathway: false, leg: null, reasoning: 'no client_id' };
+  const text = String(signal?.normalized_text || signal?.title || '').toLowerCase();
+
+  // LEG 1 — ASSET (PostGIS proximity to client_geo_assets / corridor / HQ). Reuse the existing scorer.
+  try {
+    const { data: existing } = await supabase.from('hazard_pathway_scores')
+      .select('has_pathway, reasoning').eq('signal_id', signal.id)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    let asset = existing;
+    if (!asset) {
+      const { data: scored } = await supabase.rpc('score_signal_hazard_pathway', { p_signal_id: signal.id });
+      asset = scored ? { has_pathway: scored.has_pathway, reasoning: scored.reason } : null;
+    }
+    if (asset?.has_pathway) return { has_pathway: true, leg: 'asset', reasoning: `asset: ${asset.reasoning || 'proximity to client asset'}` };
+  } catch (_) { /* asset leg best-effort */ }
+
+  // LEG 2 — ENTITY (CURATED/REVIEWED ONLY — never extracted/auto_extracted/suggested).
+  try {
+    const { data: curated } = await supabase.from('entities')
+      .select('id, name').eq('client_id', clientId).in('visibility_class', ['curated', 'reviewed']);
+    if (curated?.length) {
+      const curatedIds = new Set(curated.map((e: any) => e.id));
+      const mentions = Array.isArray(signal?.entity_mentions) ? signal.entity_mentions : [];
+      const hitId = mentions.map((m: any) => m?.entity_id).filter(Boolean).find((id: string) => curatedIds.has(id));
+      if (hitId) {
+        const e = curated.find((c: any) => c.id === hitId);
+        return { has_pathway: true, leg: 'entity', reasoning: `entity: mentions curated "${e?.name}"` };
+      }
+      for (const e of curated) {
+        if (e.name && tokenBoundaryMatch(text, String(e.name).toLowerCase())) {
+          return { has_pathway: true, leg: 'entity', reasoning: `entity: names curated "${e.name}"` };
+        }
+      }
+    }
+  } catch (_) { /* entity leg best-effort */ }
+
+  // LEG 3 — OPERATIONS (operating area from clients.locations; industry gates category eligibility).
+  try {
+    const { data: cfg } = await supabase.from('clients').select('locations, industry').eq('id', clientId).maybeSingle();
+    if (cfg?.locations?.length && operationsCategoryEligible(signal?.category, cfg.industry)) {
+      const locText = String(signal?.location || signal?.normalized_text || '').toLowerCase();
+      for (const loc of cfg.locations) {
+        if (loc && tokenBoundaryMatch(locText, String(loc).toLowerCase())) {
+          return { has_pathway: true, leg: 'operations', reasoning: `operations: location "${loc}" in operating area` };
+        }
+      }
+    }
+  } catch (_) { /* operations leg best-effort */ }
+
+  return { has_pathway: false, leg: null, reasoning: 'no asset/entity/operations pathway to client' };
 }
 
 // Severity → PRIORITY only (never admission). Mirrors the prior PECL grading intent
@@ -131,11 +217,20 @@ export async function evaluateIncidentGate(
       values: baseValues };
   }
 
-  // 2. HAZARD PATHWAY (Step 6 — interim freeze LIFTED). A hazard/NAAD signal earns an
-  // incident ONLY via a client impact pathway (proximity / corridor / HQ). No pathway →
-  // awareness only. Pathway scoring also caps relevance to 0.40 for no-pathway hazards,
-  // so this is defence-in-depth over the relevance gate below.
-  if (isHazardSignal(signal)) {
+  // 2. CLIENT PATHWAY (D6 / WO-CLIENT-THREAT-RELEVANCE). Priority derives from
+  // threat-to-THIS-client, not magnitude. Flag ON: universal 3-leg test (asset/entity/
+  // operations) for ALL categories — no pathway → awareness only. Flag OFF: legacy
+  // hazard-only pathway (unchanged). Rule 4: this is ORDERING; the relevance threshold
+  // below is untouched. Go-live gated on the BC Place inversion + 0-of-15 replay.
+  if (await isPathwayGateEnabled(supabase)) {
+    const pw = await evaluateClientPathway(supabase, signal);
+    if (!pw.has_pathway) {
+      return { admit: false, branch: 'no_pathway', priority: null,
+        reason: `no client pathway — awareness only: ${pw.reasoning}`,
+        values: baseValues };
+    }
+    // pathway confirmed (leg: ${pw.leg}) — fall through to the relevance/confidence gates.
+  } else if (isHazardSignal(signal)) {
     let pathway: any = null;
     const { data: existing } = await supabase.from('hazard_pathway_scores')
       .select('has_pathway, reasoning').eq('signal_id', signal.id)
