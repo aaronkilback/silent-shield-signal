@@ -21,8 +21,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const MIG_DIR = 'supabase/migrations';
-const files = process.argv.slice(2).length
-  ? process.argv.slice(2)
+const argFiles = process.argv.slice(2).filter((a) => a !== '--audit');
+const files = argFiles.length
+  ? argFiles
   : readdirSync(MIG_DIR).filter((f) => f.endsWith('.sql')).map((f) => join(MIG_DIR, f));
 
 const violations = [];
@@ -60,11 +61,19 @@ for (const path of files) {
   }
 }
 
+// --audit: report but never fail (audit-first per feedback_audit_before_blocking_ci). Default (no
+// flag), on a changed-files run, is a real gate — exit 1. Promote the aggregate run to blocking
+// only after the 78 legacy file-hits are triaged.
+const AUDIT = process.argv.includes('--audit');
+const fileArgs = files.filter((f) => f !== '--audit');
+
 if (violations.length) {
-  console.error('❌ FAIL — anon-EXECUTE-able SECURITY DEFINER function(s) in migrations:\n');
+  const label = AUDIT ? '⚠️  AUDIT' : '❌ FAIL';
+  console.error(`${label} — anon-EXECUTE-able SECURITY DEFINER function(s) in migrations:\n`);
   for (const v of violations) console.error('  • ' + v);
   console.error(`\n${violations.length} violation(s). A SECURITY DEFINER function must revoke EXECUTE from PUBLIC ` +
-    `(not just anon). This is the INC-GEO-ANON-EXPOSURE trap.`);
-  process.exit(1);
+    `(not just anon). NOTE (INC-GEO-ANON-EXPOSURE 2026-08-11): the per-function revoke is the RELIABLE control — ` +
+    `ALTER DEFAULT PRIVILEGES does NOT suppress the built-in PUBLIC grant on this Supabase instance (proven).`);
+  process.exit(AUDIT ? 0 : 1);
 }
-console.log(`✅ PASS — ${files.length} migration file(s) scanned; no SECURITY DEFINER function missing a public revoke.`);
+console.log(`✅ PASS — ${fileArgs.length} migration file(s) scanned; no SECURITY DEFINER function missing a public revoke.`);
