@@ -1,6 +1,15 @@
 # WO-FAIL-LOUD-AUDIT-01 — sweep for swallowed-error → silent-empty-default
 
-**Logged:** 2026-08-02. **Status:** item 1 DONE; gateway-model sweep DONE; broader code sweep OPEN. Enforces `architecture-decisions/fail-loud-doctrine.md`.
+**Logged:** 2026-08-02. **Status (2026-08-11):** item 1 DONE; gateway-model sweep DONE; **broader code sweep RAN — 2 real decision-feeding hits found + fixed + deployed prod (`2ac00308`)**; residual `.error`-ignored surface bounded + PARKED (see below). Enforces `architecture-decisions/fail-loud-doctrine.md`.
+
+## Broader sweep — RAN 2026-08-11 (this IS the acceptance; not a rubber-stamp close)
+
+Ran the P1–P4 grep priorities. **Two genuine violations in decision-feeding code, both fixed to fail loud (`2ac00308`, deployed prod across 6 functions):**
+- **`predictive-incident-scorer`** batch fetch — a failed `signals` query read as `scored:0, "No signals to score"`; a DB failure silently disabled predictive scoring, indistinguishable from a clean empty batch.
+- **`countCorroboration` (`_shared/incident-creation-gate.ts`)** — a failed `entity_mentions` query read as zero corroboration → could suppress a real incident. (Consumers redeployed: predictive-incident-scorer, incident-lifecycle-sweep, check-incident-escalation, generate-executive-report, ingest-signal, ai-decision-engine.)
+- Canonical example of the shape recorded in KB (`feedback_failed_query_reading_as_zero`).
+
+**Scope bound (do NOT carry as an unbounded open item):** the remaining surface is ~180 `callAiGateway` call sites + the P3 `data ?? []` candidates. That is **open-ended and NOT a single acceptance test** — enumerating it wholesale is exactly the anti-pattern this WO exists to avoid. **This WO is PARKED here, not left "OPEN" against an unbounded sweep.** Future fail-loud work is per-surface and demand-driven: when a specific monitor/scorer/gate is touched or misbehaves, apply the discriminator (*"does a failure here look identical to a successful empty result?"*) to that surface. The doctrine (`fail-loud-doctrine.md`) is the standing enforcement; a repo-wide grep is not a closeable acceptance criterion.
 
 ## Item 1 — `analyze_signal_threat_dna` (DONE — was fabricating)
 **Finding: all 840 threat-DNA rows were fabricated `clean` defaults.** The function sets a default `{ai_generated:0, synthetic:0, adversarial:0, verdict:'clean', confidence:0.5}`, called `claude-haiku-4-5-20251001` (unmapped in the AI gateway → OpenAI → **404**), and on the swallowed 404 stored the default. Query proof: **all 840 rows byte-identical** (`0/0/0/clean/0.5`). The scorer never analyzed anything; its adversarial-signal block (soft-delete at `adversarial ≥ 0.85`) **never fired**. Same class as entity-deep-scan's fabricated sanctions screening — model non-output recorded under "AI threat analysis" authority.

@@ -1,5 +1,15 @@
 # WO-WILDFIRE-GENERALIZE — assess the existing wildfire engine before building a Kilbacks path (ASSESSMENT, do not build)
 
+> **STATUS 2026-08-11 — PARKED, correctly NOT closed. Refusing to close this was worth more than closing it.**
+> The new `monitor-geo-wildfire` (off `client_geo_assets`) is built + live + verified (Kilbacks got real signals). But the WO's hard gate — **PECL PARITY** — is **NOT met**, so cutover is not authorized:
+> - **The 9 gas plants were never folded into `client_geo_assets`.** PECL has only **5** geo-assets today (Montney, Horn River, LNG terminal, Calgary HQ, CGL corridor) — measured 2026-08-11. The old `monitor-wildfires` knew **9 specific gas plants** + `OPS_BBOX`. So the new function can miss fires near the 7 plants no asset radius covers. That is an **unproven coverage gap, not parity.**
+> - **Parity must be proven by HISTORICAL REPLAY** against past PECL-region fires (reproduce the old function's `bcws_active_fire`/evac/hotspot signals from the substrate and confirm same-signals/same-attribution). A live wait proves nothing — PECL wildfire volume is ~0 in any 7-day window.
+> - **The prior "70%" was doc-optimism** — the same failure as WO-SSRF-SHARED-GUARD-01's mis-reported "90%": a percentage asserted from "we built the function," never measured against the acceptance criterion. See KB `feedback_wo_percent_only_meaningful_if_measured`.
+> - **Nothing is lost meanwhile:** old `monitor-wildfires` cron stays LIVE in parallel (NOT paused, NOT deleted). Coverage is unchanged until parity is proven.
+>
+> **Real remaining work to close:** (1) fold PECL's 9 gas plants into `client_geo_assets` as industrial rows; (2) historical-replay parity proof (same signals, same attribution); (3) only then pause the old `monitor-wildfires` cron and retire the `/wildfire` viewer — as a separate, deliberate step.
+
+
 **Operator 2026-08-10:** before building a household wildfire path, assess whether the existing `/wildfire` engine generalizes. It does **not** as-is — it is a PECL/NE-BC/industrial feature carrying its own geography — but its data-source core is reusable, and the right build is to make it client-agnostic off `client_geo_assets`, NOT a parallel path. (I removed the parallel `monitor-household-wildfire` I had started — never committed/deployed.)
 
 ## 1. What it actually does
