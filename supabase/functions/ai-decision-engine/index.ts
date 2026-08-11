@@ -409,6 +409,7 @@ Respond with structured JSON containing:
   "reasoning": string,
   "estimated_event_date": "ISO 8601 date string (YYYY-MM-DD) of when the described event ACTUALLY OCCURRED based on clues in the text. If the signal describes a past event (e.g., references a specific year, season, or past campaign), extract that date. If the event appears current/recent, use null.",
   "is_historical_content": boolean — true if the described event occurred more than 90 days ago. CRITICAL: If true, threat_level MUST be "low" and should_create_incident MUST be false.,
+  "is_event": boolean — EVENTHOOD test. true only if something OCCURRED: an action, attack, incident, protest, disruption, or physical event that actually happened. false if this is a STATEMENT, opinion, editorial, analysis, announcement, call-to-action, or ROUTINE REGULATORY FILING — i.e. ambient activity of the client's world, not an occurrence. An incident requires an event: if is_event is false, should_create_incident MUST be false (it is a signal for awareness, never an incident), regardless of how relevant or severe the topic is.,
   "strategic_context": "Broader threat landscape — only cite verified patterns",
   "threat_correlation": "ONLY list signals with direct evidence-based connections. State 'No direct correlations found' if none exist.",
   "campaign_assessment": "ONLY if direct evidence exists of coordination. Otherwise state 'No evidence of coordinated campaign'.",
@@ -481,6 +482,7 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
                 reasoning: { type: 'string' },
                 estimated_event_date: { type: 'string', description: 'ISO 8601 date (YYYY-MM-DD) of when the event actually occurred. Null if current/recent.' },
                 is_historical_content: { type: 'boolean', description: 'True if the described event occurred more than 90 days ago' },
+                is_event: { type: 'boolean', description: 'EVENTHOOD: true only if something OCCURRED (action/attack/protest/disruption). False for statements, opinions, analysis, announcements, or routine regulatory filings. If false, should_create_incident must be false.' },
                 strategic_context: { type: 'string' },
                 threat_correlation: { type: 'string' },
                 campaign_assessment: { type: 'string' },
@@ -1015,6 +1017,9 @@ REMEMBER: Correlation requires explicit evidence. Do not fabricate links between
         // exclusion now apply here too. Tier-2 promotion counts as corroboration.
         signal.composite_confidence = compositeScore;
         signal.relevance_score = relevanceScore;
+        // D6 eventhood: pass the LLM's occurred-vs-statement classification to the gate.
+        // undefined (older signals / pre-field) is treated as "unknown", not "not an event".
+        if (typeof decision.is_event === 'boolean') signal.is_event = decision.is_event;
         const gate = await evaluateIncidentGate(supabase, signal, 7, { corroborationOverride: !!tier2_promotion });
         if (!gate.admit) {
           console.log(`[AI-Decision] Gate rejected (${gate.branch}) signal ${signal.id}: ${gate.reason}`);

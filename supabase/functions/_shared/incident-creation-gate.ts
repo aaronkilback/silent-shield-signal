@@ -35,6 +35,7 @@ export interface GateResult {
   admit: boolean;
   branch:
     | 'pattern_excluded'
+    | 'non_event'
     | 'hazard_no_pathway'
     | 'no_pathway'
     | 'relevance_below'
@@ -223,6 +224,15 @@ export async function evaluateIncidentGate(
   // hazard-only pathway (unchanged). Rule 4: this is ORDERING; the relevance threshold
   // below is untouched. Go-live gated on the BC Place inversion + 0-of-15 replay.
   if (await isPathwayGateEnabled(supabase)) {
+    // 2a. EVENTHOOD (D6 #2). A confirmed non-event (statement / opinion / routine filing) is
+    // NEVER an incident, however relevant or severe. Only an explicit `false` refuses; unknown
+    // (undefined/null, e.g. legacy signals) falls through — we never over-refuse unclassified.
+    if (signal?.is_event === false) {
+      return { admit: false, branch: 'non_event', priority: null,
+        reason: 'not an event (statement/opinion/filing) — awareness only',
+        values: baseValues };
+    }
+    // 2b. CLIENT PATHWAY (3-leg).
     const pw = await evaluateClientPathway(supabase, signal);
     if (!pw.has_pathway) {
       return { admit: false, branch: 'no_pathway', priority: null,
