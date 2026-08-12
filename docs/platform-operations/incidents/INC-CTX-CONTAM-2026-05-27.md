@@ -69,3 +69,24 @@ F-stage execution stays **disabled** until grounding + provenance + traversal in
 
 ## 8. Out of scope (tracked separately)
 Kelly Pietras unified-graph failure (duplicate canonical entity + investigation/OSINT retrieval) — separate direction under #33: canonicalization + edge-linked traversal + 4-way parity tests.
+
+## 9. CORRECTION — root cause was misdiagnosed (2026-08-12, WO-PROMPT-ROSTER-01)
+
+**Section 3 Class B ("parametric free-association") is SUPERSEDED. The phrase was not invented — it was hardcoded in the always-on system prompt.**
+
+`_shared/fortress-operational-prompt.ts` (`FORTRESS_PLATFORM_OVERVIEW`, imported by `dashboard-ai-assistant`) shipped an `ACTIVE CLIENTS` roster on **2026-05-03** (commit `a2295744`) containing the literal line:
+
+> `- BC Children's Hospital Gender Clinic (BCCH) — pediatric medical, Vancouver-area`
+
+No roster existed before that commit. It was injected into **every** dashboard-ai-assistant session for **every** tenant. The **CRT** tenant ran **183 turns** on that path between the roster's ship date (05-03) and this incident (05-27) — every one carrying the phrase verbatim in the system prompt. The model did not emit a pretraining fact; **its own system prompt told it BCCH was an active client.** Proximate cause = **prompt contamination** (static cross-tenant identity injection), not parametric knowledge.
+
+**Why the forensic missed it:** Section 2's "full scan of every queryable text/retrieval surface" examined seven *retrieval* stores and **never examined the static system prompt / tool definitions / persona** — the model's own instruction context. Absence-from-retrieval was read as absence-from-context, so a prompt-injected fact was ruled a hallucination. This surface-set blind spot is generalized in the method-failure finding carried out of this incident (see WO — forensic surface-set completeness).
+
+**Corrected root-cause classes:**
+- **Class A (COP global leak):** unchanged — real adjacent leak, closed by `buildCOP` tenant-scoping. Was *not* the BCH vector (correct in original).
+- **Class B (parametric):** **withdrawn.** The dominant vector was the hardcoded roster in `FORTRESS_PLATFORM_OVERVIEW`.
+- **Class C (NEW — prompt contamination):** static multi-client roster in a shared always-on prompt. Remediation: dynamic per-client context sourced from the client row (WO-PROMPT-ROSTER-01); no static client list may exist in any shared prompt. The Grounding-State Doctrine remains correct and useful, but it was **not** the load-bearing control for *this* phrase — removing the hardcoded line is.
+
+**Exposure:** ~1,823 dashboard-ai-assistant turns across 4 tenant groups since 2026-05-03, still live at time of this correction (last activity 2026-08-12). One external cross-tenant disclosure (CRT — neither PECL nor BCCH). Full exposure table in WO-PROMPT-ROSTER-01.
+
+Status accordingly stays **OPEN**: the load-bearing fix (dynamic roster) had not shipped when this correction was written.
