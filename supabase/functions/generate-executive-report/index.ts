@@ -298,7 +298,63 @@ Deno.serve(async (req) => {
     const { data: noneAttrs } = await supabase.from('signal_client_attributions')
       .select('signal_id').eq('client_id', client_id).eq('attribution_type', 'none').eq('is_authoritative', true);
     const noneSet = new Set((noneAttrs || []).map((a: any) => a.signal_id));
-    const signals = (signalsRaw || []).filter((s: any) => !noneSet.has(s.id));
+    const signalsAfterNone = (signalsRaw || []).filter((s: any) => !noneSet.has(s.id));
+
+    // ── USABILITY: a brief may ONLY be built on signals with a POSITIVE verified attribution
+    // (direct/competitor/sector). Loose-matched rows (client_id set by the pre-cutover matcher, no
+    // verified attribution) are NOT usable — do NOT loosen to admit them; re-attribution is the path.
+    const { data: _posAttrRows } = await supabase.from('signal_client_attributions')
+      .select('signal_id').eq('client_id', client_id).in('attribution_type', ['direct', 'competitor', 'sector']);
+    const _posSet = new Set((_posAttrRows || []).map((a: any) => a.signal_id));
+    const signals = signalsAfterNone.filter((s: any) => _posSet.has(s.id));
+
+    // ── EMPTY-SET GUARD (WO-CLIENT-THREAT-RELEVANCE 2026-08-12) ──────────────────────────────────
+    // A brief over zero USABLE (positively-attributed) signals must NOT fabricate a confident
+    // all-clear. Return an explicit insufficient-data state WITH the diagnostic counts, BEFORE any
+    // AI narrative generation. This guards the NORMAL state of the current data (0 positive
+    // attributions exist until the re-attribution path runs), not an edge case.
+    {
+      const usabilityCounts = {
+        signals_in_period: (signalsRaw || []).length,
+        attributed: signals.length,          // positively-attributed
+        usable: signals.length,
+        excluded_superseded_none: (signalsAfterNone ? ((signalsRaw || []).length - signalsAfterNone.length) : 0),
+        loose_matched_unverified: (signalsAfterNone.length - signals.length),
+      };
+      if (signals.length === 0) {
+        const periodLabel = `${periodStart.toISOString().slice(0, 10)} to ${periodEnd.toISOString().slice(0, 10)}`;
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Executive Intelligence Brief — ${client.name}</title></head>
+<body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:760px;margin:40px auto;color:#1a1a1a">
+  <h1 style="font-size:20px;margin-bottom:2px">${client.name} — Executive Intelligence Brief</h1>
+  <p style="color:#666;margin-top:0">Period: ${periodLabel}</p>
+  <div style="border:1px solid #e0a800;background:#fff8e1;padding:16px 20px;border-radius:8px;margin:20px 0">
+    <div style="font-weight:600;font-size:16px;color:#7a5c00">⚠ Insufficient attributed data for this period</div>
+    <p style="margin:10px 0 6px">No signal in this period carries a verified client attribution, so no brief can be produced. This is <strong>not</strong> an all-clear — it reflects an attribution gap, not a quiet period.</p>
+    <table style="border-collapse:collapse;margin-top:8px;font-size:14px">
+      <tr><td style="padding:2px 18px 2px 0;color:#555">Signals in period</td><td style="font-weight:600">${usabilityCounts.signals_in_period}</td></tr>
+      <tr><td style="padding:2px 18px 2px 0;color:#555">Positively attributed</td><td style="font-weight:600">${usabilityCounts.attributed}</td></tr>
+      <tr><td style="padding:2px 18px 2px 0;color:#555">Usable</td><td style="font-weight:600">${usabilityCounts.usable}</td></tr>
+      <tr><td style="padding:2px 18px 2px 0;color:#999">— excluded (superseded 'none')</td><td style="color:#999">${usabilityCounts.excluded_superseded_none}</td></tr>
+      <tr><td style="padding:2px 18px 2px 0;color:#999">— loose-matched, unverified</td><td style="color:#999">${usabilityCounts.loose_matched_unverified}</td></tr>
+    </table>
+    <p style="margin:12px 0 0;font-size:13px;color:#7a5c00">Confidence: Insufficient data · Risk: Not assessed. Resolve by re-scoring these signals under the deterministic matcher (re-attribution path).</p>
+  </div>
+</body></html>`;
+        const reportTenantId = (client as { tenant_id?: string | null }).tenant_id ?? null;
+        let insufficientReportId: string | null = null;
+        if (reportTenantId) {
+          const { data: _r } = await supabase.from('reports').insert({
+            type: 'executive_intelligence', client_id, tenant_id: reportTenantId,
+            period_start: periodStart.toISOString(), period_end: periodEnd.toISOString(),
+            issuable: false,
+            meta_json: { client_id, client_name: client.name, insufficient_data: true, counts: usabilityCounts, report_generated_at: currentDateTimeISO },
+          }).select('id').single();
+          insufficientReportId = _r?.id ?? null;
+        }
+        return new Response(JSON.stringify({ success: true, insufficient_data: true, counts: usabilityCounts, report_id: insufficientReportId, html }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
 
     // ── WO-PROVENANCE-01 step 2 — per-signal CITABILITY from source provenance (resolveCitation) ──
     // A signal that cannot be cited cannot contribute to any main-body assertion (Blocker 1). We
