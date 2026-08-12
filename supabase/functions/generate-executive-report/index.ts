@@ -249,10 +249,11 @@ Deno.serve(async (req) => {
     const currentDateISO = reportGeneratedAt.toISOString().split('T')[0];
     const currentDateTimeISO = reportGeneratedAt.toISOString();
     
-    const periodStart = new Date();
-    periodStart.setDate(periodStart.getDate() - period_days);
-    const periodEnd = new Date();
-    
+    // Explicit historical window override (body.period_start / period_end, ISO). Enables a brief
+    // for a specific past week (e.g. benchmark comparison) instead of only "last N days from now".
+    const periodStart = body.period_start ? new Date(body.period_start) : (() => { const d = new Date(); d.setDate(d.getDate() - period_days); return d; })();
+    const periodEnd = body.period_end ? new Date(body.period_end) : new Date();
+
     // Define stale threshold: incidents older than 7 days are considered stale
     const staleThresholdMs = 7 * 24 * 60 * 60 * 1000;
     const last24hThreshold = new Date(reportGeneratedAt.getTime() - 24 * 60 * 60 * 1000);
