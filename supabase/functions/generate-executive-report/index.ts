@@ -273,7 +273,7 @@ Deno.serve(async (req) => {
     // (deleted_at IS NOT NULL means the operator dismissed it — must NOT appear
     // in executive output), and historical-tagged signals (signal_type='historical'
     // or triage_override='historical' — these are old context, not current intel).
-    const { data: signals, error: signalsError } = await supabase
+    const { data: signalsRaw, error: signalsError } = await supabase
       .from('signals')
       .select('*')
       .eq('client_id', client_id)
@@ -290,6 +290,14 @@ Deno.serve(async (req) => {
       .order('received_at', { ascending: false });
 
     if (signalsError) throw signalsError;
+
+    // attribution_type='none' exclusion (WO-CLIENT-THREAT-RELEVANCE 2026-08-12): drop signals whose
+    // attribution to this client was authoritatively superseded to 'none' (Option C) — a corrected
+    // fabrication must never reach an executive brief.
+    const { data: noneAttrs } = await supabase.from('signal_client_attributions')
+      .select('signal_id').eq('client_id', client_id).eq('attribution_type', 'none').eq('is_authoritative', true);
+    const noneSet = new Set((noneAttrs || []).map((a: any) => a.signal_id));
+    const signals = (signalsRaw || []).filter((s: any) => !noneSet.has(s.id));
 
     // ── WO-PROVENANCE-01 step 2 — per-signal CITABILITY from source provenance (resolveCitation) ──
     // A signal that cannot be cited cannot contribute to any main-body assertion (Blocker 1). We
@@ -1182,24 +1190,29 @@ Max 5 items.`;
           const firstUpdate = new Date(now);
           firstUpdate.setDate(firstUpdate.getDate() + (a.firstUpdateDays || 2));
           
-          // Try to find a matching team member
-          let ownerName = a.ownerRole;
+          // Try to find a matching REAL team member.
+          let ownerName: string | undefined;
           let ownerId: string | undefined;
           for (const [id, member] of teamMap) {
             if (member.roles.some(r => a.ownerRole.toLowerCase().includes(r))) {
               ownerId = id;
-              // Sanitize: don't expose email addresses as display names in reports
               const isEmail = member.name?.includes('@');
-              ownerName = isEmail ? a.ownerRole : (member.name || a.ownerRole);
+              if (!isEmail && member.name) ownerName = member.name;
               break;
             }
           }
+          // PHANTOM-ROLE FIX (WO-REPORT-STRUCTURE, 2026-08-12): a role is NOT an owner. If no real
+          // team member resolved, present "Unassigned" — never a fabricated role like "Intelligence
+          // Analyst". The AI's role suggestion is kept ONLY as a routing hint (suggestedFunction),
+          // clearly not an assignment. Fortress does not know the client's org chart; say so honestly.
+          const suggestedFunction = a.ownerRole;
+          if (!ownerId || !ownerName) ownerName = 'Unassigned';
 
           return {
             description: a.description,
             ownerId,
             ownerName,
-            ownerRole: a.ownerRole,
+            ownerRole: ownerId ? a.ownerRole : `Suggested function: ${suggestedFunction}`,
             deadline: deadline.toISOString(),
             firstUpdateDue: firstUpdate.toISOString(),
             priority: a.priority || 'medium'
