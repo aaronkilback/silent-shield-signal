@@ -21,3 +21,15 @@ Weekly counts: 05-18 **5** · 05-25 **2** · 06-08 **31** · 06-15 **109** · 06
 - Were the 74 **assigned a client_id, deleted, or merged**?
 - **If assigned:** to which client, by what mechanism, and was it deliberate curation or an automatic fill?
 - **If automatic:** what rule decided the owner? An entity of unknown provenance receiving a client attribution by inference is the **same anti-pattern as region-as-proxy** (`feedback_cheap_proxy_for_expensive_correct_signal`) and would need its own correction. Check `entities.created_by` / `deleted_at` / merge audit + any auto-fill on `client_id`.
+
+## OPEN FINDING (2026-08-12) — entity graph stores mentions, not resolved entities. Above the watch-list build.
+Surfaced by the watch-list result: the only cross-file link fired on NAME, not entity_id.
+- **91 of 4,722 distinct entity names (~1.9%) resolve to >1 `entity_id`** — duplication, not resolution. Concrete: `Tourmaline` has 2 entity_id rows; INV-2026-047's Tourmaline ≠ INV-2026-0072's, so entity_id matching failed and the name fallback carried the link.
+- Across the 9 closed investigations: 13 distinct entity_ids, **0 shared across files by ID.** Investigations also reference entities in prose (`synopsis`/`information`) without linking them via `correlated_entity_ids`, so structural cross-file matching is weak independent of duplication.
+- **Consequence:** any feature relying on entity_id cross-referencing (watch-list links, association graphs, dedup) silently under-matches and leans on name fallback. Entity resolution / dedup is the real fix. Measure done; **do not fix under the watch-list WO.**
+
+## NER / PERSON-LAYER work order note (2026-08-12)
+Two branches of the SAME problem — content the entity graph cannot reference by ID:
+1. **Narrative-only investigations** (~7–9 of 20 have entities only in `synopsis`/`information`, not `correlated_entity_ids`) — need NER extraction to become watch-able entities.
+2. **`investigation_persons`: 36 person rows across 13 files with NO `entity_id`** — the person layer is entirely outside the entity graph (name/phone/company free text). Same problem wearing a different hat: persons of interest in investigations are not resolvable entities and cannot be watch-listed or cross-linked.
+Both deferred to the NER/entity-resolution work order; not in the watch-list scope.
