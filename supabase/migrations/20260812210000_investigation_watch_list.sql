@@ -48,3 +48,20 @@ begin
 end $fn$;
 drop trigger if exists trg_ewl_link_mention on public.entity_mentions;
 create trigger trg_ewl_link_mention after insert on public.entity_mentions for each row execute function public.trg_watchlist_link_on_mention();
+
+-- FORWARD 3: a watched entity appearing in ANOTHER investigation (correlated entity_id OR name in
+-- synopsis/information) -> link event naming both files. Covers "later investigation".
+create or replace function public.trg_watchlist_link_on_investigation() returns trigger language plpgsql security definer as $fn$
+begin
+  insert into public.watch_list_link_events (watch_entity_id, entity_name, source_investigation_id, source_file_number, matched_type, matched_ref, matched_file_number, match_basis, notify_user_id)
+  select w.entity_id, w.entity_name, w.source_investigation_id, si.file_number, 'investigation', NEW.id, NEW.file_number,
+         case when NEW.correlated_entity_ids @> array[w.entity_id] then 'entity_id' else 'name' end, si.prepared_by
+  from public.entity_watch_list w join public.investigations si on si.id=w.source_investigation_id
+  where w.is_active and w.source_investigation_id <> NEW.id
+    and (NEW.correlated_entity_ids @> array[w.entity_id]
+         or (length(w.entity_name) >= 4 and (NEW.synopsis ilike '%'||w.entity_name||'%' or NEW.information ilike '%'||w.entity_name||'%')))
+  on conflict (source_investigation_id, watch_entity_id, matched_type, matched_ref, match_basis) do nothing;
+  return NEW;
+end $fn$;
+drop trigger if exists trg_ewl_link_investigation on public.investigations;
+create trigger trg_ewl_link_investigation after insert or update on public.investigations for each row execute function public.trg_watchlist_link_on_investigation();
