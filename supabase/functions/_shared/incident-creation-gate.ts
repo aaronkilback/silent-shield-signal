@@ -38,6 +38,7 @@ export interface GateResult {
     | 'non_event'
     | 'hazard_no_pathway'
     | 'no_pathway'
+    | 'recency_awareness'
     | 'relevance_below'
     | 'confidence_below'
     | 'confidence_null_uncorroborated'
@@ -148,6 +149,77 @@ export async function evaluateClientPathway(supabase: any, signal: any): Promise
   return { has_pathway: false, leg: null, reasoning: 'no asset/entity/operations pathway to client' };
 }
 
+// ── D6 RECENCY — "should this page NOW", distinct from pathway ("can it page"). ──────
+// Pathway decides connection; recency decides currency. An old signal with a real pathway
+// is AWARENESS, not an incident. Two legs that fail in OPPOSITE directions by stakes:
+//   • STATUS-GOVERNED (BCWS orders/alerts/fires carry authoritative status): fail SAFE.
+//     A monitor outage must NOT read as all-clear — an order active in last-known data stays
+//     'current' while the emitter is down (loud). Currency = active status, not article age.
+//   • DATE-GOVERNED (RSS/news/cyber — no status): fail CLOSED. event_time is unreliable
+//     (event_date is LLM-guessed; temporal_grounding is 100% 'unknown', never wired), so
+//     unproven recency → 'unknown' → AWARENESS. Awareness ≠ dropped: the signal still exists
+//     and is visible; it simply does not page.
+export type RecencyState = 'current' | 'aged_out' | 'unknown';
+export interface RecencyResult { state: RecencyState; basis: string; }
+
+const STATUS_SOURCES = new Set(['BCWS_evacuation', 'BCWS_active_fire', 'bcws_active_fire']);
+const ACTIVE_STATUS = new Set(['Order', 'Alert', 'Out of Control', 'Being Held']);
+// Date-governed windows (days) — consulted ONLY when a trustworthy event-time is present;
+// otherwise fail closed to awareness. Never invents currency from ingest time.
+const CATEGORY_RECENCY_DAYS: Record<string, number> = {
+  active_threat: 14, cyber: 14, regulatory: 28, protest: 5, operational: 14, environmental: 21, social_sentiment: 7,
+};
+
+function isStatusGovernedSignal(signal: any): boolean {
+  return STATUS_SOURCES.has(String(signal?.raw_json?.source || '')) ||
+    signal?.signal_origin === 'monitor-geo-wildfire';
+}
+
+// Heartbeat guard (same shape as the false-broken-geo finding: absence of a report is NOT
+// absence of the thing). Returns false if the emitter has not succeeded within windowMin.
+async function emitterHealthy(supabase: any, jobName: string, windowMin: number): Promise<boolean> {
+  try {
+    const { data } = await supabase.from('cron_heartbeat')
+      .select('completed_at').in('status', ['completed', 'succeeded'])
+      .eq('job_name', jobName).order('completed_at', { ascending: false }).limit(1).maybeSingle();
+    if (!data?.completed_at) return false;
+    return (Date.now() - new Date(data.completed_at).getTime()) / 60000 <= windowMin;
+  } catch (_) { return false; }
+}
+
+export async function recencyState(supabase: any, signal: any): Promise<RecencyResult> {
+  // STATUS-GOVERNED (authoritative; fail-safe on emitter outage).
+  if (isStatusGovernedSignal(signal)) {
+    const rj = signal?.raw_json || {};
+    const status = rj.highest_status || rj.evac_status || rj.fire_status || null;
+    const wasActive = !!status && ACTIVE_STATUS.has(String(status));
+    const healthy = await emitterHealthy(supabase, 'monitor-geo-wildfire-30min', 90); // ~3x the 30m cadence
+    if (!healthy) {
+      // Emitter DOWN — an outage must never become an all-clear. Keep active orders paging; scream.
+      if (wasActive) {
+        console.warn(`[recency] EMITTER DOWN (monitor-geo-wildfire-30min) — holding active status "${status}" CURRENT (fail-safe, not all-clear) for signal ${signal?.id}. Cron-health watchdog carries the loud finding.`);
+        return { state: 'current', basis: `status ${status} + emitter DOWN → held current (fail-safe; monitor-geo-wildfire-30min is a registered-critical job → watchdog fires)` };
+      }
+      return { state: 'unknown', basis: 'status source, emitter down, no known-active status' };
+    }
+    if (wasActive) {
+      const ageMin = signal?.created_at ? (Date.now() - new Date(signal.created_at).getTime()) / 60000 : Infinity;
+      if (ageMin <= 90) return { state: 'current', basis: `active status ${status}, re-emitted within 90m` };
+      return { state: 'aged_out', basis: `status ${status} not re-emitted in 90m (emitter healthy) → likely rescinded` };
+    }
+    return { state: 'aged_out', basis: `status ${status || 'none'} is not an active-response status` };
+  }
+  // DATE-GOVERNED (strictly fail-closed to AWARENESS — never dropped).
+  const win = CATEGORY_RECENCY_DAYS[String(signal?.category || '')];
+  const ed = signal?.event_date ? new Date(signal.event_date) : null;
+  if (win && ed && Number.isFinite(ed.getTime())) {
+    const ageDays = (Date.now() - ed.getTime()) / 86400000;
+    if (ageDays <= win) return { state: 'current', basis: `event_date ${signal.event_date} within ${win}d (${signal.category})` };
+    return { state: 'aged_out', basis: `event_date ${signal.event_date} older than ${win}d (${signal.category})` };
+  }
+  return { state: 'unknown', basis: 'no reliable event-time (event_date missing; temporal_grounding never wired) — fail closed to awareness' };
+}
+
 // Severity → PRIORITY only (never admission). Mirrors the prior PECL grading intent
 // but decoupled from the create/no-create decision.
 export function severityToPriority(signal: any): GatePriority {
@@ -239,7 +311,15 @@ export async function evaluateIncidentGate(
         reason: `no client pathway — awareness only: ${pw.reasoning}`,
         values: baseValues };
     }
-    // pathway confirmed (leg: ${pw.leg}) — fall through to the relevance/confidence gates.
+    // 2c. RECENCY (D6). Pathway confirmed it CAN page; recency decides if it should page NOW.
+    // Only 'current' promotes; 'aged_out'/'unknown' → AWARENESS (still visible, just not paged).
+    const rec = await recencyState(supabase, signal);
+    if (rec.state !== 'current') {
+      return { admit: false, branch: 'recency_awareness', priority: null,
+        reason: `awareness (not paged) — recency ${rec.state}: ${rec.basis}`,
+        values: baseValues };
+    }
+    // pathway (leg: ${pw.leg}) + recency current — fall through to the relevance/confidence gates.
   } else if (isHazardSignal(signal)) {
     let pathway: any = null;
     const { data: existing } = await supabase.from('hazard_pathway_scores')
