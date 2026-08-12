@@ -15,3 +15,9 @@ Weekly counts: 05-18 **5** · 05-25 **2** · 06-08 **31** · 06-15 **109** · 06
 - **Ownerless incidents violate the Provenance Doctrine invariant** (`client_id IS NOT NULL OR tenant_id … OR asset_class IN ('global_shared','system')`). A pattern cluster spanning multiple clients should either be attributed to each affected client (fan-out) or be a `system`/`global_shared` analytic artifact — never a bare ownerless incident.
 - **The gate already closes the forward path** ([PATTERN] excluded from incident creation). This WO is about (a) confirming no ownerless-incident path remains, and (b) the disposition of the 363 historical rows (they are closed; decide archive vs backfill-owner vs leave).
 - **Cross-ref:** the null-client alert routing gap (INC-ALERT-DELIVERY product boundary) — same ownerless class, different layer.
+
+## OPEN ITEM (logged 2026-08-12, do not chase — answer AFTER the watch-list build)
+**74 → 0 ownerless entities unreconciled.** Earlier record: ~74 entities `client_id IS NULL` (INC-XTEN class, 2026-06-01). Verified 2026-08-12: `client_id IS NULL` = **0** of 4828. Two explanations, **neither tested**:
+- Were the 74 **assigned a client_id, deleted, or merged**?
+- **If assigned:** to which client, by what mechanism, and was it deliberate curation or an automatic fill?
+- **If automatic:** what rule decided the owner? An entity of unknown provenance receiving a client attribution by inference is the **same anti-pattern as region-as-proxy** (`feedback_cheap_proxy_for_expensive_correct_signal`) and would need its own correction. Check `entities.created_by` / `deleted_at` / merge audit + any auto-fill on `client_id`.
