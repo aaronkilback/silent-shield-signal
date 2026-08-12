@@ -220,6 +220,66 @@ export async function recencyState(supabase: any, signal: any): Promise<RecencyR
   return { state: 'unknown', basis: 'no reliable event-time (event_date missing; temporal_grounding never wired) — fail closed to awareness' };
 }
 
+// D6 gate mode: 'off' (legacy), 'shadow' (compute + log, do NOT enforce), 'enforce' (authoritative).
+async function gateMode(supabase: any): Promise<'off' | 'shadow' | 'enforce'> {
+  try {
+    const { data } = await supabase.from('feature_flags').select('key, enabled')
+      .in('key', ['pathway_gate_enabled', 'pathway_gate_shadow']);
+    const m = new Map((data || []).map((r: any) => [r.key, r.enabled === true]));
+    if (m.get('pathway_gate_enabled')) return 'enforce';
+    if (m.get('pathway_gate_shadow')) return 'shadow';
+    return 'off';
+  } catch (_) { return 'off'; }
+}
+
+export interface D6PreGate {
+  refused: boolean;
+  branch: 'non_event' | 'no_pathway' | 'recency_awareness' | 'd6_pass';
+  reason: string; leg: PathwayLeg; geo: string | null; recency: RecencyState | null;
+}
+
+// The D6 pre-gates (eventhood → pathway → recency), computed once. Shared by enforce + shadow.
+async function computeD6PreGate(supabase: any, signal: any): Promise<D6PreGate> {
+  if (signal?.is_event === false) {
+    return { refused: true, branch: 'non_event', reason: 'not an event (statement/opinion/filing)', leg: null, geo: null, recency: null };
+  }
+  const pw = await evaluateClientPathway(supabase, signal);
+  if (!pw.has_pathway) {
+    return { refused: true, branch: 'no_pathway', reason: pw.reasoning, leg: null, geo: null, recency: null };
+  }
+  // Caveat-2 capture: when the pathway is ASSET, record whether it fired on real coordinates
+  // or a gazetteer text-derived place-name — that is where a false admit can hide.
+  let geo: string | null = null;
+  if (pw.leg === 'asset') {
+    try {
+      const { data } = await supabase.from('hazard_pathway_scores').select('geo_precision')
+        .eq('signal_id', signal.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      geo = data?.geo_precision ?? null;
+    } catch (_) { /* best-effort */ }
+  }
+  const rec = await recencyState(supabase, signal);
+  if (rec.state !== 'current') {
+    return { refused: true, branch: 'recency_awareness', reason: `recency ${rec.state}: ${rec.basis}`, leg: pw.leg, geo, recency: rec.state };
+  }
+  return { refused: false, branch: 'd6_pass', reason: `pathway leg=${pw.leg}${geo ? ' geo=' + geo : ''}, recency current`, leg: pw.leg, geo, recency: 'current' };
+}
+
+// Shadow logging: record what the D6 pre-gates WOULD decide, without enforcing. Legacy stays
+// authoritative. The report joins these 'shadow-d6' rows against the real (legacy) decisions.
+async function persistD6Shadow(supabase: any, signal: any, d6: D6PreGate, baseValues: any): Promise<void> {
+  try {
+    await supabase.from('incident_gate_decisions').insert({
+      signal_id: signal.id, caller_function: 'shadow-d6',
+      admitted: !d6.refused, branch: d6.branch,
+      reason: `SHADOW d6=${d6.refused ? 'refused' : 'pass'} branch=${d6.branch} leg=${d6.leg ?? '-'} geo=${d6.geo ?? '-'} recency=${d6.recency ?? '-'} | ${d6.reason}`,
+      category: baseValues.category, signal_type: baseValues.signal_type, signal_origin: baseValues.signal_origin,
+      relevance_score: baseValues.relevance_score, confidence: baseValues.confidence,
+      confidence_present: baseValues.confidence_present, corroboration_count: null,
+      assigned_priority: null, incident_id: null,
+    });
+  } catch (e) { console.error('[incident-gate] shadow persist threw:', (e as Error).message); }
+}
+
 // Severity → PRIORITY only (never admission). Mirrors the prior PECL grading intent
 // but decoupled from the create/no-create decision.
 export function severityToPriority(signal: any): GatePriority {
@@ -295,32 +355,22 @@ export async function evaluateIncidentGate(
   // operations) for ALL categories — no pathway → awareness only. Flag OFF: legacy
   // hazard-only pathway (unchanged). Rule 4: this is ORDERING; the relevance threshold
   // below is untouched. Go-live gated on the BC Place inversion + 0-of-15 replay.
-  if (await isPathwayGateEnabled(supabase)) {
-    // 2a. EVENTHOOD (D6 #2). A confirmed non-event (statement / opinion / routine filing) is
-    // NEVER an incident, however relevant or severe. Only an explicit `false` refuses; unknown
-    // (undefined/null, e.g. legacy signals) falls through — we never over-refuse unclassified.
-    if (signal?.is_event === false) {
-      return { admit: false, branch: 'non_event', priority: null,
-        reason: 'not an event (statement/opinion/filing) — awareness only',
-        values: baseValues };
+  // 2. D6 GATE (WO-CLIENT-THREAT-RELEVANCE) — mode-driven. 'enforce' = D6 pre-gates (eventhood →
+  // pathway → recency) authoritative; 'shadow' = compute + log to incident_gate_decisions, do NOT
+  // enforce (legacy stays authoritative); 'off' = legacy hazard-only. See computeD6PreGate.
+  const mode = await gateMode(supabase);
+  if (mode !== 'off') {
+    const d6 = await computeD6PreGate(supabase, signal);
+    if (mode === 'shadow') {
+      await persistD6Shadow(supabase, signal, d6, baseValues);
+      // shadow: do NOT enforce — fall through to legacy behavior below.
+    } else if (d6.refused) {
+      return { admit: false, branch: d6.branch as GateResult['branch'], priority: null,
+        reason: `${d6.branch}: ${d6.reason}`, values: baseValues };
     }
-    // 2b. CLIENT PATHWAY (3-leg).
-    const pw = await evaluateClientPathway(supabase, signal);
-    if (!pw.has_pathway) {
-      return { admit: false, branch: 'no_pathway', priority: null,
-        reason: `no client pathway — awareness only: ${pw.reasoning}`,
-        values: baseValues };
-    }
-    // 2c. RECENCY (D6). Pathway confirmed it CAN page; recency decides if it should page NOW.
-    // Only 'current' promotes; 'aged_out'/'unknown' → AWARENESS (still visible, just not paged).
-    const rec = await recencyState(supabase, signal);
-    if (rec.state !== 'current') {
-      return { admit: false, branch: 'recency_awareness', priority: null,
-        reason: `awareness (not paged) — recency ${rec.state}: ${rec.basis}`,
-        values: baseValues };
-    }
-    // pathway (leg: ${pw.leg}) + recency current — fall through to the relevance/confidence gates.
-  } else if (isHazardSignal(signal)) {
+    // enforce + not refused: D6 passed — skip the legacy hazard branch, go to relevance/confidence.
+  }
+  if (mode !== 'enforce' && isHazardSignal(signal)) {
     let pathway: any = null;
     const { data: existing } = await supabase.from('hazard_pathway_scores')
       .select('has_pathway, reasoning').eq('signal_id', signal.id)
