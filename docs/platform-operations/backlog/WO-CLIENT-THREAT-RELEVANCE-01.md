@@ -78,3 +78,11 @@ Surfaced by the false "Summerland entity-escalation" pattern (Petronas, 13km fro
 1. **Pattern-detector PROXIMITY (operator: scope not build).** `detect-threat-patterns` groups by entity/geography and computes NO distance to `client_geo_assets` (`has_proximity=false` on every pattern; 0 refs to client_geo_assets). Give it the same asset-proximity the D6 gate now has (`evaluateClientPathway` / `score_signal_hazard_pathway`) so "Summerland escalation" becomes "Summerland escalation, 13km from Kilbacks household." It computes something real and strips the only part that makes it actionable.
 
 2. **Pattern-layer + briefing QUALITY FILTERING (the "more" this case needs — Option C is otherwise inert).** `detect-threat-patterns` AND `send-daily-briefing` read `signals` by `client_id` with **0 references to `attribution_type`, `signal_client_attributions`, or the quarantine filter**. So the Option C superseding records (271 `attribution_type='none'`, applied 2026-08-12) are inert downstream — the detector will regenerate the false Petronas pattern until it honors the correction. Minimal fix: both layers skip signals with an authoritative `attribution_type='none'` record AND apply `applyAnalystSignalFilter` (a pattern/briefing layer reading raw unfiltered signals is a Quarantine-Doctrine gap regardless). Provenance: `feedback_fabricated_attributions_become_inputs`. **Immediate stopgap applied:** the existing false pattern signal `68a2e33e` set `status='false_positive'` (the one lever the briefing honors); regenerates until #2 ships.
+
+### Item 1 BUILT + deployed 2026-08-12
+`detect-threat-patterns` + `send-daily-briefing` now apply `applyAnalystSignalFilter` (quarantine)
+AND exclude signals with an authoritative `attribution_type='none'` record. Option C corrections
+are now honored in both layers; the false Petronas Summerland pattern will not regenerate.
+**Other derived layers NOT chased (operator: log, don't chase):** any layer that reads raw
+`signals` by `client_id` without these filters has the same gap — candidates to AUDIT later (not
+now): predictive-incident-scorer, generate-executive-report, belief/score stores. Deferred.

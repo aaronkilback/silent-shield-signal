@@ -7,6 +7,7 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { applyAnalystSignalFilter } from "../_shared/signal-query-filters.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -54,12 +55,14 @@ Deno.serve(async (req) => {
       { data: recentActions },
       { data: activeSequences },
     ] = await Promise.all([
-      supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence, client_id, raw_json')
+      // Quality filter (WO-CLIENT-THREAT-RELEVANCE 2026-08-12): quarantine filter so the briefing
+      // never surfaces quarantined signals; attribution_type='none' exclusion applied post-fetch below.
+      applyAnalystSignalFilter(supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence, client_id, raw_json')
         .gte('created_at', cutoff24h)
         .neq('status', 'false_positive')
         .neq('is_test', true)
         .in('client_id', activeClientIds)
-        .order('created_at', { ascending: false }).limit(50),
+        .order('created_at', { ascending: false }).limit(50)),
       supabase.from('incidents').select('id, priority, status, opened_at, title, signal_id, client_id')
         .eq('status', 'open').neq('is_test', true)
         .in('client_id', activeClientIds)
@@ -85,6 +88,13 @@ Deno.serve(async (req) => {
         .order('last_event_at', { ascending: false })
         .limit(10),
     ]);
+
+    // attribution_type='none' exclusion (WO-CLIENT-THREAT-RELEVANCE 2026-08-12): drop signals whose
+    // attribution to the client was authoritatively superseded to 'none' (Option C), so corrected
+    // fabrications never reach the briefing (the false Petronas "Summerland escalation").
+    const { data: noneAttrs } = await supabase.from('signal_client_attributions')
+      .select('signal_id').in('client_id', activeClientIds).eq('attribution_type', 'none').eq('is_authoritative', true);
+    const noneSet = new Set((noneAttrs || []).map((a: any) => a.signal_id));
 
     // DOCTRINE: severity and proximity are not tie-breakers (2026-08-10). The delivery
     // layer was ranking/filtering by relevance_score — a keyword-relevance PROXY — so a
@@ -112,6 +122,7 @@ Deno.serve(async (req) => {
 
     // Filter signals for briefing quality: exclude historical + stale; floors bypassed for critical/proximity/authoritative.
     const briefingSignals = (recentSignals || []).filter((s: any) => {
+      if (noneSet.has(s.id)) return false;             // attribution superseded to 'none' — not this client's
       if (s.triage_override === 'historical') return false;
       if (s.event_date) {
         const eventDate = new Date(s.event_date);

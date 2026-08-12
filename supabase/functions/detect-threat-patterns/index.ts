@@ -17,6 +17,7 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 import { enqueueJob } from "../_shared/queue.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
+import { applyAnalystSignalFilter } from "../_shared/signal-query-filters.ts";
 
 const THREAT_SIGNAL_TYPES = new Set(['sabotage', 'protest', 'threat', 'violence', 'theft']);
 
@@ -94,14 +95,24 @@ Deno.serve(async (req) => {
       const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
       const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
-      // Fetch all signals for this client in the last 7 days (excluding pattern signals)
-      const { data: recentSignals } = await supabase
-        .from('signals')
-        .select('id, title, signal_type, severity_score, severity, location, entity_tags, created_at, raw_json')
-        .eq('client_id', client.id)
-        .neq('signal_type', 'pattern')
-        .gte('created_at', sevenDaysAgo)
-        .order('created_at', { ascending: false });
+      // Fetch all signals for this client in the last 7 days (excluding pattern signals).
+      // Quality filter (WO-CLIENT-THREAT-RELEVANCE 2026-08-12): apply the analyst quarantine
+      // filter AND drop signals whose attribution to this client was authoritatively superseded
+      // to 'none' (Option C) — otherwise the pattern detector launders corrected fabrications
+      // into confident false findings (the false Petronas "Summerland escalation").
+      const { data: recentSignalsRaw } = await applyAnalystSignalFilter(
+        supabase
+          .from('signals')
+          .select('id, title, signal_type, severity_score, severity, location, entity_tags, created_at, raw_json')
+          .eq('client_id', client.id)
+          .neq('signal_type', 'pattern')
+          .gte('created_at', sevenDaysAgo)
+          .order('created_at', { ascending: false })
+      );
+      const { data: noneAttrs } = await supabase.from('signal_client_attributions')
+        .select('signal_id').eq('client_id', client.id).eq('attribution_type', 'none').eq('is_authoritative', true);
+      const noneSet = new Set((noneAttrs || []).map((a: any) => a.signal_id));
+      const recentSignals = (recentSignalsRaw || []).filter((s: any) => !noneSet.has(s.id));
 
       if (!recentSignals || recentSignals.length === 0) continue;
 
