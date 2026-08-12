@@ -35,7 +35,7 @@ export const AUTHORITY_VERBS: Record<AuthorityClass, string[]> = {
   // Affiliated via a PETRONAS Global stake (e.g. LNG Canada) — inform + INDIRECT-impact
   // assessment on OPERATE assets ONLY. Never task, never engage counterparties, never "update
   // protocols" for an asset PECL does not run.
-  'AFFILIATED-INFORM': ['brief', 'inform stakeholders', 'assess indirect impact on PECL-operated assets'],
+  'AFFILIATED-INFORM': ['brief', 'inform stakeholders', "assess indirect impact on the client's own operated assets"],
   // Third parties / competitors: situational awareness only.
   'EXTERNAL-MONITOR': ['monitor', 'contextualize', 'strategic assessment'],
 };

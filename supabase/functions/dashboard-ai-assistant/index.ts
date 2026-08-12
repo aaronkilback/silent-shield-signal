@@ -157,7 +157,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = "", clientContext: string = ""): string {
   const timeContext = getTimeContext();
 
   const tenantBoundaryBlock = tenantName
@@ -188,7 +188,7 @@ ${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
 ${FORTRESS_PLATFORM_OVERVIEW}
-
+${clientContext}
 ${FORTRESS_AEGIS_CAPABILITIES}
 
 ${ANTI_FABRICATION_RULES}
@@ -11095,7 +11095,28 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
-        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "");
+        // INC-CTX-CONTAM Class C (WO-PROMPT-ROSTER-01, 2026-08-12): the client roster is now
+        // DYNAMIC — THIS tenant's own clients only, from the client row. No static cross-tenant
+        // list. No tenant / no clients → empty (never a fallback naming other tenants' clients).
+        let clientContext = "";
+        try {
+          if (userTenantId) {
+            const { data: __tenantClientRows } = await supabaseClient
+              .from("clients")
+              .select("name, industry, status")
+              .eq("tenant_id", userTenantId)
+              .neq("status", "inactive");
+            const __lines = (__tenantClientRows || [])
+              .filter((c: any) => c?.name && !String(c.name).startsWith("_"))
+              .map((c: any) => `- ${c.name}${c.industry ? ` — ${c.industry}` : ""}`);
+            if (__lines.length > 0) {
+              clientContext = `\n═══ THIS TENANT'S CLIENTS (the ONLY clients you may reference) ═══\n${__lines.join("\n")}\n`;
+            }
+          }
+        } catch (e) {
+          console.warn("[Aegis] dynamic client context build failed (non-fatal):", e);
+        }
+        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "", clientContext);
         // Flight recorder: prompt-assembly trace (final system prompt + context blocks).
         rec.prompt({
           systemPrompt: __recSystemPrompt,
