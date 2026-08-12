@@ -2733,11 +2733,17 @@ Deno.serve(async (req) => {
 
     const runId = crypto.randomUUID();
 
-    // Parse optional request body for force flag
+    // Parse optional request body for force flag + scheduled marker.
+    // `scheduled:true` is sent ONLY by the daily cron (job 128). A scheduled run ALWAYS
+    // emails (state in the subject) so silence means exactly one thing: it did not run.
+    // A manual/boot POST has no marker → keeps the alert-only + dedup behavior, and cannot
+    // suppress the scheduled floor. (Notification-layer fix for the false-broken shape.)
     let forceEmail = false;
+    let scheduledRun = false;
     try {
       const body = await req.json().catch(() => ({}));
       forceEmail = body?.force === true;
+      scheduledRun = body?.scheduled === true;
     } catch { /* no body */ }
 
     // Phase 0: Load learning history
@@ -3288,6 +3294,13 @@ Deno.serve(async (req) => {
         // that point replace this blanket entry with an active-journey-count-aware probe.
         'monitor-journey-checkins-5min',
         'monitor-journey-checkins',
+        // 2026-08-11: monitor-wildfires RETIRED — cron paused (jobid 178, active=false) +
+        // de-registered in the WILDFIRE-GENERALIZE cutover; monitor-geo-wildfire-30min is the
+        // proximity successor and sole PECL wildfire authority. The old emitter tagged its
+        // signals bcws_active_fire (not its job_name), so the never-produced probe read 0 and
+        // fired a false "NEVER produced — structurally broken" HIGH. Allowlisted as retired,
+        // same treatment as monitor-social-unified / monitor-twitter. If ever un-paused, remove.
+        'monitor-wildfires',
       ]);
       const SOCIAL_ALREADY_CHECKED = new Set([
         'monitor-social-hourly', 'monitor-social',
@@ -4698,7 +4711,10 @@ Deno.serve(async (req) => {
       .limit(1);
 
     const alreadyEmailedRecently = recentWatchdogEmails && recentWatchdogEmails.length > 0;
-    const shouldEmail = forceEmail || isCritical || ((analysis.shouldAlert || remediationResults.length > 0) && !alreadyEmailedRecently);
+    // A SCHEDULED run always emails (the daily floor — silence must mean "did not run"), and
+    // BYPASSES the dedup so a manual/off-schedule run can never suppress it. Manual runs keep
+    // the alert-only + dedup behavior.
+    const shouldEmail = scheduledRun || forceEmail || isCritical || ((analysis.shouldAlert || remediationResults.length > 0) && !alreadyEmailedRecently);
 
     if (shouldEmail) {
       const resend = new Resend(RESEND_API_KEY);
@@ -4707,7 +4723,13 @@ Deno.serve(async (req) => {
       const chronicCount = analysis.findings.filter(f => f.remediationStatus === 'chronic').length;
 
       let subject: string;
-      if (fixedCount > 0 && unresolvedCount === 0 && chronicCount === 0) {
+      if (analysis.findings.length === 0 && fixedCount === 0) {
+        // Clean/no-actionable-findings scheduled run — the daily floor. State in the subject so
+        // its ARRIVAL confirms the watchdog ran; only true silence (no email) means "did not run".
+        subject = (analysis.severity === 'critical' || analysis.severity === 'degraded' || analysis.severity === 'warning')
+          ? `⚠️ Fortress Watchdog — ${analysis.severity}, no actionable findings`
+          : `✓ Fortress Watchdog — all clear`;
+      } else if (fixedCount > 0 && unresolvedCount === 0 && chronicCount === 0) {
         subject = `✓ Fortress Watchdog: ${fixedCount} issue${fixedCount !== 1 ? 's' : ''} auto-resolved — all systems nominal`;
       } else if (chronicCount > 0) {
         subject = `🔁 Fortress: ${chronicCount} chronic issue${chronicCount !== 1 ? 's' : ''} ${fixedCount > 0 ? `+ ${fixedCount} fixed` : '— needs strategic intervention'}`;
