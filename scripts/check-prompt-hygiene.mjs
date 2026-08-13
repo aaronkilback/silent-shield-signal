@@ -34,7 +34,7 @@ const EXCLUDE = [
   /\/monitor-[^/]+\//,                          // monitor-* = search config
   /\/ingest-email-intel\//,                     // email→client ROUTING config (not a prompt)
   /generate-wildfire-daily-report|agent-tools-wildfire|wildfire-portal-chat/,  // wildfire product (allowlisted)
-  /process-geospatial-map/,                     // NOTE: Petronas-bespoke (writes petronas_assets); allowlist candidate
+  /process-geospatial-map/,                     // Petronas-bespoke single-client tool (writes petronas_assets); documented + allowlisted, like wildfire
   /redteam-injection-probe|semantic-agreement-probe|fortress-qa-agent|fortress-chaos-monkey/,
   /anti-hallucination.*test|-daily-test/,
   /system-watchdog/,
@@ -57,6 +57,19 @@ const files = execSync("git ls-files 'supabase/functions/**/*.ts'", { encoding: 
 
 const nounFindings = [];
 const readFindings = [];
+const fabFindings = [];
+
+// Detector 3 (WO-CONFIDENCE-SIGNAL-INTEGRITY-01): a citation marker, reliability figure, or
+// confidence percentage rendered as a LITERAL — not derived from a computed value or resolved
+// source. Rule: if nothing computes it, it does not render.
+const FAB_PATTERNS = [
+  { kind: "citation-marker", re: /\[S\d+\]/g },                                  // [S1], [S2] literals ([S${…}] excluded)
+  { kind: "reliability-figure", re: /Reliability(?:\s+Score)?:?\s*\d+\s*%/gi },   // "Reliability: 100%"
+  { kind: "confidence-pct", re: /\d+\s*%\s*confidence|confidence:?\s*\d+\s*%/gi }, // "85% confidence"
+];
+// Exclude PROHIBITION rules (forbid the pattern), the belt-and-braces stripper, and THRESHOLD
+// descriptions ("entries below 50% confidence" is a computed filter, not a decorative claim).
+const FAB_ALLOW = /\bdo not\b|\bdon't\b|\bnever\b|\bmust not\b|do NOT|🚫|\.replace\(|not invent|\bbelow\b|\babove\b|\bthreshold\b|[<>]=?\s*\d/i;
 
 for (const f of files) {
   const lines = readFileSync(f, "utf8").split("\n");
@@ -79,6 +92,17 @@ for (const f of files) {
       const isWrite = /\.(insert|update|upsert|delete)\(/.test(line);
       if (!scoped && !pointLookup && !isWrite) readFindings.push({ file: f, line: i + 1, table: fm[2] });
     }
+    // Detector 3 — fabricated confidence/citation signals
+    if (!/^\s*(\/\/|\*|\/\*)/.test(line) && !FAB_ALLOW.test(line)) {
+      for (const p of FAB_PATTERNS) {
+        const re = new RegExp(p.re.source, p.re.flags);
+        let fm3;
+        while ((fm3 = re.exec(line)) !== null) {
+          if (inComment(line, fm3.index)) continue;
+          fabFindings.push({ file: f, line: i + 1, kind: p.kind, match: fm3[0].trim(), text: line.trim().slice(0, 110) });
+        }
+      }
+    }
   }
 }
 
@@ -96,10 +120,22 @@ if (!promptNoun.length) console.log(`   ✓ zero proper nouns in prompt/code.`);
 console.log(`\n── Detector 2 (AUDIT-ONLY, never blocks): unscoped shared reads ──`);
 console.log(`   Candidates: ${readFindings.length}  (heuristic; triage via WO-UNSCOPED-READ-CLASSIFIER-01 before gating)\n`);
 
-console.log(`═══ RESULT ═══`);
-if (promptNoun.length > 0) {
-  console.log(`  ✗ FAIL — ${promptNoun.length} hardcoded client proper noun(s) in a prompt/code line.`);
-  console.log(`    Replace with \${client.name}-relative or client-neutral phrasing.`);
+console.log(`── Detector 3 (BLOCKING): fabricated confidence/citation signals ──`);
+console.log(`   Hits: ${fabFindings.length}  (citation markers / reliability figures / confidence % not from a computed value or resolved source)\n`);
+for (const x of fabFindings) console.log(`   ✗ ${x.file}:${x.line}  [${x.kind}: ${x.match}]  ${x.text}`);
+if (!fabFindings.length) console.log(`   ✓ zero fabricated confidence/citation signals.`);
+
+console.log(`\n═══ RESULT ═══`);
+if (promptNoun.length > 0 || fabFindings.length > 0) {
+  if (promptNoun.length > 0) {
+    console.log(`  ✗ FAIL — ${promptNoun.length} hardcoded client proper noun(s) in a prompt/code line.`);
+    console.log(`    Replace with \${client.name}-relative or client-neutral phrasing.`);
+  }
+  if (fabFindings.length > 0) {
+    console.log(`  ✗ FAIL — ${fabFindings.length} fabricated confidence/citation signal(s).`);
+    console.log(`    A confidence, reliability, verification count, or citation marker rendered to a user`);
+    console.log(`    MUST derive from a computed value or a resolved source. If nothing computes it, it does not render.`);
+  }
   process.exit(1);
 }
 console.log(`  ✓ PASS — Detector 1 clean. (Detector 2: ${readFindings.length} audit-only candidates, non-blocking.)`);

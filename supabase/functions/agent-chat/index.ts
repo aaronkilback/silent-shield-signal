@@ -323,16 +323,10 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
         fallback += '\n';
       }
       
-      // SOURCES FOOTER
-      fallback += `---\n`;
-      fallback += `**Sources:**\n`;
-      fallback += `- [S1] Fortress Signals Database | Retrieved ${currentDate}\n`;
-      fallback += `- [S2] Fortress Incidents Database | Retrieved ${currentDate}\n`;
-      // [S3] External-Intelligence marker REMOVED (finding #1, 2026-08-13): a citation marker with
-      // nothing behind it. Where external intel is unavailable, say so in prose — do not emit a marker.
-      if (!bd.meta?.external_intel) {
-        fallback += `External intelligence: not available (no external web search performed).\n`;
-      }
+      // SOURCES FOOTER REMOVED (WO-CONFIDENCE-SIGNAL-INTEGRITY-01, 2026-08-13): the entire
+      // "**Sources:** [S1] Fortress Signals Database / [S2] Fortress Incidents Database" block was
+      // decorative — the chat path has NO resolved-source mechanism, so any [S#] here maps to
+      // nothing. A citation marker with nothing behind it does not render.
 
     } else if (tr.tool === 'query_fortress_data' && tr.result.success) {
       fallback += `## Query Results\n`;
@@ -959,7 +953,7 @@ ${contextData || 'No verified data available in current context. Use tools to qu
 
 [INTERNAL: You must NEVER create or invent breaking news, geopolitical events, HUMINT requirements, collection priorities, or speculative content. If you need external information, call perform_external_web_search first. If it fails, say "No external intelligence available" - do not invent content.]
 
-[INTERNAL: Every claim must be sourced from database records. Cite sources with [S1], [S2] etc. Include dates from records.]
+[INTERNAL: Every claim must be sourced from database records. Reference the record's real signal/incident ID (e.g. SIG-2026-XXXXXX) and date from the data — do NOT invent citation markers like [S1]/[S2]; the platform has no resolved-source scheme in chat.]
 
 [INTERNAL: For briefings, use ONLY tool results. If data is sparse, state "Limited data available" - do not embellish.]
 

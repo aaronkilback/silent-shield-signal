@@ -447,18 +447,17 @@ export async function runEvidenceGate(
 //                         RELIABILITY FIRST PROMPT
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function getReliabilityFirstPrompt(sources: SourceArtifact[]): string {
-  const sourceList = sources.map((s, i) => 
-    `[S${i + 1}] ${s.source_type}: ${s.title || s.url || 'Internal Record'} (retrieved: ${s.retrieved_at})`
-  ).join('\n');
-  
+export function getReliabilityFirstPrompt(_sources: SourceArtifact[]): string {
+  // sourceList builder DELETED (WO-CONFIDENCE-SIGNAL-INTEGRITY-01, 2026-08-13): it constructed
+  // [S#] citation markers, was only ever called with an empty list, and the [S#] instruction is
+  // now gone. Dead code that builds citation markers is a loaded gun for whoever wires it up next.
   return `
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                    🛡️ RELIABILITY FIRST MODE: ENABLED 🛡️                      ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
 AVAILABLE VERIFIED SOURCES:
-${sourceList || 'No pre-verified sources available. Use only database records.'}
+No pre-verified sources available. Use only database records.
 
 <!-- 2026-08-13 (finding #1 ruling): the inline [S#] citation requirement + "include a SOURCES
      section" directive were REMOVED. The consumer (generate-executive-report) builds citations
