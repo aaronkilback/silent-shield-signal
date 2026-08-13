@@ -6305,7 +6305,11 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query incidents
       if (query_type === 'incidents' || query_type === 'comprehensive') {
-        let incQ = supabaseClient.from('incidents').eq("tenant_id", tenantId).select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary');
+        // 2026-08-13 (Q2 ruling): exclude test + soft-deleted incidents from user-facing answers.
+        // Aligns with the signals fetch (`.neq('is_test', true)`); a deleted demo incident had been
+        // surfaced as a real "incident in the past year".
+        let incQ = supabaseClient.from('incidents').eq("tenant_id", tenantId).select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary')
+          .neq('is_test', true).is('deleted_at', null);
         incQ = applyFilters(incQ);
         if (filters.priority?.length) incQ = incQ.in('priority', filters.priority);
         if (filters.status?.length) incQ = incQ.in('status', filters.status);

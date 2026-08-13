@@ -1144,3 +1144,18 @@ The abandoned session verbally ruled three decisions that were never written to 
 
 Open-PR triage + all other scope stays parked until 2–5 land.
 
+
+## Reference provenance example — the gold standard for a traceable artifact (2026-08-13)
+
+Recorded per operator ruling (CRT demo-prep Q3) as the canonical example of a fully-traceable, signal-derived incident. Use this as the shape every client-facing artifact should be able to produce on demand:
+
+**Incident `704b2b43-97fd-4ec1-8cd4-ceced7ced0f3`** — "Protest Activity — Canada, Curaçao" (BC Place, tenant Critical Risk Team). `is_test=false`, not deleted, `provenance_type='signal'`, `created_by_function='ai-decision-engine'`.
+
+The chain:
+1. **Source article** — Vancouver Is Awesome (local news): `https://www.vancouverisawesome.com/local-news/old-growth-protesters-bc-place-security-5464816`
+2. **Signal `f7b5b257-51aa-48bb-944d-851914b76c1f`** — captured **2026-05-26 21:46:42Z** (`received_at`), `is_test=false`, `quality_status=active`. Text: "Protesters interrupted the Canada vs. Curaçao match at BC Place, reportedly reaching the field and attaching themselves to the goal posts…"
+3. **Incident** — opened **2026-05-26 23:18:18Z** by `ai-decision-engine` (~1h32m after signal capture), `provenance_id` = the signal id.
+
+article → signal (21:46:42Z) → incident (23:18:18Z), source URL intact, machine-derived end to end.
+
+**Honest caveat:** the signal's `signal_origin` is `unknown-legacy` — the ingestion-origin tag is a legacy placeholder, not a clean monitor attribution. The source URL and capture timestamp are concrete; the *which-monitor-ingested-it* link is not recorded. A fully-gold artifact would also carry a real `signal_origin`. This is the reference example precisely because everything *except* that one field is traceable.

@@ -20,3 +20,11 @@ Every hallucination-closed incident has a re-triage note citing the expanded sur
 - INC-CTX-CONTAM (unexamined prompt surface) — this incident.
 
 Not started. One finding, one WO.
+
+## Rule addition (2026-08-13, Q1 ruling) — "carries no tenant facts" is a claim requiring proof
+
+Extends the finding from retrieval-negatives to **unscoped shared reads in per-tenant assemblies**. INC-CTX-CONTAM §4 exempted `autonomous_scan_results` from tenant-scoping with the bare assertion "carries no tenant facts." It was false: the table's `risk_score` was rendered as a per-client `Risk posture: N/100`. That is the **second** unscoped-shared-read → per-client-answer leak in two days (the first: the static prompt roster, Class C).
+
+**The rule:** in any per-tenant prompt/answer assembly, an unscoped read (a query with no `tenant_id`/`client_id` filter, whether because the caller omitted one or because the table has no scope column) may only stand if it is **proven** to emit nothing tenant-attributable — sampled output, not an assumption. A table with no scope column that still feeds a per-tenant answer is a defect by construction: it cannot be scoped, so its output must be either provably tenant-neutral or removed. "Carries no tenant facts" written in a containment doc without a sampled-output proof is exactly the incomplete-search-space error this WO is about, pointed at the write/assembly side instead of the forensic side.
+
+**Sweep target (add to scope):** enumerate every unscoped `.from()` inside `buildCOP` and any other always-on per-tenant context builder; for each, prove tenant-neutrality or scope/remove it.
