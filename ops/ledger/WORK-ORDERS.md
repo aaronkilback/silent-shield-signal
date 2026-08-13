@@ -1209,3 +1209,13 @@ Its own item per operator ruling. `src/components/ClientRiskSnapshot.tsx:114-124
 **The fix is the component, not the data.** Nulling the stored value does NOT make it render absent (the `|| 0` fallback shows "0/100"). Options for a ruling: relabel to an honest non-score ("Onboarding baseline — AI estimate, not signal-derived"), or remove the /100 score + progress bar entirely and show only the qualitative threat_profile. Same rule as the confidence-integrity class: a score rendered to a user must derive from a computed value; if nothing computes it, it does not render. **Detector-3 gap:** the prompt-hygiene detector scans edge functions, not `src/` — a frontend variant of the class it can't currently see.
 
 **Status:** finding recorded; component fix deferred to operator ruling. Related: WO-CONFIDENCE-SIGNAL-INTEGRITY-01, the 97/100 posture (Q1).
+
+## CORRECTED FINDING (2026-08-13) — "cyber structurally capped at 0.40 by proximity" was FALSE (both of us reasoned past the code)
+
+**Attribution: shared.** The assistant asserted "proximity scoring will always cap at 0.40 no matter how good the geometry" without checking whether cyber is a hazard class; the operator carried it forward as "structurally locked out" from that line without checking the hazard class either. Neither verified against the code before building a premise on it.
+
+**The truth:** the 0.40 cap is a CEILING applied ONLY to `HAZARD_CLASSES` (`civil_emergency, wildfire, weather, natural_disaster, health_concern, amber_alert` — `incident-creation-gate.ts:24`, `generate-executive-report:465-497`, `score_signal_hazard_pathway`). Cyber / active_threat / malware are NOT hazard classes and are NEVER subject to it. Cyber reaches main-tier via the ingestion LLM gate's non-geographic connection types (`direct_naming`, `threat_actor`). Empirically both clients' cyber reaches main-tier (PECL active_threat 17, malware 6; BC Place active_threat 2) — not capped. BC Place underperforms on **config**, not a structural cap.
+
+**Lesson (again):** `feedback-negative-finding-needs-complete-search` in the other direction — a *positive* structural claim ("X is capped") is also a claim requiring the code, not an inference from a plausible sentence. A confident premise adopted by two people is still unverified until someone reads the function.
+
+**Status:** premise withdrawn; no cyber-invisibility platform finding. The lever is client configuration (see the gate-input-surface report).
