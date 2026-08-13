@@ -328,10 +328,12 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
       fallback += `**Sources:**\n`;
       fallback += `- [S1] Fortress Signals Database | Retrieved ${currentDate}\n`;
       fallback += `- [S2] Fortress Incidents Database | Retrieved ${currentDate}\n`;
-      if (bd.meta?.external_intel) {
-        fallback += `- [S3] External Intelligence Sources | Retrieved ${currentDate}\n`;
+      // [S3] External-Intelligence marker REMOVED (finding #1, 2026-08-13): a citation marker with
+      // nothing behind it. Where external intel is unavailable, say so in prose — do not emit a marker.
+      if (!bd.meta?.external_intel) {
+        fallback += `External intelligence: not available (no external web search performed).\n`;
       }
-      
+
     } else if (tr.tool === 'query_fortress_data' && tr.result.success) {
       fallback += `## Query Results\n`;
       fallback += `Found **${tr.result.count}** records matching your criteria.\n\n`;
