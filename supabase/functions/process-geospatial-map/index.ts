@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
         const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 
         // Use AI to extract asset information from the map
-        const extractionPrompt = `You are analyzing a georeferenced PDF map of Petronas Canada assets. 
+        const extractionPrompt = `You are analyzing a georeferenced PDF map of the client's assets.
 Extract ALL identifiable assets, facilities, roads, pipelines, and infrastructure from this map.
 
 For each asset, provide:
@@ -80,7 +80,7 @@ Return as JSON array of assets. Be thorough - extract every identifiable feature
           await supabase
             .from('petronas_assets')
             .insert({
-              asset_name: 'Petronas Canada Road Network',
+              asset_name: 'Road Network (from uploaded map)',
               asset_type: 'road_network',
               location_description: 'Extracted from uploaded map - requires manual coordinate entry',
               region: 'Alberta/BC',

@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
       (z_score ? `\nAnomaly Z-score: ${z_score}` : '') +
       `\n\nSignal text: ${signal_text}\n\n` +
       `Provide a concise 3-5 sentence specialist assessment. Include: threat actor assessment, ` +
-      `PECL-specific implications, recommended immediate action, and your confidence level (0-100%).`;
+      `client-specific implications, recommended immediate action, and your confidence level (0-100%).`;
 
     // 3. For each agent, invoke agent-chat with the signal as context
     const analyses = await Promise.allSettled(

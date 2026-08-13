@@ -1611,7 +1611,7 @@ WHAT COUNTS AS "MATERIAL DEVELOPMENT" (admit at ≥0.45 if client or core asset 
 - Bank / insurer / pension fund decisions about financing the client's projects
 - Regulatory rulings, environmental review outcomes, sanctions decisions
 - Reputational events naming the client (boycotts, divestment campaigns, public letters)
-- Named supply-chain or transporter changes (e.g. TC Energy is Petronas's CGL transporter)
+- Named supply-chain or transporter changes (e.g. a change in the client's key pipeline transporter or supplier)
 
 These are NOT "security threats" in the narrow sense, but they DO change the principal-protection threat surface (capital flow, activist target prioritization, geopolitical alignment, stakeholder posture). Admit them.
 
