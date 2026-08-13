@@ -6338,7 +6338,10 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query clients — tenant-scoped via tenant_id
       if (query_type === 'clients' || query_type === 'comprehensive') {
-        let clientQ = supabaseClient.from('clients').select('id, name, industry, status, locations, monitoring_keywords, high_value_assets').eq('tenant_id', tenantId);
+        // 2026-08-13 (demo-gate ruling): exclude test clients from the AEGIS client data path.
+        // The dropdown hides them via status='active', but this path filtered neither status nor
+        // is_test, so a test client (e.g. Cascade Energy) + its live signals were reachable in chat.
+        let clientQ = supabaseClient.from('clients').select('id, name, industry, status, locations, monitoring_keywords, high_value_assets').eq('tenant_id', tenantId).eq('is_test', false);
         if (filters.client_id) {
           // already verified above that the client_id belongs to the caller's tenant
           clientQ = clientQ.eq('id', filters.client_id);
