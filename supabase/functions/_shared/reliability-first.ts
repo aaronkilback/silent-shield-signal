@@ -460,10 +460,12 @@ export function getReliabilityFirstPrompt(sources: SourceArtifact[]): string {
 AVAILABLE VERIFIED SOURCES:
 ${sourceList || 'No pre-verified sources available. Use only database records.'}
 
-CITATION REQUIREMENTS:
-• Every factual claim MUST have an inline citation: [S1], [S2], etc.
-• At the end, include a SOURCES section listing all cited sources
-• Format: [S#] Title | URL | Retrieved: timestamp
+<!-- 2026-08-13 (finding #1 ruling): the inline [S#] citation requirement + "include a SOURCES
+     section" directive were REMOVED. The consumer (generate-executive-report) builds citations
+     DETERMINISTICALLY via resolveCitation; a parallel model-invented [S#] scheme — fed an EMPTY
+     source list here — produced citation markers that mapped to fabricated labels
+     ("[S1] … | Internal Database | Retrieved …"). The model must NOT invent a citation scheme.
+     Do not restore this without wiring the model to the real resolved-source set. -->
 
 CONFIDENCE RULES (MANDATORY):
 • HIGH: 2+ independent sources OR 1 authoritative + corroboration
@@ -498,11 +500,13 @@ IF INCIDENT DATA IS SPARSE:
 
 BRIEFING SCHEMA (REQUIRED):
 1. Executive Flash Banner (1-2 sentences, highest priority only)
-2. Key Developments (bullet points with citations)
-3. Incidents with IDs and evidence links
+2. Key Developments (bullet points)
+3. Incidents with IDs
 4. Impact Assessment (only if evidence supports)
 5. External Intelligence (only if web search was performed)
-6. Sources (full list with timestamps)
+<!-- "6. Sources" removed 2026-08-13 (finding #1): the report renders citations via resolveCitation.
+     The model must not emit its own Sources section — do NOT add inline [S#] markers. -->
+- Do NOT add citation markers ([S1], [S#]) or a Sources section — the platform attaches sources.
 
 <!-- 2026-08-13 (finding #1 ruling): the "Reliability Score: X% | Sources: N | External Intel: Y"
      directive was REMOVED here. Generate-then-suppress is not a control — the model was told to

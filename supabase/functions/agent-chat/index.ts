@@ -3983,9 +3983,6 @@ ${(safeBriefingData.high_priority_open_incidents || []).length > 0
 
 **External Intelligence:** Not available. No external web search was performed for geopolitical context.
 
----
-*Reliability: 100% | Sources: Fortress Database | External Intel: unavailable*
-
 ⚠️ *Note: A previous response contained unverified content and was replaced with verified database records only.*`;
       } else {
         // Minimal safe response
@@ -3993,9 +3990,7 @@ ${(safeBriefingData.high_priority_open_incidents || []).length > 0
 
 I can only report verified information from the Fortress database. No external intelligence search was performed.
 
-To include geopolitical or external news context, please ask me to perform an external web search first.
-
-*Reliability: 100% verified from database*`;
+To include geopolitical or external news context, please ask me to perform an external web search first.`;
       }
     } else {
       // Standard sanitization for less severe patterns
