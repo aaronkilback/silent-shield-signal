@@ -17,7 +17,7 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 import { enqueueJob } from "../_shared/queue.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
-import { applyAnalystSignalFilter } from "../_shared/signal-query-filters.ts";
+import { applyAnalystSignalFilter, excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
 
 const THREAT_SIGNAL_TYPES = new Set(['sabotage', 'protest', 'threat', 'violence', 'theft']);
 
@@ -100,7 +100,7 @@ Deno.serve(async (req) => {
       // filter AND drop signals whose attribution to this client was authoritatively superseded
       // to 'none' (Option C) — otherwise the pattern detector launders corrected fabrications
       // into confident false findings (the false Petronas "Summerland escalation").
-      const { data: recentSignalsRaw } = await applyAnalystSignalFilter(
+      const { data: recentSignalsRaw } = await excludeTestAndDeleted(applyAnalystSignalFilter(
         supabase
           .from('signals')
           .select('id, title, signal_type, severity_score, severity, location, entity_tags, created_at, raw_json')
@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
           .neq('signal_type', 'pattern')
           .gte('created_at', sevenDaysAgo)
           .order('created_at', { ascending: false })
-      );
+      ));
       const { data: noneAttrs } = await supabase.from('signal_client_attributions')
         .select('signal_id').eq('client_id', client.id).eq('attribution_type', 'none').eq('is_authoritative', true);
       const noneSet = new Set((noneAttrs || []).map((a: any) => a.signal_id));

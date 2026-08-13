@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { validateString, validateUUID, validateAll } from "../_shared/input-validation.ts";
+import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
 import {
   getAntiHallucinationPrompt,
   getCriticalDateContext,
@@ -174,12 +175,12 @@ Respond naturally and briefly.`
     };
 
     const loadClientP1P2Incidents = async (clientId: string) => {
-      const { data, error } = await supabase
+      const { data, error } = await excludeTestAndDeleted(supabase
         .from('incidents')
         .select('id, title, summary, priority, status, opened_at, created_at, client_id')
         .eq('client_id', clientId)
         .in('priority', ['P1', 'P2'])
-        .limit(50);
+        .limit(50));
 
       if (error) {
         console.warn('Failed to load client P1/P2 incidents:', error);

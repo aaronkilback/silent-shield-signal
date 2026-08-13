@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
 import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
 import { runEvidenceGate, getReliabilityFirstPrompt, DEFAULT_RELIABILITY_SETTINGS } from "../_shared/reliability-first.ts";
@@ -560,10 +561,10 @@ Deno.serve(async (req) => {
       const incSigIds = [...new Set((incidents ?? []).map((i: any) => i.signal_id).filter(Boolean))];
       const incSigCitable = new Set<string>();
       if (incSigIds.length) {
-        const { data: incSigs } = await supabase.from('signals')
+        const { data: incSigs } = await excludeTestAndDeleted(supabase.from('signals')
           .select('id, source_id, source_url, raw_json, received_at, event_date')
           .eq('client_id', client_id)  // defense-in-depth: an incident's supporting signal must be same-client
-          .in('id', incSigIds);
+          .in('id', incSigIds));
         const extraSrc = [...new Set((incSigs ?? []).map((r: any) => r.source_id).filter(Boolean).filter((id: string) => !provById.has(id)))];
         if (extraSrc.length) { const { data: more } = await supabase.from('sources').select('id, publisher_kind, publisher_name, provenance_path').in('id', extraSrc); for (const r of (more ?? [])) provById.set(r.id, r); }
         for (const r of (incSigs ?? [])) if (citeFor(r).citable) incSigCitable.add(r.id);

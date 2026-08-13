@@ -1,5 +1,6 @@
 import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
@@ -37,12 +38,12 @@ Deno.serve(async (req) => {
       .order("created_at", { ascending: false })
       .limit(50);
 
-    const { data: incidents } = await supabaseClient
+    const { data: incidents } = await excludeTestAndDeleted(supabaseClient
       .from("incidents")
       .select("title, description, severity, created_at, location")
       .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
       .gte("created_at", thirtyDaysAgo.toISOString())
-      .limit(20);
+      .limit(20));
 
     const { data: existingReports } = await supabaseClient
       .from("security_reports")

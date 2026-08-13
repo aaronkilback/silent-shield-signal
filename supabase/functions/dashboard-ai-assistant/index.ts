@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
 import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 3
 import { callAiGateway, callAiGatewayStream, getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 import { classifyUserSafeError, redactProviderLeak } from "../_shared/user-safe-errors.ts";
@@ -4551,13 +4552,13 @@ Deno.serve(async (req) => {
         ? iocScopedClientIds
         : ['00000000-0000-0000-0000-000000000000'];
 
-      const { data: iocMatches, error: iocError } = await supabaseClient
+      const { data: iocMatches, error: iocError } = await excludeTestAndDeleted(supabaseClient
         .from('signals')
         .select('id, title, severity, confidence, received_at, source_url, raw_json, client_id, clients(name)')
         .ilike('normalized_text', `%${indicator}%`)
         .in('client_id', iocClientScope)
         .order('received_at', { ascending: false })
-        .limit(10);
+        .limit(10));
 
       if (iocError) {
         return { error: iocError.message, message: "IOC lookup failed" };
@@ -5295,11 +5296,11 @@ The signal is now in the database with status 'triaged' and rules have been appl
         .select("*, clients(name, industry)").eq("id", incident_id).maybeSingle();
       if (incErr || !incident) return { error: "Incident not found", incident_id };
 
-      const { data: relatedSignals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
+      const { data: relatedSignals } = await excludeTestAndDeleted(supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("id, title, severity, category, description, entity_tags, location, received_at")
         .eq("client_id", incident.client_id)
         .gte("received_at", new Date(Date.now() - 7 * 86400000).toISOString())
-        .order("received_at", { ascending: false }).limit(10);
+        .order("received_at", { ascending: false }).limit(10));
 
       const ageMs = Date.now() - new Date(incident.opened_at).getTime();
       const ageHours = Math.round(ageMs / 3600000);
@@ -7313,10 +7314,10 @@ Return a JSON object (no markdown, only valid JSON):
       const investigations = investigationsRes.data || [];
 
       // Also search signals that mention this entity
-      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
+      const { data: signals } = await excludeTestAndDeleted(supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("id, title, severity, category, received_at, location")
         .or(`normalized_text.ilike.%${entity.name}%,title.ilike.%${entity.name}%`)
-        .order("received_at", { ascending: false }).limit(20);
+        .order("received_at", { ascending: false }).limit(20));
 
       // Sentiment analysis
       const sentBreakdown: Record<string, number> = {};
