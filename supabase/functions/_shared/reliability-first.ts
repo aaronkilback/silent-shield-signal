@@ -504,7 +504,10 @@ BRIEFING SCHEMA (REQUIRED):
 5. External Intelligence (only if web search was performed)
 6. Sources (full list with timestamps)
 
-At the end, state: "Reliability Score: [X]% | Sources: [N] verified | External Intel: [YES/NO]"
+<!-- 2026-08-13 (finding #1 ruling): the "Reliability Score: X% | Sources: N | External Intel: Y"
+     directive was REMOVED here. Generate-then-suppress is not a control — the model was told to
+     emit a footer that a downstream regex then tried (and intermittently failed) to strip. The
+     reliability_score is computed in code (runEvidenceGate); it is not something the model states. -->
 `;
 }
 

@@ -633,6 +633,22 @@ Deno.serve(async (req) => {
       teamMap.set(member.id, { id: member.id, name: member.name, roles });
     });
 
+    // Owner field = a REAL matched team member or 'Unassigned' — NEVER a static role string
+    // (finding #4, 2026-08-13). A role category ("Intelligence", "Security Operations") is a
+    // routing hint, not an owner; Fortress does not know the client's org chart. Mirrors the
+    // action-item owner resolution (the flash Owner had been the last place still leaking a role).
+    const resolveFlashOwner = (roleHint: string | null | undefined): string => {
+      if (roleHint) {
+        for (const [, member] of teamMap) {
+          if (member.name && !member.name.includes('@') &&
+              member.roles.some(r => String(roleHint).toLowerCase().includes(r))) {
+            return member.name;
+          }
+        }
+      }
+      return 'Unassigned';
+    };
+
     // Apply tone transformation function
     function applyToneTransformation(text: string): string {
       if (!text || !toneRules?.length) return text;
@@ -947,20 +963,29 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
       mostPressingIssue: 'Intelligence analysis in progress',
       confidence: 'Medium',
       recommendedAction: 'Review detailed findings below',
-      ownerSuggestion: 'Security Operations',
+      ownerSuggestion: undefined,   // resolved to a real member or 'Unassigned' at render (#4)
       deadlineUrgency: '48 hours'
     };
 
     if (isQuietPeriod) {
       console.log('[ExecBrief] Quiet period — using deterministic flash (no LLM)');
-      const periodSignalCount = freshSignals.length;
+      // Finding #2 (2026-08-13): NEVER assert "no signals collected" when usable > 0. Main-tier
+      // (freshSignals, rel>=0.60) and usable (positively-attributed) are DIFFERENT tiers; state both.
+      const mainCount = freshSignals.length;         // rel >= 0.60 (drives flash/severity)
+      const usableCount = signals.length;            // positively-attributed (guard set)
+      const awarenessCount = awarenessSignals.length; // 0.30–0.59
       executiveFlash = {
-        mostPressingIssue: periodSignalCount === 0
-          ? `No actionable signals collected against ${client.name} during this reporting period.`
-          : `No critical or high-severity signals against ${client.name} this period. ${periodSignalCount} lower-severity signals collected, no escalation indicators.`,
-        confidence: 'High',
-        recommendedAction: 'No immediate action required. Continue routine monitoring; reassess at next scheduled report.',
-        ownerSuggestion: 'Intelligence',
+        mostPressingIssue: usableCount === 0
+          ? `No signals with a verified client attribution this period.`
+          : mainCount === 0
+            ? `${usableCount} attributed signal${usableCount !== 1 ? 's' : ''} this period; 0 met the main-tier relevance threshold (${awarenessCount} in awareness). No critical or high-severity escalation.`
+            : `No critical or high-severity signals against ${client.name} this period. ${mainCount} main-tier signal${mainCount !== 1 ? 's' : ''} collected (${usableCount} usable total), no escalation indicators.`,
+        // Confidence must NOT read High when nothing was assessed at main tier (finding #1/#2).
+        confidence: mainCount === 0 ? 'Not assessed (no main-tier signals)' : 'High',
+        recommendedAction: (mainCount === 0 && usableCount > 0)
+          ? 'No main-tier signals to action; review the awareness set below. Reassess at next scheduled report.'
+          : 'No immediate action required. Continue routine monitoring; reassess at next scheduled report.',
+        ownerSuggestion: undefined,   // resolved to a real member or 'Unassigned' at render (#4)
         deadlineUrgency: 'This week',
         trajectory: 'STABLE',
         trajectoryReason: 'No new critical or high-severity signals in the last 24 hours; no escalation indicators present.'
@@ -1978,7 +2003,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       <div class="flash-action-text">${executiveFlash.recommendedAction}</div>
     </div>
     <div class="flash-meta">
-      <div class="flash-meta-item"><strong>Owner:</strong> ${executiveFlash.ownerSuggestion}</div>
+      <div class="flash-meta-item"><strong>Owner:</strong> ${resolveFlashOwner(executiveFlash.ownerSuggestion)}</div>
       <div class="flash-meta-item"><strong>Timeline:</strong> ${executiveFlash.deadlineUrgency}</div>
       <div class="flash-meta-item"><strong>Risk Level:</strong> ${overallRiskLevel}</div>
       <div class="flash-meta-item"><strong>Trajectory:</strong> ${executiveFlash.trajectory || 'STABLE'} — ${executiveFlash.trajectoryReason || 'Insufficient data for trend comparison'}</div>
@@ -2003,8 +2028,8 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
       <div class="meta-value">${client.industry || 'N/A'}</div>
     </div>
     <div class="meta-item">
-      <div class="meta-label">Signals Analyzed</div>
-      <div class="meta-value">${freshSignals.length}</div>
+      <div class="meta-label">Signals — period / usable / main-tier</div>
+      <div class="meta-value">${(signalsRaw || []).length} / ${signals.length} / ${freshSignals.length}</div>
     </div>
     <div class="meta-item">
       <div class="meta-label">P1/P2 Incidents</div>
