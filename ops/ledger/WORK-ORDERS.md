@@ -1159,3 +1159,29 @@ The chain:
 article → signal (21:46:42Z) → incident (23:18:18Z), source URL intact, machine-derived end to end.
 
 **Honest caveat:** the signal's `signal_origin` is `unknown-legacy` — the ingestion-origin tag is a legacy placeholder, not a clean monitor attribution. The source URL and capture timestamp are concrete; the *which-monitor-ingested-it* link is not recorded. A fully-gold artifact would also carry a real `signal_origin`. This is the reference example precisely because everything *except* that one field is traceable.
+
+## DiD regression — traveller-aegis-chat gateway verify_jwt (2026-08-13, closed)
+
+**Classification: defense-in-depth regression, NOT an exposure** (operator ruling).
+
+During the Q1/Q2 COP-fix deploy I redeployed `traveller-aegis-chat` with `--no-verify-jwt`. Its `config.toml` declares no `verify_jwt` (platform default = true), so the flag flipped its **gateway** JWT check off for a **29-minute** window: v21 @ 2026-08-13T13:09:26Z → v22 (restored, no flag) @ 13:38:41Z.
+
+**Why it was not an exposure:** the function's **handler** authenticates independently — `traveller-aegis-chat/index.ts:230-231` calls `getCallerIdentity(req)` and rejects `unauthorized`; line 232 also rejects `service_role`. That gate was never disabled, so no request could reach the function's logic unauthenticated regardless of the gateway setting. Unlike the July INC-EXT-SIGNUP class (gateway-level exposure with NO handler gate), the load-bearing control here held. Log-level confirmation for the window was not retrievable (MCP `get_logs` is capped to the most-recent slice, no time range); the handler-gate evidence is sufficient for a 29-minute window on this endpoint (operator ruling — do not build a Logflare throwaway).
+
+**Root cause + rule:** `supabase functions deploy --project-ref <ref>` ignores `config.toml` and takes gateway `verify_jwt` from the CLI flag. `--no-verify-jwt` on a function that omits `verify_jwt` (default true) silently flips it open. **Rule: the deploy flag must match the function's declared/intended gateway auth per function — never blanket `--no-verify-jwt` across a deploy batch.** Verify by response BODY (gateway `UNAUTHORIZED_NO_AUTH_HEADER` vs handler error), not just a 200. Restored + closed same session.
+
+## FINDING (2026-08-13) — the platform discarded its venue client's crowd events as categorical noise
+
+Its own ledger entry per operator ruling — NOT a sub-item of the relevance work order. This is the finding, not a demo-quality problem.
+
+**A protective intelligence platform classified its venue-security client's core security events — concerts, matches, festivals — as categorical noise and dropped them from the pipeline.** For BC Place (a stadium), a sold-out match or a Guns N Roses concert IS the security event: crowd size, ingress/egress, protest target, threat surface. The ingest-signal relevance gate scores `sports / tournaments / concerts / festivals → 0.0` categorically (CATEGORICAL EXCLUSIONS, `ingest-signal/index.ts:1641-1649`), a rule written for the energy/principal-protection archetype.
+
+**Blast radius (measured):** `filtered_signals` holds **6,782 dropped BC Place signals** — 2,964 scored `relevance_score=0.0`, 561 with an explicit venue-event exclusion reason, 3,057 `primary_connection='none'`. Confirmed dropped: "Seattle Sounders FC at Vancouver Whitecaps", "Guns N Roses Vancouver", "Bruno Mars Vancouver".
+
+**Two independent root causes, both archetype-blind:**
+1. The dominant scoring path (RSS → `process-intelligence-document`, 2,021 signals) assigns `relevance_score` with **zero client context** — relevance modelled as a property of the signal, not a relation between signal and client. Same number serves every client.
+2. The client-aware path (`ingest-signal` gate) injects `industry` as a label but scores every client against ONE energy-centric rubric whose categorical exclusions **invert** relevance for a venue.
+
+**A correct per-client model was built and shelved:** `signal_relevance_shadow` + `compute-client-relevance` (engine `g3-v5`) computed relevance as a `(signal, client)` relation driven by `client_risk_categories` — but it ran in shadow for 1 client (Petronas), was never wired to consumers, and was hard-disabled for a cross-tenant write vulnerability (INC-AITOOLS-XTENANT-2026-07-30). BC Place was never in it (0 `client_risk_categories`). Salvage: `docs/platform-operations/recovery/g3-v5-relevance-engine-salvage.md`.
+
+**Status:** finding recorded; fix deferred (revive-vs-rebuild needs incident context — operator's call). Recovery queue intact (`filtered_signals`, 6,782 BC Place rows with text+scores+reasons).
