@@ -1219,3 +1219,24 @@ Its own item per operator ruling. `src/components/ClientRiskSnapshot.tsx:114-124
 **Lesson (again):** `feedback-negative-finding-needs-complete-search` in the other direction — a *positive* structural claim ("X is capped") is also a claim requiring the code, not an inference from a plausible sentence. A confident premise adopted by two people is still unverified until someone reads the function.
 
 **Status:** premise withdrawn; no cyber-invisibility platform finding. The lever is client configuration (see the gate-input-surface report).
+
+## RECORD (2026-08-13) — BC Place gate-input config authored, and UNMEASURED (stated honestly)
+
+BC Place `locations` (4→19: venue, transit, plazas, viaducts, downtown precincts + Rogers Arena/DTES adjacency) and `high_value_assets` (5→13: kept 5 physical, added 8 systems — retractable roof, access control, accreditation, CCTV, BMS, PA/emergency, venue Wi-Fi, PavCo network; **dropped Ticketing / POS / Broadcast-media as false-match-prone** — "ticketing" would have re-admitted the exact ticket-sales noise sitting in `filtered_signals`, a fix that worsens the noise problem while looking like a fix). These are the ONLY two fields the LLM relevance gate reads.
+
+**Explicitly unmeasured — no available proof, and why:** `relevance_score` is set at ingestion and this config only affects the `ingest-signal` 4-field gate. **0 of the 15 signals in the 2026-08-06→08-13 window touched that gate** (13 `monitor-rss-sources` = client-blind extractor; 2 `monitor-cisa-kev` = skip-gate). Re-running the window would report 9/0/9 → 9/0/9 — a false negative that flatters correct config. No test was manufactured. The config is correct and forward-beneficial for `monitor-news-google`/`social` intake; its effect is simply not observable on this client's current signal history.
+
+## FINDING (2026-08-13) — the 4-field gate is not the PECL/BC Place differentiator; the client-blind RSS path is
+
+Measured intake composition (scored, active signals per client):
+
+| client | scored | RSS-extractor (client-blind) | gate-routed | gate reach |
+|---|---|---|---|---|
+| Petronas Canada | 1330 | **720 (54%)** | 216 | **16%** |
+| Cascade Energy | 476 | 362 (76%) | 33 | 7% |
+| BC Place | 291 | **167 (57%)** | 25 | **8.6%** |
+| Kilbacks | 739 | 7 (1%) | 0 | 0% |
+
+**PECL and BC Place are both ~54-57% RSS-extractor** — the client-blind path dominates BOTH. The `ingest-signal` 4-field gate reaches only **16% of PECL** and **8.6% of BC Place** intake. **So the gate config cannot be what produces the PECL vs BC Place difference — it barely touches either client.** Whatever separates their output (volume: 1330 vs 291; the RSS extractor's generic scoring, identical for both; something else), it is NOT the gate config. Anyone reasoning "PECL scores better because its gate config is richer" is reasoning from a lever that governs <1/6 of PECL's intake.
+
+**The real lever for both clients is the client-blind RSS extractor (`process-intelligence-document`)** — 54-76% of intake, reads no client config, scores relevance as a property of the signal not a relation to the client. That is the modelling error already logged (the venue-noise finding + the g3 salvage). Config authoring helps the gated minority; it does not touch the majority path. **Config is not the lever for BC Place — the RSS client-blindness is.**
