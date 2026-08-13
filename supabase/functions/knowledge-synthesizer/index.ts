@@ -648,7 +648,7 @@ STRICT QUALITY RULES — violating any of these means returning an empty array [
 4. If the data is too sparse or ambiguous to support a meaningful conclusion, return [].
 5. Never extrapolate beyond what the evidence shows. Hedge appropriately.
 
-Good: "Coastal GasLink-related protest activity has shown 3× frequency increase over 30 days with growing tactical coordination — kinetic confrontation elevated probability." (confidence: 0.72)
+Good: "Protest activity near a monitored corridor has shown 3× frequency increase over 30 days with growing tactical coordination — kinetic confrontation elevated probability." (confidence: 0.72)
 Bad: "There are protest signals in the database."
 Bad: "A cyberattack will occur." (unsupported extrapolation)
 

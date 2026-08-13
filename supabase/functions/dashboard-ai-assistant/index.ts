@@ -4994,7 +4994,7 @@ Deno.serve(async (req) => {
         if (!clientData) {
           return {
             error: "Client not found",
-            message: `Could not find a client matching '${rawClientName}'. Please use the exact client name from your Clients list (e.g., Petronas Canada).`,
+            message: `Could not find a client matching '${rawClientName}'. Please use the exact client name from your Clients list.`,
           };
         }
 

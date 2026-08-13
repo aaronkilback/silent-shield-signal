@@ -1061,7 +1061,7 @@ When generating intelligence briefings, follow this professional structure:
 
 5. **EXTERNAL INTELLIGENCE** (If web search performed):
    - MANDATORY: Every external source MUST show its ACTUAL publication date
-   - Format: "Title (SOURCE, published DATE)" - e.g., "LNG Canada begins exports (Reuters, 2025-11-15)"
+   - Format: "Title (SOURCE, published DATE)" - e.g., "Port authority tightens access controls (Reuters, 2025-11-15)"
    - Mark sources older than 7 days with 📜 HISTORICAL prefix
    - Mark sources older than 30 days with ⚠️ DATED prefix and note context may be outdated
    - NEVER present old news as current - always show the actual date

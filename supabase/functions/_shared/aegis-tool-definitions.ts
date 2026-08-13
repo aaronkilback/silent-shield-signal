@@ -160,7 +160,7 @@ Returns:
 
 **CRITICAL TESTING PROTOCOL (MANDATORY):**
 
-1. **ALWAYS use client_name parameter** (e.g., 'Petronas Canada') - NEVER use client_id directly to avoid UUID format errors.
+1. **ALWAYS use client_name parameter** (the client's exact display name) - NEVER use client_id directly to avoid UUID format errors.
 
 2. **VERIFICATION WORKFLOW (REQUIRED FOR EVERY inject_test_signal CALL):**
    - Step 1: Call inject_test_signal with client_name and unique test content
@@ -186,8 +186,8 @@ Returns:
 **Example Correct Usage:**
 \`\`\`
 inject_test_signal(
-  client_name="Petronas Canada",
-  text="Test signal: Pipeline security alert near Fort St. John - " + Date.now(),
+  client_name="<client display name>",
+  text="Test signal: Security alert near a client site - " + Date.now(),
   severity="high"
 )
 // THEN IMMEDIATELY:
@@ -203,7 +203,7 @@ Inform user of successful creation and instruct to refresh if needed
           },
           client_name: {
             type: "string",
-            description: "Client name to associate this signal with (e.g., 'Petronas Canada', 'Dan Martell'). The tool will automatically look up the correct UUID.",
+            description: "Client name to associate this signal with (the exact name shown in the Clients list). The tool will automatically look up the correct UUID.",
           },
           client_id: {
             type: "string",
@@ -2146,14 +2146,14 @@ ALWAYS call this before concluding an IOC is novel. Prior ingestion from Defende
 
 Use this when:
 - A user wants an agent to actively monitor something ("have FININT watch these entities for 30 days")
-- A client situation requires dedicated agent focus ("task VERIDIAN-TANGO to assess Coastal GasLink risk through Q2")
+- A client situation requires dedicated agent focus ("task VERIDIAN-TANGO to assess a specific asset's risk through Q2")
 - You want an agent to proactively surface findings rather than waiting to be asked
 
 The agent will see this mission at the start of every conversation and treat it as an active directive. They will log findings as they occur.
 
 Examples:
-- assign_agent_mission(agent="FININT", title="Monitor Petronas transaction patterns", objective="Track all financial signals related to PECL and LNG Canada for suspicious transaction patterns or sanctions exposure. Report any findings immediately.", deadline="2026-07-01", reporting_cadence="on_finding")
-- assign_agent_mission(agent="ECHO-ALPHA", title="Assess Q2 hemispheric risk", objective="Monitor US-Canada defense posture changes and assess implications for Petronas operational security in NE BC.", deadline="2026-06-30", reporting_cadence="weekly")`,
+- assign_agent_mission(agent="FININT", title="Monitor client transaction patterns", objective="Track all financial signals related to the client's assets for suspicious transaction patterns or sanctions exposure. Report any findings immediately.", deadline="2026-07-01", reporting_cadence="on_finding")
+- assign_agent_mission(agent="ECHO-ALPHA", title="Assess Q2 hemispheric risk", objective="Monitor US-Canada defense posture changes and assess implications for the client's operational security in its operating region.", deadline="2026-06-30", reporting_cadence="weekly")`,
       parameters: {
         type: "object",
         properties: {
@@ -2196,7 +2196,7 @@ Examples:
 Use to answer questions like:
 - "What is FININT currently tasked with?"
 - "Show me all active agent missions"
-- "What missions are assigned for Petronas?"`,
+- "What missions are assigned for this client?"`,
       parameters: {
         type: "object",
         properties: {

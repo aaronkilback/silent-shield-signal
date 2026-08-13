@@ -982,7 +982,7 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
       // ── Flash precision check (fourth-read ruling 2) — strictest check on the most-read
       // sentence. mostPressingIssue is the single line executives read; verify its SUBJECT,
       // COUNTERPARTY, and ACTION against the flash-eligible source signals it must derive from.
-      // On mismatch (e.g. "Germany finalized a LNG deal" for an "Uniper buys from Ksi Lisims"
+      // On mismatch (e.g. a summary that names a different company or deal than the flash-eligible
       // source), fall back to the top source signal's own summary VERBATIM — never print a
       // garbled claim as the headline.
       const flashSources = (flashCritical.length ? flashCritical : flashHigh).slice(0, 3);
@@ -1118,7 +1118,7 @@ LANGUAGE CALIBRATION (consolidated brief-quality ruling — enforce strictly):
 
 SUMMARY LEAD CONSTRAINT (fourth-read ruling 3 — enforce strictly):
 - The BLUF and the opening paragraph MUST derive from the FLASH-ELIGIBLE LEAD SET above (categories operational, regulatory, active_threat, security). This is the same set the flash banner derives from — the summary's lead may not diverge from the flash's basis.
-- Regional hazard material (wildfire, evacuation, air-quality, flooding — categories civil_emergency, environmental, health_concern) is MONITORING CONTEXT ONLY. It may appear only AFTER the lead, framed as situational awareness (e.g. "regional wildfire activity continues near Clinton with no established pathway to PECL assets"), NEVER as "immediate attention", "key immediate concern", or an action item, and NEVER as the lead when the flash trajectory is STABLE.
+- Regional hazard material (wildfire, evacuation, air-quality, flooding — categories civil_emergency, environmental, health_concern) is MONITORING CONTEXT ONLY. It may appear only AFTER the lead, framed as situational awareness (e.g. "regional wildfire activity continues in the operating region with no established pathway to ${client.name}'s assets"), NEVER as "immediate attention", "key immediate concern", or an action item, and NEVER as the lead when the flash trajectory is STABLE.
 - If the flash-eligible lead set is empty, lead with that fact ("no flash-eligible threat requires action this period"); do not promote hazard context into the lead to fill the space.
 
 FLASH CONSISTENCY (internal-consistency constraint — an executive flash banner has ALREADY been assessed and will be printed directly ABOVE your summary):
@@ -1204,7 +1204,7 @@ ${actionSignalContext}
 ${renderMandateGuidance((client as any).mandate_profile, client.name)}
 
 MANDATORY RULES:
-0. MANDATE FIRST: each signal above is tagged [OPERATE] / [AFFILIATED-INFORM] / [EXTERNAL-MONITOR]. Every recommendation MUST draw ONLY from that class's permitted verbs and carry its class prefix. Do NOT task security, harden, or "update protocols" for an AFFILIATED-INFORM or EXTERNAL-MONITOR subject. For LNG developments (Ksi Lisims / Uniper / LNG Canada) the correct output is a briefing/indirect-impact assessment for PECL stakeholders — never tasking another company's security.
+0. MANDATE FIRST: each signal above is tagged [OPERATE] / [AFFILIATED-INFORM] / [EXTERNAL-MONITOR]. Every recommendation MUST draw ONLY from that class's permitted verbs and carry its class prefix. Do NOT task security, harden, or "update protocols" for an AFFILIATED-INFORM or EXTERNAL-MONITOR subject. For third-party or non-operated developments (a project the client does not itself operate) the correct output is a briefing/indirect-impact assessment for ${client.name} stakeholders — never tasking another company's security.
 1. Every recommendation MUST begin by citing at least one signal ID from the list above (format: "[SIG-XXX]") and reference the specific observed event/entity. A reader must be able to point to the signal that triggered each action.
 2. NO generic, evergreen recommendations. If the action would apply to any company on any day with no signals at all, drop it.
 3. NO recommendations along the lines of "develop a plan", "conduct training", "implement audits", "enhance sharing" unless the signal evidence specifically warrants it.
@@ -1299,7 +1299,7 @@ MANDATORY TRADECRAFT RULES:
 - Named individuals: only use names that appear verbatim in the signal text — do not infer, reconstruct, or introduce names from context
 
 ${renderMandateGuidance((client as any).mandate_profile, client.name)}
-- Any RECOMMENDED ACTION or implication line must respect the mandate class of its subject: never prescribe operational action (task/secure/harden/update protocols) for an AFFILIATED-INFORM or EXTERNAL-MONITOR subject. LNG-sector developments (Ksi Lisims / Uniper / LNG Canada) yield strategic assessment or a stakeholder briefing — never tasking another company's security.
+- Any RECOMMENDED ACTION or implication line must respect the mandate class of its subject: never prescribe operational action (task/secure/harden/update protocols) for an AFFILIATED-INFORM or EXTERNAL-MONITOR subject. Third-party or non-operated developments yield strategic assessment or a stakeholder briefing — never tasking another company's security.
 
 GROUNDING VERIFICATION — before writing each deduction:
 1. Identify the specific signal number above that supports this claim
@@ -1396,7 +1396,7 @@ AWARENESS ITEMS (lower-relevance context, each with a signal ID):
 ${awItems}
 
 Write 2-4 SHORT themed paragraphs (NOT a list, NOT bullet points), each grounded with 1-2 signal IDs in brackets, e.g. [SIG-2026-027101]. Suggested themes (use only those the data supports):
-1. Regional hazard context — wildfire/weather/air-quality activity near the operating region. You MUST include an explicit sentence stating there is NO established pathway to ${client.name}'s operated assets (that verification IS the value; e.g. "regional wildfire activity continues near Clinton, ~325 km from the nearest PECL corridor, with no established pathway to operated assets").
+1. Regional hazard context — wildfire/weather/air-quality activity near the operating region. You MUST include an explicit sentence stating there is NO established pathway to ${client.name}'s operated assets (that verification IS the value; e.g. "regional wildfire activity continues in the region, with no established pathway to ${client.name}'s operated assets").
 2. Industry & sector moves — LNG/energy developments, competitor and third-party activity, regulatory context.
 3. Patterns worth watching — recurring themes or escalations that do not yet warrant action.
 Rules: plain prose, no markdown, no asterisks, no headers. Total length UNDER 250 words. Prioritize the most relevant items; it is fine to omit minor ones. Never name a private individual. Do not frame anything as requiring immediate attention.`;
