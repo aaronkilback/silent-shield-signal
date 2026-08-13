@@ -11,9 +11,7 @@ import {
   getReliabilityFirstPrompt,
   getReliabilitySettings,
   runQAChecks,
-  createSourceArtifact,
-  createVerificationTask,
-  type SourceArtifact
+  createVerificationTask
 } from "../_shared/reliability-first.ts";
 import { retrieveRelevantKnowledge, formatRagContext } from "../_shared/semantic-rag.ts";
 import { getAgentWorldModel, formatWorldModelContext } from "../_shared/world-model-context.ts";
@@ -323,10 +321,8 @@ function generateFallbackResponse(toolResults: { tool: string; result: any }[]):
         fallback += '\n';
       }
       
-      // SOURCES FOOTER REMOVED (WO-CONFIDENCE-SIGNAL-INTEGRITY-01, 2026-08-13): the entire
-      // "**Sources:** [S1] Fortress Signals Database / [S2] Fortress Incidents Database" block was
-      // decorative — the chat path has NO resolved-source mechanism, so any [S#] here maps to
-      // nothing. A citation marker with nothing behind it does not render.
+      // (Deterministic fallback intentionally emits NO sources/citation footer — the chat path has
+      // no resolved-source mechanism. WO-CONFIDENCE-SIGNAL-INTEGRITY-01.)
 
     } else if (tr.tool === 'query_fortress_data' && tr.result.success) {
       fallback += `## Query Results\n`;
@@ -669,23 +665,11 @@ Respond naturally and briefly.`
     const reliabilitySettings = await getReliabilitySettings(supabase, client_id);
     console.log('Reliability First mode:', reliabilitySettings.reliability_first_enabled ? 'ENABLED' : 'disabled');
 
-    // Collect source artifacts from context data
-    const sourceArtifacts: SourceArtifact[] = [];
-    
-    // Create source artifacts for signals data
-    if (contextData.includes('Recent Signals')) {
-      const artifact = await createSourceArtifact(supabase, {
-        source_type: 'incident_record',
-        title: 'Fortress Signals Database',
-        content: contextData,
-        client_id,
-      });
-      if (artifact) sourceArtifacts.push(artifact);
-    }
-
-    // Build Reliability First prompt block
-    const reliabilityFirstBlock = reliabilitySettings.reliability_first_enabled 
-      ? getReliabilityFirstPrompt(sourceArtifacts)
+    // Build Reliability First prompt block. Source-artifact collection DELETED 2026-08-13
+    // (WO-CONFIDENCE-SIGNAL-INTEGRITY-01): it only built the generic "Fortress Signals Database"
+    // label the removed [S#] builder consumed — dead once that builder was deleted.
+    const reliabilityFirstBlock = reliabilitySettings.reliability_first_enabled
+      ? getReliabilityFirstPrompt([])
       : '';
 
     // Build system prompt with agent persona
