@@ -1185,3 +1185,13 @@ Its own ledger entry per operator ruling — NOT a sub-item of the relevance wor
 **A correct per-client model was built and shelved:** `signal_relevance_shadow` + `compute-client-relevance` (engine `g3-v5`) computed relevance as a `(signal, client)` relation driven by `client_risk_categories` — but it ran in shadow for 1 client (Petronas), was never wired to consumers, and was hard-disabled for a cross-tenant write vulnerability (INC-AITOOLS-XTENANT-2026-07-30). BC Place was never in it (0 `client_risk_categories`). Salvage: `docs/platform-operations/recovery/g3-v5-relevance-engine-salvage.md`.
 
 **Status:** finding recorded; fix deferred (revive-vs-rebuild needs incident context — operator's call). Recovery queue intact (`filtered_signals`, 6,782 BC Place rows with text+scores+reasons).
+
+## FINDING (2026-08-13) — client_risk_categories has no population path (platform gap, not a BC Place gap)
+
+Logged separately per operator ruling. **`client_risk_categories` — the per-client input the g3-v5 relevance engine scores against — has NO population mechanism anywhere in the platform.** No edge function reads or writes it; `process-client-onboarding` does not touch it. Its only rows (6, Petronas) were created by a one-off `gate3-build` / `gate3-v2` script during the g3 pilot, `created_by` = the script, all on 2026-07-06.
+
+**Onboarding was designed to feed the per-client model and never did.** Every client created after the Petronas pilot is **structurally empty** in `client_risk_categories` — not because they were misconfigured, but because no code path populates the table. This is why the g3 engine only ever had one client's worth of rows (940, all Petronas): it wasn't a shadow-scope choice, it was the only client with inputs.
+
+**Consequence:** the revive-vs-rebuild question for g3 is downstream of this — a per-client relevance engine is inert for every client until `client_risk_categories` has a population path (onboarding-generated, or an authoring surface). Fixing the engine without fixing the input path reproduces the single-client outcome.
+
+**Status:** finding recorded. Population-path design is a platform work item, separate from BC Place onboarding and from the g3 rebuild. Related: `docs/platform-operations/recovery/g3-v5-relevance-engine-salvage.md`, the venue-noise finding above.
