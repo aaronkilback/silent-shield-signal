@@ -1680,3 +1680,40 @@ Replicated the engine's resolution (gazetteer text-geocode) + proximity (ST_Dist
 | 4 Jurisdictional / regional | CLOSED — deferred | ~7–8 real events/wk, unreachable; needs a DETERMINISTIC event-classifier, not a string test |
 
 **Position:** four axes measured, none open, each closure evidenced rather than assumed. Nothing shipped on the relevance front — but the intake-decline diagnosis went from "corpus exhaustion" (wrong) to "client-match starvation of a healthy surface, with three unbuilt relevance axes and a fourth that is a model limit" (evidenced). Better fighting position than this morning. STOP.
+
+## PECL RE-ATTRIBUTION 1a+1b (2026-08-14) — 3 keywords deactivated (reversible); dry run projected. WRITE HELD.
+
+### 1a ruling executed — 3 keywords DEACTIVATED (reversible, recorded)
+`clients.monitoring_keywords` for Petronas Canada: 42 → **39**. Removed (operator ruling):
+- **Wet'suwet'en** (bare token — region/theme-proxy; 5 CGL-specific Wet'suwet'en phrases retain the real case).
+- **Kitimat LNG** (affirmatively wrong — Chevron/Woodside project, not PECL).
+- **BC LNG** (region+industry; PECL one of several).
+Kept: Montney gas (contested) + all 17 long generics (to see which fire).
+**REVERSAL (if needed):** `update clients set monitoring_keywords = monitoring_keywords || array['Wet''suwet''en','Kitimat LNG','BC LNG'] where name='Petronas Canada';`
+
+### 1b dry run — token-boundary matcher (deterministic-matcher.ts approximated in SQL) over PECL's 1,741 active signals. READ-ONLY, nothing written.
+**Projected attribution split:** direct **276 (16%)** · competitor **0** · sector-only **12 (0.7%)** · **none 1,453 (83%)**.
+- The 83% none = signals with NO distinctive-keyword nexus (old tier-2-fuzzy / broad-geo residue). Under honest re-attribution these become `none` superseding corrections (same as the Option C 635).
+
+**Per-keyword fire counts — 11 of 39 fire, 28 are DEAD (0):**
+| fires | keyword (type) |
+|---|---|
+| 153 | LNG Canada (direct) |
+| 51 | Coastal GasLink (direct) |
+| 50 | Petronas Canada (direct) |
+| 17 | **BC Energy Regulator (sector)** — the ONLY live region-proxy |
+| 16 | Prince Rupert Gas Transmission (direct) |
+| 8 | Progress Energy Canada (direct) |
+| 7 | Unist'ot'en (direct) |
+| 5 | Gidimt'en (direct) · Stand.earth (direct) |
+| 4 | CGL pipeline (direct) |
+| 2 | Montney gas (direct) |
+| **0** | **all 16 remaining long generics** (Northeast BC wildfire ×3, LNG environmental/operational/supply-chain ×5, pipeline protest/injunction BC, Peace Region/Northeast BC energy, Skeena/Kitimat, Danielle Smith, Canada Energy Regulator LNG, landslide) + 11 distinctive that never appear verbatim (Keyera, SimpleHelp, PAN-OS ×2, Dogwood, Frack Free, Metlakatla, CGL-blockade ×2, Wet'suwet'en-blockade ×3) |
+
+**Confirms operator's "dead weight not risk" prediction:** the long generics fire 0 under token-boundary matching — prunable as data, not risk. The one live proxy is BC Energy Regulator (17 fires → 12 sector-only signals; covers ALL BC energy, not just PECL).
+
+**Montney gas (contested keep) — both matches clean:** (1) 2026-05-23 "Resource Works CEO … called the Montney gas reserves…"; (2) 2026-07-05 "Canada's Montney Natural Gas is a Crown Jewel" — context "…of the **Coastal GasLink pipeline from the Montney gas**-…" (explicitly CGL-linked). No false positive. Keep validated.
+
+**CAVEAT (scope of the projection):** this is monitoring_keywords-ONLY. The BC Place writer also anchored on **client locations / assets / entities** (DIAG anchor set: fort st. john, kitimat, montney, tumbler ridge, dawson creek, …). Adding those would move some of the 1,453 `none` into `direct` (the genuinely location-anchored PECL signals). Real `direct` ≥ 276, real `none` ≤ 1,453. Can measure the location-anchor contribution before the write if wanted.
+
+**WRITE HELD** per "I rule before anything writes." Nothing inserted into signal_client_attributions. Awaiting ruling.
