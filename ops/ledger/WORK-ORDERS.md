@@ -1959,3 +1959,30 @@ Consumers COMBINE layers at read time (relevance × attribution × hazard-pathwa
 **Pre or post admission — THE TRAP (operator's flag, confirmed):** `score_signal_temporal_context(signal_id)` takes a `signal_id`, so by construction it runs **POST-admission**, on rows already in `signals` — exactly like the hazard pathway. Therefore it **inherits the hazard-pathway limitation: it only scores what already got in.** A protest signal on match day benefits from the ×attendance factor **only if it was admitted** at the keyword `client_match` gate in the first place. A match-day protest that fails client_match (doesn't name the venue/client) is dropped before any signal exists → never scored → the temporal context can never reach it. **(b) is a PRIORITIZATION/ESCALATION lever over admitted signals, NOT an ADMISSION lever.**
 
 **The resolution shape (not designed):** to make temporal state affect *admission* — admit an event-day-relevant signal that doesn't name the client — the schedule must be consulted **at/before the client_match gate** (a pre-admission temporal leg, the mirror of the unbuilt geo-admission leg). That is a DIFFERENT integration point than (b). So temporal context is genuinely **two hooks**: (1) pre-gate admission (unbuilt, same shape as the geo-admission gap) and (2) post-admission factor (b, this pass). (b) alone is worth building — it makes the brief rank/escalate correctly on event days — but it does not rescue a dropped signal. Naming that boundary is the point: (b) is honest post-admission prioritization; the admission half is a separate, harder hook that shares the geo gate's problem. Report only — no design, no build.
+
+## ARCHITECTURE FINDING (2026-08-14) — admission is keyword-only; ALL relevance machinery is downstream of it. One architecture, not four gaps.
+Third instance today of one pattern:
+- **geo pathway** (`score_signal_hazard_pathway`) — works, post-admission, cannot rescue drops.
+- **temporal context** (`score_signal_temporal_context`, scoped) — same shape, same position, same limit.
+- **client_risk_categories scorer** (g3, if wired) — same seam.
+The platform has sophisticated relevance machinery that **can only re-rank what a substring `client_match` already admitted.** The single live admission door is keyword substring; every other layer (geo, temporal, risk-category, attribution) is a post-admission re-rank. **Admission is keyword-only and everything else is downstream of it.** Building more downstream layers = better ranking of an already-thin admitted set (the "tune relevance on 4 signals/week" mistake).
+
+## SCOPING — the admission hook (one pre-gate consultation, not a matcher per axis). Report only.
+Idea (operator): at `client_match`, on items about to be dropped, ask ONCE — does any per-client state (geo / temporal / risk-category) bear on this item? One consultation point.
+
+**Where it sits:** `process-intelligence-document`, at the `no_client_match` branch (~L488), BEFORE `recordDecision(...'no_client_match')` + the drop. A single `consultClientState(item, clients)` — for each client, evaluate its `client_risk_categories` match_spec (which already unifies keyword + named_place + geo_proximity legs, and would carry a temporal leg); on a hit, admit + attribute via the risk-category instead of dropping. This IS the g3 `compute-client-relevance` logic, relocated from post-admission to the gate.
+
+**What it needs that does not exist:**
+1. `client_risk_categories` **populated for all clients** — only PECL (6); BC Place 0; population path missing (the standing prerequisite).
+2. **The item's category AT the gate** — `require_signal_category` (the precision filter) needs the item classified, but classification happens at `relevance_score`/extraction, AFTER `client_match`. So at the gate you have title/raw_text only. Either reorder (pre-classify before client_match) or run anchor-legs-only (looser). **This ordering gap is decisive** (see measurement).
+3. **Item geolocation** for the geo_proximity legs (the geo work, `assessable:false`).
+4. `client_scheduled_conditions` for temporal legs (does not exist).
+5. **The consultation engine** — g3 `compute-client-relevance` is LOST/disabled; would be rebuilt.
+
+**What it would have admitted from last week's 3,270 drops (offline, PECL match_specs):**
+- **41** drops mention ANY PECL risk-category anchor (raw, no category filter).
+- **15** with `require_signal_category` applied (approx from title) — all via `wildfire_near_asset`.
+- **BUT the 15 are Okanagan wildfires** (Summerland/Peachland/Merritt/Vernon) matched on the **loose `evacuation order`/`evacuation alert` keyword leg — NOT the tight `named_place` (Kitimat/Montney) leg.** None are near a PECL asset. The tight named_place legs → **~0 this week** (no NE-BC fire event).
+- **Verdict: the combined consultation UNION is NOT different from the parts.** ~15 (loose) or ~0 (tight) — same magnitude as every axis-by-axis measure. **No hidden trove.** And the client's own match_spec has a loose leg (bare "evacuation order") that recreates the broad-geo breadth problem one level up — the consultation is only as precise as its legs.
+
+**Cost/value read (not a decision):** the admission hook is the correct architectural fix (one consultation, right position — pre-gate), and its prerequisites are real (population path, category-at-gate ordering, geolocation, schedule table, rebuilt engine). But the deciding number says it recovers a **small** set that is precise only with disciplined match_spec legs, and confirms — a fourth time — that the **client-relevant surface is genuinely thin** (the client-match-starvation finding). Value is CORRECTNESS (catch the real near-asset wildfire the week it happens) not VOLUME. Measuring the union was the right test: it shows the union ≈ the best single axis, because the underlying relevant content is thin, not because the machinery is missing. Report only — no build.
