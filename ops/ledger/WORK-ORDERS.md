@@ -1628,3 +1628,26 @@ Operator ruling after reading the 14 titles:
 - **Status:** axis 4 = measured, real, thin, **deferred pending a deterministic event-classifier design** (not to be proposed now).
 
 **Next: geo-authoring picture for axis 2** (what PECL + BC Place need to take shadow-admit from 34 toward meaningful). Report only.
+
+## GEO-AUTHORING PICTURE (2026-08-14) — CORRECTS the premise: asset geometry is DONE; the gap is a build, not authoring.
+
+Two corrections to earlier ledger lines (mine), on fresh evidence:
+
+### Correction A — the "34" is NOT a proximity number.
+`_shared/shadow-matcher.ts` is a **keyword token-boundary matcher with common-noun-asset geo-*disambiguation*** (a whole-token common noun like "cabin"/"home" requires a geo anchor to match; no anchor → fail-closed `geo_pending`). The earlier `geo_shadow_would_admit=34` is the shadow keyword matcher's **recall delta vs the live `.includes()` gate**; `shadow_geo_suppressed=122` is common-noun-asset matches held for lack of corroboration. **Neither is "hazard near asset by distance."** The proximity engine (`score_signal_hazard_pathway`) is a SEPARATE system not represented in the shadow at all. "Take shadow-admit from 34 toward meaningful" conflated the keyword shadow with the proximity engine.
+
+### Correction B — PECL's NE-BC geometry was NOT deferred. It is comprehensively authored.
+`client_geo_assets` today:
+- **Petronas Canada = 14 assets** (25–50km buffers): 9 gas plants (Aitken Creek, Caribou, Fort Nelson, Jedney, Lily, McMahon, Sunrise, Taylor, Younger), **LNG Canada terminal (Kitimat)**, **Coastal GasLink corridor (LineString)**, **Montney/Fort St. John upstream** (50km), **Horn River/Fort Nelson upstream** (50km), Calgary HQ. Blankets NE-BC.
+- **BC Place = 1 asset**: BC Place Stadium (venue, Point, 2km) — adequate for a single-venue client.
+- (Kilbacks 3 points; client_assets has PECL ×3 points + 2 invariant-test.)
+
+### What exists (the engine + inputs)
+- **Proximity engine `score_signal_hazard_pathway(signal_id)`**: resolves item location **coordinate-first** (`raw_json.centroid.lat/lng` or `lat/lng/lon`) → **gazetteer text-geocode fallback** (a `geo_place_gazetteer.name` appearing in `location||title||normalized_text`) → distance vs each asset's `buffer_km` (×2.5 for regional categories). Works. **Runs POST-admission, on `signals` only.**
+- **`geo_place_gazetteer` = 46 places** — covers the key ones: Fort St. John, Fort Nelson, Kitimat, Taylor, Chetwynd, Dawson Creek, Tumbler Ridge, Prince George, Terrace, Vancouver, BC Place.
+- **564 of the 3,248 keyword-dropped items (7d) already contain a gazetteer place in their title** → already geo-resolvable with what exists (the within-buffer subset would admit; Okanagan/other-province mentions correctly would not).
+
+### What is missing — and it is a BUILD, not authoring
+The engine **never runs on keyword-DROPPED items** — they are dropped before any signal exists, and `score_signal_hazard_pathway` only takes a `signal_id`. To make axis 2 an admission door, the existing location+proximity logic must run **at the client_match gate**, on dropped items, before the `no_client_match` drop. Asset geometry is done (PECL) / adequate (BC Place); the gazetteer covers the core places; the engine exists. **The missing piece is wiring the engine pre-insert — a build.**
+
+**Cost model inverted from the premise:** the expectation was "asset-geometry authoring, not a build." Evidence: authoring is essentially complete; the gap is the build (run proximity at admission). Optional small authoring (not the blocker): expand the 46-place gazetteer; add a few BC Place adjacent points. Caveat: 564 is the geo-resolvable ceiling; the actual within-buffer admit count needs the proximity run (which is the build) to measure. No build. Report only.
