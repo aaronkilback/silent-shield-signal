@@ -1541,3 +1541,15 @@ The earlier read ("thin source surface, exhausted") was measured against produci
 - **Genuine source-health items (separate, small):** ~4 dead + ~13 errored feeds = ~17 to clean; ~16 discovery-added non-producers suggest `autonomous-source-discovery` is adding low-value feeds (generator-governance). These are hygiene, not the intake driver.
 
 Evidence only — no fixes.
+
+## SETTLED (2026-08-14) — intake decline diagnosis. (Relevance-correctness of drops left to operator review.)
+
+Operator ruled these settled after reviewing a 100-row raw sample of last-7-day `no_client_match` drops:
+
+1. **Intake decline is client-match starvation of a HEALTHY source surface — not source exhaustion.** The configured feeds fetch abundant content (43/50 never-producers fetched this week; all 20 regressed still fetch 200; 261 parsed items from 10 instrumented sources); intake dies at the `client_match` stage. **Adding more feeds does not help** — new feeds hit the same client_match gate. The bottleneck is the client-match surface (2 clients: BC Place, PECL), not the number of sources. This holds regardless of whether individual drops are correctly or incorrectly filtered.
+2. **~17 feeds are genuine source hygiene:** 4 dead (never fetched) + 13 errored (fetch 404/auth/moved). Cleanup, not the intake driver.
+3. **`autonomous-source-discovery` has added ~16 feeds that never produce** (weekly 03:00 job). Generator governance — a separate item (a discovery generator whose additions never yield is producing attention-cost without intake benefit).
+
+**LEFT OPEN (not settled):** whether the `no_client_match` drops are *correctly* irrelevant vs client-relevant-but-missed. The earlier "genuinely irrelevant" judgement was made by the same matcher under question; operator is reading the 100-row raw sample directly. **Observation surfaced for that review:** a substantial slice of the sample is B.C. wildfire / state-of-emergency / B.C. weather-alert coverage — inside Fortress's own product scope (wildfire + emergency monitoring) though outside these two clients' keywords. Correct-filter vs missed-match is the operator's call; not asserted here.
+
+No fixes.
