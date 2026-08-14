@@ -2001,3 +2001,17 @@ Four independent measurements converge on the same result:
   2. Social + forum collection — dead since ~May.
   3. BC Place event calendar — the only unblocked source found.
 - **Relevance thread STOPPED.** No further work on scoring / axes / admission until collection moves.
+
+## SOCIAL + FORUM COLLECTION — post-mortem (2026-08-14, last report today). Per-platform: existed / died / why / restore / block-type.
+Overarching: social/forum collection was built on **Google CSE + deprecated Meta Graph endpoints** — a foundation that structurally cannot work at scale. CSE cannot index the social platforms (they deindex/block it); Meta's public-search endpoints are deprecated/permission-gated; X requires a paid API; LinkedIn has no accessible content API; Pastebin blocks archive scraping. The CSE bet was wrong (same lesson as the twitter-CSE retirement).
+
+| platform | existed / ran | last produced | why it died | block type | restore cost |
+|---|---|---|---|---|---|
+| **twitter / X** | API v2 rewrite (correct), ran 1228× Apr24–Jul10 | 08-10 (23 total) | **X API v2 is paid ($100–5000/mo); budget-paused (Phase X-1, 05-19), retired PROD-M** | **API-COST** | **LOW — TWITTER_BEARER_TOKEN present + code correct; fund budget + re-schedule cron. The only clean restore.** |
+| **facebook** | never ran standalone (CSE stub); real FB via social-unified Meta Graph | 06-11 (89) | Meta Graph `pages/search` deprecated + token/permission (`FACEBOOK_ACCESS_TOKEN` present but app-token scope limited); standalone is CSE-only (FB deindexed) | **ToU / API** (Meta app-review + permissions) | MED — Meta app review + Page-scoped token; standalone monitor is dead-end (CSE) |
+| **instagram** | CSE-only, still runs 1126× (last 08-14) | 05-23 (35) | **CSE cannot see Instagram; no Graph path in the standalone monitor** — runs, yields 0 | **TECHNICAL** (CSE blind to IG) | MED — IG Graph Business API (business account + app review) |
+| **social-unified** | aggregator, ran 6071× Mar12–Aug05 | 06-01 (multi_platform 42; +reddit/tiktok/threads to ~05-23) | CSE structural-zero for social + Meta Graph endpoint deprecation; cron stopped Aug 5 | **TECHNICAL + ToU** | HIGH — re-anchor off CSE onto per-platform paid APIs or a licensed aggregator |
+| **pastebin** | scrapes `pastebin.com/archive`, ran 89× Apr11–May03 (81% FAILED) | never (0 signals) | **Pastebin blocks archive scraping (non-200s); real scraping API requires PRO ($)** | **ToU / API-COST** (+ never-produced) | MED — Pastebin PRO API or alternate paste sources |
+| **linkedin** | never ran (0 cron), 0 signals, no viable method wired | never | **LinkedIn has NO public content API + prohibits scraping (ToU + legal)** | **NEVER-WORKED / ToU** | HIGH — licensed source only; no clean path |
+
+**Restore priority (by cost-to-first-signal):** (1) **X** — cheapest and cleanest: fund the API, code+token are ready. (2) **Meta FB/IG** — app review + proper tokens (one review covers both). (3) **Pastebin** — PRO API or swap to alt paste/forum sources. (4) **LinkedIn** — no clean path; needs a licensed aggregator. The structural lesson: free/CSE/scraping social collection is dead; every live path is a paid API or a licensed feed. Report only — no build.
