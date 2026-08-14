@@ -1914,3 +1914,27 @@ The pending counsel questions (`docs/platform-operations/counsel/DRAFT-cso-tou-p
 2. **Principal-protection archetype spine (entire)** — gated on **Q2** (PIPEDA / matching named individuals from the entity graph). named_principal_threat, doxxing_exposure, residence_route_proximity, associate_network all carry Q2; court_proceeding_exposure additionally carries Q1.
 3. **Founder-reputation direction** — depends on the principal-protection person-entity capability, therefore inherits **Q2**.
 One answer unblocks (or re-scopes) all three. Until it returns, all three are counsel-held, not backlog. Q3 (can a technical control substitute for authorization) bounds whether any of them have an engineering path around the answer.
+
+## EVENT CALENDAR = forward-looking STATE, not a signal (2026-08-14). Shape only — item 5, the conceptual one.
+
+Operator's framing (correct): an event calendar is a property of a DATE ("on 29 Aug, 54,000 people at 777 Pacific Blvd"), not an occurrence. Routed through ingest-signal it becomes a scored "event" and gets relevance-dropped like everything else. It must enter as STATE the scorer READS, not as a signal the scorer SCORES.
+
+### Q1 — Does a forward-looking client-state table exist? NO.
+- `client_geo_assets` is **spatial** state ("where the client is"), read by `score_signal_hazard_pathway` via a **spatial join** (signal point × asset geometry). It is the model's only per-client STATE surface of this kind.
+- **There is no temporal equivalent.** Every client-scoped temporal column in the schema is backward-looking (occurrence/lifecycle timestamps) or an expiry (`entity_watch_list.expiry_date`, `api_keys.expires_at`). `agent_world_predictions` has `time_horizon_hours` but it is (a) empty and (b) *predictions* (probabilistic guesses), not *scheduled certainties* (a booked event is deterministic state, not a forecast). **Nothing holds "at future window W, client C is in condition X."**
+- **Shape of what's missing:** a per-client SCHEDULED-CONDITIONS surface — `{client_id, window (start/end or tstzrange), condition_type, attributes (expected_attendance, event_type, gates_open, performer/team), source}`. It is state (not signals): NOT written by ingest-signal, NOT relevance-scored — a lookup surface, exactly like `client_geo_assets` one axis over (space → time).
+
+### Q2 — What the event_calendar matcher leg expects to query.
+`event_crowd_threat`'s `{type:event_calendar, to:event_day_window, assessable:false}` leg expects a **temporal join**: given a signal's date + the client, is there a scheduled-condition window covering that date, and what are its attributes? It is the **temporal mirror of the `geo_proximity` matcher** (signal point × `client_geo_assets`.geom → distance) — here it is (signal date × client_schedule.window → attendance/event_type). The matcher does not score the schedule; it looks up whether the signal falls inside an elevated window and pulls the context.
+
+### Q3 — "protest on match day > same protest dark Tuesday" — mechanically.
+Common core across every shape: **a date/window join to a per-client schedule table + a factor applied to an existing signal's score.** Not a new signal, not a relevance-gate change to admit the schedule — a CONTEXT lookup that MODIFIES a signal's score by temporal state. Three shapes it could take (not a design choice, just the forms):
+- (a) **join + multiplier in the scorer** — the relevance/risk pass joins signal.date to the schedule window; on a hit, multiply by an attendance-tier factor. Simplest; one join.
+- (b) **separate temporal-context pass** mirroring `score_signal_hazard_pathway` — a `score_signal_temporal_context(signal_id)` that reads the schedule and writes a context factor alongside (like `hazard_pathway_scores`). Composable; keeps the relevance gate untouched.
+- (c) **via the archetype spine** — the `event_calendar` matcher's hit contributes to `event_crowd_threat`'s weighted `client_risk_categories` score (the "right" home per the archetype ruling, once that model is wired).
+
+### The architectural framing
+The platform models per-client state **spatially** (`client_geo_assets` + a spatial-join scorer) but **not temporally**. The event calendar exposes that gap — it is the **temporal twin of the geo model**, and BOTH the state table AND the temporal-join scorer are absent. Same "per-client state read by a scoring pass" pattern as the geo work, on the time axis. Shape only — not designed.
+
+### Ledger note (operator directive): the event calendar is the ONLY unblocked source found.
+Across all four relevance axes, the collection inventory, court registry, and the counsel-gated principal spine — **the venue event calendar is the single source with no ToU wall and no counsel gate.** It is BC Place's OWN data (the client's schedule); the lowest-friction path is the client providing it directly. Every other net-new source is either not-built, ToU-restricted (CSO, Ticketmaster commercial), or counsel-gated (Q1/Q2). This one is a small, client-authorized feed — and it is the difference between a venue product and a keyword filter.
