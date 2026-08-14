@@ -411,7 +411,7 @@ async function runOSINTMonitorsInBackground(supabase: any, currentServiceKey: st
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${currentServiceKey ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
               },
-              body: JSON.stringify({ action: monitorAction }),
+              body: JSON.stringify({ action: monitorAction, caller: 'auto-orchestrator' }),
               signal: controller.signal
             }
           ).finally(() => clearTimeout(timeout));

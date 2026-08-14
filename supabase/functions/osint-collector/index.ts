@@ -114,11 +114,16 @@ async function delegateToFunction(functionName: string, body: Record<string, unk
   const supabaseClient = createServiceClient();
   const serviceKey = await resolveServiceRoleKey(supabaseClient);
 
+  // P1 (WO-SILENT-ZERO-PROBE): caller-stamped run record. `caller` is read from the
+  // request body (auto-orchestrator passes 'auto-orchestrator'); defaults to 'direct'.
+  const startedAt = Date.now();
+  const caller = typeof body.caller === 'string' ? body.caller : 'direct';
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 55000);
 
-    const { action, ...forwardBody } = body;
+    const { action, caller: _caller, ...forwardBody } = body;
 
     const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
       method: 'POST',
@@ -133,17 +138,47 @@ async function delegateToFunction(functionName: string, body: Record<string, unk
     clearTimeout(timeout);
     const responseBody = await response.text();
 
+    await recordRun(supabaseClient, functionName, typeof action === 'string' ? action : null, caller,
+      response.ok ? 'ok' : 'failed', response.status, Date.now() - startedAt,
+      response.ok ? null : `HTTP ${response.status}`);
+
     return new Response(responseBody, {
       status: response.status,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    await recordRun(supabaseClient, functionName, typeof body.action === 'string' ? body.action : null, caller,
+      'failed', isTimeout ? 504 : 502, Date.now() - startedAt,
+      isTimeout ? 'timeout_55s' : (err instanceof Error ? err.message : 'Unknown'));
+    if (isTimeout) {
       return errorResponse(`${functionName} timed out after 55s`, 504);
     }
     return errorResponse(
       `Failed to delegate to ${functionName}: ${err instanceof Error ? err.message : 'Unknown'}`,
       502
     );
+  }
+}
+
+// P1: durable per-invocation run record. Swallow-on-failure — instrumentation must
+// NEVER fail dispatch (same rule as ingest_decisions.recordDecision).
+async function recordRun(
+  client: any,
+  monitor: string,
+  action: string | null,
+  caller: string,
+  status: string,
+  httpStatus: number,
+  durationMs: number,
+  error: string | null,
+): Promise<void> {
+  try {
+    await client.from('monitor_run_ledger').insert({
+      monitor, action, caller, status,
+      http_status: httpStatus, duration_ms: durationMs, error,
+    });
+  } catch (_) {
+    // never throw
   }
 }
