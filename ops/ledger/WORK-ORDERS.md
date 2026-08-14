@@ -1616,3 +1616,15 @@ Reading them against the operator's "operational consequence" definition:
 - **~6 keyword-noise tail:** finance minister's *cancer diagnosis* (matched "minister", ×5), two opinion columns, housing-minister quote, fireworks-cancellation (SoE = context not event).
 
 **Finding:** even the tightened axis-4 filter carries a keyword-noise tail — "minister/court/premier as a substring" is still a keyword proxy, not an event classifier; it cannot distinguish "minister acts" from "minister mentioned." The wrong-axis problem recurs one level down. Genuine axis-4 volume is ~1/day (7–8/week) — real but thin, currently unreachable by any live door. No design proposed.
+
+## RULING (2026-08-14) — Axis 4 (jurisdictional): REAL, THIN, DEFERRED. Axis 2 (geo) is the next move.
+
+Operator ruling after reading the 14 titles:
+- **Axis 4 is real** — ~7–8 genuinely unreachable provincial events/week (involuntary-care court ruling, PST-repeal recommendation, Cowichan Aboriginal-title case are all things a BC client should see). But **not built yet.**
+- **The noise tail is a KIND problem, not a wording problem.** "Minister" matching a minister's cancer diagnosis ×5 is not fixable by sharpening the string — **every axis proposed so far is a string test, and no string test separates "minister acts" from "minister is named."** The target is an **event class**, not a token. Axis 4 needs an **event classifier** ("does this describe an action by an authority with operational consequence") running on keyword-dropped items — a different kind of gate than any of the four axes.
+- **HOLD reasons (do not build axis 4 now):**
+  1. **An LLM classifier at the admission gate is the same shape as the client-blind RSS extractor** — same non-determinism (identical items scored differently on different days). We spent two days diagnosing that; do not reintroduce it at a new gate. Any axis-4 classifier must be **deterministic**.
+  2. **Axis 2 is cheaper, larger, and already built.** Geo proximity is shadow-only + geometry-starved (34/3,253, 1 distinct asset). The engine exists; the missing input is **asset geometry = authoring work, not a build.**
+- **Status:** axis 4 = measured, real, thin, **deferred pending a deterministic event-classifier design** (not to be proposed now).
+
+**Next: geo-authoring picture for axis 2** (what PECL + BC Place need to take shadow-admit from 34 toward meaningful). Report only.
