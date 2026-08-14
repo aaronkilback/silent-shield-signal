@@ -1602,3 +1602,17 @@ Operator correction accepted: the flagged Bald Range/Summerland fires are Okanag
 **(b) Volume impact — but heavy relative to current intake.** Current signal creation (all origins, all clients, 7d): 29/61/26/14/5/11/3/5 = **~154/7d (~22/day, ~6/day the last four days).** Jurisdiction admit of 191–436/7d = **27–62/day**, i.e. **+1.2× (scoped) to +2.8× (broad) of total platform intake**, and an order of magnitude on the RSS-news portion specifically. Both current BC clients (BC Place, PECL) would receive the same BC-jurisdiction items, so per-client counts roughly double again.
 
 **Caveats:** title-only heuristic (undercounts BC items that don't name BC in the title; over-counts BC-named-but-not-jurisdictional in the broad tier). The operative subset (state of emergency / supreme court / regulatory) is inside the 191, smaller still. No design proposed.
+
+## MEASUREMENT (2026-08-14) — axis-4 jurisdiction, wildfire/evacuation removed. The count + titles.
+
+Operator refinement: strip wildfire/evacuation (those are axis-2 proximity once geometry exists); keep only jurisdiction-LEVEL events (province-wide declaration, court ruling with provincial effect, regulatory/legislative change, provincial-agency posture, minister/ministry action with operational consequence).
+
+Heuristic: 7-day `no_client_match` drops + BC reference + jurisdiction-event term (state-of-emergency/declares/supreme-court/court-case/tribunal/aboriginal-title/regulat/legislat/legislature/minister/ministry/premier/cabinet/provincial-government/BCWS) MINUS wildfire/evacuation/fire/smoke/flood.
+
+**Result: 25 raw decisions → ~14 distinct events in 7 days** (heavy multi-source duplication: deficit ×4, Bailey-cancer ×5, PST ×3-4, vehicle-seizure ×3). **Short list — confirms the operator's "should be short" hypothesis.**
+
+Reading them against the operator's "operational consequence" definition:
+- **~7–8 genuinely jurisdictional-operational:** court ruling on involuntary care + premier response; PST-expansion legislative repeal (two stories); provincial deficit/tobacco-settlement fiscal; land-transfers-to-First-Nations rejection; Cowichan Aboriginal-title court case (maps PECL `regional_activism`). These are unreachable by axes 1–3.
+- **~6 keyword-noise tail:** finance minister's *cancer diagnosis* (matched "minister", ×5), two opinion columns, housing-minister quote, fireworks-cancellation (SoE = context not event).
+
+**Finding:** even the tightened axis-4 filter carries a keyword-noise tail — "minister/court/premier as a substring" is still a keyword proxy, not an event classifier; it cannot distinguish "minister acts" from "minister mentioned." The wrong-axis problem recurs one level down. Genuine axis-4 volume is ~1/day (7–8/week) — real but thin, currently unreachable by any live door. No design proposed.
