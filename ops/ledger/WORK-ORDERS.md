@@ -1357,3 +1357,42 @@ For the 16 registry-dormant monitors. Evidence: ever-RAN = `cron.job_run_details
 | monitor-travel-risks | **never ran** | 0 | **BUILT, NEVER WIRED** |
 
 Summary: **cheap revive** = community-outreach, github (proven, just stopped). **Broken-but-wired** = macro-indicators (running, all-fail), pastebin (stopped, mostly-failed). **Superseded** = facebook, linkedin, wildfire-comprehensive. **Never-wired (expensive, unvalidated end-to-end)** = weather, earthquakes, domains, regulatory-changes, entity-proximity, emergency-google, regional-apac, travel-risks. **Stale registry name** = canadian-sources (actually live). No revive decision made — inventory prep only.
+
+## RULING WORK (2026-08-14) — court-registry source picture, darkweb verified, csis options, NAAD item-4 measured, Task-3 CORRECTION.
+
+### Item 1 — COURT REGISTRY source picture (report before rebuild). Priority.
+**BC Court Services Online (CSO, justice.gov.bc.ca/cso) IS the real registry** — Provincial + Supreme civil, traffic, criminal records, 24/7, searchable by individual name / organization name / file number. **But it cannot be an automated commercial feed:**
+- **No API, no RSS.** eSearch is a human web form. Result-list is free; **viewing a file's details costs $6/file**, documents extra.
+- **Usage Agreement prohibits automation + commercial reuse.** No decompile/reverse-engineer, no "alter the format or content of a print or display," read-only, and court-record info "may not be copied or distributed in any fashion for **resale or other commercial use** without the express written permission" of the Chief Justice/Chief Judge. Systematic extraction for a paid product is out without written court permission.
+- **Current monitor's sources were never the registry anyway:** `courthouselibrary.ca/news-events/rss` (a law-library *news* feed) + SCC dossier RSS. Wrong target confirmed.
+
+**Viable public alternatives (free, redistributable-with-attribution, NOT the paid CSO scrape):**
+- **Daily Court Lists** (`www2.gov.bc.ca/gov/content/justice/courthouse-services/daily-court-lists`, also on CSO `courtLists.do`): criminal lists by 06:30 PST, civil by 06:00 PST, posted per courthouse. These are **hearing dockets by party name** — closest thing to "is a client/protected person a party to a proceeding." Public.
+- **BC Court of Appeal** weekly hearing list + daily chambers list (`bccourts.ca/court_of_appeal/hearing_list/`).
+- **Judgments/decisions** via bccourts.ca (recent-judgments lists, some RSS) and **CanLII** (read-only REST API, free key by request) — but CanLII's ToU says large-scale/automated retrieval should go to the *original source*, and commercial redistribution is constrained; judgments are *outcomes*, not filings.
+
+**What a filing/docket record contains to match on:** party names (plaintiff/defendant/applicant/respondent), counsel/firm, file number, registry location (courthouse), filing/hearing date, proceeding type. **Party name is the primary key.** CSO's own civil search is literally "Search Civil By Party Name."
+
+**Match target — client name vs entity graph:** court records name PARTIES (people + orgs). For a venue (BC Place) the relevant party is "BC Pavilion Corporation"/"BC Place" or a monitored person; for PECL it's Petronas/Progress Energy/Coastal GasLink or a person. Since CRT protects *people*, **matching should run on BOTH client org names AND active person-entities from the graph** (one party-name query each, like the news monitors fan out) — not the current full-client-name substring. The person-entity match is the CRT-aligned high-value case (a protected principal named in a proceeding).
+
+**Bottom line for the rebuild decision:** the source is NOT "scrape CSO." It is Daily Court Lists (dockets, by party) ± CanLII/bccourts judgments, matched per-party against client orgs + entity-graph persons. Legal/source constraint changes the shape. **Not built — awaiting ruling.**
+
+### Item 3 — DARKWEB verified: 0/498 is CORRECT, not silent failure.
+- `HIBP_API_KEY` **is set** (secret present) — the paste half is not key-starved.
+- HIBP domain endpoint **works and discriminates**: live test returned HTTP 200 + `[]` for `petronas.ca`, `bcplace.com`, `coastalgaslink.com`, and correctly returned the Adobe breach for `adobe.com`. `monitored_domains` are well-configured real corporate domains (BC Place: bcplace.com/bcpavco.com; PECL: petronas.ca/petronas.com/progressenergy.com/lngcanada.ca/coastalgaslink.com).
+- **Verdict:** those corporate domains genuinely have zero cataloged HIBP breaches. Precision feed doing its job. Only junk inputs are Kilbacks→hotmail.com (free-mail, useless for domain search) and `__platform_security__`→none — neither flagship affected. No fix needed; leave it.
+
+### Item 2 — CSIS widen-match options (no clients[0] fallback). What a CSIS/Cyber-Centre/Public-Safety advisory exposes to match on:
+- **Sector / industry tags** — advisories name target sectors ("energy", "critical infrastructure", "health", "government"). Match `client.industry` (already partially done) + a synonym/NAICS-style expansion so "oil and gas"/"LNG"/"pipeline" all hit an energy client. Deterministic, no fallback.
+- **Named infrastructure / threat actor** — advisories name systems (the same vendors as `tech_stack`: Fortinet, Ivanti, Cisco…) and named campaigns. Reuse the client `tech_stack` intersection (same mechanism as cisa-kev) so a CVE/actor advisory matching a client's stack attaches to that client.
+- **Geography** — advisories sometimes name a region/country; match `client.locations`/Canada-scope. Weak on its own (most are national) — use only as a tiebreaker.
+- **Recommended shape:** a signal attaches to a client if it matches on **≥1 of {industry-synonym, tech_stack intersection, named-infrastructure}** — never a positional fallback. This widens beyond the current "client-name-word>3 OR raw industry string" without reintroducing cross-attribution. Report only.
+
+### Item 4 — NAAD geo-gate MEASURED (bounded areaDesc sample deployed to result_summary).
+Live run: `scanned 216 → french 107 → severity 40 → out_of_area 52 → created 1`. Sampled 40 out-of-area areaDesc values:
+- **~90% other-province** (NB: Kent/Sussex/Moncton; PEI: Prince County; QC: Saguenay; NL: Cabot Strait/Port aux Basques; MB: Wallace-Woodworth; SK: Cymri; NWT: Ft. Simpson) — correctly dropped.
+- **Only BC entries dropped: South Okanagan, Eastern Fraser Valley** — real BC zones but both outside BC Place (Vancouver) and PECL (NE BC). Correct to drop for these clients.
+- **No Vancouver-area or NE-BC areaDesc was dropped.** Brittleness is **theoretical on this evidence** — geo gate is doing the right thing. Residual unexercised risk: NE-BC forecast-region naming (CAP "Peace River" vs client location "Fort St. John" would whole-word-miss). Recommend leaving matching as-is; re-check the sample after a NE-BC weather event.
+
+### Item 5 — CORRECTION before executing: "never ran" was cron-only (incomplete search space).
+Edge-function access logs (08-14 14:16) show `monitor-domains`, `monitor-weather`, `monitor-earthquakes`, `monitor-linkedin`, `monitor-social` all returning **200**, in a burst coincident with `auto-orchestrator` / `autonomous-operations-loop`. My Task-3 "never ran" labels came from `cron.job_run_details`, which only covers pg_cron — it **misses orchestrator/HTTP fan-out invocations.** So several "never-wired" monitors are actually **orchestrator-invoked, running, and producing zero signals** (no weather/earthquake/domain/linkedin origin exists in `signals`, ever). Same failure class as the prior incomplete-search findings. **Item-5 mutations HELD** — the "leave the eight never-wired" and "deregister linkedin/facebook as superseded" rulings rest on a premise that just changed (they're not idle; they're running silently via an orchestrator, and deregistering a `cron_job_registry` row does NOT stop an orchestrator from calling the function). Unaffected sub-actions (revive community-outreach+github as proven producers; fix canadian-sources registry name) can proceed on re-confirmation. Need: confirm what `auto-orchestrator`/`autonomous-operations-loop` fan out to, then re-rule.
