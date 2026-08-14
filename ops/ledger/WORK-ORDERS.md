@@ -1938,3 +1938,24 @@ The platform models per-client state **spatially** (`client_geo_assets` + a spat
 
 ### Ledger note (operator directive): the event calendar is the ONLY unblocked source found.
 Across all four relevance axes, the collection inventory, court registry, and the counsel-gated principal spine — **the venue event calendar is the single source with no ToU wall and no counsel gate.** It is BC Place's OWN data (the client's schedule); the lowest-friction path is the client providing it directly. Every other net-new source is either not-built, ToU-restricted (CSO, Ticketmaster commercial), or counsel-gated (Q1/Q2). This one is a small, client-authorized feed — and it is the difference between a venue product and a keyword filter.
+
+## PLATFORM CONCEPT — client_scheduled_conditions (temporal twin of client_geo_assets). 2026-08-14. Not a venue feature.
+Per-client forward-looking STATE: `{client_id, window (start/end or tstzrange), condition_type, attributes, source}`. Read by a scoring pass; NOT written by ingest; NOT relevance-scored. The temporal twin of `client_geo_assets` (spatial state). **Do NOT build it as an event calendar** — a venue event is one instance of a general shape. Instances (same shape, different condition_type):
+- principal travel window · facility turnaround/shutdown · AGM / earnings / court date · fire season / freshet / storm season · scheduled protest or anniversary date · contract-award / regulatory-decision date · (venue) event day.
+Each is "at future window W, client C is in condition X" — a date-scoped modifier of exposure, not an occurrence.
+
+## SCOPING — score_signal_temporal_context pass (form (b)), mirror of the hazard pathway. Report only.
+Operator chose (b) — a SEPARATE pass writing a factor alongside, NOT inside the relevance/risk scorer. Rationale (operator): "two things computing one number is how we got here" — keep temporal context its own composable layer, like attribution vs relevance.
+
+**What it writes + where:** `score_signal_temporal_context(signal_id)` → a `signal_temporal_context_scores` row per (signal, client): `{signal_id, client_id, matched_condition_id, condition_type, factor (multiplier/tier), attributes_snapshot (attendance_tier, event_type, window), computed_at}`. Exact mirror of `hazard_pathway_scores` written by `score_signal_hazard_pathway`. Append/upsert; the raw signal is never rewritten.
+
+**Which consumers read the factor:** the same seam that reads `hazard_pathway_scores` today —
+- `generate-executive-report` (brief): weight `event_crowd_threat` / severity ranking on an elevated window (reads it like it reads hazard_pathway_scores at ~:481).
+- `incident-creation-gate`: escalation decision (mirrors its hazard_pathway read).
+- the `client_risk_categories` scorer, once wired: the `event_calendar` matcher's hit contributes via this factor.
+- report tiering: a match-day signal ranks above a dark-Tuesday one.
+Consumers COMBINE layers at read time (relevance × attribution × hazard-pathway × temporal-context) — no layer bakes another's number in.
+
+**Pre or post admission — THE TRAP (operator's flag, confirmed):** `score_signal_temporal_context(signal_id)` takes a `signal_id`, so by construction it runs **POST-admission**, on rows already in `signals` — exactly like the hazard pathway. Therefore it **inherits the hazard-pathway limitation: it only scores what already got in.** A protest signal on match day benefits from the ×attendance factor **only if it was admitted** at the keyword `client_match` gate in the first place. A match-day protest that fails client_match (doesn't name the venue/client) is dropped before any signal exists → never scored → the temporal context can never reach it. **(b) is a PRIORITIZATION/ESCALATION lever over admitted signals, NOT an ADMISSION lever.**
+
+**The resolution shape (not designed):** to make temporal state affect *admission* — admit an event-day-relevant signal that doesn't name the client — the schedule must be consulted **at/before the client_match gate** (a pre-admission temporal leg, the mirror of the unbuilt geo-admission leg). That is a DIFFERENT integration point than (b). So temporal context is genuinely **two hooks**: (1) pre-gate admission (unbuilt, same shape as the geo-admission gap) and (2) post-admission factor (b, this pass). (b) alone is worth building — it makes the brief rank/escalate correctly on event days — but it does not rescue a dropped signal. Naming that boundary is the point: (b) is honest post-admission prioritization; the admission half is a separate, harder hook that shares the geo gate's problem. Report only — no design, no build.
