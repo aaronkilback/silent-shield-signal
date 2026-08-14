@@ -305,8 +305,9 @@ Deno.serve(async (req) => {
     // (direct/competitor/sector). Loose-matched rows (client_id set by the pre-cutover matcher, no
     // verified attribution) are NOT usable — do NOT loosen to admit them; re-attribution is the path.
     const { data: _posAttrRows } = await supabase.from('signal_client_attributions')
-      .select('signal_id').eq('client_id', client_id).in('attribution_type', ['direct', 'competitor', 'sector']);
+      .select('signal_id, attribution_type').eq('client_id', client_id).in('attribution_type', ['direct', 'competitor', 'sector']);
     const _posSet = new Set((_posAttrRows || []).map((a: any) => a.signal_id));
+    const _directSet = new Set((_posAttrRows || []).filter((a: any) => a.attribution_type === 'direct').map((a: any) => a.signal_id));
     const signals = signalsAfterNone.filter((s: any) => _posSet.has(s.id));
 
     // ── EMPTY-SET GUARD (WO-CLIENT-THREAT-RELEVANCE 2026-08-12) ──────────────────────────────────
@@ -1037,6 +1038,19 @@ Be specific, cite EXACT data from above, and use executive-appropriate language.
     // level are now handed to the summary prompt as CONSTRAINTS so the summary
     // can elaborate but never silently contradict the banner printed above it.
     const flashTrajectory = String(executiveFlash?.trajectory || 'STABLE').toUpperCase();
+
+    // Assessment-coverage figure — replaces the decorative "Confidence: X" (WO ruling 2026-08-14).
+    // No calibration ground-truth exists (agent_world_predictions empty, 0 sources carry reliability),
+    // so a confidence label cannot be honest. State the DETERMINISTIC coverage from the three inputs
+    // that do exist: main-tier count · direct-attribution · citation coverage. Counts, not a probability.
+    const _acMain = freshSignals.length;
+    const _acDirect = freshSignals.filter((s: any) => _directSet.has(s.id)).length;
+    const _acSourced = freshSignals.filter((s: any) => (s.source_url || '').length > 0).length;
+    const _acUsable = signals.length;
+    const _acPeriod = (signalsRaw || []).length;
+    const assessmentCoverage = _acMain === 0
+      ? '0 main-tier signals — not assessed'
+      : `${_acMain} main-tier signal${_acMain !== 1 ? 's' : ''} · ${_acDirect} directly attributed · ${_acSourced} sourced (${_acUsable} attributed of ${_acPeriod} collected)`;
 
     // Generate Impact Ladders for top issues
     const impactPrompt = `As a security strategist, create impact ladders for the top 3 threats facing ${client.name}.
@@ -1995,7 +2009,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
   <div class="executive-flash">
     <div class="flash-header">
       <div class="flash-title">Executive Flash</div>
-      <div class="flash-confidence">Confidence: ${executiveFlash.confidence}</div>
+      <div class="flash-confidence">Assessment coverage: ${assessmentCoverage}</div>
     </div>
     <div class="flash-issue">${executiveFlash.mostPressingIssue}</div>
     <div class="flash-action">
