@@ -2015,3 +2015,21 @@ Overarching: social/forum collection was built on **Google CSE + deprecated Meta
 | **linkedin** | never ran (0 cron), 0 signals, no viable method wired | never | **LinkedIn has NO public content API + prohibits scraping (ToU + legal)** | **NEVER-WORKED / ToU** | HIGH — licensed source only; no clean path |
 
 **Restore priority (by cost-to-first-signal):** (1) **X** — cheapest and cleanest: fund the API, code+token are ready. (2) **Meta FB/IG** — app review + proper tokens (one review covers both). (3) **Pastebin** — PRO API or swap to alt paste/forum sources. (4) **LinkedIn** — no clean path; needs a licensed aggregator. The structural lesson: free/CSE/scraping social collection is dead; every live path is a paid API or a licensed feed. Report only — no build.
+
+## X + REDDIT — spend-decision sizing (2026-08-14, report-only). Both cost more than the premise.
+
+### X API — "$100 Basic" no longer exists; real number at current cadence ≈ $400/mo.
+- **Tier reality (Feb–Jun 2026):** X closed Basic/Pro to new signups and **retired legacy Basic ($200/mo, not $100) — force-migrated to pay-per-use after June 1 2026.** Free tier discontinued. Default now = **pay-per-use: $0.005 per post READ, hard cap 2M reads/mo** (Enterprise ~$42k+ above that). Recent search (7-day window) is on pay-per-use; **full-archive (pre-7-day) is Pro/Enterprise only.**
+- **What monitor-twitter does:** `/2/tweets/search/recent` (7-day window — fits pay-per-use), ~2–4 packed queries/run × `max_results=25`, **every 30 min** (48 runs/day). ≈ **50–100 reads/run → ~72k–108k reads/month.**
+- **Cost fit:** at $0.005/read that is **~$360–540/month at the current 30-min cadence** — NOT $100. **$100 buys ~20,000 reads/month**, which the monitor hits in ~3–4 days. To live inside $100 the cadence must drop ~4–5× (every ~2–3h, or fewer results/query). 
+- **Verdict: $100 is the entry price, not the real number.** Real number at current config ≈ **$400/mo**; $100/mo is achievable only by re-scoping the monitor to ~20k reads/mo. The v2 code + `TWITTER_BEARER_TOKEN` are ready; the decision is cadence-vs-budget, and there is no $100 Basic tier to buy.
+
+### Reddit — nothing was ever built; free API is NON-COMMERCIAL; commercial floor is ~$12k/mo.
+- **What exists:** **no `monitor-reddit` function, no Reddit API integration ever.** The 8 `reddit` signals came only from **CSE incidentally indexing reddit.com** (via monitor-social / social-unified allowlist). Net-new to build; nothing to revive.
+- **API terms (2026, post Responsible Builder Policy June 5 2026):**
+  - **Free tier = NON-COMMERCIAL ONLY** (personal / bot / mod / academic), 100 QPM per OAuth client. **A commercial founder-reputation product cannot compliantly use the free tier.** OAuth required (no-auth blocked).
+  - **Commercial = Reddit approval (2–4wk manual review, not guaranteed) + paid agreement at $0.24/1,000 calls, floor ~$12,000/month for 50M calls. No smaller paid plan.**
+  - Continuous monitoring blows the free ceiling quickly (N subreddits every few min > 100 QPM).
+- **Verdict: the operator's instinct on VALUE is right** (Reddit is where "has anyone dealt with this person" threads live — high-value for founder reputation) **but "free API, workable terms" is not the 2026 reality for commercial use.** It is the highest-value AND highest-walled source: free is non-commercial (non-compliant for the product), commercial is a $12k/mo floor + approval. Realistic paths: a licensed data reseller, or the $12k tier — not the free API.
+
+**Cross-cut:** both confirm the structural lesson — every live social path is paid or licensed, and the *entry* prices advertised ($100 X, free Reddit) are not the *commercial* prices ($400/mo X at current cadence; $12k/mo Reddit). X is still the cheapest real path (~$400/mo or ~$100 re-scoped); Reddit is high-value but $12k-floored. Report only — no build, no spend.
