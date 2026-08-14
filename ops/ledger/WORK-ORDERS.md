@@ -1717,3 +1717,45 @@ Kept: Montney gas (contested) + all 17 long generics (to see which fire).
 **CAVEAT (scope of the projection):** this is monitoring_keywords-ONLY. The BC Place writer also anchored on **client locations / assets / entities** (DIAG anchor set: fort st. john, kitimat, montney, tumbler ridge, dawson creek, …). Adding those would move some of the 1,453 `none` into `direct` (the genuinely location-anchored PECL signals). Real `direct` ≥ 276, real `none` ≤ 1,453. Can measure the location-anchor contribution before the write if wanted.
 
 **WRITE HELD** per "I rule before anything writes." Nothing inserted into signal_client_attributions. Awaiting ruling.
+
+## PECL 1b — COMPLETE SPLIT (keyword vs keyword+location/asset anchors). Location anchors re-import centroid-collision. WRITE STILL HELD.
+
+Measured the missing input (operator directive: 1,453 keyword-only `none` was unrulable with location/asset/entity anchors unmeasured).
+
+### Per-anchor fire counts (18 locations + 7 assets, over 1,741 active PECL signals)
+| fires | anchor | note |
+|---|---|---|
+| **313** | British Columbia (loc) | **broad-region proxy — any BC mention** |
+| **162** | Peace River (loc) | **a WEATHER FORECAST REGION — mostly NAAD weather warnings** |
+| **146** | Alberta (loc) | **broad-region proxy — a different province** |
+| 90 | Fort St. John (loc) | town-name — fires on graduations, real estate, car crashes |
+| 61 | Kitimat (loc) | town-name |
+| 26 | Coastal GasLink pipeline (asset) | overlaps "Coastal GasLink" keyword |
+| 21 | Skeena · 18 Prince Rupert · 15 Dawson Creek | town/region |
+| 11 | Northeast BC (loc) | broad |
+| 6 | Prince Rupert Gas Transmission pipeline (asset) | |
+| 0 | **5 of 7 assets** + 9 locations | dead long-phrases (never verbatim) |
+
+### Complete projected split (1,741 active)
+| class | count | % | quality |
+|---|---|---|---|
+| direct — distinctive **keyword** | 276 | 16% | **CLEAN** (Coastal GasLink, LNG Canada, Unist'ot'en…) |
+| direct — specific location/asset **anchor** | 279 | 16% | **CONTAMINATED — town-name centroid-collision** |
+| proxy — broad-region / BCER only | 322 | 18.5% | region-proxy (British Columbia/Alberta) |
+| none | 864 | 50% | |
+(keyword-only was 276 direct / 1,453 none; adding locations moves 589 out of none — but 279 are town-noise + 322 are broad-region-proxy.)
+
+### FINDING — location anchors do NOT cleanly rescue the `none`
+Town/region anchors carry the **same centroid-collision as the geo work** (WO-GEOCODER-PRECISION), one form over: a town name anchors on ANY mention of the town. Samples of location-anchor-only signals: Environment Canada weather warnings (Peace River forecast region), a UBC graduation, real-estate listings, a Highway 97 crash, a rail-maintainer job ad, a school calendar, Site C dam renaming. **The only clean `direct` set is the 276 keyword matches.** Broad-region locations (British Columbia 313, Alberta 146) are the region-proxy the operator removed from keywords, re-appearing in `locations`.
+
+### Montney double-count — NONE
+Location "Montney Formation" fires 0; keyword "Montney gas" fires 2; asset "…(Montney)" fires 0. No overlap.
+
+### Entities — 4,745 linked, NOT expanded
+Too large + high over-match risk (person/org names, many common words) to anchor safely; given locations already centroid-collide, entity anchoring is likely noisier still. Aggregate entity contribution not measured (its own pass if wanted).
+
+**WRITE STILL HELD.** The ruling now has the complete input: clean direct = 276 (keyword); location/asset anchors add 279 but contaminated; broad-region = 322 proxy; none = 864.
+
+## FINDING (log separately, operator directive) — the keyword list was never the 93% mechanism.
+- **28 of 39 PECL keywords fire ZERO** over the full active set. PECL attribution rests on **11 keywords; 5 carry most** (LNG Canada 153, Coastal GasLink 51, Petronas Canada 50, PRGT 16, Progress Energy 8 — plus Unist'ot'en 7, Gidimt'en 5, Stand.earth 5, BC Energy Regulator 17 [sector], CGL pipeline 4, Montney gas 2).
+- **The long region-proxy phrases (Northeast BC wildfire ×3, LNG environmental/operational/supply-chain ×5, pipeline protest/injunction BC, …) fire ZERO** under token-boundary matching. The 93% over-attribution came from the **tier-2 fuzzy rule** (INDUSTRY_TIER_KEYWORDS × REGIONAL_ANCHORS), NOT from these phrases. **The keyword list was never the mechanism** — deactivating keywords (even the 3 removed) does not touch the tier-2 fuzzy path that produced the 665/93%. That path is the real lever.
