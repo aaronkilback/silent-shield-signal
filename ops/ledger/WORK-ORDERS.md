@@ -1651,3 +1651,15 @@ Two corrections to earlier ledger lines (mine), on fresh evidence:
 The engine **never runs on keyword-DROPPED items** — they are dropped before any signal exists, and `score_signal_hazard_pathway` only takes a `signal_id`. To make axis 2 an admission door, the existing location+proximity logic must run **at the client_match gate**, on dropped items, before the `no_client_match` drop. Asset geometry is done (PECL) / adequate (BC Place); the gazetteer covers the core places; the engine exists. **The missing piece is wiring the engine pre-insert — a build.**
 
 **Cost model inverted from the premise:** the expectation was "asset-geometry authoring, not a build." Evidence: authoring is essentially complete; the gap is the build (run proximity at admission). Optional small authoring (not the blocker): expand the 46-place gazetteer; add a few BC Place adjacent points. Caveat: 564 is the geo-resolvable ceiling; the actual within-buffer admit count needs the proximity run (which is the build) to measure. No build. Report only.
+
+## MEASUREMENT (2026-08-14) — offline geo-proximity admit count on 7d keyword-dropped items. Read-only, no gate change.
+
+Replicated the engine's resolution (gazetteer text-geocode) + proximity (ST_Distance vs client_geo_assets, buffer_km) against the 3,247 last-7d `no_client_match` items. No signals created.
+
+- **Resolve to a point:** 564 / 3,247 (17%).
+- **Fall inside a buffer (admit):** **342.** Split: PECL 161, BC Place 183.
+- **Distance distribution is BIMODAL** (the finding): BC Place 183 @≤2km / 0 in 2–30km / 376 @>50km; PECL 160 @≤2km / 1 @10–30km / 403 @>50km. Admits sit ON the asset (≤2km), not near it → **not a buffer-width problem; narrowing the buffer changes nothing.**
+- **Cause (from 30 pasted samples):** two urban-centroid assets — **Calgary HQ** (admits every "Calgary" item) and **BC Place Stadium** (admits every "Vancouver" item) — because the gazetteer resolves a city to one downtown point co-located with the asset. Plus substring bugs (Vancouver Island→Vancouver, Taylor-town→Taylor-surname). ~90% noise (cat videos, Stampede 50/50, pop-up restaurants).
+- **Twist — exclude the 2 urban-centroid assets (NE-BC remote industrial only):** admit count drops **342 → 16** (all PECL: CGL corridor, Fort Nelson/Taylor/Jedney/McMahon/Younger plants, Montney/FSJ, Horn River; BC Place → 0). The remote-industrial proximity case is **~16/week — clean, feature-sized.**
+
+**Verdict (operator's test):** naive geo door = 342/week = DO NOT OPEN, but the cause is **geocoding precision, not buffer width.** Blockers before the door opens: (1) urban-centroid assets need a different axis (a downtown venue's relevance ≠ within-2km-of-stadium); (2) substring/disambiguation (Vancouver Island≠Vancouver, Taylor town≠surname); (3) the remote-industrial subset (~16/wk) already clears the bar. Read-only measurement; no build, no gate change.
