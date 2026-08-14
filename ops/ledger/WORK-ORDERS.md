@@ -1759,3 +1759,20 @@ Too large + high over-match risk (person/org names, many common words) to anchor
 ## FINDING (log separately, operator directive) — the keyword list was never the 93% mechanism.
 - **28 of 39 PECL keywords fire ZERO** over the full active set. PECL attribution rests on **11 keywords; 5 carry most** (LNG Canada 153, Coastal GasLink 51, Petronas Canada 50, PRGT 16, Progress Energy 8 — plus Unist'ot'en 7, Gidimt'en 5, Stand.earth 5, BC Energy Regulator 17 [sector], CGL pipeline 4, Montney gas 2).
 - **The long region-proxy phrases (Northeast BC wildfire ×3, LNG environmental/operational/supply-chain ×5, pipeline protest/injunction BC, …) fire ZERO** under token-boundary matching. The 93% over-attribution came from the **tier-2 fuzzy rule** (INDUSTRY_TIER_KEYWORDS × REGIONAL_ANCHORS), NOT from these phrases. **The keyword list was never the mechanism** — deactivating keywords (even the 3 removed) does not touch the tier-2 fuzzy path that produced the 665/93%. That path is the real lever.
+
+## PECL RE-ATTRIBUTION — WRITE EXECUTED (2026-08-14). 0 positive → 288. Brief unblocked.
+
+Operator ruling: keyword-only. direct=276 (clean); sector=12 (BC Energy Regulator only); everything else none. Location/asset anchors EXCLUDED (centroid-collision — the 279 "specific anchors" matched town-general news: Peace River weather warnings, a UBC graduation, real-estate listings, a Highway 97 crash). Broad-region locations (British Columbia 313, Alberta 146) = region-as-proxy in a different column. Entities (4,745) not expanded.
+
+**Written to `signal_client_attributions` (append-only, BC Place record standard):**
+- **276 direct** — basis `{keyword_fired, matched_field, match_offset, matched_text, all_matched_keywords, matcher_version:'deterministic-matcher.ts (WO-GATE-PHASE3, parity-proven 2026-08-12); SQL re-attribution 2026-08-14', matcher_deterministic:true}`; supersedes prior Option-C `none` where present.
+- **12 sector** — BC Energy Regulator match, no direct nexus.
+- **none** — for uncovered no-nexus signals (not duplicating the 271 existing Option-C `none`).
+
+**OUTPUT ASSERTION (latest non-superseded per active signal, 1,741 total):** direct **276** · sector **12** · none **1,453**. Was **0 positive** this morning.
+
+**BRIEF REGENERATED (generate-executive-report, PECL, 2026-08-07→08-15):**
+- BEFORE (13:30): `insufficient_data:true`, counts `{attributed:0, signals_in_period:91, excluded_superseded_none:39, loose_matched_unverified:52}`.
+- AFTER (17:57): **full brief** (insufficient_data gone). categories [operational, environmental]; 2 HIGH action items, both on **Prince Rupert Gas Transmission** (PECL asset) — e.g. "[EXTERNAL-MONITOR] Monitor the operational development … Prince Rupert Gas Transmission pipeline". Deductions correctly says "Insufficient signal data for strategic deductions this period" — thin but real, does NOT fabricate on 3 signals. Window went 0 attributed → 3 direct + 1 sector.
+
+PECL re-attribution complete. Same writer/standard as BC Place (167 direct). Keyword deactivation (42→39) reversible; write append-only + superseding.
