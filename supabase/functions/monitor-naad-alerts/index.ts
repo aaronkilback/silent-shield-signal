@@ -424,6 +424,14 @@ Deno.serve(async (req) => {
     let totalAlerts = 0;
     let filteredFrench = 0;
     let filteredLowPriority = 0;
+    // Split of filteredLowPriority into its two distinct drop reasons so the
+    // heartbeat can distinguish "genuinely low CAP severity (p4)" from
+    // "BC-irrelevant / geographically elsewhere in Canada". Before this the
+    // single counter conflated them, so an operator could not tell whether the
+    // geo gate was ever dropping a BC-relevant alert. low_priority_filtered is
+    // retained as (severity + out_of_area) for continuity with prior heartbeats.
+    let severityDropped = 0;
+    let outOfAreaDropped = 0;
     let nestedAsUpdates = 0;
     let signalsCreated = 0;
     const processedAlerts: any[] = [];
@@ -480,6 +488,7 @@ Deno.serve(async (req) => {
         const classification = cap ? classifyFromCap(cap) : classifyAlert(alert);
         if (classification.priority === 'p4') {
           filteredLowPriority++;
+          severityDropped++;
           continue;
         }
 
@@ -636,6 +645,7 @@ Deno.serve(async (req) => {
         const isLifeSafetyExtreme = (cap?.severity || '').toLowerCase() === 'extreme';
         if (!matchedClientId && !isLifeSafetyExtreme) {
           filteredLowPriority++;
+          outOfAreaDropped++;
           console.log(`[NAAD] Skipping out-of-area alert: "${alert.title.substring(0, 70)}" (severity=${cap?.severity ?? '?'}, areaDesc=${cap?.areaDesc?.substring(0, 60) ?? '?'})`);
           continue;
         }
@@ -759,17 +769,21 @@ Deno.serve(async (req) => {
       alerts_scanned: totalAlerts,
       french_filtered: filteredFrench,
       low_priority_filtered: filteredLowPriority,
+      severity_dropped: severityDropped,
+      out_of_area_dropped: outOfAreaDropped,
       signals_created: signalsCreated,
       nested_updates: nestedAsUpdates,
     });
 
-    console.log(`[NAAD] Complete. Total: ${totalAlerts}, French filtered: ${filteredFrench}, Low-priority filtered: ${filteredLowPriority}, New signals: ${signalsCreated}, Nested updates: ${nestedAsUpdates}`);
+    console.log(`[NAAD] Complete. Total: ${totalAlerts}, French filtered: ${filteredFrench}, Low-priority filtered: ${filteredLowPriority} (severity=${severityDropped}, out_of_area=${outOfAreaDropped}), New signals: ${signalsCreated}, Nested updates: ${nestedAsUpdates}`);
 
     return successResponse({
       success: true,
       alerts_scanned: totalAlerts,
       french_filtered: filteredFrench,
       low_priority_filtered: filteredLowPriority,
+      severity_dropped: severityDropped,
+      out_of_area_dropped: outOfAreaDropped,
       signals_created: signalsCreated,
       nested_updates: nestedAsUpdates,
       sample: processedAlerts.slice(0, 5),
