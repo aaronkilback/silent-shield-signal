@@ -1,0 +1,8 @@
+-- Silent-zero scan (Variant A regression + Variant B never_produced) across discrete MONITORS
+-- (origin-based) and per-SOURCE rss/url_feed (signals.source_id → sources; item D). SECURITY DEFINER
+-- (reads cron.job_run_details). plpgsql RETURN QUERY; sum() aggregates cast ::bigint to match
+-- RETURNS TABLE. producer_kind lets the probe emit per-monitor findings and roll per-source into
+-- the census (avoids a 69-finding flood). Applied via MCP apply_migration 2026-08-14; this file is
+-- the git-parity record (see supabase/functions/silent-zero-probe/index.ts for the consumer).
+-- Supersedes silent_zero_variant_a() (monitors-only); that RPC is retained as history.
+--   State: healthy | regression | never_produced | insufficient_history | precision_feed_exempt | unverified_exemption

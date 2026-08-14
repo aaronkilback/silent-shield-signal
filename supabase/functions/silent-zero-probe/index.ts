@@ -1,14 +1,14 @@
-// WO-SILENT-ZERO-PROBE — Variant A (regression) as a registered watchdog probe.
-// One finding per regressing producer (was producing, now 0 despite running). Coverage is
-// visible: every non-healthy state (insufficient_history, unevaluable, exempt, unverified)
-// is reported in a census finding — never omitted, never collapsed into healthy.
+// WO-SILENT-ZERO-PROBE — Variant A (regression) + Variant B (never_produced), across discrete
+// MONITORS and per-SOURCE RSS/url_feed (item D: attributed via signals.source_id → sources).
 //
-// AUDIT-ONLY for the first two scheduled runs: regression findings are written at severity
-// 'low' (visible on the neural page, does NOT notify). From the third run on they escalate to
-// 'high' (notifies via the daily email). The census finding is always 'info' (coverage, not an alert).
+// FINDINGS: one per discrete-monitor producer in state regression | never_produced. Per-SOURCE
+// producers are NOT individually alerted (92 active RSS sources → 69 would-be findings = flood);
+// they roll into the single census finding as counts + samples. Coverage stays visible, the
+// neural page stays readable.
 //
-// Names aligned (Registry-is-a-Promise): cron jobname = heartbeat job_name = registry job_name
-// = 'silent-zero-probe-daily'.
+// AUDIT gate (same for A and B): first two scheduled runs write findings at severity 'low'
+// (no notify); run 3+ escalate to 'high'. Census is always 'info'. Names aligned:
+// cron jobname = heartbeat job_name = registry job_name = 'silent-zero-probe-daily'.
 import { createServiceClient } from "../_shared/supabase-client.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
@@ -25,57 +25,76 @@ async function recordFinding(supabase: any, f: {
   }).then(() => null, (e: any) => console.warn('[silent-zero] record_platform_finding failed:', e?.message));
 }
 
+const sample = (arr: string[], n = 8) =>
+  arr.length <= n ? arr.join(', ') : `${arr.slice(0, n).join(', ')} …+${arr.length - n} more`;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   const supabase = createServiceClient();
   const hb = await startHeartbeat(supabase, JOB);
 
   try {
-    // Audit gate: count prior COMPLETED runs (this run's heartbeat is 'running', not counted).
-    // <2 prior scheduled successes → audit (regressions at 'low', no notify). >=2 → promoted ('high').
     const { count: priorRuns } = await supabase
       .from('cron_heartbeat').select('id', { count: 'exact', head: true })
       .eq('job_name', JOB).in('status', ['completed', 'succeeded']);
     const audit = (priorRuns ?? 0) < 2;
-    const regressionSeverity = audit ? 'low' : 'high';
+    const sev = audit ? 'low' : 'high';
 
-    const { data: rows, error } = await supabase.rpc('silent_zero_variant_a');
+    const { data: rows, error } = await supabase.rpc('silent_zero_scan');
     if (error) throw error;
 
-    const byState: Record<string, any[]> = {};
-    for (const r of rows ?? []) (byState[r.state] ??= []).push(r);
-    const regressions = byState['regression'] ?? [];
+    const monitors = (rows ?? []).filter((r: any) => r.producer_kind === 'monitor');
+    const sources = (rows ?? []).filter((r: any) => r.producer_kind === 'source');
+    const grp = (list: any[], st: string) => list.filter((r: any) => r.state === st);
 
-    // One finding per regressing producer (distinct fingerprint via p_affected_job = monitor).
-    for (const r of regressions) {
+    // ---- Individual findings: discrete monitors only (regression + never_produced) ----
+    for (const r of grp(monitors, 'regression')) {
       await recordFinding(supabase, {
-        severity: regressionSeverity,
-        title: `Silent-zero regression: ${r.monitor} stopped producing`,
-        analysis: `${r.monitor} produced ${r.baseline_signals} signals in the 7–90d baseline but 0 in the last 7 days, while running ${r.recent_runs} times in that window (reason: ${r.reason}). A producer that was yielding and went silent — the feed, source reachability, or match logic likely regressed.`,
-        plainEnglish: `${r.monitor} used to bring in intelligence and has produced nothing for a week despite running normally.`,
-        action: `Investigate ${r.monitor}: is the source reachable, did the match logic change, or did upstream genuinely go quiet? Confirm before it silently stays dead.${audit ? ' [AUDIT run — not notifying yet.]' : ''}`,
-        job: `${JOB}:${r.monitor}`,
+        severity: sev,
+        title: `Silent-zero regression: ${r.producer} stopped producing`,
+        analysis: `${r.producer} produced ${r.baseline_signals} signals in the 7–90d baseline but 0 in the last 7 days, while running ${r.recent_runs} times (reason: ${r.reason}). Was yielding, went silent — feed reachability, source, or match logic likely regressed.`,
+        plainEnglish: `${r.producer} used to bring in intelligence and has produced nothing for a week despite running normally.`,
+        action: `Investigate ${r.producer}: source reachable, match logic changed, or upstream genuinely quiet?${audit ? ' [AUDIT — not notifying yet.]' : ''}`,
+        job: `${JOB}:${r.producer}`,
+      });
+    }
+    for (const r of grp(monitors, 'never_produced')) {
+      await recordFinding(supabase, {
+        severity: sev,
+        title: `Silent-zero never-produced: ${r.producer} yields nothing`,
+        analysis: `${r.producer} has run and produced 0 signals over its entire history (lifetime_signals=0, ran ${r.recent_runs}× in 7d, span ${r.span_days}d, reason: ${r.reason}). Not a regression — it has never yielded. Likely mis-sourced or match-broken, or it should carry an evidence-bound precision declaration.`,
+        plainEnglish: `${r.producer} runs regularly but has never once produced intelligence — it is either broken or pointed at the wrong source.`,
+        action: `Verify ${r.producer}'s source + match, or file an evidence-bound precision declaration (expected_yield/basis/review_by) if 0 is genuinely correct.${audit ? ' [AUDIT — not notifying yet.]' : ''}`,
+        job: `${JOB}:${r.producer}`,
       });
     }
 
-    // Coverage census — makes every non-healthy state visible (requirement: report their own
-    // states, not omitted, not passed as healthy). Always 'info' (coverage, not an alert).
-    const census = Object.entries(byState)
-      .map(([st, list]) => `${st}: ${list.length} [${list.map((x: any) => `${x.monitor}(${x.reason})`).join(', ')}]`)
-      .join('  |  ');
+    // ---- Single census finding: every state visible, sources rolled up (no per-source flood) ----
+    const mCount = (st: string) => grp(monitors, st).length;
+    const sCount = (st: string) => grp(sources, st).length;
+    const names = (list: any[], st: string) => grp(list, st).map((r: any) => r.producer);
+    const srcName = (st: string) => grp(sources, st).map((r: any) => r.producer.replace(/^rss:/, ''));
+
+    const censusAnalysis =
+      `Mode: ${audit ? `AUDIT (run ${(priorRuns ?? 0) + 1} of first 2 — regression/never_produced not notifying)` : 'PROMOTED (notifies)'}. ` +
+      `MONITORS(15): healthy ${mCount('healthy')} [${sample(names(monitors, 'healthy'))}]; regression ${mCount('regression')} [${sample(names(monitors, 'regression'))}]; never_produced ${mCount('never_produced')} [${sample(names(monitors, 'never_produced'))}]; insufficient_history ${mCount('insufficient_history')} [${sample(names(monitors, 'insufficient_history'))}]; exempt ${mCount('precision_feed_exempt')}; unverified_exemption ${mCount('unverified_exemption')}. ` +
+      `SOURCES(rss/url_feed via source_id — item D): healthy ${sCount('healthy')}; regression ${sCount('regression')} [${sample(srcName('regression'))}]; never_produced ${sCount('never_produced')} [${sample(srcName('never_produced'))}]; insufficient_history ${sCount('insufficient_history')}. ` +
+      `Per-source not individually alerted (flood control) — rolled up here.`;
+
     await recordFinding(supabase, {
       severity: 'info',
       title: 'Silent-zero probe coverage census',
-      analysis: `Mode: ${audit ? 'AUDIT (first two scheduled runs — regressions not notifying)' : 'PROMOTED (regressions notify)'}. Prior runs: ${priorRuns ?? 0}. States: ${census}`,
-      plainEnglish: `Silent-zero probe evaluated ${rows?.length ?? 0} monitors. Regressions: ${regressions.length}. Unevaluable/insufficient states are listed so coverage gaps are visible, not hidden.`,
-      action: 'Review the census; unevaluable = attribution gap (P2), insufficient_history = not yet judgeable (Variant B target for never-produced).',
+      analysis: censusAnalysis,
+      plainEnglish: `Evaluated ${monitors.length} monitors + ${sources.length} RSS sources. Monitor regressions ${mCount('regression')}, never-produced ${mCount('never_produced')}. RSS sources: ${sCount('regression')} regressed, ${sCount('never_produced')} never produced — visible here, not individually alerted.`,
+      action: 'Triage the RSS never_produced list (dead feeds → deactivate) and regression list (possible systemic intake issue). Monitor-level items have their own findings.',
       job: JOB,
     });
 
     const summary = {
-      mode: audit ? 'audit' : 'promoted', prior_runs: priorRuns ?? 0, evaluated: rows?.length ?? 0,
-      regressions: regressions.map((r: any) => r.monitor),
-      state_counts: Object.fromEntries(Object.entries(byState).map(([s, l]) => [s, l.length])),
+      mode: audit ? 'audit' : 'promoted', prior_runs: priorRuns ?? 0,
+      monitors: { regression: mCount('regression'), never_produced: mCount('never_produced'), healthy: mCount('healthy'), insufficient: mCount('insufficient_history'), exempt: mCount('precision_feed_exempt') },
+      sources: { total: sources.length, healthy: sCount('healthy'), regression: sCount('regression'), never_produced: sCount('never_produced'), insufficient: sCount('insufficient_history') },
+      individual_findings: grp(monitors, 'regression').length + grp(monitors, 'never_produced').length,
     };
     await completeHeartbeat(supabase, hb, summary);
     return new Response(JSON.stringify({ ok: true, ...summary }), {

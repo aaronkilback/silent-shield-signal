@@ -1503,3 +1503,21 @@ The `unevaluable` state (monitor-rss-sources, 54–57% of intake) is NOT a missi
 - **Redundant — write-side (stamp origin):** add `signal_origin: 'monitor-rss-sources'` to raw_json at process-intelligence-document:1094. One-line, but it only recovers channel-level attribution the `source_id` already provides, and would need a backfill for historical rows. Not recommended given source_id is 100% populated.
 
 Recommendation: close the P2 gap probe-side using the already-present `source_id`. Report only — no build.
+
+## VARIANT B + per-source RSS (item D) — added to silent-zero-probe (2026-08-14).
+
+RPC replaced: `silent_zero_variant_a()` → **`silent_zero_scan()`** (plpgsql, SECURITY DEFINER) — now covers Variant A (regression) AND Variant B (never_produced=0 lifetime signals despite ≥3 runs), across discrete MONITORS (origin) and per-SOURCE rss/url_feed (attributed via `signals.source_id → sources`, item D — the 100%-populated source_id closes the P2 gap with no write change).
+
+**Live run (audit mode, verified E2E via net.http_post; test heartbeat removed after):**
+- MONITORS(15): healthy 3 · regression 2 (csis, instagram) · never_produced 2 (court-registry, social) · insufficient_history 7 · exempt 1 (darkweb).
+- SOURCES(92 active rss/url_feed): healthy 21 · regression 20 · never_produced 49 · insufficient 2.
+- **individual_findings = 4** (monitor regression ×2 + monitor never_produced ×2), all severity `low` (audit). Census `info`. **Zero per-source individual findings** — 69 would-be source findings rolled into the single census (flood control), per operator requirement.
+
+**Findings emitted (platform_findings, category coverage_health):**
+- `low` Silent-zero regression: monitor-csis / monitor-instagram
+- `low` Silent-zero never-produced: monitor-court-registry / monitor-social
+- `info` Silent-zero probe coverage census — MONITOR + SOURCE counts, with source regression/never_produced samples (single entry).
+
+**Audit gate:** same as Variant A (prior scheduled runs <2 → `low`/no-notify; run 3 → `high`). Both variants share the gate; both start fresh (test heartbeat deleted). Two scheduled successes before close.
+
+**Discrepancy surfaced (operator predicted mostly insufficient_history):** actual per-source split is 49 never_produced + 20 regression + 21 healthy, NOT mostly insufficient. Reason: these RSS sources are OLD (created >30d), so a no-baseline old source is `never_produced`, not `insufficient`. **This 20-regressed / 49-dead active-RSS-feed split is itself a real hygiene finding** (dead feeds to deactivate; 20 recent regressions may corroborate the intake-decline investigation) — surfaced in the census, flagged here for operator action.
