@@ -1455,3 +1455,89 @@ WO-SILENT-ZERO-PROBE P1 (approved; built before Variant A per ruling). Design am
 All five orchestrator-owned monitors — previously leaving **zero durable trace** — now have caller-stamped run records. `caller` correctly distinguishes orchestrator vs direct. This closes the P1 observability gap; the silent-zero probe's Variant A/B now has its run substrate for orchestrator monitors (cron monitors already have `cron.job_run_details` + `cron_heartbeat`).
 
 **Follow-ups (not P1):** (1) retention/purge cron for `monitor_run_ledger` (pattern: `purge-ingest-decisions-nightly`) before it grows unbounded; (2) Variant A (regression) next, per order. Forward-only — no backfill.
+
+## VARIANT A — audit-only detector run (2026-08-14). Matches expected; amendment exercised.
+
+WO-SILENT-ZERO-PROBE Variant A (regression), audit-only. Substrate: `monitor_precision_declaration` (RLS, darkweb seeded with its 2026-08-14 verification). Detector: `scripts/sql/silent-zero-variant-a-audit.sql` — every monitor reported, no silent pass. Yield from terminal `signals` by origin (not `signals_created`); runs from `cron.job_run_details` + `monitor_run_ledger` (both caller paths).
+
+**Result (16 monitors, all reported):**
+| state | monitors |
+|---|---|
+| regression | **monitor-csis** (bs=5, rr=28, was_producing_now_0), **monitor-instagram** (bs=19, rr=84, was_producing_now_0) |
+| precision_feed_exempt | **monitor-darkweb** (valid_declaration, review_by 2026-11-14) |
+| unverified_exemption | **monitor-pastebin** (DEMO — seeded expired review_by 2026-07-01; removed after run) |
+| insufficient_history | monitor-weather / -earthquakes / -domains / -linkedin (short_span_0d — ledger started today); monitor-social (never_produced_in_325_runs→VarB); monitor-court-registry (never_produced_in_806_runs→VarB); monitor-community-outreach / -github (baseline_but_<3_recent_runs — idle) |
+| healthy | monitor-cisa-kev (rs=4), monitor-naad-alerts (rs=29), monitor-canadian-sources (rs=1) |
+| unevaluable | monitor-rss-sources (origin=(unset), attribution gap P2) |
+
+**Operator's predicted set — matched exactly:** instagram + csis = regression ✓; the five orchestrator monitors = insufficient_history ✓ (weather/earthquakes/domains/linkedin via short_span; social via never-produced — both insufficient, neither silently passed as healthy); darkweb = precision_feed_exempt with a valid declaration ✓.
+
+**Amendment exercised on the first run (requirement 2):** the expired-declaration path was proven live — pastebin, seeded with `review_by=2026-07-01`, reported `unverified_exemption / "review_by expired 2026-07-01"`, NOT exempt. Demo declaration deleted after; only darkweb's real declaration remains. The precision exemption is falsifiable and self-expiring as designed.
+
+**Coverage honesty (requirement 1):** court-registry does NOT pass as healthy — it reports `never_produced_in_806_runs→VarB` (Variant B's target, correctly not a Variant A regression). rss-sources reports `unevaluable` (the (unset)-origin attribution gap, P2) rather than a false verdict.
+
+**Not yet a scheduled probe** — audit-only, per the audit-before-blocking rule. Next: triage this output with the operator, then wire the query as a registered watchdog probe emitting one finding per producer (Variant B is the never-produced half: court-registry, social).
+
+## VARIANT A WIRED (2026-08-14) — silent-zero-probe registered, verified end-to-end, audit-only.
+
+`silent-zero-probe` edge function (verify_jwt=true; no-auth POST → 401 confirmed). Names aligned: cron jobname = heartbeat job_name = registry job_name = **silent-zero-probe-daily** (`47 5 * * *`, active, interval 1440). Detector = RPC `public.silent_zero_variant_a()` (SECURITY DEFINER, reads cron.job_run_details). Findings via `record_platform_finding` (category `coverage_health`) → neural page + daily email.
+
+**End-to-end test (invoked via the same net.http_post path cron uses):**
+- 2 regression findings, severity **low** (AUDIT), distinct fingerprints: `monitor-csis` (bs=5, rr=28), `monitor-instagram` (bs=19, rr=84).
+- 1 census finding, severity **info**: `Mode: AUDIT ... Prior runs: 0. States: healthy:3 [...], insufficient_history:9 [...], precision_feed_exempt:1, regression:2, unevaluable:1` — every non-healthy state visible, none omitted or passed as healthy.
+- Manual test heartbeat deleted afterward so the audit gate counts only SCHEDULED runs (audit = prior_completed_runs < 2 → scheduled runs 1 & 2 write findings at `low`/no-notify; run 3 promotes to `high`).
+
+**Requirements met:** one finding per regressing producer (distinct p_affected_job) ✓; unevaluable + insufficient_history reported as their own states in the census ✓; findings via record_platform_finding ✓; audit-only first two scheduled runs then auto-promote ✓. Not closed until two scheduled successes (Two-Successes-Before-Close), next two mornings.
+
+**Follow-up (noted):** platform_findings has no auto-resolve — a regression finding stays until a resolver clears it when the monitor produces again. Variant A only records; resolution is a separate concern.
+
+## LOG (2026-08-14) — canadian-sources "healthy" on rs=1 is thin (operator: do not band yet).
+`monitor-canadian-sources` classified healthy on a single signal in 7 days. Not banding the "healthy" floor now — 1/week may be that feed's real rate; want a month of data before picking a floor. Logged for revisit; do not act.
+
+## REPORT (2026-08-14) — RSS bulk-path attribution (P2 gap): the data already exists; fix is probe-side, no write change/backlog.
+
+The `unevaluable` state (monitor-rss-sources, 54–57% of intake) is NOT a missing-data problem. Evidence: of the 1,211 `(unset)`-origin signals in the last 30 days, **1,211 (100%) already carry a non-null `source_id`**, spanning **39 distinct `sources` rows, all resolving** to `sources`. The RSS path (`process-intelligence-document:1064`) writes `source_id` on every signal — it just doesn't set `raw_json.signal_origin`, which is the field the probe reads.
+
+**What making the dominant channel observable would take:**
+- **Preferred — probe-side (no write change, no backfill):** teach the silent-zero detector to attribute RSS/url_feed yield via `signals.source_id → sources.name` (or source type) instead of only `raw_json.signal_origin`. Makes `monitor-rss-sources` evaluable AND yields **per-source** granularity for all 39 feeds for free — which is exactly WO-COVERAGE's per-source track. Cost: a query change in the RPC; no migration, no backfill, no write-path edit.
+- **Redundant — write-side (stamp origin):** add `signal_origin: 'monitor-rss-sources'` to raw_json at process-intelligence-document:1094. One-line, but it only recovers channel-level attribution the `source_id` already provides, and would need a backfill for historical rows. Not recommended given source_id is 100% populated.
+
+Recommendation: close the P2 gap probe-side using the already-present `source_id`. Report only — no build.
+
+## VARIANT B + per-source RSS (item D) — added to silent-zero-probe (2026-08-14).
+
+RPC replaced: `silent_zero_variant_a()` → **`silent_zero_scan()`** (plpgsql, SECURITY DEFINER) — now covers Variant A (regression) AND Variant B (never_produced=0 lifetime signals despite ≥3 runs), across discrete MONITORS (origin) and per-SOURCE rss/url_feed (attributed via `signals.source_id → sources`, item D — the 100%-populated source_id closes the P2 gap with no write change).
+
+**Live run (audit mode, verified E2E via net.http_post; test heartbeat removed after):**
+- MONITORS(15): healthy 3 · regression 2 (csis, instagram) · never_produced 2 (court-registry, social) · insufficient_history 7 · exempt 1 (darkweb).
+- SOURCES(92 active rss/url_feed): healthy 21 · regression 20 · never_produced 49 · insufficient 2.
+- **individual_findings = 4** (monitor regression ×2 + monitor never_produced ×2), all severity `low` (audit). Census `info`. **Zero per-source individual findings** — 69 would-be source findings rolled into the single census (flood control), per operator requirement.
+
+**Findings emitted (platform_findings, category coverage_health):**
+- `low` Silent-zero regression: monitor-csis / monitor-instagram
+- `low` Silent-zero never-produced: monitor-court-registry / monitor-social
+- `info` Silent-zero probe coverage census — MONITOR + SOURCE counts, with source regression/never_produced samples (single entry).
+
+**Audit gate:** same as Variant A (prior scheduled runs <2 → `low`/no-notify; run 3 → `high`). Both variants share the gate; both start fresh (test heartbeat deleted). Two scheduled successes before close.
+
+**Discrepancy surfaced (operator predicted mostly insufficient_history):** actual per-source split is 49 never_produced + 20 regression + 21 healthy, NOT mostly insufficient. Reason: these RSS sources are OLD (created >30d), so a no-baseline old source is `never_produced`, not `insufficient`. **This 20-regressed / 49-dead active-RSS-feed split is itself a real hygiene finding** (dead feeds to deactivate; 20 recent regressions may corroborate the intake-decline investigation) — surfaced in the census, flagged here for operator action.
+
+## INVESTIGATION (2026-08-14) — the 49 never-produced + 20 regressed RSS sources. Evidence only.
+
+### The ~49–50 never-produced (active rss/url_feed, 0 lifetime signals)
+1. **What kind:** NOT dead URLs. **46/50 have been fetched, 43/50 fetched in the last 7 days.** Only **4 never fetched** (dead). **13 carry a fetch error** (404/auth/moved — some intermittent, overlap with recently-fetched). The dominant kind: **feeds that fetch 200 and parse fine but whose items fail client-match.** Of the 10 sources with funnel instrumentation (`ingest_decisions`, forward-only since 08-02): **261 items parsed → 259 dropped at `client_match` as `no_client_match`** (99%). 1 false_positive, 1 below_threshold, 1 not_inserted.
+2. **Ever fetched successfully:** YES — overwhelmingly. This is a "returns 200, content filtered" population, not a "404" population (4 exceptions).
+3. **When added / by what:** NOT one bulk import — spread across Mar→Jul. **16 of the 50 were added at 03:00–03:01 on weekly cadence = `autonomous-source-discovery`** (the weekly 03:00 job). So a recurring generator has been adding feeds that never produce (~16); the rest were added at assorted manual/import times. It is a recurring-generator pattern + assorted singletons, not a single event.
+
+### The 20 regressed (produced in 7–90d baseline, 0 in last 7d)
+4. **Stop dates do NOT cluster at 08-09.** Last-signal days spread 2026-07-28 → 08-06 (peak 07-29 = 4 sources, 08-06 = 3). **Caveat:** these are each feed's last signal *before* the 7-day-silent window (silent since 08-07); for low-base-rate feeds, last-signal dates naturally fall in the ~2 weeks before the window. So this is **consistent with thin feeds crossing the silence threshold at staggered times — NOT evidence of a single 08-09 event.**
+5. **Fetch status:** **all 20 are still fetched (200, recent); only 2 carry an error.** The regression is downstream (client_match/relevance), NOT fetch failure — same mechanism as the 49.
+
+### Does the corpus-exhaustion conclusion hold? — PARTIALLY; the mechanism was mis-located.
+The earlier read ("thin source surface, exhausted") was measured against producing sources and is **incomplete**. Fuller evidence:
+- The configured surface is **NOT dead or exhausted at the source level** — it fetches abundant content (261 parsed items from just 10 instrumented never-producers; 43/50 fetched this week; all 20 regressed still fetched).
+- The scarcity is **client-relevance, not source availability.** With **2 clients (BC Place, PECL)**, ~99% of a general-news firehose correctly drops at `client_match` as `no_client_match`. Sampled dropped titles confirm genuine irrelevance (Calgary housing, US crime, tech, sports, celebrity), with only marginal geo-adjacent misses ("PRRD … FSJ aquatics facility", "Metro Vancouver storm") — low security-relevance even if geo-matched.
+- **Conclusion:** it is not source exhaustion — it is **client-match starvation of an abundant, healthy source surface.** The bottleneck is the 2-client match surface, not the number of feeds. Adding more general feeds would not help (they would also drop at `client_match`). This is a **material correction of the exhaustion read**: the fix direction is the client/keyword match surface (or more clients), not more sources.
+- **Genuine source-health items (separate, small):** ~4 dead + ~13 errored feeds = ~17 to clean; ~16 discovery-added non-producers suggest `autonomous-source-discovery` is adding low-value feeds (generator-governance). These are hygiene, not the intake driver.
+
+Evidence only — no fixes.
