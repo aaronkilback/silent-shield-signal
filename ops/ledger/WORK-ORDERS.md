@@ -1846,3 +1846,54 @@ Operator directive: map every per-client assessment consumer against what it rea
 **THE FINDING (one, architectural):** the client-facing assessment layer is **structurally decoupled** from the structured per-client models that exist and are populated. Assessments run on **hardcoded taxonomies** (risk table's 4 physical factors; HIGH_VALUE_CATEGORIES; frontend category lists), **flat client fields** (keywords/assets/industry), and **free LLM synthesis** — while `client_risk_categories` (0 readers), `client_geo_assets` (infra-only), and `archetype` (infra-only) sit unread. This is the SAME pattern already hit twice: the geo-admission gate ignores `client_geo_assets` (keyword-only), and the brief's risk table ignores `client_risk_categories`. **client_risk_categories is the starkest — a designed, weighted, per-client risk model with ZERO consumers in the entire codebase.**
 
 Consequence for CRT: BC Place (venue) is assessed by the same hardcoded pipeline taxonomy as PECL, with its own `client_risk_categories` empty and unread regardless. Rule the pattern, not the instance. Evidence only — no design.
+
+## DEFECT 1 BUILT + VERIFIED (2026-08-14). Confidence chip → assessment-coverage line.
+generate-executive-report: `Confidence: ${executiveFlash.confidence}` chip REPLACED with a deterministic coverage line computed from main-tier count · direct-attributed · sourced (+ usable/collected). Deployed. Verified on both clients (freshly generated):
+- **PECL:** `Assessment coverage: 2 main-tier signals · 2 directly attributed · 2 sourced (4 attributed of 95 collected)`
+- **BC Place:** `Assessment coverage: 0 main-tier signals — not assessed`
+No `Confidence: High/Medium/Low` chip renders. Zero-main-tier degradation exact. (Insufficient-data page, a separate 0-attributed branch, already states "Insufficient data" honestly.)
+
+## ARCHETYPE TAXONOMY — SCOPING (2026-08-14). Evidence + shape only. Answers: authorable-per-client vs archetype-templated + overrides.
+
+**Format reference — PECL's 6 (client_risk_categories), full structure:** `{category_key, label, criticality, weight, polarity(include|exclude), persistence(event|campaign), match_spec}`. `match_spec` = `any_of/all_of` of matchers `{type: keyword | named_place | geo_proximity, any:[…], assessable:bool}` + `require_signal_category:[…]` + optional `override_if/on_override/exclude_floor`. **Critically, PECL's `wildfire_near_asset` already marks its `geo_proximity` matchers (travel_route/supply_route/staff_home_region) `assessable:false`** — the model already declares which evidence sources are not yet wired (the geo work is that binding).
+
+**Decomposition of PECL's 6 → the STRUCTURE is energy-archetype-level; the ANCHOR VALUES are client-specific:**
+- Archetype-level (repeats for any energy client): the category *keys, weights, criticality, polarity, persistence, match_spec shape, require_signal_category*.
+- Client-specific (override): the `any:[…]` anchor lists — "Petronas/CGL/Kitimat/Montney/Fort St. John…" — PECL's names, regions, domains.
+
+### Three archetype category-set SHAPES (weights = default; anchor = per-client override; evidence = binding)
+**ENERGY** (PECL = the live reference):
+| category_key | wt | evidence source (require_signal_category × matcher) | client anchor |
+|---|---|---|---|
+| credential_exposure | 0.95 | cyber (data_exfil/phishing/intrusion) × keyword | client systems/domains |
+| asset_proximity_hazard | 0.95 | wildfire/natural_disaster × named_place OR geo_proximity→client_geo_assets | asset names + geometry |
+| named_activism | 0.80 | protest/activism × keyword | client + project names |
+| corridor_proximity | 0.55 | hazard/threat × named_place (region) OR corridor geometry | region names + corridor line |
+| regional_activism | 0.40 | protest/regulatory/environmental × industry keyword | (mostly archetype-generic) |
+| routine_ops_exclusion (polarity=exclude, override-if-escalate) | 0.25 | operational/industrial_flaring × keyword | archetype-generic + client override triggers |
+
+**VENUE_SECURITY** (BC Place — NOT decided; proposed SHAPE for review, not a design):
+| category_key | wt | evidence | anchor |
+|---|---|---|---|
+| event_crowd_threat | ~0.90 | active_threat/physical_threat × venue name + event-day calendar | venue + event schedule |
+| named_event_or_performer_threat | ~0.80 | threat × event/performer entity | event/performer entities |
+| protest_at_venue | ~0.75 | protest/activism × venue name/location | venue name |
+| transit_ingress_disruption | ~0.55 | civil_emergency/operational × transit-hub named_place (tight) | venue transit hubs |
+| severe_weather_event_impact | ~0.50 | weather/CAP × venue geo (tight buffer) | venue location |
+| credential_exposure_venue | 0.95 | cyber × venue domains | venue domains |
+| routine_event_ops_exclusion (exclude) | 0.20 | operational × ticketing/concourse | archetype-generic |
+Spine is EVENT-CENTRIC + TIGHT-GEO (the 2km centroid finding) — corridor/regional categories do NOT apply.
+
+**PRINCIPAL_PROTECTION** (CRT core — proposed SHAPE):
+| category_key | wt | evidence | anchor |
+|---|---|---|---|
+| named_principal_threat | ~0.95 | threat/harassment × protected-person entity | principal identities (entity graph) |
+| doxxing_exposure | ~0.95 | paste/breach × principal PII | principal emails/identifiers |
+| residence_route_proximity | ~0.80 | physical_threat/surveillance × principal geo | residence/route geometry |
+| court_proceeding_exposure | ~0.55 | court-list × principal name | principal names (→ court-registry work) |
+| travel_destination_risk | ~0.55 | geo-risk × travel itinerary | travel plans |
+| associate_network_threat | ~0.50 | threat × entity_relationships | associate entities |
+Spine is PERSON-CENTRIC (entity graph + relationships) — ties to entity-anchoring + court-registry threads.
+
+### The read on the operator's question
+Each archetype has a **distinct spine** (energy=corridor/hazard/activism · venue=event/crowd/transit/weather · principal=person/doxx/residence/court) — a single flat taxonomy cannot serve all three (this IS the risk-table defect). Within an archetype, clients share the spine and differ only in anchor values + weight tuning. **Evidence says: archetype-templated (per-archetype category set + default weights + match_spec shape + require_signal_category) WITH per-client override of the anchor lists and weights — NOT authorable-per-client (the one-off-script trap that doesn't scale), NOT purely templated (anchors are inherently client-specific).** The `assessable:false` matchers show the format already anticipates evidence-source bindings that the geo/court/entity work supplies. Evidence + shape only — no design, no build.
