@@ -1791,3 +1791,25 @@ PECL re-attribution complete. Same writer/standard as BC Place (167 direct). Key
 - **Root of the contradiction:** the risk table maps signals into a fixed 4-category physical-security taxonomy (and only counts `critical`); the deductions read raw content freely. A **high-severity environmental/regulatory signal is invisible to the table (→LOW) but escalation-worthy to the LLM (→ESCALATING).** Same signals, two classifiers, one document.
 
 Evidence only. No fixes.
+
+## BRIEF DEFECTS — evidence for the rulings (2026-08-14). No design.
+
+### Defect 1 — Confidence: what could compute it, and whether it can be calibrated.
+**Available to compute from (exists, real data):**
+- **main-tier count** — `freshSignals` (rel ≥ 0.60), already computed per brief.
+- **attribution basis** — `signal_client_attributions` (1,908 rows; direct/sector/none per signal). A per-signal grounding signal (e.g. count/fraction of main-tier signals that are `direct`).
+- **citation coverage** — `report_evidence_sources` (5,219 rows across 224 reports); 132/150 recent signals carry a `source_url`. Whether a claim has a resolved source is computable.
+
+**NOT available:**
+- **source reliability** — **0 sources** carry a reliability/credibility score (`sources.config` has none). No per-source credibility to weight by.
+- **calibration ground-truth** — **`agent_world_predictions` = 0 rows** (the calibration table exists but its input is empty). There is **no outcome data to calibrate a High/Medium/Low against**.
+
+**Evidence conclusion:** a *calibrated* confidence (probability of correctness) **cannot be computed honestly** — zero ground-truth. A *coverage/assessment* label (derived deterministically from main-tier count + `direct`-attribution fraction + citation coverage) **can**. Per the reliability-footer rule: either render an honestly-labelled **assessment-coverage** figure from those three, or **stop rendering "Confidence: X"** — do not keep a calibrated-sounding label with nothing calibrating it. (Both current paths — the binary quiet branch and the free LLM pick — are neither.)
+
+### Defect 2 — Risk table: hardcoded 4-factor physical taxonomy; client_risk_categories ignored; same for every client.
+- **Where the 4 factors come from:** **HARDCODED** in `generate-executive-report:789–822` — literal `category.includes('surveillance'/'reconnaissance' | 'protest'/'activism' | 'sabotage'/'vandalism')` filters + `criticalThreatCount = flashCritical` (severity=critical only). Referenced **nowhere else in the codebase**. **Not configurable per client or per archetype** — every client renders the same four.
+- **client_risk_categories is NEVER read** by the report (grep: 0 references). **PECL has 6** — `activism_naming_pecl (0.80)`, `wildfire_near_asset (0.95)`, `credential_exposure_pecl (0.95)`, `corridor_proximity (0.55)`, `regional_activism (0.40)`, `flaring_exclusion (0.25)` — **none feed the table.** PECL's real, weighted risk model is invisible to its own risk table.
+- **Every other client's table:** identical four factors. **BC Place has 0 client_risk_categories** AND would render the **same pipeline-oriented taxonomy** (surveillance/protest/sabotage/critical). **A venue assessed on a pipeline's risk taxonomy** — structurally blind to venue exposure (crowd/event/transit/weather). This is the CRT-relevant finding.
+- **Sub-findings:** (a) the codebase already has a broader category set — `HIGH_VALUE_CATEGORIES` (`generate-executive-report:665`) includes `regulatory` + `operational` — used for signal filtering but NOT wired into the risk table; (b) the table ignores `high` severity entirely (only `critical` counts), so three high-severity signals read LOW.
+
+Evidence only. No design proposed.
