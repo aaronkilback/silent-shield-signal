@@ -432,6 +432,10 @@ Deno.serve(async (req) => {
     // retained as (severity + out_of_area) for continuity with prior heartbeats.
     let severityDropped = 0;
     let outOfAreaDropped = 0;
+    // Bounded sample of the areaDesc values dropped as out-of-area, so an operator
+    // can eyeball whether any BC place-name is being geo-gated out (whole-word
+    // client.locations vs CAP areaDesc). Measurement only — matching unchanged.
+    const outOfAreaSample: string[] = [];
     let nestedAsUpdates = 0;
     let signalsCreated = 0;
     const processedAlerts: any[] = [];
@@ -646,6 +650,7 @@ Deno.serve(async (req) => {
         if (!matchedClientId && !isLifeSafetyExtreme) {
           filteredLowPriority++;
           outOfAreaDropped++;
+          if (cap?.areaDesc && outOfAreaSample.length < 40) outOfAreaSample.push(cap.areaDesc.substring(0, 80));
           console.log(`[NAAD] Skipping out-of-area alert: "${alert.title.substring(0, 70)}" (severity=${cap?.severity ?? '?'}, areaDesc=${cap?.areaDesc?.substring(0, 60) ?? '?'})`);
           continue;
         }
@@ -784,6 +789,7 @@ Deno.serve(async (req) => {
       low_priority_filtered: filteredLowPriority,
       severity_dropped: severityDropped,
       out_of_area_dropped: outOfAreaDropped,
+      out_of_area_sample: outOfAreaSample,
       signals_created: signalsCreated,
       nested_updates: nestedAsUpdates,
       sample: processedAlerts.slice(0, 5),
