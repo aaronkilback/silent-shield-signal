@@ -1907,3 +1907,10 @@ Full match_spec detail for BC Place to author anchors against. **Wired now:** pr
 - **associate_network_threat** — `entity_relationships` over person entities; **Q2** attached.
 - **named_principal_threat + doxxing_exposure** — matching named individuals from the entity graph; **Q2** attached (the deferred person-matching capability).
 Net: the entire principal-protection spine is **person-entity-centric → Q2-gated**, and court_proceeding_exposure is additionally **Q1-gated**. It is NOT a buildable archetype today — it is counsel-gated. Only the energy spine (live) and the venue spine (partially wired) are buildable now.
+
+## COUNSEL DRAFT — now gates THREE workstreams (2026-08-14, priority marker). Operator is sending it.
+The pending counsel questions (`docs/platform-operations/counsel/DRAFT-cso-tou-pipeda-court-lists.md`) are the single blocker on three separate workstreams — raising the priority of the answer:
+1. **Court-registry monitor build** — gated on **Q1** (CSO Usage Agreement / automated + commercial access to Daily Court Lists).
+2. **Principal-protection archetype spine (entire)** — gated on **Q2** (PIPEDA / matching named individuals from the entity graph). named_principal_threat, doxxing_exposure, residence_route_proximity, associate_network all carry Q2; court_proceeding_exposure additionally carries Q1.
+3. **Founder-reputation direction** — depends on the principal-protection person-entity capability, therefore inherits **Q2**.
+One answer unblocks (or re-scopes) all three. Until it returns, all three are counsel-held, not backlog. Q3 (can a technical control substitute for authorization) bounds whether any of them have an engineering path around the answer.
