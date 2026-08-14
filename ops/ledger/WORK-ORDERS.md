@@ -1302,3 +1302,58 @@ monitor-canadian-sources · monitor-community-outreach · monitor-domains · mon
 | Event calendars | **NOT BUILT** | — |
 
 No proposals — inventory only.
+
+## REPORT (2026-08-14) — three silent/running feeds: court-registry, csis, darkweb. Sources + match + ever-produced.
+
+Evidence: `cron.job_run_details` (durable run history back to Mar 2026) + all-time `signals` origin production. All three are scheduled and running now; `cron_heartbeat` only retains ~3 days, so run history came from pg_cron's own log.
+
+### monitor-court-registry — FIXABLE FEED (wrong source + brittle match). Never produced in 806 runs.
+- **Queries** two RSS feeds: `courthouselibrary.ca/news-events/rss` (a law-**library news** feed) and `scc-csc.ca/case-dossier/info/rss-eng.aspx` (Supreme Court of Canada case dossiers). **Neither is the actual court registry** (BC Court Services Online / CSO). It is not reading filings against clients.
+- **Matches** on `content.includes(client.name.toLowerCase())` — the **full client name as a substring** ("bc place", "petronas canada"), plus a COURT_KEYWORDS gate on the SCC feed. A verbatim client name essentially never appears in a library news item or an SCC case title.
+- **Ever produced:** ran 806× (ok 640) Apr 2–Aug 14; **0 signals, ever.** Two compounding reasons (wrong source + exact-name match) → structurally zero. Never worked.
+
+### monitor-csis — REGRESSED FEED. Produced 19 signals, stopped 2026-06-23; still runs, 0 since.
+- **Queries** three live gov feeds: CSIS news atom (`canada.ca/en/security-intelligence-service.atom.xml`), Canadian Centre for Cyber Security threats API (`cyber.gc.ca/api/cccs/threats/v1/get`), Public Safety Canada publications RSS. Sources are healthy.
+- **Matches** per-client: an advisory attaches to a client if a client-name **word >3 chars** OR the client's **industry** string appears in the advisory text. **#256 removed the old `clients[0]` fallback** (which had silently cross-attributed every national advisory to the first client — a real cross-tenant defect).
+- **Ever produced:** ran 537× (ok 426) Apr 2–Aug 14; produced **19 signals May 12–Jun 23**, then **0**. The stop coincides with the #256 fallback removal: post-fix it yields only on a genuine per-client match, and generic national-security advisories rarely contain a client-name word or "energy"/"venue". Not broken — correctly strict, but the match is now too narrow to fire. Fixable via match scope; the #256 removal itself was a correctness fix (do not revert).
+
+### monitor-darkweb — PRECISION FEED, UNPROVEN. Never produced in 498 runs.
+- **Queries** HaveIBeenPwned: `breaches?domain=` (no key required) per client domain, and `pasteaccount/{email}` (requires `HIBP_API_KEY`) per client contact_email. Domain derived from `monitored_domains[]` → contact_email domain → org-name guess.
+- **Matches** a client when its domain appears in an HIBP domain-breach, or its email in a paste. 3 of 4 active clients have contact_email (Petronas, BC Place, Kilbacks) → it has inputs.
+- **Ever produced:** ran 498× (ok 424) Apr 11–Aug 14; **0 signals, ever.** Same expected-sparse shape as cisa-kev (breaches are rare), BUT 0/498 over 4 months is suspicious. Before calling it "working but quiet," worth verifying: (a) is `HIBP_API_KEY` set (else the paste half is silently skipped), and (b) does the derived domain (e.g. contact_email domain) actually match a breached domain in HIBP. Not proven fixable or dead without that check — report only.
+
+**Shapes differ, not grouped:** court-registry = never-worked (wrong source + exact-name); csis = regressed (was working, #256 narrowed the match); darkweb = precision/config, unproven (0/498 warrants a key+domain-derivation check).
+
+## RESULT (2026-08-14) — NAAD counter split deployed + measured. out_of_area is the MAJORITY of drops.
+
+Split `low_priority_filtered` into `severity_dropped` (p4 / low CAP severity) + `out_of_area_dropped` (geo-gate: no client location/keyword match, not Extreme). Instrumentation-only; `low_priority_filtered` retained as the combined total for continuity. Deployed to prod (`monitor-naad-alerts`, single-function, `--no-verify-jwt` to match its `verify_jwt=false` config; no-auth probe confirmed gateway unchanged, handler runs, 200).
+
+**Live measured split (deploy-verification run):** `scanned 216 → french 107 → severity_dropped 40 → out_of_area_dropped 53 → created 0` (40+53=93 = the old combined counter).
+- **out_of_area = 53 of 93 (57%) of the low-priority bucket, and 49% of all 109 non-french alerts.** It is the single largest drop reason after French. **NOT small — the brittleness is load-bearing, not theoretical.**
+- **Caveat before acting:** a large out_of_area is EXPECTED for a national feed on a BC roster — most of those 53 are genuinely Ontario/Alberta/Quebec/NS alerts that *should* drop. The split proves the geo gate is doing most of the filtering; it does NOT yet prove any BC-relevant alert is being wrongly dropped. The next cheap measurement is to sample the `areaDesc` of the out-of-area drops (already console.logged per drop) for BC place-names — if any BC areaDesc is being dropped on a whole-word miss, the brittleness is real; if all 53 are non-BC, it is correct. Location matching NOT changed (per ruling: measure first).
+- Retro note: the historical 30 days cannot be retroactively split (single combined counter until this deploy). The heartbeat distinguishes them going forward; the 216-alert corpus is stable hour-to-hour, so this run is representative of steady state.
+
+## REPORT (2026-08-14) — dormant-monitor triage: ever-worked vs never-wired (prep, no revive decision).
+
+For the 16 registry-dormant monitors. Evidence: ever-RAN = `cron.job_run_details` (Mar 2026→); ever-PRODUCED = `signals` origin. "Cheap revive" = code+cron proven by real output; "expensive" = never validated end-to-end.
+
+| Monitor | Ran ever? | Produced ever? | Class |
+|---|---|---|---|
+| monitor-canadian-sources | 7701× (ok 7698), last 08-14 | 24 (canadian_news_rss, last 07-22) | **LIVE** — runs as `monitor-canadian-every-30min`; registry name is stale, feed is not dormant |
+| monitor-community-outreach | 692× (ok 688), Apr22–May21 | 36 (Energetic City News) | **EVER-WORKED, stopped May 21** — cheap revive |
+| monitor-github | 228× (ok 156), Apr11–Jun7 | 2 | **EVER-WORKED (marginal), stopped Jun 7** — cheap revive, low yield |
+| monitor-macro-indicators | 124× since Apr13, last 08-14, **ok=0** | 0 | **WIRED + RUNNING + 100% FAILURE** — scheduled daily 4mo, never once succeeded. NOT cheap (needs debug) |
+| monitor-pastebin | 89× (ok 17, 81% fail), Apr11–May3 | 0 | **RAN-BUT-MOSTLY-FAILED, stopped May 3** — not cheap |
+| monitor-facebook | never ran standalone | 89 (via social-unified) | **SUPERSEDED** — facebook covered by `monitor-social-unified` (6071×, last 08-05) |
+| monitor-linkedin | never ran standalone | 0 standalone | **SUPERSEDED / never wired** — linkedin via social-unified |
+| monitor-wildfire-comprehensive | never ran (that name) | via monitor-wildfires | **SUPERSEDED** — wildfire live via `monitor-wildfires` (11496×) + `monitor-geo-wildfire` |
+| monitor-weather | **never ran** | 0 | **BUILT, NEVER WIRED** — expensive (unvalidated) |
+| monitor-earthquakes | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-domains | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-regulatory-changes | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-entity-proximity | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-emergency-google | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-regional-apac | **never ran** | 0 (Channel News Asia ×2 via other path) | **BUILT, NEVER WIRED** |
+| monitor-travel-risks | **never ran** | 0 | **BUILT, NEVER WIRED** |
+
+Summary: **cheap revive** = community-outreach, github (proven, just stopped). **Broken-but-wired** = macro-indicators (running, all-fail), pastebin (stopped, mostly-failed). **Superseded** = facebook, linkedin, wildfire-comprehensive. **Never-wired (expensive, unvalidated end-to-end)** = weather, earthquakes, domains, regulatory-changes, entity-proximity, emergency-google, regional-apac, travel-risks. **Stale registry name** = canadian-sources (actually live). No revive decision made — inventory prep only.
