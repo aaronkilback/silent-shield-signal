@@ -1455,3 +1455,25 @@ WO-SILENT-ZERO-PROBE P1 (approved; built before Variant A per ruling). Design am
 All five orchestrator-owned monitors — previously leaving **zero durable trace** — now have caller-stamped run records. `caller` correctly distinguishes orchestrator vs direct. This closes the P1 observability gap; the silent-zero probe's Variant A/B now has its run substrate for orchestrator monitors (cron monitors already have `cron.job_run_details` + `cron_heartbeat`).
 
 **Follow-ups (not P1):** (1) retention/purge cron for `monitor_run_ledger` (pattern: `purge-ingest-decisions-nightly`) before it grows unbounded; (2) Variant A (regression) next, per order. Forward-only — no backfill.
+
+## VARIANT A — audit-only detector run (2026-08-14). Matches expected; amendment exercised.
+
+WO-SILENT-ZERO-PROBE Variant A (regression), audit-only. Substrate: `monitor_precision_declaration` (RLS, darkweb seeded with its 2026-08-14 verification). Detector: `scripts/sql/silent-zero-variant-a-audit.sql` — every monitor reported, no silent pass. Yield from terminal `signals` by origin (not `signals_created`); runs from `cron.job_run_details` + `monitor_run_ledger` (both caller paths).
+
+**Result (16 monitors, all reported):**
+| state | monitors |
+|---|---|
+| regression | **monitor-csis** (bs=5, rr=28, was_producing_now_0), **monitor-instagram** (bs=19, rr=84, was_producing_now_0) |
+| precision_feed_exempt | **monitor-darkweb** (valid_declaration, review_by 2026-11-14) |
+| unverified_exemption | **monitor-pastebin** (DEMO — seeded expired review_by 2026-07-01; removed after run) |
+| insufficient_history | monitor-weather / -earthquakes / -domains / -linkedin (short_span_0d — ledger started today); monitor-social (never_produced_in_325_runs→VarB); monitor-court-registry (never_produced_in_806_runs→VarB); monitor-community-outreach / -github (baseline_but_<3_recent_runs — idle) |
+| healthy | monitor-cisa-kev (rs=4), monitor-naad-alerts (rs=29), monitor-canadian-sources (rs=1) |
+| unevaluable | monitor-rss-sources (origin=(unset), attribution gap P2) |
+
+**Operator's predicted set — matched exactly:** instagram + csis = regression ✓; the five orchestrator monitors = insufficient_history ✓ (weather/earthquakes/domains/linkedin via short_span; social via never-produced — both insufficient, neither silently passed as healthy); darkweb = precision_feed_exempt with a valid declaration ✓.
+
+**Amendment exercised on the first run (requirement 2):** the expired-declaration path was proven live — pastebin, seeded with `review_by=2026-07-01`, reported `unverified_exemption / "review_by expired 2026-07-01"`, NOT exempt. Demo declaration deleted after; only darkweb's real declaration remains. The precision exemption is falsifiable and self-expiring as designed.
+
+**Coverage honesty (requirement 1):** court-registry does NOT pass as healthy — it reports `never_produced_in_806_runs→VarB` (Variant B's target, correctly not a Variant A regression). rss-sources reports `unevaluable` (the (unset)-origin attribution gap, P2) rather than a false verdict.
+
+**Not yet a scheduled probe** — audit-only, per the audit-before-blocking rule. Next: triage this output with the operator, then wire the query as a registered watchdog probe emitting one finding per producer (Variant B is the never-produced half: court-registry, social).
