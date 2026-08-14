@@ -1986,3 +1986,18 @@ Idea (operator): at `client_match`, on items about to be dropped, ask ONCE — d
 - **Verdict: the combined consultation UNION is NOT different from the parts.** ~15 (loose) or ~0 (tight) — same magnitude as every axis-by-axis measure. **No hidden trove.** And the client's own match_spec has a loose leg (bare "evacuation order") that recreates the broad-geo breadth problem one level up — the consultation is only as precise as its legs.
 
 **Cost/value read (not a decision):** the admission hook is the correct architectural fix (one consultation, right position — pre-gate), and its prerequisites are real (population path, category-at-gate ordering, geolocation, schedule table, rebuilt engine). But the deciding number says it recovers a **small** set that is precise only with disciplined match_spec legs, and confirms — a fourth time — that the **client-relevant surface is genuinely thin** (the client-match-starvation finding). Value is CORRECTNESS (catch the real near-asset wildfire the week it happens) not VOLUME. Measuring the union was the right test: it shows the union ≈ the best single axis, because the underlying relevant content is thin, not because the machinery is missing. Report only — no build.
+
+## WEEK'S CONCLUSION (2026-08-14) — COLLECTION is the product constraint. Relevance thread CLOSED.
+Four independent measurements converge on the same result:
+1. **Corpus analysis** — the RSS surface fetches abundant content; ~99% correctly drops at client_match (2-client roster).
+2. **Per-axis admission** — keyword (only live door) / geo (too wide raw, thin clean) / thematic (no door) / jurisdictional (~7-8 real events/wk).
+3. **Geo-admit distribution** — 342/wk naive = urban-centroid noise; ~16/wk clean remote-industrial.
+4. **Combined risk-category consultation** — union ≈ best single axis (~15/wk, all broad-region wildfire via a loose leg; tight legs ~0).
+**All four land on a handful of client-relevant items per week, for two clients, against a Canadian news RSS pipeline. Relevance engineering does not change this — the surface is thin, not the machinery missing.**
+
+- **Admission hook: correct fix, low volume, worth building for CORRECTNESS. PARKED, not cancelled.**
+- **Everything that would change OUTPUT is COLLECTION:**
+  1. Q2 counsel answer → person-entity monitoring → founder reputation.
+  2. Social + forum collection — dead since ~May.
+  3. BC Place event calendar — the only unblocked source found.
+- **Relevance thread STOPPED.** No further work on scoring / axes / admission until collection moves.
