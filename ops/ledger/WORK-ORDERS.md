@@ -1431,3 +1431,27 @@ Per ruling: source = **BC Daily Court Lists** (NOT CSO scrape, NOT CanLII). **Or
 - **Parse target:** per-courthouse court-list page (format — HTML vs PDF vs the CSO app's dynamic render — **not yet confirmed**; a build-time discovery, not assumed). Fields expected per entry: **party names**, file/court number, courtroom, time, hearing/proceeding type, registry location. The match field is **party name**.
 - **Match logic (org-only):** normalized **whole-word / token match** of client **organisation names + known legal-entity aliases** (e.g. BC Place → "BC Pavilion Corporation"/"BC Place"; PECL → "Petronas"/"Progress Energy"/"Coastal GasLink") against the party-name field. **NOT substring** (the exact defect that made the old monitor match "Canada"); **NOT person names** (deferred). A hit → one signal with the docket entry + registry location + hearing date, provenance = court list URL + date.
 - **Open items before build:** (1) CSO ToU ruling from counsel (gating); (2) confirm the live list format per courthouse (parse target); (3) courthouse scope — which registries to poll (client-location-relevant: Vancouver for BC Place; NE-BC / Prince George / Fort St. John for PECL). No build until the ToU clears and you approve the shape.
+
+## P1 SHIPPED (2026-08-14) — caller-stamped monitor_run_ledger. Orchestrator collection is now observable.
+
+WO-SILENT-ZERO-PROBE P1 (approved; built before Variant A per ruling). Design amended first: `is_precision_feed` is now **evidence-bound** — requires `expected_yield` (a rate) + `basis` (empirical artifact, darkweb's HIBP verification is the standard) + `review_by` (date; on expiry the exemption lapses and the probe fires). No permanent silencer.
+
+**Built:**
+- `public.monitor_run_ledger` (migration `20260814140000_create_monitor_run_ledger`, applied single-file; RLS-enabled at creation, service-role writes, no policy). Columns: monitor, action, caller, status, http_status, duration_ms, error, started_at. Consumer: silent-zero probe (named). Git parity file committed.
+- `osint-collector.delegateToFunction` writes one caller-stamped row per dispatch, **swallow-on-failure** (never fails dispatch — same rule as `ingest_decisions.recordDecision`). `caller` read from request body, default 'direct'.
+- `auto-orchestrator` passes `caller: 'auto-orchestrator'` in its osint-collector call.
+- Both deployed `--no-verify-jwt` (matches their `verify_jwt=false` config; no auth regression).
+
+**Verified end-to-end (live prod, one manual orchestrator run + one direct probe):**
+| monitor | caller | status | http | ms |
+|---|---|---|---|---|
+| monitor-earthquakes | p1-verify | ok | 200 | 448 |
+| monitor-earthquakes | auto-orchestrator | ok | 200 | 355 |
+| monitor-weather | auto-orchestrator | ok | 200 | 2014 |
+| monitor-social | auto-orchestrator | ok | 200 | 24434 |
+| monitor-linkedin | auto-orchestrator | ok | 200 | 3280 |
+| monitor-domains | auto-orchestrator | ok | 200 | 22520 |
+
+All five orchestrator-owned monitors — previously leaving **zero durable trace** — now have caller-stamped run records. `caller` correctly distinguishes orchestrator vs direct. This closes the P1 observability gap; the silent-zero probe's Variant A/B now has its run substrate for orchestrator monitors (cron monitors already have `cron.job_run_details` + `cron_heartbeat`).
+
+**Follow-ups (not P1):** (1) retention/purge cron for `monitor_run_ledger` (pattern: `purge-ingest-decisions-nightly`) before it grows unbounded; (2) Variant A (regression) next, per order. Forward-only — no backfill.
