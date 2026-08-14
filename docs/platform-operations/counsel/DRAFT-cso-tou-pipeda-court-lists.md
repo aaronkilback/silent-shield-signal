@@ -38,5 +38,15 @@ Separately, and **not** part of the initial build, we may later match **named in
 
 We are holding person-matching entirely pending this answer; the initial build is **organisation-name only**.
 
+## Q3 — Does a technical control (anonymization / aggregation / ephemeral matching) change Q1 or Q2?
+
+We want to know whether we can engineer around the authorization question rather than obtain authorization. **We suspect the answer is no, and we would rather hear that plainly than build a control that does not actually change our obligations.** Specifically:
+
+1. **Ephemeral matching** — if we match a record and then **discard the underlying court record immediately**, retaining nothing but the alert, does that change obligations that attach **at the moment of collection**? Our understanding is that collection triggers PIPEDA regardless of subsequent deletion, but we want it confirmed.
+2. **Hit/no-hit as personal information** — is a **"X appears / does not appear as a party" result about a named individual** itself personal information under PIPEDA, even when we retain none of the source record? I.e., does producing the *inference* attract the same obligations as retaining the record?
+3. **Purely aggregate product** — would a product exposing **only aggregate figures (counts by registry, sector, proceeding type, with no identifiers and no way to single out an individual or organisation)** fall **outside** both the CSO "resale or other commercial use" clause and PIPEDA? At what point does aggregation stop being a reuse of court-record information?
+
+Frame for all three: **we are asking whether a technical control can substitute for authorization.** If it cannot, we would rather know now and pursue authorization (or drop the capability) than rely on anonymization/aggregation as a compliance shortcut that does not hold.
+
 ## What we need back
-A go / no-go on Q1 (with any conditions or required authorization), and a risk assessment on Q2 with the obligations that would apply if we later proceed. Q1 is gating; Q2 is informational-but-important.
+A go / no-go on Q1 (with any conditions or required authorization), a risk assessment on Q2 with the obligations that would apply if we later proceed, and a direct answer on Q3 — whether any of anonymization, ephemeral matching, or aggregation removes the Q1/Q2 obligations, or whether authorization is required regardless. Q1 is gating; Q3 determines whether there is an engineering path around it (we expect not); Q2 is informational-but-important.
