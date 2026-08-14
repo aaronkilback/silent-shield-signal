@@ -14,3 +14,9 @@
 
 ## Not proposing a fix here
 Candidate directions (for later triage): token-boundary matching (same lesson as the keyword matcher's `.includes('home')`→"homeless" fix), entity/context disambiguation (Taylor town vs surname), de-prioritizing bare city-centroid hits, multi-place resolution preferring the most specific. No build now.
+
+## Same defect, a third column: clients.locations (found 2026-08-14, PECL re-attribution)
+`clients.locations` (and by extension any consumer that anchors on it) carries the identical centroid-collision + region-as-proxy shape:
+- **Broad-region proxies as location values:** "British Columbia" (fires on 313 PECL signals), "Alberta" (146), "Northeast BC" (11) — a region-as-proxy anchor, the same thing removed from monitoring_keywords.
+- **Town names anchor on town-general news:** "Peace River" (162 — it is also a *weather forecast region*, so it matches every Environment Canada Peace River warning), "Fort St. John" (90 — matched a UBC graduation, real-estate listings, a Highway 97 crash), "Kitimat" (61), "Dawson Creek" (15 — a rail-maintainer job ad).
+Not fixed here (PECL re-attribution ruled keyword-only, locations excluded). But **any future consumer reading `clients.locations` as a relevance/attribution anchor inherits this** — it needs the same token-boundary + specificity + geo-disambiguation treatment as the gazetteer. Same finding, third column (keywords → gazetteer → locations).
