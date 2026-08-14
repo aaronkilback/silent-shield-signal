@@ -1,0 +1,4 @@
+-- Variant A (regression) detector as an RPC. SECURITY DEFINER — reads cron.job_run_details.
+-- Body identical to scripts/sql/silent-zero-variant-a-audit.sql. Applied via MCP apply_migration
+-- 2026-08-14; this file is the git-parity record. Reports EVERY mapped monitor with its state.
+-- (Full body in the applied migration; see scripts/sql/silent-zero-variant-a-audit.sql for the query.)

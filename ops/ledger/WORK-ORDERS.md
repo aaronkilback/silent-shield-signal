@@ -1477,3 +1477,29 @@ WO-SILENT-ZERO-PROBE Variant A (regression), audit-only. Substrate: `monitor_pre
 **Coverage honesty (requirement 1):** court-registry does NOT pass as healthy — it reports `never_produced_in_806_runs→VarB` (Variant B's target, correctly not a Variant A regression). rss-sources reports `unevaluable` (the (unset)-origin attribution gap, P2) rather than a false verdict.
 
 **Not yet a scheduled probe** — audit-only, per the audit-before-blocking rule. Next: triage this output with the operator, then wire the query as a registered watchdog probe emitting one finding per producer (Variant B is the never-produced half: court-registry, social).
+
+## VARIANT A WIRED (2026-08-14) — silent-zero-probe registered, verified end-to-end, audit-only.
+
+`silent-zero-probe` edge function (verify_jwt=true; no-auth POST → 401 confirmed). Names aligned: cron jobname = heartbeat job_name = registry job_name = **silent-zero-probe-daily** (`47 5 * * *`, active, interval 1440). Detector = RPC `public.silent_zero_variant_a()` (SECURITY DEFINER, reads cron.job_run_details). Findings via `record_platform_finding` (category `coverage_health`) → neural page + daily email.
+
+**End-to-end test (invoked via the same net.http_post path cron uses):**
+- 2 regression findings, severity **low** (AUDIT), distinct fingerprints: `monitor-csis` (bs=5, rr=28), `monitor-instagram` (bs=19, rr=84).
+- 1 census finding, severity **info**: `Mode: AUDIT ... Prior runs: 0. States: healthy:3 [...], insufficient_history:9 [...], precision_feed_exempt:1, regression:2, unevaluable:1` — every non-healthy state visible, none omitted or passed as healthy.
+- Manual test heartbeat deleted afterward so the audit gate counts only SCHEDULED runs (audit = prior_completed_runs < 2 → scheduled runs 1 & 2 write findings at `low`/no-notify; run 3 promotes to `high`).
+
+**Requirements met:** one finding per regressing producer (distinct p_affected_job) ✓; unevaluable + insufficient_history reported as their own states in the census ✓; findings via record_platform_finding ✓; audit-only first two scheduled runs then auto-promote ✓. Not closed until two scheduled successes (Two-Successes-Before-Close), next two mornings.
+
+**Follow-up (noted):** platform_findings has no auto-resolve — a regression finding stays until a resolver clears it when the monitor produces again. Variant A only records; resolution is a separate concern.
+
+## LOG (2026-08-14) — canadian-sources "healthy" on rs=1 is thin (operator: do not band yet).
+`monitor-canadian-sources` classified healthy on a single signal in 7 days. Not banding the "healthy" floor now — 1/week may be that feed's real rate; want a month of data before picking a floor. Logged for revisit; do not act.
+
+## REPORT (2026-08-14) — RSS bulk-path attribution (P2 gap): the data already exists; fix is probe-side, no write change/backlog.
+
+The `unevaluable` state (monitor-rss-sources, 54–57% of intake) is NOT a missing-data problem. Evidence: of the 1,211 `(unset)`-origin signals in the last 30 days, **1,211 (100%) already carry a non-null `source_id`**, spanning **39 distinct `sources` rows, all resolving** to `sources`. The RSS path (`process-intelligence-document:1064`) writes `source_id` on every signal — it just doesn't set `raw_json.signal_origin`, which is the field the probe reads.
+
+**What making the dominant channel observable would take:**
+- **Preferred — probe-side (no write change, no backfill):** teach the silent-zero detector to attribute RSS/url_feed yield via `signals.source_id → sources.name` (or source type) instead of only `raw_json.signal_origin`. Makes `monitor-rss-sources` evaluable AND yields **per-source** granularity for all 39 feeds for free — which is exactly WO-COVERAGE's per-source track. Cost: a query change in the RPC; no migration, no backfill, no write-path edit.
+- **Redundant — write-side (stamp origin):** add `signal_origin: 'monitor-rss-sources'` to raw_json at process-intelligence-document:1094. One-line, but it only recovers channel-level attribution the `source_id` already provides, and would need a backfill for historical rows. Not recommended given source_id is 100% populated.
+
+Recommendation: close the P2 gap probe-side using the already-present `source_id`. Report only — no build.
