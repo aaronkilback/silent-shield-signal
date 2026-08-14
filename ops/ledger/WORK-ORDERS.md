@@ -1553,3 +1553,30 @@ Operator ruled these settled after reviewing a 100-row raw sample of last-7-day 
 **LEFT OPEN (not settled):** whether the `no_client_match` drops are *correctly* irrelevant vs client-relevant-but-missed. The earlier "genuinely irrelevant" judgement was made by the same matcher under question; operator is reading the 100-row raw sample directly. **Observation surfaced for that review:** a substantial slice of the sample is B.C. wildfire / state-of-emergency / B.C. weather-alert coverage — inside Fortress's own product scope (wildfire + emergency monitoring) though outside these two clients' keywords. Correct-filter vs missed-match is the operator's call; not asserted here.
 
 No fixes.
+
+## MECHANISM (2026-08-14) — the client_match gate is geography-blind and is the only live door in the RSS path. Confirmed. Evidence only.
+
+Operator verdict on the 100-sample: ~85% correct drops; one wrong cluster (BC wildfire/state-of-emergency ×11 + Cowichan/Aboriginal-title mapping PECL regional_activism + Energeticcity FSJ). Mechanism trace:
+
+### Q1 — client_match runs BEFORE any geo/hazard evaluation. A dropped wildfire is never seen by score_signal_hazard_pathway.
+- RSS funnel order (process-intelligence-document): **parse → client_match → relevance_score → insert.** `no_client_match` is a HARD drop at **process-intelligence-document:488-490**, *before* any signal row exists.
+- `score_signal_hazard_pathway` call sites (entire repo): **`ingest-signal:2007`** (post-insert, a DIFFERENT ingest path) and **`_shared/incident-creation-gate.ts:110,381`** (on already-existing signals). It is **not called anywhere in the RSS path.** It operates only on rows in `signals`.
+- Therefore: a BC wildfire item that drops at client_match **never becomes a signal → `score_signal_hazard_pathway` never sees it.** The geo/PostGIS/D6 pathway model runs **exclusively on signals that already passed the keyword gate.**
+
+### Q2 — keyword substring match is the ONLY live admission door in the RSS path.
+- `matchClientKeywords` (`_shared/keyword-matcher.ts` / `deterministic-matcher.ts`) is pure substring: `lowerText.includes(client.name / keyword / competitor / high_value_asset / location)`. **No geometry, no ST_Distance, no coordinates.** It matches a location only if the **literal name string** appears in the text — it cannot compute proximity. "Bald Range wildfire" contains no PECL keyword/location string → dropped.
+- A geo-aware matcher (asset-geo anchor + `shadow_geo_suppressed`) runs at the same stage but **in SHADOW only** (WO-GATE-PHASE3 slice 4a): it writes `ingest_shadow` and never alters `clientMatches`. The live drop (line 488) is decided by keyword `clientMatches` alone.
+
+### The confirmed implication — and it is compounded
+The operator's hypothesis holds: **every geo asset, every PostGIS calc, and the D6 pathway model operate on a set already filtered by a keyword gate that cannot see geography. The wildfire work runs downstream of a filter that drops wildfires.** Quantified (7d): **3,253 items keyword-dropped; 371 of them wildfire-class** (+71 weather, +20 other-hazard). None were geo-evaluated.
+
+**Second gate revealed by the shadow:** even if the geo door were opened, it would currently admit only **34 of 3,253** keyword-dropped items — `distinct_assets_would_hit = 1`. The geo path is **starved of asset geometry** (BC Place = 1 `client_geo_assets` row; PECL's NE-BC asset polygons = the geo-authoring deferred earlier). `shadow_geo_suppressed` flagged 122.
+
+**Three relevance axes, one live door:**
+1. **Keyword** (name/asset/location as literal string) — the ONLY live admission door.
+2. **Geographic proximity** (hazard near an asset) — SHADOW-only, and geometry-starved (would admit 34).
+3. **Risk-category / thematic** (PECL `regional_activism` / `activism_naming_pecl`; the Cowichan item) — **no live door in the RSS path at all** (the LLM relevance rule 14a for threat-patterns runs AFTER the keyword gate, so it never sees keyword-dropped items).
+
+The operator's 11 wildfire + Cowichan + FSJ items span all three axes; only axis 1 has a door. **Caveat:** the specific flagged fires (Bald Range/Summerland/Vernon = Okanagan, southern BC) are far from PECL's NE-BC assets — proximity-geo alone would not admit them; "province-wide state of emergency" is a broad-relevance signal none of the three axes captures. Fire DETECTION (CWFIS hotspots) IS covered — via `ingest-signal`/the dedicated wildfire pipeline, not the RSS news path; the gap is RSS hazard NEWS context.
+
+No fixes.
