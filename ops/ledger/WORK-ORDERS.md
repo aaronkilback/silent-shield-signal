@@ -1813,3 +1813,36 @@ Evidence only. No fixes.
 - **Sub-findings:** (a) the codebase already has a broader category set — `HIGH_VALUE_CATEGORIES` (`generate-executive-report:665`) includes `regulatory` + `operational` — used for signal filtering but NOT wired into the risk table; (b) the table ignores `high` severity entirely (only `critical` counts), so three high-severity signals read LOW.
 
 Evidence only. No design proposed.
+
+## DEFECT 1 — proposed rendering (report before build, one line).
+Ruling: stop rendering "Confidence: X"; replace with a deterministic ASSESSMENT-COVERAGE figure from the three inputs that exist (main-tier count · direct-attribution · citation coverage). No probability wording.
+
+PECL window computes: main-tier **2**, both **direct**-attributed, both **sourced** (usable 4, period 95).
+
+**Proposed line (replaces the `Confidence:` chip):**
+> `Assessment coverage: 2 main-tier signals · both directly attributed · both sourced (4 attributed of 95 collected)`
+
+- Labelled "Assessment coverage," not confidence. Counts, no percentages (nothing a reader can read as a probability of correctness). All three inputs shown; zero-main-tier degrades to "0 main-tier signals — not assessed." Awaiting operator wording ruling before building.
+
+## ARCHITECTURAL FINDING (2026-08-14) — populated per-client models sit unread; the client-facing assessment layer runs on hardcoded taxonomies + flat fields + LLM. ONE finding, not four defects.
+
+Operator directive: map every per-client assessment consumer against what it reads. Result — the pattern is systemic.
+
+**The three populated per-client models and who reads them:**
+| model | populated | readers |
+|---|---|---|
+| **client_risk_categories** | PECL **6** (wildfire_near_asset 0.95, credential_exposure_pecl 0.95, activism_naming_pecl 0.80, corridor_proximity, regional_activism, flaring_exclusion) | **ZERO — backend AND frontend.** Only consumer `compute-client-relevance` (g3) is DISABLED. Fully dead. |
+| **client_geo_assets** | PECL 14, BC Place 1 | infra/gating only: `score_signal_hazard_pathway`, `incident-creation-gate`, `client-mandate`, `monitor-geo-wildfire`. **No client-facing rendered assessment reads it.** |
+| **archetype** (`_shared/archetypes.ts`) | exists | `incident-creation-gate`, `monitor-social-unified`, `system-watchdog`, frontend `ClientSelector`. **No brief/scorer reads it.** |
+
+**What the client-facing ASSESSMENT consumers actually read:**
+| consumer (renders a per-client assessment/score) | reads risk_cat / geo / archetype? | reads instead |
+|---|---|---|
+| generate-executive-report — **risk table** | none | **hardcoded 4-factor taxonomy** (surveillance/protest/sabotage/critical) + flat fields (monitoring_keywords, high_value_assets, industry) |
+| ingest-signal / process-intelligence-document — **relevance / client_match** | none | flat fields (name/industry/locations/high_value_assets) + monitoring_keywords (keyword substring) |
+| assess-entity, detect-threat-patterns, predictive-incident-scorer, analyze-threat-escalation, model-geopolitical-risk, generate-poi-report | none | LLM-over-signals |
+| frontend RiskSnapshot / ClientRiskSnapshot / ThreatGlobe / EscalationProbabilityCard | none | signals / incidents / predictive_incident_scores (runtime) |
+
+**THE FINDING (one, architectural):** the client-facing assessment layer is **structurally decoupled** from the structured per-client models that exist and are populated. Assessments run on **hardcoded taxonomies** (risk table's 4 physical factors; HIGH_VALUE_CATEGORIES; frontend category lists), **flat client fields** (keywords/assets/industry), and **free LLM synthesis** — while `client_risk_categories` (0 readers), `client_geo_assets` (infra-only), and `archetype` (infra-only) sit unread. This is the SAME pattern already hit twice: the geo-admission gate ignores `client_geo_assets` (keyword-only), and the brief's risk table ignores `client_risk_categories`. **client_risk_categories is the starkest — a designed, weighted, per-client risk model with ZERO consumers in the entire codebase.**
+
+Consequence for CRT: BC Place (venue) is assessed by the same hardcoded pipeline taxonomy as PECL, with its own `client_risk_categories` empty and unread regardless. Rule the pattern, not the instance. Evidence only — no design.
