@@ -1580,3 +1580,25 @@ The operator's hypothesis holds: **every geo asset, every PostGIS calc, and the 
 The operator's 11 wildfire + Cowichan + FSJ items span all three axes; only axis 1 has a door. **Caveat:** the specific flagged fires (Bald Range/Summerland/Vernon = Okanagan, southern BC) are far from PECL's NE-BC assets — proximity-geo alone would not admit them; "province-wide state of emergency" is a broad-relevance signal none of the three axes captures. Fire DETECTION (CWFIS hotspots) IS covered — via `ingest-signal`/the dedicated wildfire pipeline, not the RSS news path; the gap is RSS hazard NEWS context.
 
 No fixes.
+
+## FRAME (2026-08-14) — four relevance axes; only one has a live door. Plus jurisdiction volume measurement.
+
+The RSS admission gate resolves relevance on FOUR distinct axes; only axis 1 has a live door:
+1. **Keyword** — name/keyword/competitor/asset/location as a literal `.includes()` substring. **LIVE — the only door.**
+2. **Geographic proximity** — hazard near a client asset polygon. **SHADOW only, and geometry-starved** (would admit 34/3,253; `distinct_assets_would_hit=1`; BC Place has 1 geo asset, PECL NE-BC polygons deferred).
+3. **Thematic / risk-category** — PECL `regional_activism` / `activism_naming_pecl` (e.g. Cowichan title ruling). **No RSS door** (LLM rule 14a runs after the keyword gate).
+4. **Jurisdictional / regional** — coarser than a named asset: a BC-wide state of emergency, a BC Supreme Court title ruling, a provincial regulatory change, a BCWS-wide posture shift is relevant to a BC client irrespective of distance to any polygon. **Does not exist as a concept anywhere in the pipeline.**
+
+Operator correction accepted: the flagged Bald Range/Summerland fires are Okanagan and would NOT be admitted by proximity either — they are axis-4 (BC-jurisdiction), which is the real gap.
+
+### Measurement — how much would a jurisdiction match admit, and what it does to volume (evidence only)
+**Heuristic (stated):** title-text proxy on the 7-day `no_client_match` drops (3,248). BC reference = title matches `british columbia` OR `B.C.` OR `\yBC\y`. Two gradations:
+- **Broad (any BC mention): 436 / 3,248 = 13.4%.** (Over-counts true jurisdiction relevance — includes "B.C. man charged in Ontario", "best B.C. cities to rent".)
+- **Scoped (BC + a jurisdiction-level term** — province/provincial/state-of-emergency/supreme-court/regulator/legislature/minister/BCWS/wildfire/evacuation/drought/flood): **191 / 3,248 = 5.9%.** (Closest to the operator's examples.)
+- For contrast, clearly NON-BC drops: Alberta/Calgary/Edmonton 316, US 134, other-provinces 174 — a jurisdiction match correctly excludes these.
+
+**(a) Answer:** a BC-jurisdiction match would admit **~191 (scoped) to ~436 (broad) of 3,248** — **6–13%.** NOT ~800. **It is an axis, not a filter-removal** by the operator's own test.
+
+**(b) Volume impact — but heavy relative to current intake.** Current signal creation (all origins, all clients, 7d): 29/61/26/14/5/11/3/5 = **~154/7d (~22/day, ~6/day the last four days).** Jurisdiction admit of 191–436/7d = **27–62/day**, i.e. **+1.2× (scoped) to +2.8× (broad) of total platform intake**, and an order of magnitude on the RSS-news portion specifically. Both current BC clients (BC Place, PECL) would receive the same BC-jurisdiction items, so per-client counts roughly double again.
+
+**Caveats:** title-only heuristic (undercounts BC items that don't name BC in the title; over-counts BC-named-but-not-jurisdictional in the broad tier). The operative subset (state of emergency / supreme court / regulatory) is inside the 191, smaller still. No design proposed.
