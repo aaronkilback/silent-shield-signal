@@ -1252,3 +1252,108 @@ The finding that matters most from the g3 Q2 analysis is **non-determinism, not 
 ## SIDE FINDING (2026-08-14) — naad emergency-alert feed produces 0 for BC clients (218 scanned, all filtered)
 
 `monitor-naad-alerts` heartbeat: `alerts_scanned: 218, signals_created: 0, french_filtered: 108, low_priority_filtered: 94`. A national emergency-alert feed (NAAD/Alert Ready) scans 218 alerts and creates **zero** signals — 108 dropped as French, 94 as low-priority. For a BC-based client roster (BC Place downtown Vancouver, PECL NE BC), an emergency-alert feed producing nothing warrants its own look: either the priority filter is too aggressive (dropping BC-relevant alerts as "low_priority") or the geographic/client matching never fires. Emergency alerts are exactly the high-value, time-critical class a protective platform should not be filtering to zero.
+
+## CORRECTION (2026-08-14) — both "dead feed" side-findings above were quiet-window snapshots; both feeds produce. Fresh evidence.
+
+The two side-findings above (cisa-kev empty-tech_stack skip; naad zero-yield) were logged from a single window ~18 days ago. Re-measured 2026-08-14 with live heartbeats + signal counts. **Both premises are false.** Neither is a fix; both are corrections of the earlier read.
+
+### CISA-KEV — tech_stack does NOT gate BC Place / PECL, and the feed produces
+- **tech_stack is populated for both flagship clients**: BC Place = 18 entries (`microsoft windows, cisco, fortinet, fortios, palo alto networks, pan-os, ivanti, citrix, netscaler, vmware, schneider electric, honeywell, johnson controls, zoom, atlassian`, …); Petronas Canada = 28 (adds OT/ICS: `siemens, rockwell automation, emerson, aveva, abb, ge digital, crowdstrike, splunk`, …). Both are **evaluated, not skipped**.
+- **Format**: `tech_stack text[]`, lower-cased vendor/product names ≥3 chars. Match (line 179): `kevHaystack = (vendorProject + ' ' + product).toLowerCase()`; a stack entry matches if `haystack.includes(entry)`. So entries must read like KEV's own vendor/product strings (`fortinet`, `pan-os`, `citrix`) — the current values already do.
+- **The 6 `clients_skipped_empty_tech_stack` are NOT the flagship clients.** Only **2 active** clients have empty tech_stack: `__platform_security__` and `Kilbacks` (internal/personal). The other 4 are inactive/shell/benchmark rows. `#256 Phase 4` (empty = skip, "no opt-in to global CVE feed") is correct policy and is doing the right thing.
+- **The feed produces**: 16 CVE signals in the last 30 days (last 2026-08-12). Last run: `recent_kev_entries: 3, signals_suppressed: 4, signals_created: 0` — the 3 recent KEV entries were **deduped** (`suppressed` = already-signalled CVE), not blocked. cisa-kev is a **precision feed by design**: output = (new KEV entries in a 3-day lookback, ~few/day) × (intersection with a client's stack). A 0-created run is the expected shape of a quiet KEV window, not a config failure. **"One field unlocks an entire feed" does not hold** — the field is per-client, both flagship clients have it, and the feed already yields.
+
+### NAAD — produces 100 signals/30d; the "0 created" window was genuinely quiet Canada-wide
+- **naad has 180 signals lifetime, 100 in the last 30 days, last 2026-08-10** (4 days before this read). It is bursty by nature — a national life-safety feed yields when a BC-relevant emergency fires, and nothing when Canada is quiet on BC. The observed `218 scanned / 0 created` is one quiet 15-min slice, not a structural zero.
+- **Priority filter (`classifyFromCap`)**: CAP severity tier → Fortress priority. Extreme→p1, Severe→p2, Moderate→p3, **everything else (Minor / Unknown) → p4**. `p4` is dropped (line 481). `responseType` evacuate/shelter bumps low/medium→high so evac orders survive regardless of tier. This drop is correct — a "Minor/Unknown" CAP alert is not an operator event.
+- **Geo-matching (line ~600)**: geography-first. `client.locations` matched **whole-word** (`\bloc\b` regex) against CAP `areaDesc`. Keyword fallback (≥6-char monitoring_keywords vs title+summary) fires **only if `areaDesc` is empty**. If no client matches AND severity≠Extreme → dropped as out-of-area (line ~640). Extreme alerts pass with `client_id=null` as platform life-safety notices.
+- **Real finding (measurability, not production): the `low_priority_filtered` counter is double-used.** It is incremented by BOTH the p4-severity drop (line 481) AND the out-of-area geo-gate drop (line ~640). So "94 low_priority" conflates "genuinely low-severity" with "BC-irrelevant / geo-elsewhere" — an operator cannot tell from the heartbeat whether the geo gate ever wrongly dropped a BC-relevant alert. The two drop reasons need separate counters before anyone can claim the geo gate is safe. **Secondary risk**: whole-word `client.locations ∈ areaDesc` is brittle against EC/CAP official area naming (forecast-region names, "Metro Vancouver – Central", etc.) — a real BC alert whose areaDesc doesn't contain a client location as a literal whole word is silently out-of-area'd. Neither is fixed here (report-only).
+
+## INVENTORY (2026-08-14) — collection surface beyond RSS news. Fleet state, no proposals.
+
+Registry + last-heartbeat, prod `kpuqukppbmwebiptqmog`. `interval=525600` (1yr sentinel) + `last_run=null` = **registered-but-dormant** (never scheduled to a real cadence). Running = recent succeeded heartbeat. "Yields" = distinct `signal_origin` in signals, last 30d.
+
+### BUILT + RUNNING (recent succeeded heartbeat)
+| Function | Cadence | Yields (30d) | Notes |
+|---|---|---|---|
+| monitor-rss-sources | 35min | **1216** (`(unset)` origin) | dominant intake; the funnel path |
+| monitor-naad-alerts | 15min (critical) | 100 | emergency/CAP — bursty |
+| monitor-geo-wildfire | 30min (critical) | 5 + bcws_active_fire 16 | wildfire |
+| monitor-cisa-kev | 12h | 16 | CVE/KEV precision feed |
+| monitor-news-google | 6h | 16 (last 07-30 — **silent 2wk**) | news API |
+| monitor-court-registry | 4h | **0 in 30d** | runs, produces nothing |
+| monitor-csis | 6h | 0 | runs, silent |
+| monitor-darkweb | 6h | 0 | runs, silent |
+| monitor-instagram | 2h | 0 | runs, silent |
+| monitor-journey-checkins | 5min | n/a (check-ins, not signals) | protective-detail |
+
+### BUILT + DORMANT (registered, never ran / 1yr sentinel interval)
+monitor-canadian-sources · monitor-community-outreach · monitor-domains · monitor-earthquakes · monitor-emergency-google · monitor-entity-proximity · monitor-facebook · monitor-github · monitor-linkedin · monitor-macro-indicators · monitor-pastebin (×2) · monitor-regional-apac · **monitor-regulatory-changes** · monitor-travel-risks · monitor-weather · monitor-wildfire-comprehensive · monitor-twitter (retired PROD-M). Function code exists; no live cadence.
+
+### Mapped to the operator's source-type list
+| Source type | State | Function |
+|---|---|---|
+| Court registry | **BUILT + running, 0 yield** | monitor-court-registry (4h, succeeded, no signals 30d) |
+| Regulatory | **BUILT + dormant** | monitor-regulatory-changes + retrieve-regulatory-document (exists, no cadence) |
+| Municipal / community | **BUILT + dormant** | monitor-community-outreach (built Feb 2026, registry sentinel, never ran) |
+| Permit | **NOT BUILT** | — |
+| Procurement | **NOT BUILT** | — |
+| Transit | **NOT BUILT** | — |
+| Event calendars | **NOT BUILT** | — |
+
+No proposals — inventory only.
+
+## REPORT (2026-08-14) — three silent/running feeds: court-registry, csis, darkweb. Sources + match + ever-produced.
+
+Evidence: `cron.job_run_details` (durable run history back to Mar 2026) + all-time `signals` origin production. All three are scheduled and running now; `cron_heartbeat` only retains ~3 days, so run history came from pg_cron's own log.
+
+### monitor-court-registry — FIXABLE FEED (wrong source + brittle match). Never produced in 806 runs.
+- **Queries** two RSS feeds: `courthouselibrary.ca/news-events/rss` (a law-**library news** feed) and `scc-csc.ca/case-dossier/info/rss-eng.aspx` (Supreme Court of Canada case dossiers). **Neither is the actual court registry** (BC Court Services Online / CSO). It is not reading filings against clients.
+- **Matches** on `content.includes(client.name.toLowerCase())` — the **full client name as a substring** ("bc place", "petronas canada"), plus a COURT_KEYWORDS gate on the SCC feed. A verbatim client name essentially never appears in a library news item or an SCC case title.
+- **Ever produced:** ran 806× (ok 640) Apr 2–Aug 14; **0 signals, ever.** Two compounding reasons (wrong source + exact-name match) → structurally zero. Never worked.
+
+### monitor-csis — REGRESSED FEED. Produced 19 signals, stopped 2026-06-23; still runs, 0 since.
+- **Queries** three live gov feeds: CSIS news atom (`canada.ca/en/security-intelligence-service.atom.xml`), Canadian Centre for Cyber Security threats API (`cyber.gc.ca/api/cccs/threats/v1/get`), Public Safety Canada publications RSS. Sources are healthy.
+- **Matches** per-client: an advisory attaches to a client if a client-name **word >3 chars** OR the client's **industry** string appears in the advisory text. **#256 removed the old `clients[0]` fallback** (which had silently cross-attributed every national advisory to the first client — a real cross-tenant defect).
+- **Ever produced:** ran 537× (ok 426) Apr 2–Aug 14; produced **19 signals May 12–Jun 23**, then **0**. The stop coincides with the #256 fallback removal: post-fix it yields only on a genuine per-client match, and generic national-security advisories rarely contain a client-name word or "energy"/"venue". Not broken — correctly strict, but the match is now too narrow to fire. Fixable via match scope; the #256 removal itself was a correctness fix (do not revert).
+
+### monitor-darkweb — PRECISION FEED, UNPROVEN. Never produced in 498 runs.
+- **Queries** HaveIBeenPwned: `breaches?domain=` (no key required) per client domain, and `pasteaccount/{email}` (requires `HIBP_API_KEY`) per client contact_email. Domain derived from `monitored_domains[]` → contact_email domain → org-name guess.
+- **Matches** a client when its domain appears in an HIBP domain-breach, or its email in a paste. 3 of 4 active clients have contact_email (Petronas, BC Place, Kilbacks) → it has inputs.
+- **Ever produced:** ran 498× (ok 424) Apr 11–Aug 14; **0 signals, ever.** Same expected-sparse shape as cisa-kev (breaches are rare), BUT 0/498 over 4 months is suspicious. Before calling it "working but quiet," worth verifying: (a) is `HIBP_API_KEY` set (else the paste half is silently skipped), and (b) does the derived domain (e.g. contact_email domain) actually match a breached domain in HIBP. Not proven fixable or dead without that check — report only.
+
+**Shapes differ, not grouped:** court-registry = never-worked (wrong source + exact-name); csis = regressed (was working, #256 narrowed the match); darkweb = precision/config, unproven (0/498 warrants a key+domain-derivation check).
+
+## RESULT (2026-08-14) — NAAD counter split deployed + measured. out_of_area is the MAJORITY of drops.
+
+Split `low_priority_filtered` into `severity_dropped` (p4 / low CAP severity) + `out_of_area_dropped` (geo-gate: no client location/keyword match, not Extreme). Instrumentation-only; `low_priority_filtered` retained as the combined total for continuity. Deployed to prod (`monitor-naad-alerts`, single-function, `--no-verify-jwt` to match its `verify_jwt=false` config; no-auth probe confirmed gateway unchanged, handler runs, 200).
+
+**Live measured split (deploy-verification run):** `scanned 216 → french 107 → severity_dropped 40 → out_of_area_dropped 53 → created 0` (40+53=93 = the old combined counter).
+- **out_of_area = 53 of 93 (57%) of the low-priority bucket, and 49% of all 109 non-french alerts.** It is the single largest drop reason after French. **NOT small — the brittleness is load-bearing, not theoretical.**
+- **Caveat before acting:** a large out_of_area is EXPECTED for a national feed on a BC roster — most of those 53 are genuinely Ontario/Alberta/Quebec/NS alerts that *should* drop. The split proves the geo gate is doing most of the filtering; it does NOT yet prove any BC-relevant alert is being wrongly dropped. The next cheap measurement is to sample the `areaDesc` of the out-of-area drops (already console.logged per drop) for BC place-names — if any BC areaDesc is being dropped on a whole-word miss, the brittleness is real; if all 53 are non-BC, it is correct. Location matching NOT changed (per ruling: measure first).
+- Retro note: the historical 30 days cannot be retroactively split (single combined counter until this deploy). The heartbeat distinguishes them going forward; the 216-alert corpus is stable hour-to-hour, so this run is representative of steady state.
+
+## REPORT (2026-08-14) — dormant-monitor triage: ever-worked vs never-wired (prep, no revive decision).
+
+For the 16 registry-dormant monitors. Evidence: ever-RAN = `cron.job_run_details` (Mar 2026→); ever-PRODUCED = `signals` origin. "Cheap revive" = code+cron proven by real output; "expensive" = never validated end-to-end.
+
+| Monitor | Ran ever? | Produced ever? | Class |
+|---|---|---|---|
+| monitor-canadian-sources | 7701× (ok 7698), last 08-14 | 24 (canadian_news_rss, last 07-22) | **LIVE** — runs as `monitor-canadian-every-30min`; registry name is stale, feed is not dormant |
+| monitor-community-outreach | 692× (ok 688), Apr22–May21 | 36 (Energetic City News) | **EVER-WORKED, stopped May 21** — cheap revive |
+| monitor-github | 228× (ok 156), Apr11–Jun7 | 2 | **EVER-WORKED (marginal), stopped Jun 7** — cheap revive, low yield |
+| monitor-macro-indicators | 124× since Apr13, last 08-14, **ok=0** | 0 | **WIRED + RUNNING + 100% FAILURE** — scheduled daily 4mo, never once succeeded. NOT cheap (needs debug) |
+| monitor-pastebin | 89× (ok 17, 81% fail), Apr11–May3 | 0 | **RAN-BUT-MOSTLY-FAILED, stopped May 3** — not cheap |
+| monitor-facebook | never ran standalone | 89 (via social-unified) | **SUPERSEDED** — facebook covered by `monitor-social-unified` (6071×, last 08-05) |
+| monitor-linkedin | never ran standalone | 0 standalone | **SUPERSEDED / never wired** — linkedin via social-unified |
+| monitor-wildfire-comprehensive | never ran (that name) | via monitor-wildfires | **SUPERSEDED** — wildfire live via `monitor-wildfires` (11496×) + `monitor-geo-wildfire` |
+| monitor-weather | **never ran** | 0 | **BUILT, NEVER WIRED** — expensive (unvalidated) |
+| monitor-earthquakes | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-domains | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-regulatory-changes | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-entity-proximity | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-emergency-google | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-regional-apac | **never ran** | 0 (Channel News Asia ×2 via other path) | **BUILT, NEVER WIRED** |
+| monitor-travel-risks | **never ran** | 0 | **BUILT, NEVER WIRED** |
+
+Summary: **cheap revive** = community-outreach, github (proven, just stopped). **Broken-but-wired** = macro-indicators (running, all-fail), pastebin (stopped, mostly-failed). **Superseded** = facebook, linkedin, wildfire-comprehensive. **Never-wired (expensive, unvalidated end-to-end)** = weather, earthquakes, domains, regulatory-changes, entity-proximity, emergency-google, regional-apac, travel-risks. **Stale registry name** = canadian-sources (actually live). No revive decision made — inventory prep only.
