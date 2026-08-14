@@ -1663,3 +1663,20 @@ Replicated the engine's resolution (gazetteer text-geocode) + proximity (ST_Dist
 - **Twist — exclude the 2 urban-centroid assets (NE-BC remote industrial only):** admit count drops **342 → 16** (all PECL: CGL corridor, Fort Nelson/Taylor/Jedney/McMahon/Younger plants, Montney/FSJ, Horn River; BC Place → 0). The remote-industrial proximity case is **~16/week — clean, feature-sized.**
 
 **Verdict (operator's test):** naive geo door = 342/week = DO NOT OPEN, but the cause is **geocoding precision, not buffer width.** Blockers before the door opens: (1) urban-centroid assets need a different axis (a downtown venue's relevance ≠ within-2km-of-stadium); (2) substring/disambiguation (Vancouver Island≠Vancouver, Taylor town≠surname); (3) the remote-industrial subset (~16/wk) already clears the bar. Read-only measurement; no build, no gate change.
+
+## RULINGS — CLOSE (2026-08-14). Four relevance axes measured; none open; each closure now evidenced.
+
+1. **Geo door: DO NOT OPEN.** 342/week fails the bar; narrowing buffers does nothing (admits are ≤2km — centroid collision, not proximity). Evidenced by the bimodal distribution (void between 2–30km).
+2. **Remote-industrial slice (16/week): VIABLE, PARKED.** Real, clean, clears the bar — but serves **PECL only, returns 0 for BC Place**. Not the priority while CRT is the commercial thread. Revisit if/when a remote/sparse-geography client is the focus.
+3. **The geo LIMIT (log explicitly):** geo proximity is an axis **for remote or sparse-geography clients only. It is NOT an axis for urban single-site clients.** A downtown venue (BC Place) is not a proximity problem — distance-to-asset carries no information when everything relevant AND everything irrelevant sits inside 2km. This is a **limit of the geo model, not a defect in it.** **BC Place needs a different relevance model; no amount of geometry authoring changes that** → belongs in the **archetype work**, not the geo work.
+4. **Geocoding defects (log separately — real independent of any axis):** city-centroid resolution (a city → one downtown point that swallows every incidental mention), "Vancouver Island" substring-matching "Vancouver", "Taylor Farms" substring-matching Taylor BC. Backlog: `WO-GEOCODER-PRECISION-01`.
+
+### The four-axis position (evidenced, not assumed)
+| Axis | State | Evidence |
+|---|---|---|
+| 1 Keyword | LIVE — only door | `matchClientKeywords` = pure `.includes()`; the entire admission gate |
+| 2 Geo proximity | CLOSED — engine exists, not opened | 342/wk naive = centroid noise; 16/wk remote-industrial (PECL-only) viable-parked; not an axis for urban clients |
+| 3 Thematic / risk-category | CLOSED — no RSS door | LLM rule 14a runs after keyword gate; never sees dropped items |
+| 4 Jurisdictional / regional | CLOSED — deferred | ~7–8 real events/wk, unreachable; needs a DETERMINISTIC event-classifier, not a string test |
+
+**Position:** four axes measured, none open, each closure evidenced rather than assumed. Nothing shipped on the relevance front — but the intake-decline diagnosis went from "corpus exhaustion" (wrong) to "client-match starvation of a healthy surface, with three unbuilt relevance axes and a fourth that is a model limit" (evidenced). Better fighting position than this morning. STOP.
