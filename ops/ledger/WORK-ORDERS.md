@@ -1897,3 +1897,13 @@ Spine is PERSON-CENTRIC (entity graph + relationships) — ties to entity-anchor
 
 ### The read on the operator's question
 Each archetype has a **distinct spine** (energy=corridor/hazard/activism · venue=event/crowd/transit/weather · principal=person/doxx/residence/court) — a single flat taxonomy cannot serve all three (this IS the risk-table defect). Within an archetype, clients share the spine and differ only in anchor values + weight tuning. **Evidence says: archetype-templated (per-archetype category set + default weights + match_spec shape + require_signal_category) WITH per-client override of the anchor lists and weights — NOT authorable-per-client (the one-off-script trap that doesn't scale), NOT purely templated (anchors are inherently client-specific).** The `assessable:false` matchers show the format already anticipates evidence-source bindings that the geo/court/entity work supplies. Evidence + shape only — no design, no build.
+
+## VENUE SPINE authored as template (2026-08-14) — docs/platform-operations/archetypes/venue-security-spine.md
+Full match_spec detail for BC Place to author anchors against. **Wired now:** protest_at_venue, credential_exposure, routine_ops_exclusion + keyword/named_place legs. **assessable:false (waiting on bindings):** event_calendar (NO source — the venue's #1 axis), transit_feed (NO source), geo_proximity (geo work; weak for downtown venue), entity (not wired). Finding: venue threat-detection is wired; its DEFINING relevance axes (event-day + transit) have no evidence source.
+
+## PRINCIPAL-PROTECTION spine is GATED, not merely unbuilt (record explicitly — do NOT scope as buildable).
+- **court_proceeding_exposure** — depends on **counsel Q1** (CSO ToU / court-list automated access). Blocked until Q1 answered.
+- **residence_route_proximity** — person-entity geo; **counsel Q2** (PIPEDA person-matching) attached.
+- **associate_network_threat** — `entity_relationships` over person entities; **Q2** attached.
+- **named_principal_threat + doxxing_exposure** — matching named individuals from the entity graph; **Q2** attached (the deferred person-matching capability).
+Net: the entire principal-protection spine is **person-entity-centric → Q2-gated**, and court_proceeding_exposure is additionally **Q1-gated**. It is NOT a buildable archetype today — it is counsel-gated. Only the energy spine (live) and the venue spine (partially wired) are buildable now.
