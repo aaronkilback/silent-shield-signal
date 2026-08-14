@@ -1521,3 +1521,23 @@ RPC replaced: `silent_zero_variant_a()` → **`silent_zero_scan()`** (plpgsql, S
 **Audit gate:** same as Variant A (prior scheduled runs <2 → `low`/no-notify; run 3 → `high`). Both variants share the gate; both start fresh (test heartbeat deleted). Two scheduled successes before close.
 
 **Discrepancy surfaced (operator predicted mostly insufficient_history):** actual per-source split is 49 never_produced + 20 regression + 21 healthy, NOT mostly insufficient. Reason: these RSS sources are OLD (created >30d), so a no-baseline old source is `never_produced`, not `insufficient`. **This 20-regressed / 49-dead active-RSS-feed split is itself a real hygiene finding** (dead feeds to deactivate; 20 recent regressions may corroborate the intake-decline investigation) — surfaced in the census, flagged here for operator action.
+
+## INVESTIGATION (2026-08-14) — the 49 never-produced + 20 regressed RSS sources. Evidence only.
+
+### The ~49–50 never-produced (active rss/url_feed, 0 lifetime signals)
+1. **What kind:** NOT dead URLs. **46/50 have been fetched, 43/50 fetched in the last 7 days.** Only **4 never fetched** (dead). **13 carry a fetch error** (404/auth/moved — some intermittent, overlap with recently-fetched). The dominant kind: **feeds that fetch 200 and parse fine but whose items fail client-match.** Of the 10 sources with funnel instrumentation (`ingest_decisions`, forward-only since 08-02): **261 items parsed → 259 dropped at `client_match` as `no_client_match`** (99%). 1 false_positive, 1 below_threshold, 1 not_inserted.
+2. **Ever fetched successfully:** YES — overwhelmingly. This is a "returns 200, content filtered" population, not a "404" population (4 exceptions).
+3. **When added / by what:** NOT one bulk import — spread across Mar→Jul. **16 of the 50 were added at 03:00–03:01 on weekly cadence = `autonomous-source-discovery`** (the weekly 03:00 job). So a recurring generator has been adding feeds that never produce (~16); the rest were added at assorted manual/import times. It is a recurring-generator pattern + assorted singletons, not a single event.
+
+### The 20 regressed (produced in 7–90d baseline, 0 in last 7d)
+4. **Stop dates do NOT cluster at 08-09.** Last-signal days spread 2026-07-28 → 08-06 (peak 07-29 = 4 sources, 08-06 = 3). **Caveat:** these are each feed's last signal *before* the 7-day-silent window (silent since 08-07); for low-base-rate feeds, last-signal dates naturally fall in the ~2 weeks before the window. So this is **consistent with thin feeds crossing the silence threshold at staggered times — NOT evidence of a single 08-09 event.**
+5. **Fetch status:** **all 20 are still fetched (200, recent); only 2 carry an error.** The regression is downstream (client_match/relevance), NOT fetch failure — same mechanism as the 49.
+
+### Does the corpus-exhaustion conclusion hold? — PARTIALLY; the mechanism was mis-located.
+The earlier read ("thin source surface, exhausted") was measured against producing sources and is **incomplete**. Fuller evidence:
+- The configured surface is **NOT dead or exhausted at the source level** — it fetches abundant content (261 parsed items from just 10 instrumented never-producers; 43/50 fetched this week; all 20 regressed still fetched).
+- The scarcity is **client-relevance, not source availability.** With **2 clients (BC Place, PECL)**, ~99% of a general-news firehose correctly drops at `client_match` as `no_client_match`. Sampled dropped titles confirm genuine irrelevance (Calgary housing, US crime, tech, sports, celebrity), with only marginal geo-adjacent misses ("PRRD … FSJ aquatics facility", "Metro Vancouver storm") — low security-relevance even if geo-matched.
+- **Conclusion:** it is not source exhaustion — it is **client-match starvation of an abundant, healthy source surface.** The bottleneck is the 2-client match surface, not the number of feeds. Adding more general feeds would not help (they would also drop at `client_match`). This is a **material correction of the exhaustion read**: the fix direction is the client/keyword match surface (or more clients), not more sources.
+- **Genuine source-health items (separate, small):** ~4 dead + ~13 errored feeds = ~17 to clean; ~16 discovery-added non-producers suggest `autonomous-source-discovery` is adding low-value feeds (generator-governance). These are hygiene, not the intake driver.
+
+Evidence only — no fixes.
