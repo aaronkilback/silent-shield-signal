@@ -2133,3 +2133,78 @@ They reach briefs exactly as they would if reviewed — because **the briefs do 
 PECL: **3 main-tier (relevance≥0.60) band signals, all 3 unreviewed.** These are the direct-attributed signals that reach PECL's brief — none carry a reasoning trail (though, per Q3, the brief wouldn't render it anyway). BC Place: 0 in-band (nothing to review — consistent with the 0.47% thin surface).
 
 **VERDICT.** Real gap (denominator correct), caused by an unretried fire-and-forget async review with no reconciliation, permanent (not queue lag). But the reasoning layer it drops is **not wired into any operator brief** — so the operator-visible consequence reduces to (i) missing incidents in the 0.60–0.64 promote sub-band (69% uncovered) and (ii) empty Reasoning-Trail panels on Signal-Detail drill-down. It is simultaneously the highest-*count* finding on the board and one of the lowest-*consequence*, because the layer is barely consumed. Two independent defects sit here: the delivery gap (fire-and-forget) AND the consumption gap (briefs ignore the output). Fixing delivery without wiring consumption changes nothing Vince sees except incident counts. **Evidence only — nothing built.**
+
+## TIER-2 REVIEW GAP — DOWNGRADED + split into two defects (2026-08-16, operator ruling)
+**Severity high→low, reason recorded in code (system-watchdog ~L2974).** It sat HIGH for 103 days as one of the lowest-consequence items on the board; that miscalibration is what made the watchdog hard to read. Ruling: **real defect, no client-facing consumer → low.** Not fixed — two independent defects in a layer briefs do not read is not worth build time while collection is the constraint. Deployed (verify_jwt=false).
+
+The gap is two independent defects. **Ordering is consumption-before-delivery** — wiring the reasoning layer into briefs is what would make the delivery gap matter, and there is no point retrying delivery of something nothing reads:
+
+**DEFECT A — CONSUMPTION GAP (must come first).** Briefs ignore `agent_review` and the review's composite re-score entirely. `generate-executive-report` reads `agent_review` 0 times and `composite_confidence` 0 times; `generate-daily-briefing` likewise. Only `_shared/fortress-operational-prompt.ts` consumes it (AEGIS chat + Signal-Detail "Reasoning Trail" panel). So the reasoning layer is invisible in every operator brief. **Until this is wired, fixing delivery changes nothing a client sees.** This is the gating half.
+
+**DEFECT B — DELIVERY GAP (the fixable half, but second).** `ai-decision-engine` (L803/L1205) fires review-signal-agent via `await fetch(... AbortSignal.timeout(20000))` — no retry, no queue, no reconciliation — so ~60% of reviews are lost permanently (all 52 unreviewed band signals >24h old; 0 in last 24h → permanent, not lag). Straightforward to fix (retry/queue/backfill), but pointless in isolation: retrying delivery of something nothing reads yields nothing client-visible. Only defensible AFTER Defect A.
+
+**Net.** Both parked while collection is the constraint. If/when the reasoning layer is wired into a brief (Defect A), Defect B becomes worth the retry work. Not before.
+
+## client_scheduled_conditions — TABLE + BC Place seed (2026-08-16)
+Built the temporal twin of `client_geo_assets`: per-client forward-looking state, read by a (future) scoring pass, **never written by ingest, never relevance-scored**. Table + seed only — NO scorer, join, or consumer built. State surface exists before anything reads it.
+- **Table:** `public.client_scheduled_conditions` (id, client_id FK→clients ON DELETE CASCADE, window_start/window_end date, condition_type, label, attributes jsonb, source, created_by, created_at). CHECK `window_end >= window_start` (single-day: ws=we; multi-day valid). **RLS enabled at creation, deny-by-default (0 policies)** — service-role write only. Indexes: (client_id, window_start, window_end), (condition_type). Git parity: `supabase/migrations/20260816150000_create_client_scheduled_conditions.sql`. Applied single-file via apply_migration (not db push).
+- **Seed:** 22 rows, condition_type='venue_event', source='bcplace.com/events-tickets manual 2026-08-16'. Verified: 22 rows, 1 multi-day (Canada Super 60, six-day window as ONE row), RLS on / 0 policies.
+- **Five load bands (ordered by crowd load at this venue):** concert=full_bowl (8) · cfl=strong (5) · mls=partial (7) · cricket=sustained (1) · community=minor (1). WWF Climb For Nature correctly community/minor (stair-climb, not a 50k bowl event), NOT weighted as a full house.
+- **Two data-quality notes carried IN the seed (not fixed):** WWF slug reuse (`source_slug='noahkahan-2'`, do-not-key-on-slug flagged); Seattle Sounders `rivalry:true` (Cascadia crowd profile — event_class alone does not capture it).
+
+## bcplace.com events widget — JSON ENDPOINT FOUND (2026-08-16) — feed is viable
+Browser discovery: **`https://www.bcplace.com/wp-json/wp/v2/event`** — open, unauthenticated, no nonce, paginated (`?per_page=100` → 80 events). WordPress core REST API over a custom post type `event` (rest_base `event`); NO The-Events-Calendar/Tribe/MEC plugin (checked `/wp-json/` index). Clean `title.rendered` + `link` per object. **One real limitation:** event DATES are unstructured prose inside `excerpt.rendered`/`content.rendered` (e.g. "Saturday, August 29 … 7:30 p.m. PT"); the only custom `meta` key is `event_subtitle` (empty) — there is NO machine-readable start/end date field. So an ingester would get clean titles/links for free but must parse dates out of prose. This converts the manual seed into a FEED candidate. Endpoint recorded; NO ingester built.
+
+## score_signal_temporal_context — form (b) scoring pass: TABLE built, FUNCTION staged, read-only proof (2026-08-16)
+Form (b) as scoped: a temporal twin of the hazard pathway. Given a signal + client, if the signal's date falls inside a `client_scheduled_conditions` window, write a shadow row (matched condition, load_band, factor). **Contract: does NOT touch relevance_score, does NOT touch the admission gate.** Mirror of hazard_pathway_scores MINUS the relevance coupling (hazard caps relevance_score; this one never does).
+- **Table BUILT + applied:** `public.signal_temporal_context_scores` (signal_id/client_id/matched_condition_id FKs, condition_type, matched_label, in_window, event_class, load_band, factor, window_start/end, reasoning). RLS enabled deny-by-default (0 policies). Git parity `supabase/migrations/20260816160000_create_signal_temporal_context_scores.sql`. Row written ONLY on a window match — no window ⇒ no row (never a factor of 1).
+- **Function STAGED, NOT applied:** `docs/platform-operations/backlog/WO-TEMPORAL-CONTEXT-SCORER-fn-STAGED.sql`. Held out of migrations/ because the factor NUMBERS await ruling. On ruling → dated migration + apply + controlled populate.
+- **PROPOSED FACTORS (multiplicative uplift, monotonic with venue crowd load):** full_bowl/concert 1.50 · strong/cfl 1.35 · partial/mls 1.20 · sustained/cricket 1.15 · minor/community 1.05 · no window → no row. PROPOSED rivalry modifier +0.10 (Sounders 1.20→1.30) — flagged separately (event_class alone doesn't capture Cascadia profile). Awaiting operator ruling before anything writes.
+
+### Read-only pass over BC Place's 377 existing signals — result
+- **By the defined mechanic (signal created-date ∈ window): 0 of 377 land.** Not sparsity — TEMPORAL MISALIGNMENT: the corpus is 2026-05-18…08-14; the first seeded window is 08-19 (5-day gap). The 22 windows are entirely forward of the entire signal history, so a backfill test is structurally guaranteed 0. First testable day = 2026-08-19 (Whitecaps v Houston Dynamo).
+- **But the content is heavily event-related: 139 of 377 (37%) mention an event term** (Whitecaps/Lions/concert/etc.). BC Place's stream is mostly sports/venue content — the concept is right, the data is aligned in TOPIC but not in TIME.
+- **Mechanic distinction surfaced for ruling:** the 139 are mostly event-REPORTING (recaps/announcements: "BC Lions Win", "Whitecaps exit Leagues Cup", "Concert Announcement Tease") dated off the event day. The date-in-window mechanic elevates signals that COINCIDE with an event (a protest ON match day — the stated intent), NOT signals ABOUT an event. So even with aligned dates those recaps would not all land, and that is correct behaviour.
+- Corpus relevance of the event-term signals sits 0.3–0.5 (below/at main-tier); a future COINCIDENT operational signal is what the factor would uplift. Nothing was written to signal_temporal_context_scores — the pass was run as a pure SELECT.
+
+**NET:** concept validated (surface exists, join works, mechanic is correct), but it cannot demonstrate a live hit until signals arrive on/after 08-19 coincident with a window. "Concept right, data too thin to show it" — confirmed on the TIME axis; the TOPIC axis shows the stream is event-dense, which is the encouraging half.
+
+## score_signal_temporal_context — FACTORS APPROVED + APPLIED; saturation answered; base rate reconstructed (2026-08-16)
+Factors ruled: **1.50/1.35/1.20/1.15/1.05 + rivalry +0.10 + no-row-for-no-window** — APPROVED. Function applied as dated migration `supabase/migrations/20260816170000_score_signal_temporal_context_fn.sql` (fn_exists=1). **No consumer wired; shadow store empty (function uninvoked).** Contract holds: never touches relevance_score, never touches admission.
+
+### Saturation question — answered (concern does not hold)
+No consumer exists, so clamping is a CONSUMER decision, not a factor property. Against BC Place's actual relevance distribution (n=377, mean 0.475, median 0.500, p90 0.632):
+- Only **32/377 (8.5%)** sit ≥0.667 (the 1.5x clamp zone) — and those are ALREADY ≥main-tier, so pinning them to 1.0 loses nothing that matters for surfacing.
+- **230/377 (61%)** sit in [0.40,0.60) — the band where 1.5x does discriminating, NON-saturating work (lifts to [0.60,0.90), crossing main-tier). A 0.45 protest on a concert night → 0.675 is the designed lift.
+- Verdict: the factor is NOT mostly saturating; its real work is sub-threshold promotion in the meaty middle. If zero clamping is ever wanted, a headroom form `rel + (1-rel)*(factor-1)` avoids it — noted, not built.
+
+### Coincide-not-about base rate — reconstructed over last 90 days (THE sharper finding)
+Reconstructed historical BC Place event days via web (Whitecaps/Lions home + concerts). **The 90-day window was atypical: FIFA World Cup 2026 occupied BC Place Jun 13–Jul 7 (7 matches), displacing normal Whitecaps/Lions schedules to Kelowna/away.** 13 confirmed event days total (7 FIFA-WC, 2 cfl, 3 mls, 1 concert AC/DC).
+- **8 non-event-topic signals coincided with an event day.** But they decompose to near-zero genuine signal:
+  - **5 are synthetic `[PATTERN]` meta-signals** (frequency spike / entity escalation / geographic cluster) — these coincide BECAUSE event days spike signal volume; they are echoes of event traffic, not independent coincidences. Circular.
+  - **2 are mis-attributed noise** — a Cisco SSRF CVE and an LNG-Canada flaring story (relevance 0), both matched to BC Place only via the short-substring fabrication surface. Not about the venue at all.
+  - **1 is genuinely coincident: "Fans Marching to BC Place" (06-24, WC match day, rel 0.5)** — crowd movement, security-relevant — and even that is event-adjacent.
+- **Base rate of genuine independent coincidence ≈ 1 in 90 days, and that 90 days included a once-in-a-generation World Cup.** In the normal Whitecaps/Lions cadence the count is effectively zero.
+
+**VERDICT (operator's own frame): closer to "correct and useless" than "once a month."** The mechanic is correct, but on this client's real signal stream it would fire on a genuine coincide-not-about signal about once per quarter at best — and the one historical window that exercised it (World Cup) is non-recurring. This is a **real but rare lever**, worth knowing BEFORE a consumer is built. It argues the consumer is low-priority relative to collection — the surface exists and is correct, but the event-day-coincident non-event signal it's designed to elevate barely occurs in the data. Recorded; no consumer wired.
+
+## TEMPORAL-CONTEXT: correct machinery, insufficient stream (2026-08-16, closed)
+Recorded per operator: score_signal_temporal_context is **correct machinery with insufficient stream to exercise it** — genuine coincide-not-about signals occur ~once/quarter on BC Place's stream, and the one 90-day window that exercised it (FIFA World Cup) is non-recurring. Consumer stays UNWIRED. Function live, shadow store empty, awaiting forward signal flow.
+
+## RELEVANCE-SCORE DISTRIBUTION = DEFAULT-DOMINATED, PLATFORM-WIDE (2026-08-16) — the bigger finding. Evidence only.
+The saturation analysis surfaced this and the operator asked to separate it. **The [0.40,0.60) clustering is NOT BC Place-specific and NOT a judgement distribution — it is a schema default masquerading as a score.**
+
+**1. Platform-wide, not client-specific.** In-band [0.40,0.60): BC Place 61.0% (230/377) · PECL 57.0% (1045/1834) · platform 60.6% (2314/3818). **Median 0.500 on every client.** Temporal context was just the first uplift pointed at a bulk band that every client shares.
+
+**2. The band is one spike.** Exact-value histogram, platform-wide (n=3818): **0.50 = 1,821 signals = 47.7% of ALL signals.** Then 0.30=15.3%, 0.40=7.2%, 0.70=5.2%, 1.00=4.7%. Genuinely-scored spread values (0.53, 0.54, 0.59…) are ≤1.7% each. Round buckets dominate; continuous judgement is the exception.
+
+**3. Root cause of the 0.50 spike = a DB COLUMN DEFAULT.** `signals.relevance_score` has `column_default = 0.5`. Any insert that does not explicitly set relevance_score lands at exactly 0.50. Corroboration:
+   - **74%** of the 0.50 signals (1,354/1,821) have NO origin metadata at all (raw_json has no signal_origin/monitor_name/source) — inserted bare.
+   - **95.1%** of the 0.50 signals have NO AI scoring trace (ai_confidence/confidence/relevance_reasoning/agent_review/ai_analysis absent) vs 91.0% for other values — 0.50 signals are ~2× barer than the rest.
+
+**4. The other spikes are their own defaults/buckets, not judgement either.**
+   - **0.70 (5.2%)** = the RSS path's null-default — `process-intelligence-document:1070` writes `relevance_score: signal.relevance_score || 0.7`.
+   - **0.30 (15.3%)** = an AI-PROMPT-instructed floor: the extraction prompt says "give 0.3 or lower to tangential / unverifiable / historical content" (process-intelligence-document lines 627/640/643) — a coarse instructed bucket, not a computed score.
+   - **0.40 (7.2%)** = includes the unresolved-geography hazard cap (`least(rel,0.40)` in score_signal_hazard_pathway) documented earlier, plus model hedging.
+
+**CONCLUSION (operator's hypothesis, confirmed): most signals were never really scored.** ~48% carry the schema default 0.50; a further ~28% carry coarse instructed/path buckets (0.30/0.70/0.40). The threshold question is **moot for the bulk band** — main-tier at 0.60, the composite gate, AND any uplift (temporal context or otherwise) are all operating on top of a default value for roughly half the corpus, not a per-signal judgement. An uplift mechanism pointed at [0.40,0.60) is promoting the same never-scored bulk regardless of which mechanism it is. This is upstream of, and larger than, temporal context. Evidence only — nothing built, no scorer changed.
