@@ -1,23 +1,22 @@
--- STAGED — NOT APPLIED. score_signal_temporal_context (form (b), temporal twin of
--- score_signal_hazard_pathway). Held out of supabase/migrations/ deliberately: the factor
--- NUMBERS below are a PROPOSAL awaiting the operator ruling (2026-08-16 — "propose them, do
--- not assume; I want to see the numbers before they are written"). On ruling, move this into a
--- dated migration + apply_migration (single-file), then run a controlled populate.
+-- score_signal_temporal_context (form (b), temporal twin of score_signal_hazard_pathway).
+-- Factors APPROVED by operator ruling 2026-08-16 (after the saturation question was answered:
+-- only 8.5% of BC Place signals sit in the 1.5x clamp zone and those are already ≥main-tier;
+-- 61% sit in [0.40,0.60) where 1.5x does non-saturating discriminating work).
 --
 -- Contract (locked by ruling): mirrors the hazard pathway EXCEPT it NEVER touches
 -- signals.relevance_score and NEVER touches the admission gate. A row is written ONLY when a
 -- signal date falls inside a client_scheduled_conditions window. No window ⇒ NO row (never a
--- factor of 1). Output lands in signal_temporal_context_scores (already created + RLS-on).
+-- factor of 1). Output lands in signal_temporal_context_scores (RLS-on, deny-by-default).
+-- NO CONSUMER is wired — this only populates the shadow store.
 --
--- ── PROPOSED FACTORS (multiplicative uplift; monotonic with crowd load at this venue) ──
+-- ── APPROVED FACTORS (multiplicative uplift; monotonic with crowd load at this venue) ──
 --   full_bowl  (concert)   1.50   ~54k single-night sellout — peak crowd/target density
 --   strong     (cfl)       1.35   large draw, regular cadence, rarely a full bowl
 --   partial    (mls)       1.20   lower-bowl configuration, moderate draw
 --   sustained  (cricket)   1.15   multi-day; persistent but lower PER-DAY density
 --   minor      (community) 1.05   not a bowl event; barely above neutral
 --   no window              (no row — absence is neutral, never written as 1.0)
---   PROPOSED rivalry modifier: +0.10 when attributes.rivalry=true (Sounders 1.20 → 1.30).
---     Flagged separately because event_class alone does not capture the Cascadia crowd profile.
+--   rivalry modifier: +0.10 when attributes.rivalry=true (Sounders 1.20 → 1.30) — APPROVED.
 
 create or replace function public.score_signal_temporal_context(p_signal_id uuid)
 returns jsonb

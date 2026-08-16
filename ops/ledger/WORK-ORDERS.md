@@ -2168,3 +2168,22 @@ Form (b) as scoped: a temporal twin of the hazard pathway. Given a signal + clie
 - Corpus relevance of the event-term signals sits 0.3–0.5 (below/at main-tier); a future COINCIDENT operational signal is what the factor would uplift. Nothing was written to signal_temporal_context_scores — the pass was run as a pure SELECT.
 
 **NET:** concept validated (surface exists, join works, mechanic is correct), but it cannot demonstrate a live hit until signals arrive on/after 08-19 coincident with a window. "Concept right, data too thin to show it" — confirmed on the TIME axis; the TOPIC axis shows the stream is event-dense, which is the encouraging half.
+
+## score_signal_temporal_context — FACTORS APPROVED + APPLIED; saturation answered; base rate reconstructed (2026-08-16)
+Factors ruled: **1.50/1.35/1.20/1.15/1.05 + rivalry +0.10 + no-row-for-no-window** — APPROVED. Function applied as dated migration `supabase/migrations/20260816170000_score_signal_temporal_context_fn.sql` (fn_exists=1). **No consumer wired; shadow store empty (function uninvoked).** Contract holds: never touches relevance_score, never touches admission.
+
+### Saturation question — answered (concern does not hold)
+No consumer exists, so clamping is a CONSUMER decision, not a factor property. Against BC Place's actual relevance distribution (n=377, mean 0.475, median 0.500, p90 0.632):
+- Only **32/377 (8.5%)** sit ≥0.667 (the 1.5x clamp zone) — and those are ALREADY ≥main-tier, so pinning them to 1.0 loses nothing that matters for surfacing.
+- **230/377 (61%)** sit in [0.40,0.60) — the band where 1.5x does discriminating, NON-saturating work (lifts to [0.60,0.90), crossing main-tier). A 0.45 protest on a concert night → 0.675 is the designed lift.
+- Verdict: the factor is NOT mostly saturating; its real work is sub-threshold promotion in the meaty middle. If zero clamping is ever wanted, a headroom form `rel + (1-rel)*(factor-1)` avoids it — noted, not built.
+
+### Coincide-not-about base rate — reconstructed over last 90 days (THE sharper finding)
+Reconstructed historical BC Place event days via web (Whitecaps/Lions home + concerts). **The 90-day window was atypical: FIFA World Cup 2026 occupied BC Place Jun 13–Jul 7 (7 matches), displacing normal Whitecaps/Lions schedules to Kelowna/away.** 13 confirmed event days total (7 FIFA-WC, 2 cfl, 3 mls, 1 concert AC/DC).
+- **8 non-event-topic signals coincided with an event day.** But they decompose to near-zero genuine signal:
+  - **5 are synthetic `[PATTERN]` meta-signals** (frequency spike / entity escalation / geographic cluster) — these coincide BECAUSE event days spike signal volume; they are echoes of event traffic, not independent coincidences. Circular.
+  - **2 are mis-attributed noise** — a Cisco SSRF CVE and an LNG-Canada flaring story (relevance 0), both matched to BC Place only via the short-substring fabrication surface. Not about the venue at all.
+  - **1 is genuinely coincident: "Fans Marching to BC Place" (06-24, WC match day, rel 0.5)** — crowd movement, security-relevant — and even that is event-adjacent.
+- **Base rate of genuine independent coincidence ≈ 1 in 90 days, and that 90 days included a once-in-a-generation World Cup.** In the normal Whitecaps/Lions cadence the count is effectively zero.
+
+**VERDICT (operator's own frame): closer to "correct and useless" than "once a month."** The mechanic is correct, but on this client's real signal stream it would fire on a genuine coincide-not-about signal about once per quarter at best — and the one historical window that exercised it (World Cup) is non-recurring. This is a **real but rare lever**, worth knowing BEFORE a consumer is built. It argues the consumer is low-priority relative to collection — the surface exists and is correct, but the event-day-coincident non-event signal it's designed to elevate barely occurs in the data. Recorded; no consumer wired.
