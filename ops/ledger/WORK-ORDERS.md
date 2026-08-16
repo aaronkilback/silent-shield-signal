@@ -2105,3 +2105,14 @@ Every ingested item is evaluated at `client_match` against ALL active clients �
 **The earlier "no starvation" (slice cap) conclusion HOLDS** — the cap does not exclude BC Place. This is a distinct false positive from Rule T3's definition.
 
 **The real signal underneath (the demo concern is valid, cause differs):** BC Place's thin YIELD — 12 signals/7d, 0 on most days — is the collection thin-surface finding (a venue against a Canadian-news RSS pipeline), NOT a coverage failure. Fix directions (not built): (a) Rule T3 should use `ingest_decisions.clients_evaluated` (processed) vs signals-produced (yield) — coverage ≠ yield; (b) the demo sparsity is the collection problem (event-calendar / archetype), unfixable by the watchdog. Read-only.
+
+## WATCHDOG Rule T3 — FIXED + PROVEN (2026-08-16). Coverage now = clients_evaluated (processing), not signals (yield).
+system-watchdog Rule T3 gained Source 3: `ingest_decisions.clients_evaluated` in the window. A client evaluated at client_match is COVERED regardless of yield.
+**Proof (before → after):**
+- BEFORE: `Client coverage gap: BC Place …` (medium, occ 5, since 08-09) + `… Kilbacks …` (occ 4, since 08-13) — both firing daily.
+- Deploy fix → re-run watchdog (19:49, http 200) → **neither re-emitted** (last_seen stayed 19:48:12, occ held 6/5). Then **resolved both** (resolved_at 19:50).
+- (First deploy attempt was truncated/incomplete — an intervening run on OLD code bumped occ 5→6 / 4→5; the confirmed second deploy is what the 19:49 clean run validates.)
+Two false findings that had been on the board a week are cleared. Same class as the instagram double-listing (yield≠coverage). Rule T3 will now only fire on GENUINE non-coverage (client not evaluated at all).
+
+## THE NUMBER THAT MATTERS (2026-08-16) — BC Place week is essentially empty. Collection, not coverage.
+**BC Place: 3,403 items evaluated at client_match in 7 days, 16 matched, 12 signals — a 0.47% match rate.** The demo client's week is essentially empty. This is the **collection thin-surface finding** (a venue against a Canadian-news RSS pipeline), NOT a coverage failure — BC Place is processed on every item; there is almost nothing about it to find. **This is what Vince would see if he logged in today.** The levers that change it are the recorded ones: BC Place event calendar (the only unblocked source), the venue archetype spine, and person-entity monitoring (Q2). The watchdog fix removes the false alarm; it does not change the 0.47%.

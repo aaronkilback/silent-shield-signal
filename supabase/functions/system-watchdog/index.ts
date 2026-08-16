@@ -3879,16 +3879,35 @@ Deno.serve(async (req) => {
             (signalClients || []).map((s: any) => s.client_id).filter((id: any) => !!id)
           );
 
-          const gaps = eligible.filter((c: any) => !seenNames.has(c.name) && !seenIds.has(c.id));
+          // Source 3 (2026-08-16): clients EVALUATED at the client_match stage in the window
+          // = coverage (its keywords were checked against ingested items), NOT yield. Rule T3
+          // previously equated coverage with a produced signal (Source 2) + rejection_samples
+          // (Source 1, written ONLY by monitor-social-unified — dead since Aug 5). So a client
+          // processed 243×/24h but producing 0 signals (thin surface) was falsely flagged
+          // "not processed". clients_evaluated distinguishes processed-with-no-yield from truly-uncovered.
+          const { data: evalRows } = await supabase
+            .from('ingest_decisions')
+            .select('clients_evaluated')
+            .eq('stage', 'client_match')
+            .gte('last_seen_at', coverageWindowStartIso);
+          const seenEvaluated = new Set<string>();
+          for (const r of evalRows || []) {
+            if (Array.isArray(r.clients_evaluated)) {
+              for (const id of r.clients_evaluated) if (id) seenEvaluated.add(id);
+            }
+          }
+
+          const gaps = eligible.filter((c: any) =>
+            !seenNames.has(c.name) && !seenIds.has(c.id) && !seenEvaluated.has(c.id));
 
           for (const c of gaps) {
             behavioralFindings.push({
               category: 'mission_effectiveness',
               severity: 'medium',
               title: `Client coverage gap: ${c.name} not processed by any monitor in ${COVERAGE_WINDOW_HOURS}h`,
-              analysis: `Client "${c.name}" (id=${c.id}) is active and non-fixture, but no monitor's rejection_samples or signal output references them in the last ${COVERAGE_WINDOW_HOURS}h. Likely causes: (a) client missing monitoring_keywords/entities/archetype, (b) clients.slice(0,N) cap excluding them, (c) all queries for this client produced empty payloads and never landed in samples.`,
-              plainEnglish: `This client may be invisible to monitors right now. Operator-configured intent may not be reaching runtime, or the client is being deprioritized by iteration caps.`,
-              action: `Check (1) client.monitoring_keywords + monitoring_config.archetype populated, (2) entities under this client have active_monitoring_enabled=true, (3) the client appears in clients ordering before the slice(0,4) cap. Tracked: PROD-N architectural review gate (client prioritization).`,
+              analysis: `Client "${c.name}" (id=${c.id}) is active and non-fixture, but NO monitor evaluated them at the client_match stage, produced a signal for them, or referenced them in rejection_samples in the last ${COVERAGE_WINDOW_HOURS}h. This is genuine non-coverage (not merely zero yield — clients_evaluated is now checked). Likely causes: (a) client missing monitoring_keywords/entities/archetype, (b) a clients.slice(0,N) cap excluding them, (c) the ingest funnel not running.`,
+              plainEnglish: `This client is invisible to monitors right now — its keywords are not even being checked against incoming intelligence. Operator-configured intent is not reaching runtime.`,
+              action: `Check (1) client.monitoring_keywords + monitoring_config.archetype populated, (2) the ingest funnel (monitor-rss-sources → process-intelligence-document) is running, (3) the client is not excluded by a slice(0,N) cap. NOTE: zero-yield-but-processed is NOT a coverage gap — that is a thin-surface/collection issue, and clients_evaluated now excludes it.`,
             });
           }
         } catch (covErr) {
