@@ -304,8 +304,14 @@ Deno.serve(async (req) => {
     // ── USABILITY: a brief may ONLY be built on signals with a POSITIVE verified attribution
     // (direct/competitor/sector). Loose-matched rows (client_id set by the pre-cutover matcher, no
     // verified attribution) are NOT usable — do NOT loosen to admit them; re-attribution is the path.
+    // is_authoritative=true REQUIRED (2026-08-16): mirror the none-exclusion's authoritative filter
+    // (L300). Without it, the positive read admitted non-authoritative rows — the write/read asymmetry
+    // that let yesterday's is_authoritative=false PECL positives render as attributed. The write-fix
+    // (promoting those 288 to authoritative via append-only supersede) landed first, so requiring the
+    // flag here is now symmetric and non-breaking; doing it before the write-fix would have flipped
+    // PECL to insufficient_data. See ops/ledger/WORK-ORDERS.md ITEM 1.
     const { data: _posAttrRows } = await supabase.from('signal_client_attributions')
-      .select('signal_id, attribution_type').eq('client_id', client_id).in('attribution_type', ['direct', 'competitor', 'sector']);
+      .select('signal_id, attribution_type').eq('client_id', client_id).eq('is_authoritative', true).in('attribution_type', ['direct', 'competitor', 'sector']);
     const _posSet = new Set((_posAttrRows || []).map((a: any) => a.signal_id));
     const _directSet = new Set((_posAttrRows || []).filter((a: any) => a.attribution_type === 'direct').map((a: any) => a.signal_id));
     const signals = signalsAfterNone.filter((s: any) => _posSet.has(s.id));
