@@ -2033,3 +2033,17 @@ Overarching: social/forum collection was built on **Google CSE + deprecated Meta
 - **Verdict: the operator's instinct on VALUE is right** (Reddit is where "has anyone dealt with this person" threads live — high-value for founder reputation) **but "free API, workable terms" is not the 2026 reality for commercial use.** It is the highest-value AND highest-walled source: free is non-commercial (non-compliant for the product), commercial is a $12k/mo floor + approval. Realistic paths: a licensed data reseller, or the $12k tier — not the free API.
 
 **Cross-cut:** both confirm the structural lesson — every live social path is paid or licensed, and the *entry* prices advertised ($100 X, free Reddit) are not the *commercial* prices ($400/mo X at current cadence; $12k/mo Reddit). X is still the cheapest real path (~$400/mo or ~$100 re-scoped); Reddit is high-value but $12k-floored. Report only — no build, no spend.
+
+## X SIGNALS-PER-DOLLAR — historical yield measurement (2026-08-16, read-only). Token verified (402 credits-depleted, not 401).
+Before funding X pay-per-use credits, measured what X-origin monitoring actually yielded Apr–Jul (origin monitor-twitter/twitter).
+1. **Total X-origin signals:** 23 over 2026-04-03 → 08-10 (~4 months); 18 active days; **~1.28/active day.**
+2. **Quality-active** (is_test=false, not deleted, quality active): **8 of 23** (15 were test/deleted/quarantined).
+3. **Attribute positively under the current deterministic matcher:** **1** (PECL) + 0 (BC Place) = **1.**
+4. **Reach main-tier (rel ≥ 0.60):** **1** — the same one.
+5. **Split:** Petronas 6 active → 1 attributed/main-tier; BC Place 2 active → 0.
+
+**The one signal:** *"Stand.earth activists protest at RBC CEO's home over Coastal [GasLink]"* (rel 0.80) — a genuinely relevant CGL-activism item. So X *can* surface the right kind of signal; it did so **once in four months.**
+
+**Signals-per-dollar verdict:** ~4 months of X monitoring, for the current 2-client keyword config, produced **ONE attributed main-tier signal.** At the sizing report's cost that is **~$1,600 per main-tier signal** (~$400/mo × 4mo at current cadence), or ~$400/signal even re-scoped to ~$100/mo. The operator's "two vs twenty" test lands at **~one.** Poor signals-per-dollar for the current config.
+
+**Caveat (honest):** this measures X against the CURRENT client-KEYWORD config (PECL/BC Place). The **founder-reputation** direction would query X for PERSON names (Q2-gated) — a DIFFERENT query pattern this historical yield does NOT test. X-for-founder-reputation could differ; X-for-current-2-client-keywords is ~1/4mo. Token confirmed valid (402 credits-depleted, authenticates); funding is the only remaining step, but the historical yield argues against it for the current config. Read-only — no writes, no credits funded.
