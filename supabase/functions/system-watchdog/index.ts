@@ -2972,13 +2972,26 @@ Deno.serve(async (req) => {
         const withAgentReview = tier2Eligible.filter(s => s.raw_json?.agent_review);
         const coveragePct = Math.round((withAgentReview.length / tier2Eligible.length) * 100);
         if (coveragePct < 70) {
+          // Severity DOWNGRADED high→low 2026-08-16 (operator ruling). This
+          // finding sat HIGH for 103 days while being one of the lowest-
+          // consequence items on the board — a miscalibration that made the
+          // watchdog hard to read. It IS a real defect (unretried fire-and-
+          // forget in ai-decision-engine loses ~60% of reviews permanently),
+          // but agent_review has NO client-facing consumer: generate-executive-
+          // report / generate-daily-briefing read neither agent_review nor the
+          // review's composite re-score. Only AEGIS chat + the Signal-Detail
+          // "Reasoning Trail" panel consume it. So the reasoning layer being
+          // absent is invisible in every operator brief. Consequence bounds to
+          // missed incidents in the 0.60-0.64 promote sub-band. Real defect, no
+          // client-facing consumer → low. See ops/ledger/WORK-ORDERS.md
+          // (DELIVERY GAP / CONSUMPTION GAP — consumption before delivery).
           behavioralFindings.push({
             category: 'behavioral_health',
-            severity: 'high',
-            title: `Tier-2 review gap: only ${coveragePct}% of eligible signals reviewed`,
-            analysis: `${withAgentReview.length} of ${tier2Eligible.length} signals in the tier-2 band (composite 0.60-0.75) from last 48h have agent_review. Expected ≥70%.`,
-            plainEnglish: `Signals in the tier-2 review band are landing without the deeper AI context that explains why they matter. Operators see borderline-relevance threats without reasoning.`,
-            action: `Check ai-decision-engine logs — review-signal-agent may not be firing for tier-2-eligible signals (composite_confidence in [0.60, 0.75)).`,
+            severity: 'low',
+            title: `Tier-2 review gap: ${coveragePct}% of eligible signals reviewed (real defect, no client-facing consumer)`,
+            analysis: `${withAgentReview.length} of ${tier2Eligible.length} signals in the tier-2 band (composite 0.60-0.75) from last 48h have agent_review. Real delivery defect (unretried fire-and-forget review loses the tail permanently), but no brief consumes agent_review, so operator-visible consequence bounds to missed incidents in the 0.60-0.64 promote sub-band. Fixing delivery alone changes nothing a client sees — consumption must be wired first.`,
+            plainEnglish: `The deeper-reasoning layer is missing on borderline signals, but no client report reads that layer anyway, so nothing a client sees changes. Recorded as a real defect held below the notify line until the reasoning layer is wired into briefs.`,
+            action: `Do not fix delivery in isolation. Sequence is consumption-before-delivery: wire agent_review into briefs first (that is what would make the gap matter), then fix the fire-and-forget retry. See ledger.`,
           });
         }
       }
