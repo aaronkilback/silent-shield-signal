@@ -2287,3 +2287,10 @@ Operator ruled: fix write-first. Gating check first (as instructed): **the appen
 **Deploy safety (platform-wide):** only two clients have ANY positive attributions — PECL (288 authoritative post-fix) and BC Place (167 authoritative). No other client exists to flip. The L308 change breaks no client.
 
 **Recorded follow-up (not fixed):** `is_authoritative` is writer-set with NO promoting trigger and default=false — a writer that omits it silently mints non-authoritative rows (the exact 08-14 failure). The write path should default-or-assert authoritative on the current attribution, or a promote-on-supersede mechanism should exist. Latent; logged for a ruling, not touched here.
+
+## WO-ATTRIBUTION-AUTHORITY-DEFAULT-01 — logged (2026-08-16, options only, DO NOT BUILD)
+Promoted from a flagged note to a work order per operator: `is_authoritative` is writer-set, default false, nothing promotes it → an omitting writer mints rows the ledger doesn't consider true while a consumer reads them anyway. **Same shape as the 0.5 relevance default: absence rendering as a usable value.** Target discipline = ingest_decisions "NULL = never scored, never coalesce." Full WO: `docs/platform-operations/backlog/WO-ATTRIBUTION-AUTHORITY-DEFAULT-01.md`. Options:
+1. DEFAULT true + explicit demote — GUESSES true on omission (over-authoritative, arguably worse). REJECT.
+2. **NOT NULL, no default — FAILS LOUD** (omitting writer errors at INSERT). Recommended; prereq = inventory+fix writers first. Direct analog of the never-coalesce discipline.
+3. promote-on-supersede trigger — handles the supersede lifecycle + single-authoritative invariant but does NOT force declaration at insert. Complementary to (2), best paired with a partial-unique index `(signal_id,client_id) WHERE is_authoritative`.
+Recommendation for ruling: Option 2 primary (fail loud), optionally + the partial-unique index from Option 3. Not built. Operator also to close ITEM 1 on OUTPUT by regenerating PECL through the Reports UI (SQL-reconstructed coverage "2 main-tier / 4 attributed" pending live confirmation).
