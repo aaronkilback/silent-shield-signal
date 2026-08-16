@@ -2084,3 +2084,24 @@ Five steps per source (quality-active → positively-attributed via deterministi
 Two things true at once: (a) as an **asset-keyword** instrument on the current 2-client config, X is the worst value on the platform (1 signal/150d, ~$1,600). (b) The metric measures **corporate keyword yield** and is the **WRONG instrument for principal-threat detection, which is a rare-event problem** — a rare-event source is not judged by average yield. The single X-attributed signal in 150 days — **"Stand.earth activists at an executive's residence"** — was **person-centric, the exact class the metric undervalues.** **X reopens if/when Q2 clears AND a principal-protection client exists. Not before.** Deferred, not rejected.
 
 **COLLECTION THREAD CLOSED.** Levers that move output remain: Q2 counsel → person-entity/founder-reputation; BC Place event calendar (only unblocked source); rss-sources hygiene (the channel that works). No further collection scoping until one of those moves.
+
+## WATCHDOG ITEM 1 (2026-08-16) — BC Place "coverage gap ×5" is a FALSE POSITIVE. Not cap, not config, not monitors. Watchdog Rule T3 conflates 0-yield with not-processed.
+Watchdog fired: BC Place coverage gap ×5/7d, Kilbacks ×4/3d ("no monitor processed it"). Re-checked; the finding is wrong.
+
+**Which clients each monitor processed (24h / 7d) — ALL THREE, uniformly:**
+| client | evaluated @client_match 24h | 7d | client_matched 7d | signals 24h | signals 7d |
+|---|---|---|---|---|---|
+| BC Place | **243** | **3,403** | 16 | 0 | **12** |
+| Kilbacks | 243 | 3,403 | 4 | 0 | 14 |
+| Petronas | 243 | 3,403 | 15 | 1 | 23 |
+Every ingested item is evaluated at `client_match` against ALL active clients — **BC Place was evaluated 243×/24h, 3,403×/7d and matched 16 items/7d, producing 12 signals in 7d (0 in the last 24h).** It is demonstrably PROCESSED.
+
+**Answers to the four diagnostics:**
+1. **Ordering changed?** No. `pickActiveClients()` = `status='active'` + drop `_`-prefixed fixtures; NO ordering, NO slice. The `slice(0,4)` exists only in **monitor-social-unified:175 (DEAD since Aug 5)**, and it includes BC Place (position 2 of 4) anyway. **monitor-news-google REMOVED its `.slice(0,3)` cap 2026-05-07.** The cap is not live.
+2. **Config populated for BC Place?** YES — `monitoring_keywords`=37, `monitoring_config.archetype='sports_venue'`, `crt_pilot=true`, venue activism keywords (BC Place/PavCo/FIFA/Whitecaps/protest/breach/evacuation). (active_monitoring_enabled is a per-ENTITY flag, n/a at client level.)
+3. **Monitors running?** YES — 243 client_match evaluations/24h prove rss-sources→process-intelligence-document is running and evaluating BC Place.
+4. **Cap / config / not-running?** **NONE of them.** It is the WATCHDOG. **Rule T3 (system-watchdog per-client coverage SLO) defines "processed" = appears in `rejection_samples.source_name` OR has a signal with client_id in 24h.** `rejection_samples` is written ONLY by monitor-social-unified (dead) → the rule degrades to **"produced a signal in 24h."** BC Place produces intermittently (12/7d, 0 on ~5 of 7 days) → fires 5 false coverage-gap findings. **Same shape-of-zero conflation** we've hit repeatedly: 0-yield ≠ not-covered.
+
+**The earlier "no starvation" (slice cap) conclusion HOLDS** — the cap does not exclude BC Place. This is a distinct false positive from Rule T3's definition.
+
+**The real signal underneath (the demo concern is valid, cause differs):** BC Place's thin YIELD — 12 signals/7d, 0 on most days — is the collection thin-surface finding (a venue against a Canadian-news RSS pipeline), NOT a coverage failure. Fix directions (not built): (a) Rule T3 should use `ingest_decisions.clients_evaluated` (processed) vs signals-produced (yield) — coverage ≠ yield; (b) the demo sparsity is the collection problem (event-calendar / archetype), unfixable by the watchdog. Read-only.
