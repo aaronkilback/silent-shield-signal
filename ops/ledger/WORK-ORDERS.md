@@ -2241,3 +2241,30 @@ So removing the column default ALONE changes nothing (composite re-defaults). To
 
 ## NET (changes what the relevance work IS)
 The relevance score is not a per-signal judgement for most of the corpus — it is a schema default with a coalesce-based safety net that guarantees 0.5 even if the schema default is removed. Every downstream mechanism that reads relevance — main-tier at 0.60, the composite/incident gate, awareness tiering, AND any uplift (temporal context, geo, future) — operates on top of that default for ~48% of signals and coarse buckets for another ~28%. Fixing tiering/uplift/thresholds is moot until signals are actually scored on the write side (6 bare-insert paths) OR the read side is made to fail loud (remove ~8 coalescers + composite null-handling). This is upstream of the entire week's measurement. Evidence only.
+
+## ITEM 1 — PECL attribution: write AND read both wrong, cancelled out (2026-08-16). Evidence only.
+Operator's hypothesis CONFIRMED: the brief rendered PRGT action items + "2 main-tier / 4 attributed" on NON-authoritative rows because the write failed to set authoritative AND the read fails to check it — the two errors cancel.
+
+**What sets is_authoritative / why yesterday's write did not.** Nothing automatic sets it. Column `is_authoritative` DEFAULT=false; the only trigger `trg_sca_append_only` (BEFORE UPDATE/DELETE) just blocks mutation of the append-only ledger — it does NOT promote a row. So is_authoritative is 100% writer-controlled. Timeline: **2026-08-12 16:04** wrote 271 `none` with is_authoritative=**true** (that writer set it). **2026-08-14 17:54** (yesterday's re-attribution) wrote 276 `direct` + 12 `sector` + 1182 `none`, ALL is_authoritative=**false** — the writer omitted the flag, default applied. Yesterday's positives never became authoritative.
+
+**Which rows the guard/report actually read** (`generate-executive-report`):
+- Exclusion read (L299-300): `attribution_type='none' AND is_authoritative=true` → the 271 authoritative `none` (08-12). Filters on auth.
+- Positive read (L307-308): `attribution_type IN ('direct','competitor','sector')` → **NO is_authoritative filter** → reads the 288 non-authoritative positives (08-14). `_directSet` (L310) built from this.
+- **Asymmetric:** the report checks is_authoritative on EXCLUSION but not on INCLUSION.
+
+**Was yesterday's brief built on the new positives?** YES — the 288 non-authoritative direct+sector. Proof (side-effect-free reconstruction of the read, no brief invocation): positives-as-report-reads = **288**; positives-if-auth-required = **0**; overlap of positives with authoritative-`none` = **0** (none-exclusion drops nothing). If the positive read required is_authoritative (symmetric with the exclusion), the usable set is 0 → the brief hits its own insufficient-data guard (L314-342). It rendered ONLY because the read ignores the flag the write failed to set. (122 of 288 are all-time main-tier rel≥0.60; the brief's "2 main-tier / 4 attributed" is that set narrowed to the 08-07…08-14 window after stale/cancel/dedup/citability tiering.)
+
+**Re-run now: same output or insufficient_data?** SAME output. Rows are append-only+unchanged; read logic unchanged → reads the same 288 → same PRGT brief. It does NOT return insufficient_data. It WOULD return insufficient_data the moment the positive read is corrected to require is_authoritative.
+
+**The landmine:** the write-fix (promote the 288 to authoritative) is safe — the read finds them either way. The read-fix (require auth on positives, the obviously-"correct" symmetry) done ALONE flips PECL's brief to insufficient_data instantly. Both are currently wrong; they must be fixed together, write-first. The ledger's authoritative truth for PECL currently says "271 signals = none, 0 positive"; the brief says "288 positive" — they disagree, and the brief wins by not reading the authoritative flag. Nothing fixed — evidence only.
+
+## ITEM 2 — 0.5 default: full shape recorded (do NOT fix yet). Three independent substitutions.
+The missing-judgement default is substituted THREE independent times, any one of which reintroduces 0.5:
+1. **Schema:** `signals.relevance_score DEFAULT 0.5` — bare inserts land here.
+2. **Read (×3):** `ai-decision-engine` L259/L659/L987 `signal.relevance_score || 0.5` — the composite/incident gate re-defaults null→0.5.
+3. **SQL composite:** `COALESCE(relevance_score, 0.50)` (backfill migration L34), documented "relevance_score NULL → 0.50 (neutral)" — composite_confidence re-defaults independently.
+Three plausible-value-for-missing-judgement substitutions. Removing any one leaves the other two.
+
+**Target state is already in-repo, not a new invention:** `ingest_decisions.relevance_score` enforces "NULL = never scored. 0 = scored zero. Never coalesce" (migration 20260802193600 L16; `ingest_shadow_substrate` L55 same discipline). The newer instrumentation already does null≠0 / fail-loud; `signals.relevance_score` + its ~8 consumers predate and violate it. The fix is to bring the old path up to the standard the repo already sets.
+
+**Six bare-insert paths (omit relevance_score → take DEFAULT 0.5):** `detect-threat-patterns` (LARGEST — and it inserts synthetic `[PATTERN]` meta-signals: frequency-spike / entity-escalation / geo-cluster, which arguably should carry NO relevance score at all, not a defaulted one — a meta-signal about signal volume has no per-signal relevance to default), `monitor-weather`, `monitor-macro-indicators`, `monitor-wildfire-comprehensive`, `parse-travel-security-report`, `parse-document` (+`visibility-gap-scanner` partial). Do NOT fix yet — recorded for the ruling on what relevance work becomes.
