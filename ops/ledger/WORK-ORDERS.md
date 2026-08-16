@@ -2208,3 +2208,36 @@ The saturation analysis surfaced this and the operator asked to separate it. **T
    - **0.40 (7.2%)** = includes the unresolved-geography hazard cap (`least(rel,0.40)` in score_signal_hazard_pathway) documented earlier, plus model hedging.
 
 **CONCLUSION (operator's hypothesis, confirmed): most signals were never really scored.** ~48% carry the schema default 0.50; a further ~28% carry coarse instructed/path buckets (0.30/0.70/0.40). The threshold question is **moot for the bulk band** — main-tier at 0.60, the composite gate, AND any uplift (temporal context or otherwise) are all operating on top of a default value for roughly half the corpus, not a per-signal judgement. An uplift mechanism pointed at [0.40,0.60) is promoting the same never-scored bulk regardless of which mechanism it is. This is upstream of, and larger than, temporal context. Evidence only — nothing built, no scorer changed.
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LARGEST FINDING OF THE WEEK (2026-08-16) — RELEVANCE SCORE IS NOT A JUDGEMENT
+# Upstream of everything measured this week (temporal context, tiering, attribution,
+# the collection thread). ~3 in 4 signals carry no per-signal relevance judgement:
+# 48% at the schema column default 0.5, ~28% at coarse instructed/path buckets
+# (0.30 / 0.70 / 0.40). Evidence only — nothing proposed, nothing built.
+# ══════════════════════════════════════════════════════════════════════════════
+
+## Q1 — Which insert paths write signals WITHOUT setting relevance_score (→ take DB default 0.5)
+Two canonical setters DO set it: `ingest-signal` (13 refs; note L1773 explicitly writes `relevance_score: null` on one branch) and `process-intelligence-document` (18 refs, RSS path; L1070 `|| 0.7`). **Neither wrote the 48%.** The 0.50 spike comes from DIRECT-insert paths that OMIT the column (a column-default applies only when the column is omitted):
+- `detect-threat-patterns` (the `[PATTERN]` synthetic signals) — 0 relevance_score refs
+- `monitor-weather` · `monitor-macro-indicators` · `monitor-wildfire-comprehensive` · `parse-travel-security-report` · `parse-document` — all 0 refs
+- `visibility-gap-scanner` — 1 ref (partial)
+Six of seven direct writers set nothing → every row they insert lands at exactly 0.50 via `signals.relevance_score DEFAULT 0.5`.
+
+## Q2 — How much of the CLIENT-FACING attributed base sits on default relevance
+- **BC Place: 167 authoritative `direct` attributions — 54 (32.3%) sit on the 0.50 default; 71 (42.5%) in [0.40,0.60); avg relevance 0.447.** A third of BC Place's client-visible attributed signals carry the schema default, not a judgement → main-tier and awareness tiering for BC Place is substantially arbitrary. Confirmed.
+- **PECL — SIDE-FINDING (separate defect):** its 276 `direct` + 12 `sector` attributions are **`is_authoritative=false`**. PECL's AUTHORITATIVE attribution is 271 `none`. So PECL's positive re-attribution is present in the ledger but NOT the current authoritative state — PECL effectively has no authoritative positive attribution. (Of the 271 auth `none`: 21.4% on 0.50; of the 276 non-auth `direct`: 15.6% on 0.50.) This authoritative-state gap needs its own look — flagged, not chased here.
+
+## Q3 — Predates the scoring paths, or actively inserting bare rows TODAY?
+**Actively inserting today.** Last 30 days (2026-07-17…08-16): 1,238 signals, **403 (32.6%) at exactly 0.50, 346 of them bare-origin.** By category: active_threat 139 (112 `[PATTERN]` from detect-threat-patterns), operational 101, civil_emergency 39 (**latest 2026-08-16 = today**), regulatory 32, social_sentiment 24, environmental 5. Multiple live producers, dominated by detect-threat-patterns. Not a legacy artefact — the platform mints bare 0.50 rows continuously.
+
+## Q4 — What breaks if the default is removed and the column made nullable
+**Making it nullable does NOT achieve loud-fail today — the consumers coalesce null away, so null silently becomes 0.5 (or 0) at the reader.** The default is not only in the schema; it is re-injected downstream:
+- `ai-decision-engine` L259/L659/L987 (the COMPOSITE GATE — the exact tiering/incident consumer the operator wants to fail loud): `signal.relevance_score || 0.5` → null → 0.5 silently.
+- SQL composite computation: `COALESCE(relevance_score, 0.50)` (backfill migration L34, explicitly documented "relevance_score NULL → 0.50 (neutral)") — the composite_confidence column RE-DEFAULTS null to 0.5 regardless of the signals column.
+- `process-intelligence-document` L914/L927 `|| 0` (null→0, would DROP); `review-signal-agent`, `structured-debate` (`|| 0.5`); `send-daily-briefing`, `source-credibility-context` (`?? 0`); frontend `SignalHistory` L126 `?? 1` (null→treated as HIGH).
+So removing the column default ALONE changes nothing (composite re-defaults). To get the empty-set-guard loud-fail behaviour, EVERY coalescer (~8 sites) must be removed AND the composite computation must treat null as skip/error first — otherwise nullable just relocates the silent 0.5 from the schema into the readers, harder to see, not easier.
+- **Precedent already in-repo:** `ingest_decisions.relevance_score` is documented "NULL = never scored. 0 = scored zero. Never coalesce" (and `ingest_shadow_substrate` the same). The null≠0 / fail-loud discipline is already the STANDARD in the newer instrumentation tables; `signals.relevance_score` + its ~8 consumers predate and violate it. A fix has a pattern to mirror.
+
+## NET (changes what the relevance work IS)
+The relevance score is not a per-signal judgement for most of the corpus — it is a schema default with a coalesce-based safety net that guarantees 0.5 even if the schema default is removed. Every downstream mechanism that reads relevance — main-tier at 0.60, the composite/incident gate, awareness tiering, AND any uplift (temporal context, geo, future) — operates on top of that default for ~48% of signals and coarse buckets for another ~28%. Fixing tiering/uplift/thresholds is moot until signals are actually scored on the write side (6 bare-insert paths) OR the read side is made to fail loud (remove ~8 coalescers + composite null-handling). This is upstream of the entire week's measurement. Evidence only.
