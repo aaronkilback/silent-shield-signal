@@ -2187,3 +2187,24 @@ Reconstructed historical BC Place event days via web (Whitecaps/Lions home + con
 - **Base rate of genuine independent coincidence ≈ 1 in 90 days, and that 90 days included a once-in-a-generation World Cup.** In the normal Whitecaps/Lions cadence the count is effectively zero.
 
 **VERDICT (operator's own frame): closer to "correct and useless" than "once a month."** The mechanic is correct, but on this client's real signal stream it would fire on a genuine coincide-not-about signal about once per quarter at best — and the one historical window that exercised it (World Cup) is non-recurring. This is a **real but rare lever**, worth knowing BEFORE a consumer is built. It argues the consumer is low-priority relative to collection — the surface exists and is correct, but the event-day-coincident non-event signal it's designed to elevate barely occurs in the data. Recorded; no consumer wired.
+
+## TEMPORAL-CONTEXT: correct machinery, insufficient stream (2026-08-16, closed)
+Recorded per operator: score_signal_temporal_context is **correct machinery with insufficient stream to exercise it** — genuine coincide-not-about signals occur ~once/quarter on BC Place's stream, and the one 90-day window that exercised it (FIFA World Cup) is non-recurring. Consumer stays UNWIRED. Function live, shadow store empty, awaiting forward signal flow.
+
+## RELEVANCE-SCORE DISTRIBUTION = DEFAULT-DOMINATED, PLATFORM-WIDE (2026-08-16) — the bigger finding. Evidence only.
+The saturation analysis surfaced this and the operator asked to separate it. **The [0.40,0.60) clustering is NOT BC Place-specific and NOT a judgement distribution — it is a schema default masquerading as a score.**
+
+**1. Platform-wide, not client-specific.** In-band [0.40,0.60): BC Place 61.0% (230/377) · PECL 57.0% (1045/1834) · platform 60.6% (2314/3818). **Median 0.500 on every client.** Temporal context was just the first uplift pointed at a bulk band that every client shares.
+
+**2. The band is one spike.** Exact-value histogram, platform-wide (n=3818): **0.50 = 1,821 signals = 47.7% of ALL signals.** Then 0.30=15.3%, 0.40=7.2%, 0.70=5.2%, 1.00=4.7%. Genuinely-scored spread values (0.53, 0.54, 0.59…) are ≤1.7% each. Round buckets dominate; continuous judgement is the exception.
+
+**3. Root cause of the 0.50 spike = a DB COLUMN DEFAULT.** `signals.relevance_score` has `column_default = 0.5`. Any insert that does not explicitly set relevance_score lands at exactly 0.50. Corroboration:
+   - **74%** of the 0.50 signals (1,354/1,821) have NO origin metadata at all (raw_json has no signal_origin/monitor_name/source) — inserted bare.
+   - **95.1%** of the 0.50 signals have NO AI scoring trace (ai_confidence/confidence/relevance_reasoning/agent_review/ai_analysis absent) vs 91.0% for other values — 0.50 signals are ~2× barer than the rest.
+
+**4. The other spikes are their own defaults/buckets, not judgement either.**
+   - **0.70 (5.2%)** = the RSS path's null-default — `process-intelligence-document:1070` writes `relevance_score: signal.relevance_score || 0.7`.
+   - **0.30 (15.3%)** = an AI-PROMPT-instructed floor: the extraction prompt says "give 0.3 or lower to tangential / unverifiable / historical content" (process-intelligence-document lines 627/640/643) — a coarse instructed bucket, not a computed score.
+   - **0.40 (7.2%)** = includes the unresolved-geography hazard cap (`least(rel,0.40)` in score_signal_hazard_pathway) documented earlier, plus model hedging.
+
+**CONCLUSION (operator's hypothesis, confirmed): most signals were never really scored.** ~48% carry the schema default 0.50; a further ~28% carry coarse instructed/path buckets (0.30/0.70/0.40). The threshold question is **moot for the bulk band** — main-tier at 0.60, the composite gate, AND any uplift (temporal context or otherwise) are all operating on top of a default value for roughly half the corpus, not a per-signal judgement. An uplift mechanism pointed at [0.40,0.60) is promoting the same never-scored bulk regardless of which mechanism it is. This is upstream of, and larger than, temporal context. Evidence only — nothing built, no scorer changed.
