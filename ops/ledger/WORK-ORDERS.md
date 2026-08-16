@@ -2053,3 +2053,20 @@ Before funding X pay-per-use credits, measured what X-origin monitoring actually
 
 ## METRIC (generalisable) — cost per attributed main-tier signal, per source. The number that should decide collection strategy.
 Computable per source via the five steps: total → quality-active → attributed-positive (deterministic matcher) → main-tier (rel≥0.60) → split by client. X = ~$1,600/main-tier-signal (paid). Free/near-free sources = the yield IS the value (cost≈0). Running retrospectively across all live sources (below).
+
+## RETROSPECTIVE — attributed-main-tier yield per source (2026-08-16, last 150d, read-only). + the metric's bias.
+Five steps per source (quality-active → positively-attributed via deterministic keyword matcher → main-tier rel≥0.60):
+| source | quality-active | attributed+ | **attributed main-tier** | cost | ~cost / main-tier signal |
+|---|---|---|---|---|---|
+| **rss-sources** | 1,276 | 240 | **80** | free (RSS) | **~$0 — best value** |
+| **news-google** | 194 | 109 | **29** | Google CSE (paid/query, modest) | low |
+| other/unclassified | 704 | 30 | 8 | mixed | — |
+| canadian-sources | 19 | 3 | 1 | free | ~$0 |
+| **naad** | 167 | **0** | **0** | free | n/a (see bias) |
+| **wildfire (geo/cwfis)** | 32 | **0** | **0** | free | n/a (see bias) |
+| **cisa-kev** | 27 | **0** | **0** | free | n/a (see bias) |
+| X/twitter | 8 | 1 | 1 | ~$400/mo | **~$1,600** |
+
+**THE BIAS (this is the finding):** the metric attributes via the **keyword matcher only** — so it gives **ZERO credit to sources whose value is on the non-keyword axes.** naad (0) = jurisdictional/geo emergency alerts that don't name the client; wildfire/cwfis (0) = geo-proximity hazards that don't name the client; cisa-kev (0) = CVEs matched by **tech_stack**, not keywords. All three produce genuinely relevant signals via their OWN attribution basis (geo / jurisdiction / tech_stack) that the keyword re-attribution cannot see — the same architecture finding (keyword is the only attribution lens). **Their 0 is a measurement blind spot, not worthlessness.**
+
+**Reading:** for **keyword-attributable NEWS sources**, the metric is valid and decisive — **rss-sources (80, free) is the best value on the platform; news-google (29, low-cost) second; X ($1,600/signal) worst.** For **geo/tech/jurisdiction sources (naad/wildfire/cisa-kev)**, the metric under-reads to 0 and must be paired with an axis-appropriate measure (proximity hits, tech_stack matches, jurisdictional events) — the very axes with no admission door. **Cost-per-keyword-attributed-main-tier decides NEWS collection; it cannot decide geo/tech/jurisdiction collection until those axes are measurable.**
