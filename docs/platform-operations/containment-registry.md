@@ -40,8 +40,15 @@ absence = no-op (fail-open on the reclassification, never breaks the watchdog).
   WO-BELIEF-PROVENANCE-01).
 
 ## Maintenance
-- When a contained subject is fixed-and-restored or a frozen store is unfrozen, **delete its registry row** in the
-  same change (so the watchdog resumes reporting real failures for it). Stale registry rows are the inverse hazard:
-  a genuinely-broken subject silenced because it was once intentionally off.
+- When a contained subject is fixed-and-restored or a frozen store is unfrozen, **set `state='remediated'` +
+  `remediated_at=now()` — do NOT delete the row** (operator ruling 2026-08-17, WO-VIP-DEEP-SCAN-REMEDIATION-01).
+  The disable→re-enable history must persist: `since` = when it was contained, `remediated_at` = when it was
+  restored. **Rationale:** vip-deep-scan sat disabled for seven weeks with NO registry entry at all; losing the
+  record is exactly the failure. A deleted row erases that the subject was ever contained.
+  - `remediated` is intentionally OUTSIDE the watchdog suppression set (`contained_503|deleted|deprovisioned|frozen`,
+    L4484), so the watchdog RESUMES reporting real failures for a remediated subject — the "stale registry row
+    silences a genuinely-broken subject" hazard does not apply to `remediated` (only to the four active states).
+  - `deleted`/`deprovisioned` rows stay as-is (the subject is gone); `remediated` is the terminal state for a
+    subject that came BACK.
 - Deploy note: the watchdog code change (reclassification at `record_platform_finding`) ships with the normal
   system-watchdog deploy; the registry table + rows are already applied to prod (`wo_containment_registry_01`).
