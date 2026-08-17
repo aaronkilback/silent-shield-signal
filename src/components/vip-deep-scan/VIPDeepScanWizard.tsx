@@ -601,11 +601,27 @@ export function VIPDeepScanWizard() {
       navigate(`/client/${formData.clientId}`);
     } catch (error) {
       console.error("Error initiating deep scan:", error);
-      toast({
-        title: "Error",
-        description: "Failed to initiate deep scan. Please try again.",
-        variant: "destructive",
-      });
+      // Surface the function's REAL state instead of a misleading "try again". The scan pipeline
+      // may be unavailable pending security remediation (503) — retrying will not help; the intake
+      // was NOT submitted. Parse the edge function's response body when present.
+      let title = "Deep Scan Could Not Start";
+      let description = "The scan could not be initiated and your intake was not submitted.";
+      try {
+        const ctx = (error as { context?: Response })?.context;
+        const status = ctx?.status;
+        const body = ctx && typeof ctx.json === "function" ? await ctx.json().catch(() => null) : null;
+        if (body?.error === "SERVICE_UNAVAILABLE" || status === 503) {
+          title = "VIP Deep Scan Unavailable";
+          description = body?.message
+            || "VIP Deep Scan is temporarily unavailable pending security remediation. Your intake was not submitted — please do not retry; we will notify you when it is restored.";
+        } else if (status === 403 || body?.error === "CLIENT_NOT_AUTHORIZED") {
+          title = "Not Authorized";
+          description = "You are not authorized to run a deep scan for this client.";
+        } else if (body?.message) {
+          description = body.message;
+        }
+      } catch (_) { /* fall back to the generic (non-retry) message above */ }
+      toast({ title, description, variant: "destructive" });
     } finally {
       setIsSubmitting(false);
     }
