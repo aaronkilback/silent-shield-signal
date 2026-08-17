@@ -274,16 +274,28 @@ Deno.serve(async (req) => {
     const scanTasks = scanResults.filter((s) => s.ok).map((s) => s.scan);
     let signalOk = false, signalError: string | undefined;
     try {
-      const { error: sigErr } = await supabase.functions.invoke("ingest-signal", {
+      const { data: sigData, error: sigErr } = await supabase.functions.invoke("ingest-signal", {
         body: {
           origin: "vip_deep_scan",
           text: `VIP Deep Scan initiated for ${intakeData.fullLegalName} (${intakeData.priorityLevel} priority). Investigation ${investigation.file_number}. Scans queued: ${scanTasks.join(", ") || "none"}. Due ${dueDateIso}.`,
           client_id: clientId,
+          // Internal, consent-vetted intake signal: provenance is the authenticated intake, not an
+          // external URL. skip_relevance_gate marks it pre-vetted (satisfies ingest-signal F-034.1,
+          // which rejects a null source_url otherwise) and keeps this tracking record from being
+          // relevance-dropped. source_url points at the created investigation for auditability.
+          source_url: `https://fortress.silentshieldsecurity.com/investigations/${investigation.id}`,
+          skip_relevance_gate: true,
           sourceType: "vip_intake_wizard",
           sourceData: { entity_id: vipEntityId, investigation_id: investigation.id, investigation_file_number: investigation.file_number, priority: intakeData.priorityLevel, scan_tasks: scanTasks },
         },
       });
-      signalOk = !sigErr; signalError = (sigErr as { message?: string })?.message;
+      // ingest-signal returns rejections as HTTP 200 {status:'rejected', reason} — inspect the body,
+      // not just sigErr, so a rejection is not misreported as success.
+      const rejected = (sigData as { status?: string })?.status === "rejected";
+      signalOk = !sigErr && !rejected;
+      signalError = sigErr
+        ? (sigErr as { message?: string })?.message
+        : (rejected ? `ingest-signal rejected: ${(sigData as { reason?: string })?.reason ?? "unknown"}` : undefined);
     } catch (e) { signalError = e instanceof Error ? e.message : String(e); }
 
     // ── 6. Travel-itinerary gap (decision #3: skip creation, report the gap; NO fabricated origin) ──
