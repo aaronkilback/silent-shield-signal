@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
     const { data: entity, error: entityError } = await supabase.from("entities").insert({
       name: intakeData.fullLegalName,
       type: "person",
-      entity_status: "active",
+      entity_status: "confirmed",
       is_active: true,
       active_monitoring_enabled: true,
       client_id: clientId,
@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
     for (const m of (intakeData.familyMembers || [])) {
       if (!m?.name) continue;
       const { data: fam, error: famErr } = await supabase.from("entities").insert({
-        name: m.name, type: "person", entity_status: "active", is_active: true,
+        name: m.name, type: "person", entity_status: "confirmed", is_active: true,
         active_monitoring_enabled: true, client_id: clientId,
         visibility_class: "curated", legal_hold: false, created_by: actorUserId,
         attributes: {
