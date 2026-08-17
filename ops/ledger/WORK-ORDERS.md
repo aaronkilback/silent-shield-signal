@@ -2360,3 +2360,13 @@ Recorded: `docs/platform-operations/backlog/WO-VIP-DEEP-SCAN-REMEDIATION-01.md`.
 - signals: must go via ingest-signal (requires signal_number!/quality_status!/temporal_grounding!/signal_origin!) — raw insert is wrong.
 - entities: closest; needs visibility_class!/legal_hold! now.
 **So the rebuild = near-total rewrite, and the drifted record models (investigations model, itinerary origin gap, signal-via-ingest) shape "what a client receives" — flagged for operator's decision before writing them. Security spine (getCallerIdentity + getAccessibleClientIds membership validation on client_id, fail-loud per-insert, provenance/created_by, no swallowed errors) is unambiguous and ready to build.**
+
+## vip-deep-scan REBUILT + DEPLOYED (2026-08-17) — security spine live, awaiting operator proof
+Secure rebuild deployed (verify_jwt=true, deployed without --no-verify-jwt). Unauth probe → 401 UNAUTHORIZED_NO_AUTH_HEADER (stub 503 gone; anonymous callers cannot reach it). Security remediation implemented:
+- **Tenant-membership validation on client_id** — getCallerIdentity → userCanAccessClient(caller,clientId) + super_admin fallback; service_role trusted; else 403 CLIENT_NOT_AUTHORIZED. Body client_id NEVER trusted.
+- **Server-side consent enforcement** — consentDataCollection mandatory (400 if absent); darkweb/social gated on their consents.
+- **Schema-current writes** — entities (visibility_class='curated', legal_hold, created_by); entity_relationships (entity_a_id/entity_b_id/strength/first_observed/last_observed); investigations (file_number continues INV-2026 seq, synopsis/information/file_status='open'/prepared_by/correlated_entity_ids/cross_references); signal via ingest-signal. NO travelers/itineraries (skipped per decision #3), NO scan_phases (dropped per #2), VIP marked via cross_references.origin not file_number (per #1).
+- **Fail-loud** — every core insert checked + aborts with an error naming what already exists; monitor + signal outcomes surfaced in the response, never swallowed.
+- **Provenance** — created_by/prepared_by = acting user; origin markers on entity + investigation; actor echoed in response.
+Operator decisions honored: file_number INV-2026-00XX (next 0077) continuing shared sequence; scan phases dropped; itineraries skipped + gap reported (no fabricated origin).
+Registry: kept contained_503 row, reason updated to "remediation deployed, awaiting proof — delete on green". Action 2 (intake truthful message) committed; operator deploys frontend. **PROOF PENDING: operator runs authorized scan via UI → I query + paste every table/row, then delete the containment row.**
