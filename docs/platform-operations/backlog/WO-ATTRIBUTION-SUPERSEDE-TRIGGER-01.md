@@ -1,6 +1,26 @@
 # WO-ATTRIBUTION-SUPERSEDE-TRIGGER-01 — promote-on-supersede trigger (the correction path)
 
-**Status:** DESIGN — sequenced FIRST, before the sweep writer (WO-ATTRIBUTION-WRITER-MISSING-01). DO NOT BUILD until the design is ruled. 2026-08-17.
+**Status:** BUILT + PROVEN + APPLIED to prod 2026-08-17 (migration `20260817140000_sca_promote_on_supersede.sql`). Unblocks the sweep (WO-ATTRIBUTION-WRITER-MISSING-01).
+
+## Case 4b (operator addition) — CAN the session-spoof be blocked? YES, via pg_trigger_depth().
+The GUC handshake ALONE cannot distinguish trigger context from session context — a GUC set with `set_config(...,true)` is settable by any code in the txn, so a plain session that sets `sca.demoting` itself and issues a correct-shaped demotion would pass a GUC-only check (= "anyone who knows the GUC name may demote" = convention, not constraint). **It IS blockable with `pg_trigger_depth()`:** a top-level session UPDATE reaches the append-only trigger at depth **1**; the promote-trigger's demotion reaches it at depth **2**. The exemption requires `pg_trigger_depth() >= 2` AND the GUC AND a pure diff. Proven — Case 6 below (session spoof, correct-shaped diff, depth 1) RAISES.
+- **Honest residual:** `pg_trigger_depth()` measures DEPTH, not IDENTITY. It guarantees "inside a nested trigger" (which on this table's trigger set = the promote trigger); a party with DDL rights could add a colluding trigger — a far higher bar than a GUC name, and detectable. Against any SESSION-level SQL, real constraint.
+
+## Proof harness — 8/8 PASS (identical-body temp replica, 2026-08-17)
+| # | case | expected | result |
+|---|---|---|---|
+| 1 | first attribution INSERT | ok | ok ✅ |
+| 2 | valid supersede (old demoted+retained, 1 authoritative, index holds) | ok | old_auth=false, count=1, retained ✅ |
+| 3 | bare UPDATE (note change) | RAISE | append-only ✅ |
+| 4 | DELETE | RAISE | append-only ✅ |
+| 5 | spoofed GUC + WRONG-shaped diff | RAISE | append-only ✅ |
+| 6 | **spoofed GUC + CORRECT-shaped diff, session demotion (depth 1)** | RAISE | **append-only (depth gate) ✅** |
+| 7 | supersede a non-authoritative target | RAISE | "not the current authoritative row" ✅ |
+| 8 | double-supersede of already-demoted target (serialization guard) | RAISE | "not the current authoritative row" ✅ |
+Applied prod functions are byte-identical to the proven bodies (verified: live `tg_sca_append_only` carries the depth gate + GUC check; `trg_sca_promote_on_supersede` is BEFORE INSERT; proof functions dropped).
+
+---
+(original design — sequenced first, before the sweep writer. Now BUILT.)
 
 ## Why this is the blocker (we created it)
 The constraint pass (WO-ATTRIBUTION-AUTHORITY-DEFAULT-01: `is_authoritative` NOT NULL + partial-unique `(signal_id,client_id) WHERE is_authoritative`) made the ledger strict; the append-only trigger (`trg_sca_append_only`, raises on any UPDATE/DELETE) makes it immutable. **Together, correcting a wrong authoritative attribution is currently impossible** — you can't UPDATE-demote the old row (append-only) and can't INSERT a second authoritative row (unique index). A sweep that can only ADD first-time attributions would make **the first run's judgements permanent.** This trigger is the only append-only-compatible correction path. Getting it wrong makes the ledger permanently wrong, so it ships and is proven before any writer.
