@@ -28,6 +28,23 @@ retrieveSubject(subject, scope, opts) -> { exposureItems: ExposureItem[], proven
 **Un-trapping the existing overlap (part of the design, not a separate cleanup):** the four current CSE functions collapse into Module #1 + thin callers — `vip-osint-discovery`'s query-source logic folds into the battery (it stops being a trapped parallel); `osint-entity-scan` (the Investigate path) and `osint-web-search` / `perform-external-web-search` become thin wrappers or are retired. A single-source-of-truth CI guard (like the deterministic-matcher extraction) prevents any surface from reimplementing retrieval inline.
 
 ---
+## CONSTRAINTS (invariants — a violation is a regression, enforce in review/CI)
+
+**C1 — Recall in the query, precision in the verifier.** A Phase-1 discovery query MUST NOT be narrowed by a current-identity anchor (employer, current city, current role). Disambiguation happens ONLY in the verifier (LLM homonym filter over the anchor set), never by making an anchor a *required* term in a discovery query.
+- **Why:** anchoring on a current employer would have missed the 2011 Olynyk case — the subject was not at that employer then. The most damaging exposure predates current identity by definition.
+- **Regression test:** any change that moves an anchor from the verifier into a discovery query's required terms (e.g. `"Name" PETRONAS (legal terms)`) is a regression and must be rejected. Discovery queries carry the exact name + category terms only.
+- **Allowed (not a violation):** ADDING supplementary queries that expand coverage — e.g. a Phase-2 propagation query `"Name" "conservation officer"` or a Phase-3 re-sweep with a *discovered* historical role. Anchors may EXPAND recall (more queries) or VERIFY precision; they may never RESTRICT the base discovery sweep.
+- **Corollary:** the verifier must not reject a finding solely because it fails to match *current* anchors — a role/employer/city mismatch is expected for historical exposure. It rejects only on positive disconfirming evidence (clearly a different individual).
+
+## PHASE 3 — Historical identity (sweep → discover history → re-sweep)
+**The battery DOES need historical anchors, and current intake cannot supply them fully.** A subject's exposure spans employers, addresses, roles, and names they no longer hold; the intake captures current state only, and subjects forget or omit the very history that is most damaging. Two sources, both required:
+
+1. **Subject-supplied (high precision, incomplete):** extend the intake to capture prior employers, prior cities/addresses, former roles/titles, former/maiden names, past affiliations. Cheap, precise, but bounded by what the subject remembers and is willing to disclose.
+2. **Scan-inferred — Phase 3 (catches what the subject omits):** after Phase 1 verification, extract identity facts from confirmed findings (role="conservation officer", org="BC Conservation Officer Service", prior city, former title) and feed them back as (a) verifier context (raising confidence on historical findings) and (b) NEW supplementary discovery queries (expanding recall per C1 — additive, never restrictive). Iterate: sweep → extract identity history → re-sweep with learned anchors → until no new identity facts appear (bounded, e.g. ≤2 iterations for cost).
+
+**Why Phase 3 is load-bearing for the acceptance test:** verifying that the 2011 conservation-officer judgment is *this* Aaron Kilback (now PETRONAS security) requires knowing he *was* a conservation officer — a fact the intake does not contain. Phase 3 discovers "Aaron Kilback → BC conservation officer" from the finding itself, which both confirms the identity link and seeds propagation. Without it, a strict verifier could reject the most important finding as a presumed homonym. (Interim for v1: for an uncommon exact-name like "Aaron Kilback", name-match + absence-of-disconfirmation suffices; Phase 3 becomes essential for common names and deeper histories.)
+
+---
 ## Two-phase retrieval design (the shared internals of Module #1)
 
 **Whole-web (empirical):** entity_content shows **567 distinct domains / 2,231 URLs** (facebook, reddit, wikipedia, cbc.ca, courtlistener.com, justice.gov, researchgate, foreign gov, niche orgs). Consistent with a whole-web PSE, not a site-restricted engine. Operator confirms authoritatively in the PSE panel. Creds `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` are set.
