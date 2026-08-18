@@ -274,7 +274,12 @@ Deno.serve(async (req) => {
     const scanTasks = scanResults.filter((s) => s.ok).map((s) => s.scan);
     let signalOk = false, signalError: string | undefined;
     try {
+      // ingest-signal has verify_jwt=false and gates on its OWN getCallerIdentity (exact service-key
+      // match). functions.invoke does not reliably forward the service-role key as Authorization, so
+      // pass it explicitly — otherwise ingest-signal 401s (proof run #2, 2026-08-18).
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
       const { data: sigData, error: sigErr } = await supabase.functions.invoke("ingest-signal", {
+        headers: { Authorization: `Bearer ${serviceRoleKey}` },
         body: {
           origin: "vip_deep_scan",
           text: `VIP Deep Scan initiated for ${intakeData.fullLegalName} (${intakeData.priorityLevel} priority). Investigation ${investigation.file_number}. Scans queued: ${scanTasks.join(", ") || "none"}. Due ${dueDateIso}.`,
