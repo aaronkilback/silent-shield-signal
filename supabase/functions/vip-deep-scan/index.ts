@@ -113,6 +113,10 @@ Deno.serve(async (req) => {
     }
     const primaryAddress = intakeData.properties?.find((p) => p.type === "primary")?.address
       || intakeData.properties?.[0]?.address || "";
+    // Canonical contact location per CLAUDE.md: attributes.contact_info.{email,phone} (string|array)
+    // + legacy attributes.{emails,phones}. Readers merge both; primary_/secondary_ alone show as N/A.
+    const emailList = [...new Set([intakeData.primaryEmail, ...(intakeData.secondaryEmails || "").split("\n").map((s) => s.trim())].filter(Boolean))];
+    const phoneList = [...new Set([intakeData.primaryPhone, ...(intakeData.secondaryPhones || "").split("\n").map((s) => s.trim())].filter(Boolean))];
 
     // ── 1. VIP entity (fail-loud) ──
     const { data: entity, error: entityError } = await supabase.from("entities").insert({
@@ -136,6 +140,9 @@ Deno.serve(async (req) => {
         social_media_handles: socialHandles,
         date_of_birth: intakeData.dateOfBirth,
         nationality: intakeData.nationality,
+        contact_info: { email: emailList, phone: phoneList },  // canonical (CLAUDE.md)
+        emails: emailList,   // legacy
+        phones: phoneList,   // legacy
         primary_email: intakeData.primaryEmail,
         secondary_emails: intakeData.secondaryEmails,
         primary_phone: intakeData.primaryPhone,
