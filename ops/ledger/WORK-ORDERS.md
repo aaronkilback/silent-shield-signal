@@ -2414,3 +2414,23 @@ Operator: "The scan produced no findings because it never searches." Confirmed. 
 **Q3 — dropped intake field:** phone WAS captured — entity attributes.primary_phone="17782204544" — but written to a NON-CANONICAL key. Canonical contact per CLAUDE.md is attributes.contact_info.phone (+ legacy attributes.phones); display reads the merged contact_info/legacy pattern, both null here → shows N/A. My vip-deep-scan wrote primary_phone/primary_email (the original's shape), not contact_info.{phone,email}. Field is misfiled, not lost — same class as the canonical-contact-location rule.
 
 **Q4 — remediation guidance: NET-NEW.** Nothing generates reputational-exposure remediation. The "remediation/suppression" hits are unrelated: system-watchdog remediation ACTIONS (reset circuit breakers), process-feedback SIGNAL suppression (false-positive learning), generate-report quarantine suppression. investigations.recommendations is a free-text field nothing populates with structured options; generate-poi-report produces a threat assessment, not a remediation plan. The entire finding→(what/where · why it matters · options: removal/de-index/suppression/correction/accept-and-prepare · effort+likelihood · priority) layer is net-new.
+
+## VIP scan contact-fix DONE + retrieval-depth evidence (2026-08-18, evidence only, no design)
+**Part 1 DONE:** vip-deep-scan now writes canonical attributes.contact_info.{email,phone} + legacy {emails,phones} arrays (deployed). Backfilled entity 32750258 (INV-2026-0077): contact_info.phone=[17782204544,12504975544], email=[akilback@hotmail.com,lylasolutions@gmail.com] — recovered secondary values too. N/A resolved.
+
+**Part 2 — what deeper retrieval would take (evidence, no design):**
+CSE creds: `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` — both SET/live. All four search functions use CSE at `num=5`, single query, NO pagination.
+Empirical findability (WebSearch proxy):
+- **Bare `"Aaron Kilback"` → top results = CURRENT identity + homonyms**: ZoomInfo (PETRONAS Security Coordinator), Medium article, Instagram "Aaron Kulbacki", Wikipedia homonyms. **The 2011 Olynyk v. Kilback judgment is NOT in the top results.** This is exactly why a num=5 bare-name scan found nothing reputational.
+- **Targeted `"Aaron Kilback" conservation officer Olynyk malicious prosecution` → wiselaw.blogspot.com is #1**, + corroborating christopherdiarmani.com #2. The content IS Google-indexed and CSE-reachable. Gap = query strategy + depth, NOT reachability or the key.
+What it would take (achievable with the CSE key we have):
+1. **Query variation (biggest lever)** — bare name buries old reputational content under current-identity + homonyms; need name + legal/reputational context terms (lawsuit/court/judgment/prosecution/charged/allegation) + known-role terms (conservation officer, BC gov). Achievable now — smarter/more queries.
+2. **Pagination** — CSE `start` (1,11,…91) → up to 100 results/query (10 request units); currently unused. Achievable now (cost: 100 free/day then $5/1000, 10k/day cap).
+3. **Site-restricted / targeted-platform** (site:blogspot.com, archive.org, legal/court/review sites) — achievable via q site: / siteSearch IF the engine is whole-web.
+4. **Date-range for OLD content** — LIMITED: CSE dateRestrict is recency-relative (d/w/m/y from now), poor for targeting 2011; do it via query terms instead. Soft limit.
+5. **HARD DEPENDENCY to verify first:** the CSE engine (cx=GOOGLE_SEARCH_ENGINE_ID) must be "search the ENTIRE WEB," not a restricted site list. Functions do site:facebook/linkedin (suggests whole-web) but MUST be verified in the Programmable Search Engine panel. If restricted → needs a whole-web PSE or a SERP API (SerpAPI/Bing/Brave) = different tool.
+What needs a different tool: only IF the engine is site-restricted, OR for non-web sources (court registries, paste/breach). For THIS target (indexed, #1 on a targeted query), current CSE key + query variation + pagination suffices.
+
+**vip-osint-discovery persist:** it ONLY streams (send({type:'discovery'})) — no .insert / entity_content / investigations write. Making it persist = add a write step (feasible). BUT persist alone does NOT close the gap: it's still num=5, no pagination, name-centric queries → same bare-name ranking problem. The missing piece is retrieval DEPTH/VARIATION, in whichever function.
+
+**ACCEPTANCE TEST (recorded):** given "Aaron Kilback", the scan MUST surface wiselaw.blogspot.com's Olynyk v. Kilback post (ideally + christopherdiarmani.com corroboration). Achievable with the current CSE key IF engine is whole-web AND retrieval uses query variation and/or pagination. **Nothing ships until the scan surfaces it.**
