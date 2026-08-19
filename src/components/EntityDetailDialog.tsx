@@ -21,6 +21,7 @@ import { CreateRelationshipDialog } from "./CreateRelationshipDialog";
 import { LocationsMap } from "./LocationsMap";
 import { ImageLightboxTrigger } from "@/components/ui/image-lightbox";
 import { POIReportMarkdown } from "./POIReportMarkdown";
+import { ReputationalExposurePanel } from "./ReputationalExposurePanel";
 
 interface EntityDetailDialogProps {
   entityId: string | null;
@@ -1060,6 +1061,7 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                 </span>
               )}
             </TabsTrigger>
+            <TabsTrigger value="exposure" className="flex-shrink-0">Exposure</TabsTrigger>
           </TabsList>
 
           <TabsContent value="details" className="space-y-4 mt-4">
@@ -2212,6 +2214,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
                 </Button>
               </Card>
             )}
+          </TabsContent>
+
+          <TabsContent value="exposure" className="mt-4">
+            <ReputationalExposurePanel entityId={entityId} />
           </TabsContent>
         </Tabs>
       </DialogContent>
