@@ -269,6 +269,14 @@ Deno.serve(async (req) => {
     if (intakeData.consentDarkWebScan) {
       const emails = [intakeData.primaryEmail, ...(intakeData.secondaryEmails || "").split("\n").map((s) => s.trim()).filter(Boolean)].filter(Boolean);
       await record("dark_web_scan", () => supabase.functions.invoke("monitor-darkweb", { body: { targetEmails: emails, entityId: vipEntityId, clientId } }));
+      // Per-SUBJECT breach check (HIBP account API on the actual personal emails) → subject_exposure_items.
+      // This is the real breach exposure; monitor-darkweb above is a corporate-domain monitor that ignores
+      // these emails. Inert until HIBP_API_KEY is set (returns an honest 503, never a fake clean result).
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      await record("subject_breach_check", () => supabase.functions.invoke("subject-breach-check", {
+        headers: { Authorization: `Bearer ${serviceRoleKey}` },
+        body: { entityId: vipEntityId, emails },
+      }));
     }
     // Reputational retrieval (Module #1) — the paid product's OSINT core. FIRED async (fire-and-persist):
     // a 7-category deep scan takes ~minutes and must not block vip-deep-scan's own 150s ceiling on top of
