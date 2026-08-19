@@ -30,6 +30,17 @@ interface FamilyMember {
   relationship: string;
   dateOfBirth: string;
   socialMedia: string;
+  consentToScan?: boolean;   // per-adult consent (operator ruling: no principal-consents-for-household)
+  consentDate?: string;
+}
+
+// Minor check for the intake UI. Unknown/invalid DOB → null (cannot confirm ≥18). Minors are hard-blocked
+// server-side regardless of this; the UI just reflects it.
+function familyMemberIsMinor(dob?: string): boolean | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  return (Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000) < 18;
 }
 
 interface TravelPlan {
@@ -487,7 +498,7 @@ export function VIPDeepScanWizard() {
   const addFamilyMember = () => {
     setFormData(prev => ({
       ...prev,
-      familyMembers: [...prev.familyMembers, { name: "", relationship: "", dateOfBirth: "", socialMedia: "" }]
+      familyMembers: [...prev.familyMembers, { name: "", relationship: "", dateOfBirth: "", socialMedia: "", consentToScan: false }]
     }));
   };
 
@@ -498,11 +509,18 @@ export function VIPDeepScanWizard() {
     }));
   };
 
-  const updateFamilyMember = (index: number, field: keyof FamilyMember, value: string) => {
+  const updateFamilyMember = (index: number, field: keyof FamilyMember, value: string | boolean) => {
     setFormData(prev => ({
       ...prev,
-      familyMembers: prev.familyMembers.map((member, i) => 
-        i === index ? { ...member, [field]: value } : member
+      familyMembers: prev.familyMembers.map((member, i) =>
+        i === index
+          ? {
+              ...member,
+              [field]: value,
+              // stamp the consent date when consent is granted; clear it when revoked
+              ...(field === "consentToScan" ? { consentDate: value ? new Date().toISOString() : undefined } : {}),
+            }
+          : member
       )
     }));
   };
@@ -1075,7 +1093,9 @@ export function VIPDeepScanWizard() {
                   </p>
                 </Card>
               ) : (
-                formData.familyMembers.map((member, index) => (
+                formData.familyMembers.map((member, index) => {
+                  const isMinor = familyMemberIsMinor(member.dateOfBirth);
+                  return (
                   <Card key={index} className="p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-1">
@@ -1124,8 +1144,29 @@ export function VIPDeepScanWizard() {
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
+                    {/* Per-adult consent (operator ruling). Minors <18 are hard-blocked server-side regardless. */}
+                    <div className="mt-3 pt-3 border-t">
+                      {isMinor === true ? (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5" /> Under 18 — will NOT be scanned. Minors are excluded; a guardian legal basis is a counsel question, out of scope.
+                        </p>
+                      ) : (
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <Checkbox
+                            checked={member.consentToScan === true}
+                            onCheckedChange={(v) => updateFamilyMember(index, "consentToScan", v === true)}
+                            className="mt-0.5"
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            I confirm <span className="font-medium text-foreground">{member.name || "this adult family member"}</span> has personally consented to a reputational scan of their own name.
+                            {isMinor === null && member.dateOfBirth === "" && " (A date of birth is required to run their scan — it cannot run without confirming they are 18+.)"}
+                          </span>
+                        </label>
+                      )}
+                    </div>
                   </Card>
-                ))
+                  );
+                })
               )}
             </div>
 

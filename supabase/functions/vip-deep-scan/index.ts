@@ -33,7 +33,7 @@ interface VIPIntakeData {
   properties: Array<{ type: string; address: string; hasSecuritySystem: boolean; notes: string }>;
   wildfirePreparedness: string;
   wildfireEvacuationPlan: string;
-  familyMembers: Array<{ name: string; relationship: string; dateOfBirth: string; socialMedia: string }>;
+  familyMembers: Array<{ name: string; relationship: string; dateOfBirth: string; socialMedia: string; consentToScan?: boolean; consentDate?: string }>;
   householdStaff: string;
   securityPersonnel: string;
   pets: string;
@@ -184,10 +184,18 @@ Deno.serve(async (req) => {
     }
     const vipEntityId = entity.id as string;
 
+    // Minor check — hard block. Unknown/invalid DOB → cannot confirm ≥18 → fail CLOSED (not scannable).
+    const minorStatus = (dob?: string): boolean | null => {
+      if (!dob) return null;
+      const d = new Date(dob); if (isNaN(d.getTime())) return null;
+      return (Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000) < 18;
+    };
     // ── 2. Family entities + relationships (fail-loud on each; provenance via created_by + origin) ──
     const familyEntityIds: string[] = [];
+    const familyScanPlan: Array<{ entityId: string; name: string; minor: boolean | null; consent: boolean }> = [];
     for (const m of (intakeData.familyMembers || [])) {
       if (!m?.name) continue;
+      const minor = minorStatus(m.dateOfBirth);
       const { data: fam, error: famErr } = await supabase.from("entities").insert({
         name: m.name, type: "person", entity_status: "confirmed", is_active: true,
         active_monitoring_enabled: true, client_id: clientId,
@@ -196,12 +204,16 @@ Deno.serve(async (req) => {
           origin: "vip_deep_scan_intake", vip_family_member: true, parent_vip_entity_id: vipEntityId,
           relationship_to_vip: m.relationship, date_of_birth: m.dateOfBirth, social_media: m.socialMedia,
           actor_user_id: actorUserId,
+          // Per-member consent provenance (operator ruling: per-adult consent, NO principal-consents-for-household).
+          scan_consent: { granted: m.consentToScan === true, consent_date: m.consentDate ?? null, consent_name: m.name },
+          is_minor: minor,
         },
       }).select("id").single();
       if (famErr || !fam) {
         return errorResponse(`Failed to create family entity "${m.name}" (VIP entity ${vipEntityId} already created): ${famErr?.message ?? "no row"}`, 500);
       }
       familyEntityIds.push(fam.id);
+      familyScanPlan.push({ entityId: fam.id, name: m.name, minor, consent: m.consentToScan === true });
       const { error: relErr } = await supabase.from("entity_relationships").insert({
         entity_a_id: vipEntityId, entity_b_id: fam.id,
         relationship_type: `family_${m.relationship || "member"}`,
@@ -311,6 +323,32 @@ Deno.serve(async (req) => {
       await record("travel_risk_scan", () => supabase.functions.invoke("monitor-travel-risks", { body: { clientId } }));
     }
 
+    // ── 4b. Per-FAMILY-MEMBER reputational scans (operator ruling): per-ADULT consent only; minors <18
+    //        HARD-BLOCKED regardless of any checkbox; unknown DOB fails closed (cannot confirm ≥18). No
+    //        principal-consents-for-household. Each consented adult is a separate scanned subject. ──
+    const familyScans: Array<{ name: string; scanned: boolean; reason: string; scan_id?: string }> = [];
+    const srKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    for (const fm of familyScanPlan) {
+      if (fm.minor === true) { familyScans.push({ name: fm.name, scanned: false, reason: "minor_hard_blocked" }); continue; }
+      if (fm.minor === null) { familyScans.push({ name: fm.name, scanned: false, reason: "dob_unknown_cannot_confirm_adult" }); continue; }
+      if (!fm.consent) { familyScans.push({ name: fm.name, scanned: false, reason: "no_per_member_consent" }); continue; }
+      try {
+        const { data, error } = await supabase.functions.invoke("subject-retrieval", {
+          headers: { Authorization: `Bearer ${srKey}` },
+          body: {
+            async: true, persist: true,
+            subject: { name: fm.name, entityId: fm.entityId },
+            scope: { categories: ["legal", "financial", "professional", "media", "social", "corporate", "property"], depth: "deep", phase2: true },
+            owner: { clientId, entityId: fm.entityId },
+          },
+        });
+        const d = ((data as { data?: Record<string, unknown> })?.data ?? data) as Record<string, unknown> | undefined;
+        familyScans.push(error ? { name: fm.name, scanned: false, reason: `fire_failed: ${(error as { message?: string }).message}` } : { name: fm.name, scanned: true, reason: "consented_adult_scan_fired", scan_id: d?.scanId as string });
+      } catch (e) {
+        familyScans.push({ name: fm.name, scanned: false, reason: `fire_failed: ${e instanceof Error ? e.message : String(e)}` });
+      }
+    }
+
     // ── 5. Tracking signal — via ingest-signal per doctrine (surfaced, non-fatal) ──
     const scanTasks = scanResults.filter((s) => s.ok).map((s) => s.scan);
     let signalOk = false, signalError: string | undefined;
@@ -359,6 +397,8 @@ Deno.serve(async (req) => {
       entity_id: vipEntityId,
       family_entity_ids: familyEntityIds,
       relationships_created: familyEntityIds.length,
+      // Per-member scan outcomes — states plainly who was scanned and who was skipped (minor/consent).
+      family_scans: familyScans,
       investigation: { id: investigation.id, file_number: investigation.file_number },
       tracking_signal: { via: "ingest-signal", ok: signalOk, error: signalError },
       enrichment_scans: scanResults,
