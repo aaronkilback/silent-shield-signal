@@ -129,12 +129,41 @@ function parseJson<T>(content: string | undefined, fallback: T): T {
 }
 
 // ── Verifier (C1 corollary: reject only clear homonyms; NEVER reject on historical role/employer mismatch) ──
-async function verifyFindings(subject: Subject, rows: Raw[]): Promise<Raw[]> {
+// ── #4 Verifier — DETERMINISTIC name-gate first; LLM only for genuine bare-surname ambiguity (temp 0).
+// Rule (operator): reject when the subject's SURNAME is preceded (or, reversed, followed) by a DIFFERENT
+// first name. "Ash Kilback" fails, "Aaron Kilback" passes, bare "Kilback" → LLM residual. A name-gate of
+// "does the surname appear" is NOT enough — every homonym contains the surname.
+const NAME_TITLE_STOP = new Set(["officer", "conservation", "justice", "judge", "constable", "sergeant", "sgt", "detective", "mister", "mr", "mrs", "ms", "dr", "doctor", "professor", "prof", "chief", "director", "agent", "former", "late", "contact", "email", "phone", "reverend", "captain", "lieutenant", "corporal", "warden", "ranger", "deputy", "sheriff", "mayor", "councillor", "senator", "governor", "coach", "councilman"]);
+function escapeRegex(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function nameGate(subject: Subject, blob: string): "pass" | "reject" | "residual" {
+  const first = firstName(subject.name).toLowerCase();
+  const surname = lastName(subject.name);
+  if (!surname || !first) return "residual";
+  if (new RegExp(`\\b${escapeRegex(first)}\\b[\\s.]+\\b${escapeRegex(surname)}\\b`, "i").test(blob)) return "pass";  // full name anywhere = subject
+  const fwd = [...blob.matchAll(new RegExp(`\\b([A-Z][a-z]{2,})\\s+${escapeRegex(surname)}\\b`, "g"))].map((m) => m[1]);          // "Ash Kilback"
+  const rev = [...blob.matchAll(new RegExp(`\\b${escapeRegex(surname)},\\s+([A-Z][a-z]{2,})\\b`, "g"))].map((m) => m[1]);        // "Kilback, Barry"
+  const occ = [...fwd, ...rev].filter((w) => !NAME_TITLE_STOP.has(w.toLowerCase()));
+  if (occ.length) return occ.some((w) => w.toLowerCase() === first) ? "pass" : "reject";
+  return "residual";   // bare surname / initials / name only in the URL → hand to the LLM homonym check
+}
+async function verifyFindings(subject: Subject, rows: Raw[], urlQueries?: Map<string, Set<string>>): Promise<Raw[]> {
   if (rows.length === 0) return [];
-  const anchors = [subject.anchors?.employer && `Known employer(s): ${subject.anchors.employer}`, subject.anchors?.location && `Known location(s): ${subject.anchors.location}`, subject.anchors?.role && `Known role(s): ${subject.anchors.role}`].filter(Boolean).join("\n") || "(no anchors)";
+  const surname = lastName(subject.name).toLowerCase();
   const kept: Raw[] = [];
-  for (let i = 0; i < rows.length; i += 20) {
-    const batch = rows.slice(i, i + 20);
+  const residual: Raw[] = [];
+  for (const r of rows) {
+    const g = nameGate(subject, `${r.title} ${r.snippet} ${r.url}`);
+    if (g === "reject") continue;                    // deterministic homonym drop — provenance CANNOT rescue a clear different-first-name
+    if (g === "pass") { kept.push(r); continue; }
+    // residual (bare surname, no name in snippet): a URL returned by a case query DERIVED from this subject
+    // (surname in the key) is about them even if the snippet never names them (e.g. wiselaw's archive fragment).
+    const pk = caseKeyFromQueries(r.url, urlQueries);
+    if (pk && pk.split("|").includes(surname)) { kept.push(r); continue; }
+    residual.push(r);
+  }
+  const anchors = [subject.anchors?.employer && `Known employer(s): ${subject.anchors.employer}`, subject.anchors?.location && `Known location(s): ${subject.anchors.location}`, subject.anchors?.role && `Known role(s): ${subject.anchors.role}`].filter(Boolean).join("\n") || "(no anchors)";
+  for (let i = 0; i < residual.length; i += 20) {
+    const batch = residual.slice(i, i + 20);
     const { content, error } = await callAiGateway({
       model: "gpt-4o-mini",
       messages: [
@@ -142,6 +171,7 @@ async function verifyFindings(subject: Subject, rows: Raw[]): Promise<Raw[]> {
         { role: "user", content: `PERSON: ${subject.name}\n${anchors}\n\nRESULTS:\n${batch.map((r, j) => `[${j}] ${r.title} — ${r.snippet} (${r.domain})`).join("\n")}` },
       ],
       functionName: "subject-retrieval",
+      extraBody: { temperature: 0 },
     });
     if (error) { kept.push(...batch); continue; }   // fail-open (C1: better to include for the verifier's job than wrongly exclude)
     const parsed = parseJson<{ verdicts: Array<{ i: number; keep: boolean }> }>(content, { verdicts: [] });
@@ -195,15 +225,17 @@ function matchCitation(text: string): string {
   const m = text.match(/\b(\d{4})\s+(BCSC|BCCA|SCC|ONSC|ONCA|ABQB|ABCA|FCA|FC|QCCS|NSSC|SKQB|MBQB)\s+(\d+)\b/i);
   return m ? `${m[1]} ${m[2].toUpperCase()} ${m[3]}` : "";
 }
-function otherSurnames(text: string, exclude: string[]): string[] {
-  const ex = new Set(exclude.map((s) => s.toLowerCase()));
-  const found = new Set<string>();
-  for (const m of text.matchAll(/\b([A-Z][a-z]{3,})\b/g)) {
-    const w = m[1];
-    if (ex.has(w.toLowerCase()) || PIVOT_STOPWORDS.has(w)) continue;
-    found.add(w);
-  }
-  return [...found].slice(0, 2);
+// Extract the OTHER real litigant surname(s) — ONLY names bound to an explicit legal-relation verb, never
+// any capitalized word. This is what prevents garbage party-pairs like "Technology"/"Most"/"Arms" v. X
+// (which both waste queries AND poison provenance so homonyms get whitelisted).
+function litigants(text: string, subject: Subject): string[] {
+  const ex = new Set([lastName(subject.name).toLowerCase(), firstName(subject.name).toLowerCase()]);
+  const names = new Set<string>();
+  for (const m of text.matchAll(/\b([A-Z][a-z]{2,})\s+(?:sued|v\.|vs\.?|versus|prosecuted|charged|alleges|alleged)\b/g)) names.add(m[1]);
+  for (const m of text.matchAll(/\b(?:sued|against|v\.|vs\.?|versus|prosecuted|convicted of defaming)\s+(?:the\s+)?([A-Z][a-z]{2,})\b/g)) names.add(m[1]);
+  const cn = matchCaseName(text);
+  if (cn) { names.add(cn.a); names.add(cn.b); }
+  return [...names].filter((n) => !ex.has(n.toLowerCase()) && !PIVOT_STOPWORDS.has(n)).slice(0, 2);
 }
 async function extractThirdPartyQuote(f: Raw): Promise<string> {
   const { content } = await callAiGateway({
@@ -227,7 +259,7 @@ async function pivotQueriesFor(f: Raw, subject: Subject): Promise<string[]> {
   const ci = matchCitation(blob);
   if (ci) qs.push(`"${ci}"`);
   if (LEGAL_CONTEXT.test(blob)) {
-    for (const o of otherSurnames(blob, [surname, firstName(subject.name)])) {
+    for (const o of litigants(blob, subject)) {
       qs.push(`"${o} v. ${surname}"`, `"${surname} v. ${o}"`, `"${o}" "${surname}"`);   // case query ALWAYS fires
     }
   }
@@ -258,15 +290,33 @@ function citationKey(text: string): string {
 const normTitle = (t: string): string => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const mostCommon = (xs: string[]): string => { const c = new Map<string, number>(); for (const x of xs) if (x) c.set(x, (c.get(x) ?? 0) + 1); let best = "", n = 0; for (const [k, v] of c) if (v > n) { best = k; n = v; } return best; };
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const addUrlQuery = (m: Map<string, Set<string>>, url: string, q: string) => { if (!m.has(url)) m.set(url, new Set()); m.get(url)!.add(q); };
+// (A) Query PROVENANCE: a URL returned by a case query is about that case regardless of its snippet.
+// Recognises "X v. Y" AND a two-quoted-surname party pair (`"Olynyk" "Kilback"`).
+function caseKeyFromQuery(q: string): string {
+  const cn = matchCaseName(q);
+  if (cn) return [cn.a, cn.b].map((s) => s.toLowerCase()).sort().join("|");
+  const names = [...q.matchAll(/"([A-Z][a-z'’-]{2,})"/g)].map((m) => m[1]);
+  if (names.length >= 2 && names.length <= 3) return names.slice(0, 2).map((s) => s.toLowerCase()).sort().join("|");
+  return "";
+}
+function caseKeyFromQueries(url: string, urlQueries?: Map<string, Set<string>>): string {
+  const qs = urlQueries?.get(url); if (!qs) return "";
+  for (const q of qs) { const k = caseKeyFromQuery(q); if (k) return k; }
+  return "";
+}
 
-export function clusterFindings(_subjectName: string, findings: Raw[]): ExposureItem[] {
+export function clusterFindings(_subjectName: string, findings: Raw[], urlQueries?: Map<string, Set<string>>): ExposureItem[] {
   if (findings.length === 0) return [];
   // Pass 1 — assign EVERY finding to exactly one group key (lossless by construction).
   const groups = new Map<string, Raw[]>();
   for (const f of findings) {
     const blob = `${f.title} ${f.snippet}`;
+    // (A) Precedence (additive): case-name QUERY provenance > snippet case name > citation > canonical URL.
+    // Query provenance wins because the query is intent; the snippet is a display artifact Google chose.
+    const qk = caseKeyFromQueries(f.url, urlQueries);
     const cn = caseNameKey(blob), ci = citationKey(blob);
-    const key = cn ? "case:" + cn : ci ? "cite:" + ci : "url:" + canonicalUrl(f.url);
+    const key = qk ? "case:" + qk : cn ? "case:" + cn : ci ? "cite:" + ci : "url:" + canonicalUrl(f.url);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(f);
   }
@@ -324,19 +374,27 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   const searchErrors: Array<{ query: string; error: string }> = [];   // failed requests surfaced, NOT swallowed as empty
   let providerUsed = "";
   let raw: Raw[] = [];
+  // (A) queries-per-URL — every query that returned a URL, tracked across BOTH phases (before any dedup
+  // drops a duplicate occurrence). This is what lets clustering key on the case QUERY that found a URL,
+  // even when that URL's stored finding came from a different (phase-1) query.
+  const urlQueries = new Map<string, Set<string>>();
   for (const bq of battery) {
     const sr = await searchProvider(bq.query, bq.pages);
     providerUsed = sr.provider;
     if (!sr.ok) { searchErrors.push({ query: bq.query, error: sr.error ?? "unknown" }); continue; }  // error ≠ empty
-    for (const r of sr.results) raw.push({ ...r, category: bq.category });
+    for (const r of sr.results) { raw.push({ ...r, category: bq.category }); addUrlQuery(urlQueries, r.url, bq.query); }
   }
   raw = dedupeByUrl(raw);
-  let verified = await verifyFindings(subject, raw);
+  let verified = await verifyFindings(subject, raw, urlQueries);
   verified = classifySourceClass(subject, verified);   // deterministic tag self_published vs third_party (both kept)
   // PHASE 2 — pivot ONLY third_party, event-worthy findings (RC2). Self-published never seeds propagation.
   let phase2: Raw[] = [];
   if (scope.phase2 !== false) {
-    const pivotCandidates = verified.filter((f) => f.source_class === "third_party").slice(0, opts.maxPivots ?? 6);
+    // Order pivot candidates by legal priority so the REAL case finding (e.g. "Olynyk sued … Kilback")
+    // is pivoted BEFORE the cap — otherwise the case-name query never fires and its echo is never found.
+    const legalScore = (f: Raw) => { const b = `${f.title} ${f.snippet}`; return (matchCaseName(b) ? 2 : 0) + (matchCitation(b) ? 2 : 0) + (LEGAL_CONTEXT.test(b) ? 1 : 0); };
+    const pivotCandidates = verified.filter((f) => f.source_class === "third_party")
+      .sort((a, b) => legalScore(b) - legalScore(a)).slice(0, opts.maxPivots ?? 8);
     const ranQueries = new Set<string>();   // global dedup — never run the same propagation query twice
     for (const f of pivotCandidates) {
       const pqs = await pivotQueriesFor(f, subject);   // deterministic set; [] if not event-worthy
@@ -345,17 +403,18 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
         ranQueries.add(q);
         const sr = await searchProvider(q, 1);
         if (!sr.ok) { searchErrors.push({ query: q, error: sr.error ?? "unknown" }); continue; }
-        for (const r of sr.results) phase2.push({ ...r, category: f.category, phase: 2, query: q });
+        // record provenance for EVERY returned URL — even ones later dropped from phase2 as phase-1 dups
+        for (const r of sr.results) { phase2.push({ ...r, category: f.category, phase: 2, query: q }); addUrlQuery(urlQueries, r.url, q); }
       }
     }
     const knownUrls = new Set(verified.map((v) => v.url));
     phase2 = dedupeByUrl(phase2).filter((r) => !knownUrls.has(r.url));
-    phase2 = await verifyFindings(subject, phase2);
+    phase2 = await verifyFindings(subject, phase2, urlQueries);
     phase2 = classifySourceClass(subject, phase2);
   }
   // CLUSTER
   const allFindings = [...verified, ...phase2];
-  const exposureItems = clusterFindings(subject.name, allFindings);
+  const exposureItems = clusterFindings(subject.name, allFindings, urlQueries);
   // DEBUG: capture the FULL pre-cluster set + which findings survived clustering (which were dropped)
   if (opts.debug) {
     const clusteredUrls = new Set(exposureItems.flatMap((it) => it.locations.map((l) => l.url)));
