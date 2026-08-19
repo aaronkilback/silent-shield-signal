@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const result = await retrieveSubject(supabase, subject, scope, { persist, owner, createdBy });
+    const result = await retrieveSubject(supabase, subject, scope, { persist, owner, createdBy, debug: body?.debug === true });
     return successResponse(result);
   } catch (e) {
     console.error("[subject-retrieval] error:", e);

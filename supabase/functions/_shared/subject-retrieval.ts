@@ -27,6 +27,7 @@ export interface RetrieveOpts {
   owner?: { clientId?: string; tenantId?: string; entityId?: string };
   createdBy?: string;
   maxPivots?: number;
+  debug?: boolean;   // capture the pre-cluster findings set to subject_scan_findings for diagnosis
 }
 interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; rank?: number; source_class?: "third_party" | "self_published"; }
 export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; found_at_rank?: number; }
@@ -275,7 +276,18 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
     phase2 = await classifySourceClass(subject, phase2);
   }
   // CLUSTER
-  const exposureItems = await clusterFindings(subject.name, [...verified, ...phase2]);
+  const allFindings = [...verified, ...phase2];
+  const exposureItems = await clusterFindings(subject.name, allFindings);
+  // DEBUG: capture the FULL pre-cluster set + which findings survived clustering (which were dropped)
+  if (opts.debug) {
+    const clusteredUrls = new Set(exposureItems.flatMap((it) => it.locations.map((l) => l.url)));
+    const rows = allFindings.map((f) => ({
+      scan_id: scanId, subject_entity_id: subject.entityId ?? null, url: f.url, domain: f.domain ?? null,
+      title: (f.title ?? "").slice(0, 300), snippet: (f.snippet ?? "").slice(0, 300), source_class: f.source_class ?? null,
+      phase: f.phase, found_at_rank: f.rank ?? null, found_by_query: (f.query ?? "").slice(0, 300), clustered: clusteredUrls.has(f.url),
+    }));
+    for (let i = 0; i < rows.length; i += 200) { try { await supabase.from("subject_scan_findings").insert(rows.slice(i, i + 200)); } catch (_) { /* debug best-effort, never fails the scan */ } }
+  }
   // PERSIST
   if (opts.persist) await persist(supabase, subject, opts.owner, opts.createdBy, scanId, exposureItems);
   // PS2 ranking: source_class (third_party bucket first), then obscurity (an item's obscurity = the
