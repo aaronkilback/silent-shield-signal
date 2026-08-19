@@ -28,9 +28,9 @@ export interface RetrieveOpts {
   createdBy?: string;
   maxPivots?: number;
 }
-interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; }
+interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; source_class?: "third_party" | "self_published"; }
 export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; }
-export interface ExposureItem { title: string; category: string; summary?: string; severity?: string; fingerprint: string; locations: ExposureLocation[]; }
+export interface ExposureItem { title: string; category: string; summary?: string; severity?: string; fingerprint: string; source_class?: "third_party" | "self_published"; locations: ExposureLocation[]; }
 
 const ALL_CATEGORIES = ["legal", "financial", "professional", "media", "social", "corporate", "property"];
 const domainOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return undefined; } };
@@ -43,14 +43,20 @@ function buildBattery(subject: Subject, scope: Scope): Array<{ category: string;
   const b: Array<{ category: string; query: string; pages: number }> = [];
   const add = (category: string, query: string, pages = P) => b.push({ category, query, pages });
   if (cats.includes("legal")) {
-    add("legal", `${n} (lawsuit OR court OR judgment OR ruling OR "v." OR plaintiff OR defendant OR prosecution OR charged OR convicted OR acquitted OR litigation OR tribunal)`);
+    // RC1: QUOTED MULTI-WORD PROCEDURAL phrases (absent from marketing prose — self-filter self-authored
+    // "human judgment" noise) instead of bare common words. Recall in the query, precision in the verifier.
+    add("legal", `${n} ("reasons for judgment" OR "the plaintiff" OR "the defendant" OR "pleaded guilty" OR "found liable" OR "statement of claim" OR "Court of Appeal" OR "Supreme Court")`, Math.max(P, 3));
+    add("legal", `${n} ("malicious prosecution" OR "v." OR "abuse of process" OR "found guilty" OR "class action")`, Math.max(P, 3));
+    // Site-restricted legal domains (guaranteed-clean results).
     add("legal", `${n} site:canlii.org`, 2);
     add("legal", `${n} site:courtlistener.com`, 1);
+    add("legal", `${n} site:bccourts.ca`, 1);
   }
   if (cats.includes("financial")) add("financial", `${n} (bankruptcy OR insolvency OR lien OR creditor OR foreclosure OR receivership OR "tax lien")`);
   if (cats.includes("professional")) add("professional", `${n} (disciplinary OR sanction OR reprimand OR "license revoked" OR suspended OR barred OR "professional conduct")`);
-  if (cats.includes("media")) add("media", `${n} (investigation OR alleged OR controversy OR scandal OR reported OR charged)`);
-  if (cats.includes("social")) { add("social", n, 2); add("social", `${n} (site:facebook.com OR site:instagram.com OR site:x.com OR site:reddit.com OR site:linkedin.com)`, 2); }
+  if (cats.includes("media")) add("media", `${n} (investigation OR alleged OR controversy OR scandal OR "charged with" OR "found guilty")`);
+  // RC3: bare-name baseline paginated DEEP — the subject's own top-5 must be paged past to reach third-party content.
+  if (cats.includes("social")) { add("social", n, Math.max(P + 2, 5)); add("social", `${n} (site:facebook.com OR site:instagram.com OR site:x.com OR site:reddit.com OR site:linkedin.com)`, 2); }
   if (cats.includes("corporate")) add("corporate", `${n} (director OR officer OR founder OR shareholder OR "board of" OR incorporated)`);
   if (cats.includes("property")) add("property", `${n} (property OR "real estate" OR deed OR title OR mortgage)`, 1);
   return b;
@@ -107,17 +113,40 @@ async function verifyFindings(subject: Subject, rows: Raw[]): Promise<Raw[]> {
   return kept;
 }
 
-// ── PHASE 2: pivot → propagation ──
-async function pivotTerms(f: Raw): Promise<{ case_name?: string; parties?: string[]; distinctive_quote?: string; event_terms?: string[] }> {
+// ── Source-class classifier (RC3): self-published (subject's own footprint) vs third-party. BOTH are
+// kept and reported — self-published is "self-published exposure" ranked separately, NOT discarded. ──
+async function classifySourceClass(subject: Subject, rows: Raw[]): Promise<Raw[]> {
+  if (rows.length === 0) return rows;
+  const handles = (subject.anchors?.knownHandles || []).join(", ");
+  for (let i = 0; i < rows.length; i += 20) {
+    const batch = rows.slice(i, i + 20);
+    const { content, error } = await callAiGateway({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: `Classify each web result about a person as "self_published" (content the SUBJECT authored/owns — their own LinkedIn/Instagram/Medium/X/personal-site posts, first-person, an account that is theirs) or "third_party" (someone ELSE writing about them — court, news, blog, forum). Return JSON {"c":[{"i":<index>,"cls":"self_published|third_party"}]}.` },
+        { role: "user", content: `SUBJECT: ${subject.name}${handles ? `\nKnown handles: ${handles}` : ""}\n\nRESULTS:\n${batch.map((r, j) => `[${j}] ${r.title} — ${r.snippet} (${r.domain})`).join("\n")}` },
+      ],
+      functionName: "subject-retrieval",
+    });
+    const parsed = error ? { c: [] } : parseJson<{ c: Array<{ i: number; cls: string }> }>(content, { c: [] });
+    const map = new Map(parsed.c.map((x) => [x.i, x.cls]));
+    batch.forEach((r, j) => { r.source_class = (map.get(j) === "self_published" ? "self_published" : "third_party"); });
+  }
+  return rows;
+}
+
+// ── PHASE 2: pivot → propagation. EVENT-WORTHINESS GATE (RC2): only third_party findings that carry an
+// event signature (case name / citation / a THIRD-PARTY quote) are pivoted — never a marketing tagline. ──
+async function pivotTerms(f: Raw): Promise<{ case_name?: string; parties?: string[]; distinctive_quote?: string; event_terms?: string[]; is_event?: boolean }> {
   const { content } = await callAiGateway({
     model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: `Extract propagation pivot terms from a reputational finding. Return JSON {"case_name":"","parties":[],"distinctive_quote":"","event_terms":[]}. distinctive_quote = the most verbatim, unusual quoted phrase from the ruling/article (a near-unique fingerprint); "" if none. case_name = legal style of cause if present.` },
+      { role: "system", content: `Extract propagation pivot terms from a finding ONLY IF it reports an event of consequence (a court case, charge, sanction, controversy, regulatory action). Return JSON {"is_event":true|false,"case_name":"","parties":[],"distinctive_quote":"","event_terms":[]}. is_event=false for marketing bios, taglines, product blurbs, or the subject's own promotional content. distinctive_quote = a verbatim, unusual phrase written by a THIRD PARTY about the subject (a judge/journalist/regulator) — NEVER the subject's own first-person promotional words; "" if none. case_name = legal style of cause if present.` },
       { role: "user", content: `Title: ${f.title}\nSnippet: ${f.snippet}\nURL: ${f.url}` },
     ],
     functionName: "subject-retrieval",
   });
-  return parseJson(content, {});
+  return parseJson(content, { is_event: false });
 }
 function propagationQueries(p: { case_name?: string; parties?: string[]; distinctive_quote?: string }, subjectName: string): string[] {
   const qs: string[] = [];
@@ -141,13 +170,16 @@ async function clusterFindings(subjectName: string, findings: Raw[]): Promise<Ex
   });
   if (error) return [];
   const parsed = parseJson<{ items: Array<{ title: string; category: string; summary: string; severity: string; fingerprint: string; location_indices: number[] }> }>(content, { items: [] });
-  return parsed.items.map((it) => ({
-    title: it.title, category: it.category, summary: it.summary, severity: it.severity,
-    fingerprint: (it.fingerprint || it.title || "item").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80),
-    locations: (it.location_indices || []).map((idx) => findings[idx]).filter(Boolean).map((f) => ({
-      url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase,
-    })),
-  })).filter((x) => x.locations.length > 0);
+  return parsed.items.map((it) => {
+    const clustered = (it.location_indices || []).map((idx) => findings[idx]).filter(Boolean);
+    // item is third_party exposure if ANY of its locations is third-party; else self-published exposure.
+    const source_class = clustered.some((f) => f.source_class === "third_party") ? "third_party" : "self_published";
+    return {
+      title: it.title, category: it.category, summary: it.summary, severity: it.severity, source_class,
+      fingerprint: (it.fingerprint || it.title || "item").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80),
+      locations: clustered.map((f) => ({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase })),
+    } as ExposureItem;
+  }).filter((x) => x.locations.length > 0);
 }
 
 async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["owner"], createdBy: string | undefined, scanId: string, items: ExposureItem[]) {
@@ -155,6 +187,7 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
     const { data: row, error } = await supabase.from("subject_exposure_items").upsert({
       subject_entity_id: subject.entityId ?? null, client_id: owner?.clientId ?? null, tenant_id: owner?.tenantId ?? null,
       category: item.category || "other", title: item.title, summary: item.summary ?? null, severity: item.severity ?? null,
+      source_class: item.source_class ?? null,
       fingerprint: item.fingerprint, scan_id: scanId, matcher_version: SUBJECT_RETRIEVAL_VERSION, created_by: createdBy ?? null, updated_at: new Date().toISOString(),
     }, { onConflict: "subject_entity_id,fingerprint" }).select("id").single();
     if (error || !row) continue;
@@ -178,12 +211,16 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
     for (const r of results) raw.push({ ...r, category: bq.category });
   }
   raw = dedupeByUrl(raw);
-  const verified = await verifyFindings(subject, raw);
-  // PHASE 2 — pivot on each verified source event
+  let verified = await verifyFindings(subject, raw);
+  verified = await classifySourceClass(subject, verified);   // tag self_published vs third_party (both kept)
+  // PHASE 2 — pivot ONLY third_party, event-worthy findings (RC2). Self-published never seeds propagation.
   let phase2: Raw[] = [];
   if (scope.phase2 !== false) {
-    for (const f of verified.slice(0, opts.maxPivots ?? 6)) {
+    const pivotCandidates = verified.filter((f) => f.source_class === "third_party").slice(0, opts.maxPivots ?? 6);
+    for (const f of pivotCandidates) {
       const pivot = await pivotTerms(f);
+      // event-worthiness gate: must be an event AND yield a case name or a third-party quote — never a tagline
+      if (!pivot.is_event || (!pivot.case_name && !(pivot.distinctive_quote && pivot.distinctive_quote.length > 12))) continue;
       for (const q of propagationQueries(pivot, subject.name)) {
         const results = await cseSearch(q, 1);
         for (const r of results) phase2.push({ ...r, category: f.category, phase: 2, query: q });
@@ -192,10 +229,18 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
     const knownUrls = new Set(verified.map((v) => v.url));
     phase2 = dedupeByUrl(phase2).filter((r) => !knownUrls.has(r.url));
     phase2 = await verifyFindings(subject, phase2);
+    phase2 = await classifySourceClass(subject, phase2);
   }
   // CLUSTER
   const exposureItems = await clusterFindings(subject.name, [...verified, ...phase2]);
   // PERSIST
   if (opts.persist) await persist(supabase, subject, opts.owner, opts.createdBy, scanId, exposureItems);
-  return { scanId, version: SUBJECT_RETRIEVAL_VERSION, exposureItems, counts: { battery_queries: battery.length, phase1_verified: verified.length, phase2_verified: phase2.length, exposure_items: exposureItems.length } };
+  const thirdParty = exposureItems.filter((x) => x.source_class === "third_party");
+  const selfPublished = exposureItems.filter((x) => x.source_class === "self_published");
+  return {
+    scanId, version: SUBJECT_RETRIEVAL_VERSION,
+    thirdPartyExposure: thirdParty,      // external exposure (the product's core)
+    selfPublishedExposure: selfPublished, // subject's own footprint (reported, ranked separately)
+    counts: { battery_queries: battery.length, phase1_verified: verified.length, phase2_verified: phase2.length, third_party_items: thirdParty.length, self_published_items: selfPublished.length },
+  };
 }
