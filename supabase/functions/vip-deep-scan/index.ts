@@ -270,8 +270,34 @@ Deno.serve(async (req) => {
       const emails = [intakeData.primaryEmail, ...(intakeData.secondaryEmails || "").split("\n").map((s) => s.trim()).filter(Boolean)].filter(Boolean);
       await record("dark_web_scan", () => supabase.functions.invoke("monitor-darkweb", { body: { targetEmails: emails, entityId: vipEntityId, clientId } }));
     }
+    // Reputational retrieval (Module #1) — the paid product's OSINT core. FIRED async (fire-and-persist):
+    // a 7-category deep scan takes ~minutes and must not block vip-deep-scan's own 150s ceiling on top of
+    // its other fan-out. subject-retrieval returns immediately with a scanId; exposure items land in
+    // subject_exposure_items and run status in subject_scan_runs. (Replaces the osint-entity-scan call —
+    // that wrote entity_content; the reputational scan writes subject_exposure_items, surfaced by the
+    // entity Investigate reader once that lands.)
+    let reputationalScan: { ok: boolean; scan_id?: string; status?: string; results_table?: string; error?: string } | null = null;
     if (intakeData.consentSocialMediaAnalysis) {
-      await record("osint_entity_scan", () => supabase.functions.invoke("osint-entity-scan", { body: { entity_id: vipEntityId } }));
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+      try {
+        const { data, error } = await supabase.functions.invoke("subject-retrieval", {
+          headers: { Authorization: `Bearer ${serviceRoleKey}` },   // functions.invoke does not reliably forward service-role — pass explicitly (same as ingest-signal below)
+          body: {
+            async: true, persist: true,
+            subject: { name: intakeData.fullLegalName, entityId: vipEntityId },
+            scope: { categories: ["legal", "financial", "professional", "media", "social", "corporate", "property"], depth: "deep", phase2: true },
+            owner: { clientId, entityId: vipEntityId },
+          },
+        });
+        const d = ((data as { data?: Record<string, unknown> })?.data ?? data) as Record<string, unknown> | undefined;
+        reputationalScan = error
+          ? { ok: false, error: (error as { message?: string }).message }
+          : { ok: true, scan_id: d?.scanId as string, status: d?.status as string, results_table: d?.results_table as string };
+        scanResults.push({ scan: "reputational_scan", ok: !error, error: (error as { message?: string })?.message });
+      } catch (e) {
+        reputationalScan = { ok: false, error: e instanceof Error ? e.message : String(e) };
+        scanResults.push({ scan: "reputational_scan", ok: false, error: reputationalScan.error });
+      }
     }
     if ((intakeData.travelPlans || []).length > 0) {
       await record("travel_risk_scan", () => supabase.functions.invoke("monitor-travel-risks", { body: { clientId } }));
@@ -328,6 +354,10 @@ Deno.serve(async (req) => {
       investigation: { id: investigation.id, file_number: investigation.file_number },
       tracking_signal: { via: "ingest-signal", ok: signalOk, error: signalError },
       enrichment_scans: scanResults,
+      // requirement (b): state plainly what was fired and where results will appear — never silent success.
+      reputational_scan: reputationalScan
+        ? { ...reputationalScan, note: reputationalScan.ok ? `Deep reputational scan fired (scan ${reputationalScan.scan_id}). Findings will populate subject_exposure_items for entity ${vipEntityId}; run status in subject_scan_runs. NOTE: no UI reader is wired yet — results are persisted but not client-visible until the entity Investigate surface lands.` : `Reputational scan failed to fire: ${reputationalScan.error}` }
+        : { ok: false, note: "Not fired — social-media analysis consent was not granted at intake." },
       travel_itinerary_gap: travelGap,
       due_date: dueDateIso,
     });

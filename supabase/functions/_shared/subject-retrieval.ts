@@ -28,6 +28,20 @@ export interface RetrieveOpts {
   createdBy?: string;
   maxPivots?: number;
   debug?: boolean;   // capture the pre-cluster findings set to subject_scan_findings for diagnosis
+  scanId?: string;   // caller-supplied id (async path pre-writes the 'started' tracking row, then passes it)
+}
+
+// Bounded concurrency — parallelize Serper/LLM calls without bursting the provider's rate limit. JS is
+// single-threaded so the sequential merge of results after each call is race-free.
+const SEARCH_CONCURRENCY = 6;
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) || 1 }, async () => {
+    while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx], idx); }
+  });
+  await Promise.all(workers);
+  return out;
 }
 interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; rank?: number; source_class?: "third_party" | "self_published"; }
 export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; found_at_rank?: number; }
@@ -389,6 +403,22 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
     if (existing && groups.has(existing)) { groups.get(existing)!.push(...fs); groups.delete(key); }
     else titleToKey.set(nt, key);
   }
+  // Pass 3 — litigant-surname co-occurrence (precision fix, ranked BELOW query/snippet/citation provenance):
+  // a url-group whose combined text contains ALL litigant surnames of a known case joins that case cluster.
+  // This links same-case coverage whose own snippet lacked the case name — e.g. the Vancouver Sun
+  // "Prosecution policy comes back to bite Liberals" echo of "Kilback v. Olynyk". Surnames ≥4 chars only,
+  // matched on word boundaries, to avoid short-token false merges.
+  const caseParts = [...groups.keys()].filter((k) => k.startsWith("case:"))
+    .map((k) => ({ key: k, parts: k.slice(5).split("|").filter((p) => p.length >= 4) }))
+    .filter((c) => c.parts.length >= 2);
+  if (caseParts.length) {
+    for (const [key, fs] of [...groups]) {
+      if (!key.startsWith("url:")) continue;
+      const blob = fs.map((f) => `${f.title} ${f.snippet}`).join(" ").toLowerCase();
+      const hit = caseParts.find((c) => c.parts.every((p) => new RegExp(`\\b${p}\\b`).test(blob)));
+      if (hit && groups.has(hit.key) && hit.key !== key) { groups.get(hit.key)!.push(...fs); groups.delete(key); }
+    }
+  }
   // Build items. category + first-pass severity are deterministic; Module #2 refines severity later.
   const items: ExposureItem[] = [];
   for (const [key, fs] of groups) {
@@ -425,9 +455,31 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
   }
 }
 
+// ── Scan-run tracking (fire-and-persist requirement). 'started' before work; 'completed'/'failed' after.
+// A SIGKILL leaves the row at 'started' = visibly died-mid-run. Best-effort; never fails the scan.
+export async function startScanRun(supabase: any, scanId: string, subject: Subject, scope: Scope, opts: RetrieveOpts) {
+  try {
+    await supabase.from("subject_scan_runs").insert({
+      id: scanId, subject_entity_id: subject.entityId ?? null, subject_name: subject.name,
+      owner_client_id: opts.owner?.clientId ?? null, owner_tenant_id: opts.owner?.tenantId ?? null,
+      scope, status: "started", fired_by: opts.createdBy ?? null,
+    });
+  } catch (_) { /* tracking is best-effort */ }
+}
+async function finishScanRun(supabase: any, scanId: string, status: "completed" | "failed", counts: any, error?: unknown) {
+  try {
+    await supabase.from("subject_scan_runs").update({
+      status, counts: counts ?? null, error: error ? String(error instanceof Error ? error.message : error).slice(0, 500) : null,
+      finished_at: new Date().toISOString(),
+    }).eq("id", scanId);
+  } catch (_) { /* tracking is best-effort */ }
+}
+
 // ── ENTRY POINT ──
 export async function retrieveSubject(supabase: any, subject: Subject, scope: Scope = {}, opts: RetrieveOpts = {}) {
-  const scanId = crypto.randomUUID();
+  const scanId = opts.scanId ?? crypto.randomUUID();
+  if (opts.persist && !opts.scanId) await startScanRun(supabase, scanId, subject, scope, opts);   // async path pre-writes it
+  try {
   // LEARNED BATTERY — load facts discovered on prior scans of THIS subject (litigants/cases/citations),
   // seeded additively into the battery so they fire every run regardless of phase-1 luck.
   const learned = await loadLearnedTerms(supabase, subject.entityId);
@@ -440,8 +492,8 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   // drops a duplicate occurrence). This is what lets clustering key on the case QUERY that found a URL,
   // even when that URL's stored finding came from a different (phase-1) query.
   const urlQueries = new Map<string, Set<string>>();
-  for (const bq of battery) {
-    const sr = await searchProvider(bq.query, bq.pages);
+  const p1 = await mapLimit(battery, SEARCH_CONCURRENCY, async (bq) => ({ bq, sr: await searchProvider(bq.query, bq.pages) }));
+  for (const { bq, sr } of p1) {   // sequential merge = race-free
     providerUsed = sr.provider;
     if (!sr.ok) { searchErrors.push({ query: bq.query, error: sr.error ?? "unknown" }); continue; }  // error ≠ empty
     for (const r of sr.results) { raw.push({ ...r, category: bq.category }); addUrlQuery(urlQueries, r.url, bq.query); }
@@ -449,6 +501,10 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   raw = dedupeByUrl(raw);
   let verified = await verifyFindings(subject, raw, urlQueries);
   verified = classifySourceClass(subject, verified);   // deterministic tag self_published vs third_party (both kept)
+  // CHECKPOINT — persist phase-1 items BEFORE phase-2 (durability). A SIGKILL during phase-2 then still
+  // leaves the phase-1 findings written — and the learned-battery case query already ran in phase-1, so
+  // the headline case item is preserved even on a 149s death. The end-of-scan persist upserts over this.
+  if (opts.persist) { try { await persist(supabase, subject, opts.owner, opts.createdBy, scanId, clusterFindings(subject.name, verified, urlQueries)); } catch (_) { /* checkpoint best-effort */ } }
   // PHASE 2 — pivot ONLY third_party, event-worthy findings (RC2). Self-published never seeds propagation.
   let phase2: Raw[] = [];
   if (scope.phase2 !== false) {
@@ -457,17 +513,15 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
     const legalScore = (f: Raw) => { const b = `${f.title} ${f.snippet}`; return (matchCaseName(b) ? 2 : 0) + (matchCitation(b) ? 2 : 0) + (LEGAL_CONTEXT.test(b) ? 1 : 0); };
     const pivotCandidates = verified.filter((f) => f.source_class === "third_party")
       .sort((a, b) => legalScore(b) - legalScore(a)).slice(0, opts.maxPivots ?? 8);
-    const ranQueries = new Set<string>();   // global dedup — never run the same propagation query twice
-    for (const f of pivotCandidates) {
-      const pqs = await pivotQueriesFor(f, subject);   // deterministic set; [] if not event-worthy
-      for (const q of pqs) {
-        if (ranQueries.has(q)) continue;
-        ranQueries.add(q);
-        const sr = await searchProvider(q, 1);
-        if (!sr.ok) { searchErrors.push({ query: q, error: sr.error ?? "unknown" }); continue; }
-        // record provenance for EVERY returned URL — even ones later dropped from phase2 as phase-1 dups
-        for (const r of sr.results) { phase2.push({ ...r, category: f.category, phase: 2, query: q }); addUrlQuery(urlQueries, r.url, q); }
-      }
+    // Compute all pivot query sets concurrently (each has an LLM quote call), then run the deduped union.
+    const pivotSets = await mapLimit(pivotCandidates, SEARCH_CONCURRENCY, async (f) => ({ f, qs: await pivotQueriesFor(f, subject) }));
+    const queryToCat = new Map<string, string>();   // dedup queries globally; keep first candidate's category
+    for (const { f, qs } of pivotSets) for (const q of qs) if (!queryToCat.has(q)) queryToCat.set(q, f.category);
+    const p2 = await mapLimit([...queryToCat.keys()], SEARCH_CONCURRENCY, async (q) => ({ q, sr: await searchProvider(q, 1) }));
+    for (const { q, sr } of p2) {
+      if (!sr.ok) { searchErrors.push({ query: q, error: sr.error ?? "unknown" }); continue; }
+      // record provenance for EVERY returned URL — even ones later dropped from phase2 as phase-1 dups
+      for (const r of sr.results) { phase2.push({ ...r, category: queryToCat.get(q)!, phase: 2, query: q }); addUrlQuery(urlQueries, r.url, q); }
     }
     const knownUrls = new Set(verified.map((v) => v.url));
     phase2 = dedupeByUrl(phase2).filter((r) => !knownUrls.has(r.url));
@@ -498,11 +552,17 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   const byObscurity = (a: ExposureItem, b: ExposureItem) => obscurity(b) - obscurity(a);
   const thirdParty = exposureItems.filter((x) => x.source_class === "third_party").sort(byObscurity);
   const selfPublished = exposureItems.filter((x) => x.source_class === "self_published").sort(byObscurity);
+  const counts = { battery_queries: battery.length, learned_terms_seeded: learned.length, search_errors: searchErrors.length, phase1_verified: verified.length, phase2_verified: phase2.length, third_party_items: thirdParty.length, self_published_items: selfPublished.length };
+  if (opts.persist) await finishScanRun(supabase, scanId, "completed", counts);
   return {
     scanId, version: SUBJECT_RETRIEVAL_VERSION, provider: providerUsed,
     thirdPartyExposure: thirdParty,      // external exposure (the product's core)
     selfPublishedExposure: selfPublished, // subject's own footprint (reported, ranked separately)
     searchErrors,                        // failed requests — surfaced, never collapsed into "no results"
-    counts: { battery_queries: battery.length, learned_terms_seeded: learned.length, search_errors: searchErrors.length, phase1_verified: verified.length, phase2_verified: phase2.length, third_party_items: thirdParty.length, self_published_items: selfPublished.length },
+    counts,
   };
+  } catch (e) {
+    if (opts.persist) await finishScanRun(supabase, scanId, "failed", null, e);
+    throw e;
+  }
 }

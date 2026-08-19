@@ -6,7 +6,9 @@
 import {
   createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient,
 } from "../_shared/supabase-client.ts";
-import { retrieveSubject } from "../_shared/subject-retrieval.ts";
+import { retrieveSubject, startScanRun } from "../_shared/subject-retrieval.ts";
+
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
 Deno.serve(async (req) => {
   const cors = handleCors(req);
@@ -39,6 +41,24 @@ Deno.serve(async (req) => {
         }
         if (!ok) return errorResponse("CLIENT_NOT_AUTHORIZED: caller cannot access owner.clientId", 403);
       }
+    }
+
+    // ASYNC (fire-and-persist) — for callers with a long turnaround (vip-deep-scan): track 'started',
+    // return immediately with the scanId + where results land, and run the scan in the background of this
+    // invocation (own 150s ceiling). Results are read from subject_exposure_items; status from
+    // subject_scan_runs. Never silent success — the response states exactly what was fired and where.
+    if (body?.async === true) {
+      if (!persist) return errorResponse("async mode requires persist:true (results are read from subject_exposure_items, not the response)", 400);
+      const scanId = crypto.randomUUID();
+      await startScanRun(supabase, scanId, subject, scope, { persist, owner, createdBy });
+      const run = retrieveSubject(supabase, subject, scope, { persist, owner, createdBy, scanId, debug: body?.debug === true })
+        .catch((e) => console.error(`[subject-retrieval async ${scanId}] scan failed:`, e));
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) EdgeRuntime.waitUntil(run);
+      return successResponse({
+        scanId, status: "started",
+        results_table: "subject_exposure_items", tracking_table: "subject_scan_runs",
+        message: `Reputational scan ${scanId} started for "${subject.name}". Exposure items will be written to subject_exposure_items (owner client ${owner?.clientId ?? "n/a"} / entity ${subject.entityId ?? "n/a"}); run status is tracked in subject_scan_runs (started → completed/failed; a row stuck at 'started' means the scan died mid-run).`,
+      });
     }
 
     const result = await retrieveSubject(supabase, subject, scope, { persist, owner, createdBy, debug: body?.debug === true });
