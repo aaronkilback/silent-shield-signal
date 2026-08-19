@@ -243,11 +243,12 @@ ${childSafety ? renderChildSafety(childSafety) : ""}
 function renderChildSafety(cs: any): string {
   const draftTag = (r: any) => (!r.reviewed_by || /^DRAFT/i.test(r.reviewed_by)) ? `<span class="draft-tag">DRAFT — UNREVIEWED</span>` : "";
   const prov = (r: any) => `<div class="prov">authored/reviewed by ${esc(r.reviewed_by || "—")}${r.last_reviewed_at ? ` · ${esc(String(r.last_reviewed_at).slice(0, 10))}` : ""}</div>`;
-  const framing = (cs.framing || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
+  const src = (r: any) => r.content?.source ? `<div class="prov">Source: ${esc(r.content.source)}${r.content?.needs_source ? ` — <strong>primary citation to be confirmed by reviewer</strong>` : ""}</div>` : "";
+  const framing = (cs.framing || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${src(r)}${prov(r)}</div>`).join("");
   const platform = (cs.platforms || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.risk_profile)}</p><div class="cs-sub">Contact patterns to watch</div><ul>${(r.content?.contact_patterns || []).map((x: string) => `<li>${esc(x)}</li>`).join("")}</ul><div class="cs-sub">Settings you can verify</div><ul>${(r.content?.verifiable_settings || []).map((x: string) => `<li>${esc(x)}</li>`).join("")}</ul>${prov(r)}</div>`).join("");
   const cross = (cs.cross_platform || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
   const protocols = (cs.protocols || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
-  const escalation = (cs.escalation || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.content?.org || r.title)}${draftTag(r)}</h4><p><strong>${esc(r.content?.contact)}</strong></p><p>${esc(r.content?.note)}</p>${prov(r)}</div>`).join("");
+  const escalation = (cs.escalation || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.content?.org || r.title)}${draftTag(r)}</h4><p><strong>${esc(r.content?.contact)}</strong></p><p>${esc(r.content?.note)}</p>${prov(r)}</div>`).join("");
   return `
 <h2>6 · Family &amp; Child Safety</h2>
 <p class="section-intro">Advisory guidance for the household. This section does not scan or analyse any minor — it is authored safety guidance and an assessment of what the principal's own public posts reveal.</p>
