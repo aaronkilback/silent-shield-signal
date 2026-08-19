@@ -21,6 +21,12 @@ import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/hea
  */
 
 const DARKWEB_SOURCE_KEY = 'HIBP Exposure Monitor (email/paste)';
+// Free-mail providers — a breaches-by-domain query on one is meaningless (millions of unrelated accounts).
+// A client whose only "domain" is one of these has no real corporate domain and is skipped.
+const FREE_MAIL_DOMAINS = new Set([
+  'hotmail.com', 'gmail.com', 'yahoo.com', 'outlook.com', 'icloud.com', 'aol.com', 'live.com',
+  'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'yandex.com', 'msn.com', 'me.com', 'ymail.com',
+]);
 
 /**
  * Build a citation URL for a HIBP paste per its `Source`.
@@ -70,22 +76,26 @@ Deno.serve(async (req) => {
     if (clientsError) throw clientsError;
 
     let signalsCreated = 0;
+    const skippedClients: string[] = [];   // no real corporate domain → honestly skipped (reported below)
 
     for (const client of clients || []) {
-      // Build domains list: monitored_domains[] preferred (explicit operator
-      // configuration), falls back to contact_email-derived domain, then to
-      // org-name guess. Pre-2026-05-08 only the last two were used, which
-      // produced bogus domains like 'bcchildrenshospitalgenderclinic.com'
-      // for clients without contact_email — making the monitor look broken.
+      // SALVAGE FIX (operator ruling 2026-08-19): breaches-by-DOMAIN is only meaningful for a client's OWN
+      // corporate domain. Use ONLY operator-configured monitored_domains, minus free-mail providers. NO
+      // contact_email fallback, NO org-name guess — those produced meaningless queries (a personal client's
+      // contact 'akilback@hotmail.com' → querying breaches on 'hotmail.com'). A monitor that queries a
+      // free-mail provider's domain and reports success is worse than one that skips honestly. Per-subject
+      // personal-email breach exposure is handled by subject-breach-check (HIBP account API), not here.
       const domains: string[] = [];
-      if (Array.isArray(client.monitored_domains) && client.monitored_domains.length > 0) {
+      if (Array.isArray(client.monitored_domains)) {
         for (const d of client.monitored_domains) {
-          if (typeof d === 'string' && d.trim().length > 0) domains.push(d.trim().toLowerCase());
+          const dom = typeof d === 'string' ? d.trim().toLowerCase() : '';
+          if (dom && !FREE_MAIL_DOMAINS.has(dom)) domains.push(dom);
         }
-      } else if (client.contact_email && client.contact_email.includes('@')) {
-        domains.push(client.contact_email.split('@')[1].toLowerCase().trim());
-      } else {
-        domains.push((client.organization || client.name).toLowerCase().replace(/[^a-z0-9]/g, '') + '.com');
+      }
+      if (domains.length === 0) {
+        console.log(`[monitor-darkweb] SKIP client "${client.name}" (${client.id}) — no real corporate monitored_domains (free-mail/contact-email fallback removed).`);
+        skippedClients.push(client.name);
+        continue;
       }
 
       for (const domain of domains) {
@@ -237,12 +247,15 @@ Deno.serve(async (req) => {
     await completeHeartbeat(supabase, hb, {
       signals_created: signalsCreated,
       clients_checked: clients?.length || 0,
+      clients_skipped_no_domain: skippedClients.length,
+      skipped_clients: skippedClients,
     });
 
     return successResponse({
       success: true,
       signals_created: signalsCreated,
       clients_checked: clients?.length || 0,
+      clients_skipped_no_domain: skippedClients,   // honest: who has no real corporate domain
       source: 'darkweb'
     });
 
