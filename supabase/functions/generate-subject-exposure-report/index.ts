@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
     if (!entityId) return errorResponse("entityId required", 400);
     const supabase = createServiceClient();
 
-    const { data: entity } = await supabase.from("entities").select("id, name, client_id, tenant_id").eq("id", entityId).maybeSingle();
+    const { data: entity } = await supabase.from("entities").select("id, name, client_id, tenant_id, attributes").eq("id", entityId).maybeSingle();
     if (!entity) return errorResponse("entity not found", 404);
     if (!(await authorize(supabase, caller, entity.client_id))) return errorResponse("NOT_AUTHORIZED", 403);
     const { data: client } = entity.client_id ? await supabase.from("clients").select("name").eq("id", entity.client_id).maybeSingle() : { data: null };
@@ -94,10 +94,29 @@ Deno.serve(async (req) => {
       ? { authored: true, summary: String(body.remediation.summary ?? ""), items: Array.isArray(body.remediation.items) ? body.remediation.items : [] }
       : { authored: false, summary: "", items: [] };
 
+    // ── Section 6 · Family & Child Safety (authored guidance; renders only for a family engagement) ──
+    const childPlatforms: string[] = (entity.attributes?.child_platforms ?? []).map((p: string) => String(p).toLowerCase());
+    const includeChildSafety = childPlatforms.length > 0 || body?.includeChildSafety === true;
+    let childSafety: any = null;
+    if (includeChildSafety) {
+      const { data: g } = await supabase.from("child_safety_guidance").select("section, key, title, content, is_emergency, reviewed_by, last_reviewed_at, display_order").eq("is_active", true).order("display_order");
+      const rows = g ?? [];
+      const isDraft = (r: any) => !r.reviewed_by || /^DRAFT/i.test(r.reviewed_by);
+      const pick = (sec: string, filterKeys?: string[]) => rows.filter((r: any) => r.section === sec && (!filterKeys || filterKeys.includes(r.key)));
+      const platforms = pick("platform", childPlatforms);   // only the platforms the parent selected
+      childSafety = {
+        framing: pick("framing"), platforms, cross_platform: pick("cross_platform"),
+        protocols: pick("protocol"), escalation: pick("escalation"),
+        selected_platforms: childPlatforms,
+        contains_draft: [...pick("framing"), ...platforms, ...pick("cross_platform"), ...pick("protocol"), ...pick("escalation")].some(isDraft),
+      };
+    }
+
     const meta = {
       subject: { name: entity.name, entity_id: entityId },
       client: client?.name ?? null,
       generated_at: new Date().toISOString(),
+      child_safety: childSafety ? { included: true, selected_platforms: childPlatforms, contains_draft: childSafety.contains_draft } : { included: false },
       coverage: {
         scan_id: scan?.id ?? null, depth: scope.depth ?? null,
         queries_run: counts.battery_queries ?? null, phase1_verified: counts.phase1_verified ?? null, phase2_verified: counts.phase2_verified ?? null,
@@ -110,7 +129,7 @@ Deno.serve(async (req) => {
     };
 
     const reportId = crypto.randomUUID();
-    const html = renderReport({ meta, thirdParty, selfPublished, breaches, reportId });
+    const html = renderReport({ meta, thirdParty, selfPublished, breaches, reportId, childSafety });
 
     // store the rendered HTML in the private generated-reports bucket
     const path = `reputational-exposure/${entityId}/${reportId}.html`;
@@ -136,7 +155,7 @@ Deno.serve(async (req) => {
 });
 
 // ── PRINT-HTML renderer — light theme, print-optimised (NOT the app dark CSS). ──
-function renderReport({ meta, thirdParty, selfPublished, breaches, reportId }: any): string {
+function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, childSafety }: any): string {
   const cov = meta.coverage;
   const sevBadge = (s: string) => `<span class="sev sev-${esc(s)}">${esc(s || "—")}</span>`;
   const awareness = (a: string) => a ? `<span class="aware aware-${esc(a)}">${a === "unknown" ? "not previously known" : esc(a)}</span>` : "";
@@ -168,10 +187,17 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId }: a
   .caveat { background: #fff8e6; border-left: 3px solid #e6a817; padding: 8px 12px; font-size: 13px; margin: 10px 0; }
   .rem-placeholder { color: #888; font-style: italic; border: 1px dashed #ccc; padding: 16px; border-radius: 6px; }
   .empty-note { color: #888; font-style: italic; font-size: 13px; }
+  .draft-banner { background: #7a1f1f; color: #fff; padding: 12px 16px; border-radius: 6px; font-weight: bold; margin: 16px 0; font-size: 14px; }
+  .draft-tag { display: inline-block; background: #7a1f1f; color: #fff; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 3px; letter-spacing: .05em; margin-left: 8px; vertical-align: middle; }
+  .cs-block { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+  .cs-block.emergency { border-color: #c0392b; background: #fdf3f2; }
+  .cs-block h4 { margin: 0 0 6px; font-size: 15px; } .cs-block .prov { color: #999; font-size: 11px; margin-top: 6px; }
+  .cs-block ul { margin: 6px 0 0; padding-left: 18px; } .cs-sub { color: #666; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin: 8px 0 2px; }
   footer { margin-top: 40px; padding-top: 12px; border-top: 1px solid #ddd; color: #999; font-size: 11px; }
 </style></head><body>
 <h1>Reputational Exposure Assessment</h1>
 <div class="sub"><strong>${esc(meta.subject.name)}</strong>${meta.client ? ` · prepared for ${esc(meta.client)}` : ""} · generated ${esc(meta.generated_at.slice(0, 10))} · report ${esc(reportId.slice(0, 8))}</div>
+${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this report contains family &amp; child-safety guidance (Section 6) that has NOT been reviewed or signed by a child-safety professional. It must not be delivered to a client in this state.</div>` : ""}
 
 <h2>1 · Scope &amp; Method</h2>
 <p class="section-intro">What we searched, how much, and — equally — what we did not. A finding is only as meaningful as the space it was found in.</p>
@@ -206,6 +232,28 @@ ${meta.remediation.authored
     ? `${meta.remediation.summary ? `<p>${esc(meta.remediation.summary)}</p>` : ""}${meta.remediation.items.length ? `<ol>${meta.remediation.items.map((r: any) => `<li><strong>${esc(r.action)}</strong>${r.finding_ref ? ` <span class="rank">(${esc(r.finding_ref)})</span>` : ""}${r.rationale ? `<div class="isum">${esc(r.rationale)}</div>` : ""}</li>`).join("")}</ol>` : ""}<p class="section-intro">Remediation authored by analyst.</p>`
     : `<div class="rem-placeholder">Remediation is authored by your analyst and added before this report is issued. It is never machine-generated. (This copy has not yet been finalized.)</div>`}
 
+${childSafety ? renderChildSafety(childSafety) : ""}
+
 <footer>Silent Shield Security · Reputational Exposure Assessment · Confidential. Every finding above carries the source URL and the query that surfaced it — this report is auditable end to end.</footer>
 </body></html>`;
+}
+
+// Section 6 · Family & Child Safety — authored guidance. Every block that is still DRAFT renders a visible
+// DRAFT tag on its face (operator addition 1) so an unreviewed section cannot be delivered unknowingly.
+function renderChildSafety(cs: any): string {
+  const draftTag = (r: any) => (!r.reviewed_by || /^DRAFT/i.test(r.reviewed_by)) ? `<span class="draft-tag">DRAFT — UNREVIEWED</span>` : "";
+  const prov = (r: any) => `<div class="prov">authored/reviewed by ${esc(r.reviewed_by || "—")}${r.last_reviewed_at ? ` · ${esc(String(r.last_reviewed_at).slice(0, 10))}` : ""}</div>`;
+  const framing = (cs.framing || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
+  const platform = (cs.platforms || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.risk_profile)}</p><div class="cs-sub">Contact patterns to watch</div><ul>${(r.content?.contact_patterns || []).map((x: string) => `<li>${esc(x)}</li>`).join("")}</ul><div class="cs-sub">Settings you can verify</div><ul>${(r.content?.verifiable_settings || []).map((x: string) => `<li>${esc(x)}</li>`).join("")}</ul>${prov(r)}</div>`).join("");
+  const cross = (cs.cross_platform || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
+  const protocols = (cs.protocols || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
+  const escalation = (cs.escalation || []).map((r: any) => `<div class="cs-block"><h4>${esc(r.content?.org || r.title)}${draftTag(r)}</h4><p><strong>${esc(r.content?.contact)}</strong></p><p>${esc(r.content?.note)}</p>${prov(r)}</div>`).join("");
+  return `
+<h2>6 · Family &amp; Child Safety</h2>
+<p class="section-intro">Advisory guidance for the household. This section does not scan or analyse any minor — it is authored safety guidance and an assessment of what the principal's own public posts reveal.</p>
+${framing}
+${platform ? `<h3 style="font-size:15px;margin-top:20px">Platform Inventory &amp; Guidance</h3>${platform}` : (cs.selected_platforms?.length ? "" : `<p class="empty-note">No platforms were specified for the household's children.</p>`)}
+${cross ? `<h3 style="font-size:15px;margin-top:20px">Cross-Platform Signals</h3>${cross}` : ""}
+${protocols ? `<h3 style="font-size:15px;margin-top:20px">Response Protocols</h3>${protocols}` : ""}
+${escalation ? `<h3 style="font-size:15px;margin-top:20px">Where to Get Help</h3>${escalation}` : ""}`;
 }

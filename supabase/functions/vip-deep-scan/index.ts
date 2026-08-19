@@ -34,6 +34,7 @@ interface VIPIntakeData {
   wildfirePreparedness: string;
   wildfireEvacuationPlan: string;
   familyMembers: Array<{ name: string; relationship: string; dateOfBirth: string; socialMedia: string; consentToScan?: boolean; consentDate?: string }>;
+  childPlatforms?: string[];
   householdStaff: string;
   securityPersonnel: string;
   pets: string;
@@ -152,6 +153,7 @@ Deno.serve(async (req) => {
         wildfire_evacuation_plan: intakeData.wildfireEvacuationPlan,
         family_members: intakeData.familyMembers,
         household_staff: intakeData.householdStaff,
+        child_platforms: intakeData.childPlatforms ?? [],   // Section 6B guidance (platform names only, no child data)
         security_personnel: intakeData.securityPersonnel,
         pets: intakeData.pets,
         human_wildlife_conflict: intakeData.humanWildlifeConflict,

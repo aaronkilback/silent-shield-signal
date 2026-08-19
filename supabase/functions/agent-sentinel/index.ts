@@ -336,6 +336,30 @@ Deno.serve(async (req) => {
       console.warn('[sentinel] containment stale probe error:', e?.message);
     }
 
+    // ── Probe 2h: child-safety guidance staleness / draft (Section 6 · Family & Child Safety) ──
+    // Safety guidance going quietly out of date is exactly the failure class we removed everywhere else.
+    // DRAFT is stale by definition (unsigned); escalation rows are emergency contacts on a 3-month interval
+    // where an out-of-date phone/URL is directly harmful to a parent. ONE aggregated finding.
+    try {
+      const { data: stale, error: csgErr } = await supabase.rpc('child_safety_guidance_stale');
+      if (csgErr) throw csgErr;
+      const rows = Array.isArray(stale) ? stale : [];
+      if (rows.length > 0) {
+        const drafts = rows.filter((r: any) => r.reason === 'draft_unreviewed');
+        const escStale = rows.filter((r: any) => r.section === 'escalation' && r.reason === 'review_interval_exceeded');
+        await recordFinding(supabase, {
+          category: 'data_integrity', severity: escStale.length > 0 ? 'high' : 'medium',
+          title: `${rows.length} child-safety guidance block(s) unreviewed/stale${drafts.length ? ` (${drafts.length} DRAFT)` : ''}${escStale.length ? ` — incl. ${escStale.length} escalation contact(s) past review` : ''}`,
+          analysis: `child_safety_guidance_stale() returned ${rows.length} active row(s): ${rows.slice(0, 25).map((r: any) => `${r.section}/${r.key} (${r.reason})`).join('; ')}. DRAFT rows are unsigned safety content; escalation rows are emergency contacts (3-month interval) where a stale phone/URL is directly harmful.`,
+          plainEnglish: `${rows.length} Section-6 family-safety blocks are unsigned or overdue for review${escStale.length ? ', including emergency escalation contacts' : ''} — a child-safety professional must review and sign them.`,
+          action: 'Review + sign via edit-child-safety-guidance (action=review). Draft blocks must not reach a family — they render with a DRAFT banner and the report issuable gate holds.', job: 'child-safety-guidance',
+        });
+        report.findings_written++;
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] child-safety guidance staleness probe error:', e?.message);
+    }
+
     // ── Probe 3: Management API security advisor ingestion ──
     // Pulls the canonical Supabase security advisor (rls_disabled_in_public,
     // policy_exists_rls_disabled, security_definer_view, function_search_path_mutable, auth

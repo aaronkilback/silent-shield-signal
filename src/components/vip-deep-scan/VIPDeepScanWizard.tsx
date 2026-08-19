@@ -81,6 +81,7 @@ interface VIPIntakeData {
   
   // Step 4: Family & Household
   familyMembers: FamilyMember[];
+  childPlatforms: string[];   // platforms the household's children use — drives Section 6B guidance (names only, no child data)
   householdStaff: string;
   securityPersonnel: string;
   pets: string;
@@ -144,6 +145,7 @@ const initialFormData: VIPIntakeData = {
   wildfirePreparedness: "",
   wildfireEvacuationPlan: "",
   familyMembers: [],
+  childPlatforms: [],
   householdStaff: "",
   securityPersonnel: "",
   pets: "",
@@ -1168,6 +1170,28 @@ export function VIPDeepScanWizard() {
                   );
                 })
               )}
+            </div>
+
+            {/* Child-safety: which platforms the children use (names only — drives Section 6B guidance; no
+                child accounts or data are collected or scanned). */}
+            <div className="space-y-2 pt-2 border-t">
+              <Label>Platforms your children use</Label>
+              <p className="text-xs text-muted-foreground">Select the platforms your children use. This tailors the family-safety guidance in the report. We collect the platform names only — no child accounts, data, or scans.</p>
+              <div className="flex flex-wrap gap-3 pt-1">
+                {["Roblox", "Minecraft", "Discord", "Snapchat", "TikTok", "Instagram", "YouTube", "WhatsApp"].map((p) => {
+                  const slug = p.toLowerCase();
+                  const checked = formData.childPlatforms.includes(slug);
+                  return (
+                    <label key={slug} className="flex items-center gap-1.5 cursor-pointer text-sm">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => updateFormData("childPlatforms", v === true ? [...formData.childPlatforms, slug] : formData.childPlatforms.filter((x) => x !== slug))}
+                      />
+                      {p}
+                    </label>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -30,6 +30,11 @@ Deno.serve(async (req) => {
 
     // ── ISSUABLE GATE (deny-by-default) ──
     if (report.issuable !== true) return errorResponse("REPORT_NOT_ISSUABLE: an operator must set reports.issuable=true (issuance gate) before this report can be delivered", 409);
+    // ── DRAFT CHILD-SAFETY HARD BLOCK — belt-and-suspenders to the visible DRAFT banner. Unreviewed
+    //     Section-6 guidance cannot reach a family even if issuable was flipped. Regenerate after review. ──
+    if (report.meta_json?.child_safety?.contains_draft === true) {
+      return errorResponse("CONTAINS_DRAFT_CHILD_SAFETY: this report's Section 6 (Family & Child Safety) contains guidance not yet reviewed/signed by a child-safety professional. Have it reviewed (edit-child-safety-guidance, action=review) and regenerate before delivery.", 409);
+    }
 
     // ── expiring token ──
     const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "");
