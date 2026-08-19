@@ -62,24 +62,62 @@ function buildBattery(subject: Subject, scope: Scope): Array<{ category: string;
   return b;
 }
 
-async function cseSearch(query: string, pages: number): Promise<Raw[]> {
+// ── PROVIDER-AGNOSTIC SEARCH (one file to swap providers — burned once by a hardcoded assumption).
+// CONTRACT: a failed REQUEST and an EMPTY result set are DISTINCT. ok=false+error → the search failed;
+// ok=true+results=[] → it genuinely found nothing. They must never look the same (that ambiguity sent
+// the CSE diagnosis down the wrong path). Provider via env SEARCH_PROVIDER (default 'serper'; 'cse'
+// retained as fallback). Brave/Bing (WO-LONGTAIL-COVERAGE-01) = one more case here.
+interface SearchResult { ok: boolean; error?: string; results: Raw[]; provider: string; }
+
+async function searchProvider(query: string, pages: number): Promise<SearchResult> {
+  const provider = (Deno.env.get("SEARCH_PROVIDER") || "serper").toLowerCase();
+  if (provider === "cse") return searchCSE(query, pages);
+  return searchSerper(query, pages);
+}
+
+async function searchSerper(query: string, pages: number): Promise<SearchResult> {
+  const key = Deno.env.get("SERPER_API_KEY");
+  if (!key) return { ok: false, error: "SERPER_API_KEY not set", results: [], provider: "serper" };
+  const results: Raw[] = [];
+  for (let p = 1; p <= pages; p++) {
+    let resp: Response;
+    try {
+      resp = await fetch("https://google.serper.dev/search", {
+        method: "POST", headers: { "X-API-KEY": key, "Content-Type": "application/json" }, body: JSON.stringify({ q: query, num: 10, page: p }),
+      });
+    } catch (e) { return { ok: false, error: `serper fetch failed: ${e instanceof Error ? e.message : String(e)}`, results, provider: "serper" }; }
+    if (!resp.ok) {
+      let msg = `HTTP ${resp.status}`;
+      try { const j = await resp.json(); msg = j.message || j.error || msg; } catch { /* keep HTTP status */ }
+      return { ok: false, error: `serper ${msg}`, results, provider: "serper" };   // request error — DISTINCT from empty
+    }
+    const d = await resp.json();
+    const organic = d.organic || [];
+    organic.forEach((o: any, i: number) => results.push({ title: o.title, url: o.link, snippet: o.snippet || "", domain: domainOf(o.link), category: "", phase: 1, query, rank: o.position ?? ((p - 1) * 10 + i + 1) }));
+    if (organic.length < 10) break;   // no more pages
+  }
+  return { ok: true, results, provider: "serper" };   // genuine result set (possibly empty) — DISTINCT from error
+}
+
+async function searchCSE(query: string, pages: number): Promise<SearchResult> {
   const key = Deno.env.get("GOOGLE_SEARCH_API_KEY");
   const cx = Deno.env.get("GOOGLE_SEARCH_ENGINE_ID");
-  if (!key || !cx) throw new Error("CSE credentials missing (GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_ENGINE_ID)");
-  const out: Raw[] = [];
+  if (!key || !cx) return { ok: false, error: "CSE credentials missing", results: [], provider: "cse" };
+  const results: Raw[] = [];
   for (let p = 0; p < pages; p++) {
     const start = p * 10 + 1;
     if (start > 91) break;
     const url = `https://www.googleapis.com/customsearch/v1?key=${key}&cx=${cx}&q=${encodeURIComponent(query)}&num=10&start=${start}`;
     let resp: Response;
-    try { resp = await fetch(url); } catch { break; }
-    if (!resp.ok) break;                       // 429/4xx → stop paginating this query
-    const data = await resp.json();
-    const items = data.items || [];
-    items.forEach((it: any, idx: number) => out.push({ title: it.title, url: it.link, snippet: it.snippet || "", domain: domainOf(it.link), category: "", phase: 1, query, rank: start + idx }));
+    try { resp = await fetch(url); } catch (e) { return { ok: false, error: `cse fetch failed: ${e instanceof Error ? e.message : String(e)}`, results, provider: "cse" }; }
+    if (!resp.ok) return { ok: false, error: `cse HTTP ${resp.status}`, results, provider: "cse" };
+    const d = await resp.json();
+    if (d.error) return { ok: false, error: `cse ${d.error.message ?? "api error"}`, results, provider: "cse" };
+    const items = d.items || [];
+    items.forEach((it: any, idx: number) => results.push({ title: it.title, url: it.link, snippet: it.snippet || "", domain: domainOf(it.link), category: "", phase: 1, query, rank: start + idx }));
     if (items.length < 10) break;
   }
-  return out;
+  return { ok: true, results, provider: "cse" };
 }
 
 const dedupeByUrl = (rows: Raw[]) => { const seen = new Set<string>(); return rows.filter((r) => r.url && !seen.has(r.url) && seen.add(r.url)); };
@@ -205,10 +243,14 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   const scanId = crypto.randomUUID();
   // PHASE 1 — battery sweep
   const battery = buildBattery(subject, scope);
+  const searchErrors: Array<{ query: string; error: string }> = [];   // failed requests surfaced, NOT swallowed as empty
+  let providerUsed = "";
   let raw: Raw[] = [];
   for (const bq of battery) {
-    const results = await cseSearch(bq.query, bq.pages);
-    for (const r of results) raw.push({ ...r, category: bq.category });
+    const sr = await searchProvider(bq.query, bq.pages);
+    providerUsed = sr.provider;
+    if (!sr.ok) { searchErrors.push({ query: bq.query, error: sr.error ?? "unknown" }); continue; }  // error ≠ empty
+    for (const r of sr.results) raw.push({ ...r, category: bq.category });
   }
   raw = dedupeByUrl(raw);
   let verified = await verifyFindings(subject, raw);
@@ -222,8 +264,9 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
       // event-worthiness gate: must be an event AND yield a case name or a third-party quote — never a tagline
       if (!pivot.is_event || (!pivot.case_name && !(pivot.distinctive_quote && pivot.distinctive_quote.length > 12))) continue;
       for (const q of propagationQueries(pivot, subject.name)) {
-        const results = await cseSearch(q, 1);
-        for (const r of results) phase2.push({ ...r, category: f.category, phase: 2, query: q });
+        const sr = await searchProvider(q, 1);
+        if (!sr.ok) { searchErrors.push({ query: q, error: sr.error ?? "unknown" }); continue; }
+        for (const r of sr.results) phase2.push({ ...r, category: f.category, phase: 2, query: q });
       }
     }
     const knownUrls = new Set(verified.map((v) => v.url));
@@ -242,9 +285,10 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   const thirdParty = exposureItems.filter((x) => x.source_class === "third_party").sort(byObscurity);
   const selfPublished = exposureItems.filter((x) => x.source_class === "self_published").sort(byObscurity);
   return {
-    scanId, version: SUBJECT_RETRIEVAL_VERSION,
+    scanId, version: SUBJECT_RETRIEVAL_VERSION, provider: providerUsed,
     thirdPartyExposure: thirdParty,      // external exposure (the product's core)
     selfPublishedExposure: selfPublished, // subject's own footprint (reported, ranked separately)
-    counts: { battery_queries: battery.length, phase1_verified: verified.length, phase2_verified: phase2.length, third_party_items: thirdParty.length, self_published_items: selfPublished.length },
+    searchErrors,                        // failed requests — surfaced, never collapsed into "no results"
+    counts: { battery_queries: battery.length, search_errors: searchErrors.length, phase1_verified: verified.length, phase2_verified: phase2.length, third_party_items: thirdParty.length, self_published_items: selfPublished.length },
   };
 }
