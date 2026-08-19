@@ -197,28 +197,63 @@ function propagationQueries(p: { case_name?: string; parties?: string[]; distinc
 }
 
 // ── Clustering: N findings → exposure items (one item = one underlying fact, N locations) ──
-async function clusterFindings(subjectName: string, findings: Raw[]): Promise<ExposureItem[]> {
+// ── DETERMINISTIC + LOSSLESS clusterer (WO-RETRIEVAL-NONDETERMINISM-01 #1). No LLM. Every finding lands
+// in exactly one item; nothing is dropped. Cluster key priority: case name (X v. Y, order-insensitive)
+// → citation (2010 BCSC ####) → canonical URL. url-singletons with identical normalized titles merge
+// (same story, different URL). An unclustered finding is its own single-location item — never discarded.
+function canonicalUrl(u: string): string {
+  try { const x = new URL(u); return (x.hostname.replace(/^www\./, "") + x.pathname).replace(/\/+$/, "").toLowerCase(); } catch { return (u || "").toLowerCase(); }
+}
+function caseNameKey(text: string): string {
+  const m = text.match(/\b([A-Z][A-Za-z'’-]{2,})\s+v(?:s?\.|ersus)?\.?\s+([A-Z][A-Za-z'’-]{2,})/);
+  return m ? [m[1], m[2]].map((s) => s.toLowerCase()).sort().join("|") : "";
+}
+function citationKey(text: string): string {
+  const m = text.match(/\b(\d{4})\s+(BCSC|BCCA|SCC|ONSC|ONCA|ABQB|ABCA|FCA|FC|QCCS|NSSC|SKQB|MBQB)\s+(\d+)\b/i)
+    || text.match(/\[(\d{4})\]\s+([A-Za-z]{2,6})\s+(\d+)/);
+  return m ? `${m[1]}-${m[2].toLowerCase()}-${m[3]}` : "";
+}
+const normTitle = (t: string): string => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const mostCommon = (xs: string[]): string => { const c = new Map<string, number>(); for (const x of xs) if (x) c.set(x, (c.get(x) ?? 0) + 1); let best = "", n = 0; for (const [k, v] of c) if (v > n) { best = k; n = v; } return best; };
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export function clusterFindings(_subjectName: string, findings: Raw[]): ExposureItem[] {
   if (findings.length === 0) return [];
-  const { content, error } = await callAiGateway({
-    model: "gpt-4o-mini",
-    messages: [
-      { role: "system", content: `Group web findings about ${subjectName} into EXPOSURE ITEMS. One item = one underlying fact/event even if it appears at multiple URLs (a blog + a news repost + a forum thread about the SAME court case = ONE item, with those URLs as its locations). Return JSON {"items":[{"title":"","category":"legal|financial|professional|media|social|corporate|property","summary":"","severity":"low|medium|high|critical","fingerprint":"short-slug-of-the-core-event","location_indices":[<input indices>]}]}. Every input index belongs to exactly one item.` },
-      { role: "user", content: findings.map((f, i) => `[${i}] (${f.category}) ${f.title} — ${f.snippet} (${f.url})`).join("\n") },
-    ],
-    functionName: "subject-retrieval",
-  });
-  if (error) return [];
-  const parsed = parseJson<{ items: Array<{ title: string; category: string; summary: string; severity: string; fingerprint: string; location_indices: number[] }> }>(content, { items: [] });
-  return parsed.items.map((it) => {
-    const clustered = (it.location_indices || []).map((idx) => findings[idx]).filter(Boolean);
-    // item is third_party exposure if ANY of its locations is third-party; else self-published exposure.
-    const source_class = clustered.some((f) => f.source_class === "third_party") ? "third_party" : "self_published";
-    return {
-      title: it.title, category: it.category, summary: it.summary, severity: it.severity, source_class,
-      fingerprint: (it.fingerprint || it.title || "item").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80),
-      locations: clustered.map((f) => ({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase, found_at_rank: f.rank })),
-    } as ExposureItem;
-  }).filter((x) => x.locations.length > 0);
+  // Pass 1 — assign EVERY finding to exactly one group key (lossless by construction).
+  const groups = new Map<string, Raw[]>();
+  for (const f of findings) {
+    const blob = `${f.title} ${f.snippet}`;
+    const cn = caseNameKey(blob), ci = citationKey(blob);
+    const key = cn ? "case:" + cn : ci ? "cite:" + ci : "url:" + canonicalUrl(f.url);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(f);
+  }
+  // Pass 2 — merge url-singletons that share an identical normalized title (same story, different URL).
+  const titleToKey = new Map<string, string>();
+  for (const [key, fs] of [...groups]) {
+    if (!key.startsWith("url:")) continue;
+    const nt = normTitle(fs[0].title);
+    if (nt.length < 8) continue;                       // too-generic titles are not merged
+    const existing = titleToKey.get(nt);
+    if (existing && groups.has(existing)) { groups.get(existing)!.push(...fs); groups.delete(key); }
+    else titleToKey.set(nt, key);
+  }
+  // Build items. category + first-pass severity are deterministic; Module #2 refines severity later.
+  const items: ExposureItem[] = [];
+  for (const [key, fs] of groups) {
+    const source_class = fs.some((f) => f.source_class === "third_party") ? "third_party" : "self_published";
+    const category = mostCommon(fs.map((f) => f.category)) || "other";
+    const isLegal = key.startsWith("case:") || key.startsWith("cite:") || category === "legal";
+    const severity = isLegal ? "high" : (category === "financial" || category === "professional") ? "medium" : undefined;
+    const rep = fs.slice().sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999))[0];
+    const title = key.startsWith("case:") ? `Legal case: ${key.slice(5).split("|").map(cap).join(" v. ")}` : (rep.title || _subjectName);
+    // dedupe identical URLs into one location (same place found by 2 queries is not two findings)
+    const seen = new Set<string>();
+    const locations: ExposureLocation[] = [];
+    for (const f of fs) { if (seen.has(f.url)) continue; seen.add(f.url); locations.push({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase, found_at_rank: f.rank }); }
+    items.push({ title, category: isLegal ? "legal" : category, summary: undefined, severity, source_class, fingerprint: key.replace(/[^a-z0-9]+/g, "-").slice(0, 80), locations });
+  }
+  return items;
 }
 
 async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["owner"], createdBy: string | undefined, scanId: string, items: ExposureItem[]) {
@@ -277,7 +312,7 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   }
   // CLUSTER
   const allFindings = [...verified, ...phase2];
-  const exposureItems = await clusterFindings(subject.name, allFindings);
+  const exposureItems = clusterFindings(subject.name, allFindings);
   // DEBUG: capture the FULL pre-cluster set + which findings survived clustering (which were dropped)
   if (opts.debug) {
     const clusteredUrls = new Set(exposureItems.flatMap((it) => it.locations.map((l) => l.url)));
