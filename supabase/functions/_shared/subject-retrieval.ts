@@ -28,8 +28,8 @@ export interface RetrieveOpts {
   createdBy?: string;
   maxPivots?: number;
 }
-interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; source_class?: "third_party" | "self_published"; }
-export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; }
+interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; rank?: number; source_class?: "third_party" | "self_published"; }
+export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; found_at_rank?: number; }
 export interface ExposureItem { title: string; category: string; summary?: string; severity?: string; fingerprint: string; source_class?: "third_party" | "self_published"; locations: ExposureLocation[]; }
 
 const ALL_CATEGORIES = ["legal", "financial", "professional", "media", "social", "corporate", "property"];
@@ -76,7 +76,7 @@ async function cseSearch(query: string, pages: number): Promise<Raw[]> {
     if (!resp.ok) break;                       // 429/4xx → stop paginating this query
     const data = await resp.json();
     const items = data.items || [];
-    for (const it of items) out.push({ title: it.title, url: it.link, snippet: it.snippet || "", domain: domainOf(it.link), category: "", phase: 1, query });
+    items.forEach((it: any, idx: number) => out.push({ title: it.title, url: it.link, snippet: it.snippet || "", domain: domainOf(it.link), category: "", phase: 1, query, rank: start + idx }));
     if (items.length < 10) break;
   }
   return out;
@@ -177,7 +177,7 @@ async function clusterFindings(subjectName: string, findings: Raw[]): Promise<Ex
     return {
       title: it.title, category: it.category, summary: it.summary, severity: it.severity, source_class,
       fingerprint: (it.fingerprint || it.title || "item").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80),
-      locations: clustered.map((f) => ({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase })),
+      locations: clustered.map((f) => ({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase, found_at_rank: f.rank })),
     } as ExposureItem;
   }).filter((x) => x.locations.length > 0);
 }
@@ -194,7 +194,7 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
     for (const loc of item.locations) {
       await supabase.from("subject_exposure_locations").upsert({
         exposure_item_id: row.id, url: loc.url, domain: loc.domain ?? null, platform: loc.platform ?? null,
-        title: loc.title ?? null, snippet: loc.snippet ?? null, found_by_query: loc.found_by_query ?? null, phase: loc.phase,
+        title: loc.title ?? null, snippet: loc.snippet ?? null, found_by_query: loc.found_by_query ?? null, phase: loc.phase, found_at_rank: loc.found_at_rank ?? null,
       }, { onConflict: "exposure_item_id,url" });
     }
   }
@@ -235,8 +235,12 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   const exposureItems = await clusterFindings(subject.name, [...verified, ...phase2]);
   // PERSIST
   if (opts.persist) await persist(supabase, subject, opts.owner, opts.createdBy, scanId, exposureItems);
-  const thirdParty = exposureItems.filter((x) => x.source_class === "third_party");
-  const selfPublished = exposureItems.filter((x) => x.source_class === "self_published");
+  // PS2 ranking: source_class (third_party bucket first), then obscurity (an item's obscurity = the
+  // shallowest rank it appears at anywhere; more buried = higher value). subject_awareness applies later.
+  const obscurity = (x: ExposureItem) => Math.min(999, ...x.locations.map((l) => l.found_at_rank ?? 999));
+  const byObscurity = (a: ExposureItem, b: ExposureItem) => obscurity(b) - obscurity(a);
+  const thirdParty = exposureItems.filter((x) => x.source_class === "third_party").sort(byObscurity);
+  const selfPublished = exposureItems.filter((x) => x.source_class === "self_published").sort(byObscurity);
   return {
     scanId, version: SUBJECT_RETRIEVAL_VERSION,
     thirdPartyExposure: thirdParty,      // external exposure (the product's core)

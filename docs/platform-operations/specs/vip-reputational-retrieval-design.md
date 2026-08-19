@@ -98,6 +98,17 @@ The client must see **"2011 court judgment — findable in 7 places"**, not seve
 - **Why it matters for remediation:** removing one post is pointless if the story sits in six other places. The location list IS the remediation surface — de-index vs takedown vs suppress is decided per-cluster against ALL its locations, not per-URL.
 
 ---
+## PRODUCT STANDARD (above the acceptance test) — a finding the subject already knew is not a finding
+The report's value is **what the client did not know** — a forgotten indexed record, a data-broker page with their home address, an associate's post naming them, a geotagged photo revealing a property. If a client reads the report and recognises everything in it, we charged $10,000 for a mirror. The acceptance test is the *mechanical* proof (the pipeline surfaces + clusters a target); this standard is the *product* bar.
+
+**PS1 — subject_awareness is the real metric.** Every finding carries `subject_awareness ∈ {known, unknown, disputed}`, **captured at DELIVERY** (with the client, not by the scan). A scan surfacing 12 items where the client knew 11 has FAILED, however cleanly the pipeline ran. This metric — not item count — grades a scan. (Substrate: `subject_exposure_items.subject_awareness`, null until delivery.)
+
+**PS2 — obscurity is a value signal; it changes ranking.** Ranking is NOT relevance-to-query; it is **likely-unknown-to-subject**. Default order:
+1. **source_class** — self-published content is almost always known, so `self_published` ranks BELOW `third_party` by default.
+2. **obscurity** — a page-four result the subject has never seen outranks a page-one result they see weekly. Captured as `subject_exposure_locations.found_at_rank` (deeper = more valuable); an item's obscurity = the shallowest rank at which it appears anywhere (buried everywhere = highest value).
+3. **subject_awareness** (post-delivery) — `unknown` > `disputed` > `known`; a `known` item drops regardless of how prominent it is.
+The scan sets source_class + obscurity; delivery sets awareness; the report ranks by all three.
+
 ## COST (per scan)
 CSE JSON API: **$5 / 1,000 queries**, 1 query = 1 request (≤10 results); 100 free/day; **hard cap 10,000/day**.
 
