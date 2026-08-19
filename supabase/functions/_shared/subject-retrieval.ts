@@ -37,7 +37,7 @@ const ALL_CATEGORIES = ["legal", "financial", "professional", "media", "social",
 const domainOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return undefined; } };
 
 // ── PHASE 1: battery (C1 — name + category terms only, no current-anchor narrowing) ──
-function buildBattery(subject: Subject, scope: Scope): Array<{ category: string; query: string; pages: number }> {
+function buildBattery(subject: Subject, scope: Scope, learned: LearnedTerm[] = []): Array<{ category: string; query: string; pages: number }> {
   const n = `"${subject.name}"`;
   const cats = scope.categories?.length ? scope.categories : ALL_CATEGORIES;
   const P = scope.depth === "deep" ? 4 : scope.depth === "shallow" ? 2 : 3;
@@ -60,7 +60,66 @@ function buildBattery(subject: Subject, scope: Scope): Array<{ category: string;
   if (cats.includes("social")) { add("social", n, Math.max(P + 2, 5)); add("social", `${n} (site:facebook.com OR site:instagram.com OR site:x.com OR site:reddit.com OR site:linkedin.com)`, 2); }
   if (cats.includes("corporate")) add("corporate", `${n} (director OR officer OR founder OR shareholder OR "board of" OR incorporated)`);
   if (cats.includes("property")) add("property", `${n} (property OR "real estate" OR deed OR title OR mortgage)`, 1);
+  // LEARNED BATTERY (additive only — C1 preserved). Facts discovered on prior scans seed extra queries so
+  // they are never rediscovered by luck. Scope-respecting: a learned term whose category is out of scope
+  // is not added. This never narrows the standing sweep above; it only expands recall.
+  for (const q of learnedBatteryQueries(subject, learned)) if (cats.includes(q.category)) b.push(q);
   return b;
+}
+
+interface LearnedTerm { term_type: string; term_value: string; }
+
+async function loadLearnedTerms(supabase: any, entityId?: string): Promise<LearnedTerm[]> {
+  if (!entityId) return [];
+  try {
+    const { data } = await supabase.from("subject_learned_terms").select("term_type, term_value").eq("subject_entity_id", entityId).eq("status", "active").limit(200);
+    return (data as LearnedTerm[]) ?? [];
+  } catch { return []; }
+}
+// Additive seed queries from learned facts. Same shapes the pivot would generate — but STANDING, so they
+// fire on every scan regardless of whether phase-1 rediscovers the seed this run.
+function learnedBatteryQueries(subject: Subject, learned: LearnedTerm[]): Array<{ category: string; query: string; pages: number }> {
+  const surname = lastName(subject.name);
+  const n = `"${subject.name}"`;
+  const out: Array<{ category: string; query: string; pages: number }> = [];
+  const seen = new Set<string>();
+  const add = (category: string, query: string, pages = 1) => { if (!seen.has(query)) { seen.add(query); out.push({ category, query, pages }); } };
+  for (const t of learned) {
+    const v = t.term_value;
+    if (t.term_type === "litigant") { add("legal", `"${v} v. ${surname}"`); add("legal", `"${surname} v. ${v}"`); add("legal", `"${v}" "${surname}"`); }
+    else if (t.term_type === "case_name" || t.term_type === "citation") add("legal", `"${v}"`);
+    else if (t.term_type === "prior_employer" || t.term_type === "former_role") add("professional", `${n} "${v}"`);
+  }
+  return out;
+}
+// Extract learnable facts from a scan's third-party findings + persist with provenance (scan, finding, when).
+// Deterministic types only (litigant/case_name/citation) — the ones the pipeline actually discovers and
+// that make the case finding reproducible. Inserts NEW terms only (uses the already-loaded existing set),
+// so no onConflict target needed; the unique index still guards races (swallowed on violation).
+async function persistLearnedTerms(supabase: any, subject: Subject, scanId: string, findings: Raw[], existing: LearnedTerm[]) {
+  if (!subject.entityId) return;
+  const surnameLc = lastName(subject.name).toLowerCase(), firstLc = firstName(subject.name).toLowerCase();
+  const have = new Set(existing.map((t) => `${t.term_type}:${t.term_value.toLowerCase()}`));
+  const rows: Array<{ term_type: string; term_value: string; url: string }> = [];
+  const seen = new Set<string>();
+  const push = (term_type: string, value: string, url: string) => {
+    const v = value.trim(); if (!v) return;
+    const k = `${term_type}:${v.toLowerCase()}`;
+    if (seen.has(k) || have.has(k)) return; seen.add(k);
+    rows.push({ term_type, term_value: v, url });
+  };
+  for (const f of findings) {
+    if (f.source_class !== "third_party") continue;
+    const blob = `${f.title} ${f.snippet}`;
+    const cn = matchCaseName(blob);
+    if (cn) { push("case_name", `${cn.a} v. ${cn.b}`, f.url); for (const p of [cn.a, cn.b]) if (p.toLowerCase() !== surnameLc && p.toLowerCase() !== firstLc) push("litigant", p, f.url); }
+    const ci = matchCitation(blob); if (ci) push("citation", ci, f.url);
+    if (LEGAL_CONTEXT.test(blob)) for (const o of litigants(blob, subject)) push("litigant", o, f.url);
+  }
+  if (!rows.length) return;
+  try {
+    await supabase.from("subject_learned_terms").insert(rows.map((r) => ({ subject_entity_id: subject.entityId, term_type: r.term_type, term_value: r.term_value, discovered_scan_id: scanId, discovered_finding_url: r.url })));
+  } catch (_) { /* learning is best-effort; never fails the scan */ }
 }
 
 // ── PROVIDER-AGNOSTIC SEARCH (one file to swap providers — burned once by a hardcoded assumption).
@@ -369,8 +428,11 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
 // ── ENTRY POINT ──
 export async function retrieveSubject(supabase: any, subject: Subject, scope: Scope = {}, opts: RetrieveOpts = {}) {
   const scanId = crypto.randomUUID();
+  // LEARNED BATTERY — load facts discovered on prior scans of THIS subject (litigants/cases/citations),
+  // seeded additively into the battery so they fire every run regardless of phase-1 luck.
+  const learned = await loadLearnedTerms(supabase, subject.entityId);
   // PHASE 1 — battery sweep
-  const battery = buildBattery(subject, scope);
+  const battery = buildBattery(subject, scope, learned);
   const searchErrors: Array<{ query: string; error: string }> = [];   // failed requests surfaced, NOT swallowed as empty
   let providerUsed = "";
   let raw: Raw[] = [];
@@ -426,7 +488,10 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
     for (let i = 0; i < rows.length; i += 200) { try { await supabase.from("subject_scan_findings").insert(rows.slice(i, i + 200)); } catch (_) { /* debug best-effort, never fails the scan */ } }
   }
   // PERSIST
-  if (opts.persist) await persist(supabase, subject, opts.owner, opts.createdBy, scanId, exposureItems);
+  if (opts.persist) {
+    await persist(supabase, subject, opts.owner, opts.createdBy, scanId, exposureItems);
+    await persistLearnedTerms(supabase, subject, scanId, allFindings, learned);   // learn facts for next scan
+  }
   // PS2 ranking: source_class (third_party bucket first), then obscurity (an item's obscurity = the
   // shallowest rank it appears at anywhere; more buried = higher value). subject_awareness applies later.
   const obscurity = (x: ExposureItem) => Math.min(999, ...x.locations.map((l) => l.found_at_rank ?? 999));
@@ -438,6 +503,6 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
     thirdPartyExposure: thirdParty,      // external exposure (the product's core)
     selfPublishedExposure: selfPublished, // subject's own footprint (reported, ranked separately)
     searchErrors,                        // failed requests — surfaced, never collapsed into "no results"
-    counts: { battery_queries: battery.length, search_errors: searchErrors.length, phase1_verified: verified.length, phase2_verified: phase2.length, third_party_items: thirdParty.length, self_published_items: selfPublished.length },
+    counts: { battery_queries: battery.length, learned_terms_seeded: learned.length, search_errors: searchErrors.length, phase1_verified: verified.length, phase2_verified: phase2.length, third_party_items: thirdParty.length, self_published_items: selfPublished.length },
   };
 }
