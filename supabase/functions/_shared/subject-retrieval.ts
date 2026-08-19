@@ -15,7 +15,7 @@ export interface Subject {
   name: string;
   entityId?: string;
   aliases?: string[];
-  anchors?: { employer?: string; location?: string; role?: string; emails?: string[]; knownHandles?: string[] };
+  anchors?: { employer?: string; location?: string; role?: string; emails?: string[]; knownHandles?: string[]; ownDomains?: string[] };
 }
 export interface Scope {
   categories?: string[];               // subset of the 7; default all
@@ -154,46 +154,88 @@ async function verifyFindings(subject: Subject, rows: Raw[]): Promise<Raw[]> {
 
 // ── Source-class classifier (RC3): self-published (subject's own footprint) vs third-party. BOTH are
 // kept and reported — self-published is "self-published exposure" ranked separately, NOT discarded. ──
-async function classifySourceClass(subject: Subject, rows: Raw[]): Promise<Raw[]> {
-  if (rows.length === 0) return rows;
-  const handles = (subject.anchors?.knownHandles || []).join(", ");
-  for (let i = 0; i < rows.length; i += 20) {
-    const batch = rows.slice(i, i + 20);
-    const { content, error } = await callAiGateway({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: `Classify each web result about a person as "self_published" (content the SUBJECT authored/owns — their own LinkedIn/Instagram/Medium/X/personal-site posts, first-person, an account that is theirs) or "third_party" (someone ELSE writing about them — court, news, blog, forum). Return JSON {"c":[{"i":<index>,"cls":"self_published|third_party"}]}.` },
-        { role: "user", content: `SUBJECT: ${subject.name}${handles ? `\nKnown handles: ${handles}` : ""}\n\nRESULTS:\n${batch.map((r, j) => `[${j}] ${r.title} — ${r.snippet} (${r.domain})`).join("\n")}` },
-      ],
-      functionName: "subject-retrieval",
-    });
-    const parsed = error ? { c: [] } : parseJson<{ c: Array<{ i: number; cls: string }> }>(content, { c: [] });
-    const map = new Map(parsed.c.map((x) => [x.i, x.cls]));
-    batch.forEach((r, j) => { r.source_class = (map.get(j) === "self_published" ? "self_published" : "third_party"); });
-  }
+// ── #2 Source-class classifier — DETERMINISTIC rules, no LLM (WO-RETRIEVAL-NONDETERMINISM-01 #2).
+// self_published = the URL is on the subject's OWN account (a social host whose path carries their
+// handle) or their own domain. Else third_party. This correctly rejects OTHER people's LinkedIn posts
+// that merely mention the subject (which the LLM wrongly marked self_published).
+const SOCIAL_HOSTS = ["linkedin.com", "x.com", "twitter.com", "instagram.com", "facebook.com", "medium.com", "soundcloud.com", "tiktok.com", "youtube.com", "threads.net", "substack.com", "github.com"];
+function deriveHandles(subject: Subject): string[] {
+  const hs = new Set<string>([subject.name.toLowerCase().replace(/[^a-z0-9]+/g, "")]);
+  for (const h of (subject.anchors?.knownHandles || [])) { const n = h.toLowerCase().replace(/[^a-z0-9]+/g, ""); if (n) hs.add(n); }
+  return [...hs].filter((h) => h.length >= 5);
+}
+function isSelfPublished(url: string, handles: string[], ownDomains: string[]): boolean {
+  let host = "", path = "";
+  try { const x = new URL(url); host = x.hostname.replace(/^www\./, "").toLowerCase(); path = x.pathname.toLowerCase().replace(/[^a-z0-9]+/g, ""); } catch { return false; }
+  if (ownDomains.some((d) => host === d || host.endsWith("." + d))) return true;
+  if (SOCIAL_HOSTS.some((s) => host === s || host.endsWith("." + s))) return handles.some((h) => path.includes(h));
+  return false;
+}
+function classifySourceClass(subject: Subject, rows: Raw[]): Raw[] {
+  const handles = deriveHandles(subject);
+  const ownDomains = (subject.anchors?.ownDomains || []).map((d) => d.toLowerCase());
+  for (const r of rows) r.source_class = isSelfPublished(r.url, handles, ownDomains) ? "self_published" : "third_party";
   return rows;
 }
 
 // ── PHASE 2: pivot → propagation. EVENT-WORTHINESS GATE (RC2): only third_party findings that carry an
 // event signature (case name / citation / a THIRD-PARTY quote) are pivoted — never a marketing tagline. ──
-async function pivotTerms(f: Raw): Promise<{ case_name?: string; parties?: string[]; distinctive_quote?: string; event_terms?: string[]; is_event?: boolean }> {
+// ── #3 Pivot — DETERMINISTIC case-name / citation / party extraction; the case-name query ALWAYS fires
+// when a case is present (this is what lost wiselaw — the old LLM chose a quote instead). LLM kept ONLY
+// for a distinctive THIRD-PARTY quote (genuine judgement), temperature 0.
+const PIVOT_STOPWORDS = new Set(["Ken", "The", "This", "That", "Court", "Supreme", "Justice", "British", "Columbia", "Canada", "Canadian", "Vancouver", "Province", "Officer", "Conservation", "Prosecution", "Malicious", "Liberals", "Judge", "Case", "News", "Ministry", "Kind", "Student", "Director", "Alternate", "Chief", "Former", "Deadline", "Business", "Manager", "Founder", "December", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
+const LEGAL_CONTEXT = /\b(v\.|versus|sued|lawsuit|court|prosecution|charged|judgment|judgement|plaintiff|defendant|convicted|acquitted|tribunal|litigation|liable|immunity)\b/i;
+function lastName(name: string): string { const p = name.trim().split(/\s+/); return (p[p.length - 1] || name).replace(/[^A-Za-z'’-]/g, ""); }
+function firstName(name: string): string { return (name.trim().split(/\s+/)[0] || "").replace(/[^A-Za-z'’-]/g, ""); }
+function matchCaseName(text: string): { a: string; b: string } | null {
+  const m = text.match(/\b([A-Z][A-Za-z'’-]{2,})\s+v(?:s?\.|ersus)?\.?\s+([A-Z][A-Za-z'’-]{2,})/);
+  return m ? { a: m[1], b: m[2] } : null;
+}
+function matchCitation(text: string): string {
+  const m = text.match(/\b(\d{4})\s+(BCSC|BCCA|SCC|ONSC|ONCA|ABQB|ABCA|FCA|FC|QCCS|NSSC|SKQB|MBQB)\s+(\d+)\b/i);
+  return m ? `${m[1]} ${m[2].toUpperCase()} ${m[3]}` : "";
+}
+function otherSurnames(text: string, exclude: string[]): string[] {
+  const ex = new Set(exclude.map((s) => s.toLowerCase()));
+  const found = new Set<string>();
+  for (const m of text.matchAll(/\b([A-Z][a-z]{3,})\b/g)) {
+    const w = m[1];
+    if (ex.has(w.toLowerCase()) || PIVOT_STOPWORDS.has(w)) continue;
+    found.add(w);
+  }
+  return [...found].slice(0, 2);
+}
+async function extractThirdPartyQuote(f: Raw): Promise<string> {
   const { content } = await callAiGateway({
     model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: `Extract propagation pivot terms from a finding ONLY IF it reports an event of consequence (a court case, charge, sanction, controversy, regulatory action). Return JSON {"is_event":true|false,"case_name":"","parties":[],"distinctive_quote":"","event_terms":[]}. is_event=false for marketing bios, taglines, product blurbs, or the subject's own promotional content. distinctive_quote = a verbatim, unusual phrase written by a THIRD PARTY about the subject (a judge/journalist/regulator) — NEVER the subject's own first-person promotional words; "" if none. case_name = legal style of cause if present.` },
-      { role: "user", content: `Title: ${f.title}\nSnippet: ${f.snippet}\nURL: ${f.url}` },
+      { role: "system", content: `Return JSON {"quote":""}. quote = ONE verbatim, distinctive phrase written by a THIRD PARTY about the subject (a judge/journalist/regulator) — NEVER the subject's own first-person promotional words. "" if none.` },
+      { role: "user", content: `Title: ${f.title}\nSnippet: ${f.snippet}` },
     ],
     functionName: "subject-retrieval",
+    extraBody: { temperature: 0 },
   });
-  return parseJson(content, { is_event: false });
+  return (parseJson<{ quote: string }>(content, { quote: "" }).quote || "").trim();
 }
-function propagationQueries(p: { case_name?: string; parties?: string[]; distinctive_quote?: string }, subjectName: string): string[] {
+// Deterministic propagation query set for ONE finding. [] if not event-worthy (no legal signal + no quote).
+async function pivotQueriesFor(f: Raw, subject: Subject): Promise<string[]> {
+  const blob = `${f.title} ${f.snippet}`;
+  const surname = lastName(subject.name);
   const qs: string[] = [];
-  if (p.case_name) qs.push(`"${p.case_name}"`);
-  if (p.distinctive_quote && p.distinctive_quote.length > 12) qs.push(`"${p.distinctive_quote}"`);
-  if (p.parties && p.parties.length >= 2) qs.push(p.parties.slice(0, 3).map((x) => `"${x}"`).join(" "));
-  qs.push(`"${p.case_name || subjectName}" (site:reddit.com OR site:x.com OR site:facebook.com)`);
-  return [...new Set(qs)].slice(0, 6);
+  const cn = matchCaseName(blob);
+  if (cn) qs.push(`"${cn.a} v. ${cn.b}"`, `"${cn.b} v. ${cn.a}"`);
+  const ci = matchCitation(blob);
+  if (ci) qs.push(`"${ci}"`);
+  if (LEGAL_CONTEXT.test(blob)) {
+    for (const o of otherSurnames(blob, [surname, firstName(subject.name)])) {
+      qs.push(`"${o} v. ${surname}"`, `"${surname} v. ${o}"`, `"${o}" "${surname}"`);   // case query ALWAYS fires
+    }
+  }
+  const hasLegalSignal = qs.length > 0;
+  const quote = await extractThirdPartyQuote(f);   // LLM (temp 0) — the only residual judgement call
+  if (quote.length > 20) qs.push(`"${quote}"`);
+  if (!hasLegalSignal && quote.length <= 20) return [];   // marketing/non-event → skip
+  return [...new Set(qs)].slice(0, 8);
 }
 
 // ── Clustering: N findings → exposure items (one item = one underlying fact, N locations) ──
@@ -290,16 +332,17 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   }
   raw = dedupeByUrl(raw);
   let verified = await verifyFindings(subject, raw);
-  verified = await classifySourceClass(subject, verified);   // tag self_published vs third_party (both kept)
+  verified = classifySourceClass(subject, verified);   // deterministic tag self_published vs third_party (both kept)
   // PHASE 2 — pivot ONLY third_party, event-worthy findings (RC2). Self-published never seeds propagation.
   let phase2: Raw[] = [];
   if (scope.phase2 !== false) {
     const pivotCandidates = verified.filter((f) => f.source_class === "third_party").slice(0, opts.maxPivots ?? 6);
+    const ranQueries = new Set<string>();   // global dedup — never run the same propagation query twice
     for (const f of pivotCandidates) {
-      const pivot = await pivotTerms(f);
-      // event-worthiness gate: must be an event AND yield a case name or a third-party quote — never a tagline
-      if (!pivot.is_event || (!pivot.case_name && !(pivot.distinctive_quote && pivot.distinctive_quote.length > 12))) continue;
-      for (const q of propagationQueries(pivot, subject.name)) {
+      const pqs = await pivotQueriesFor(f, subject);   // deterministic set; [] if not event-worthy
+      for (const q of pqs) {
+        if (ranQueries.has(q)) continue;
+        ranQueries.add(q);
         const sr = await searchProvider(q, 1);
         if (!sr.ok) { searchErrors.push({ query: q, error: sr.error ?? "unknown" }); continue; }
         for (const r of sr.results) phase2.push({ ...r, category: f.category, phase: 2, query: q });
@@ -308,7 +351,7 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
     const knownUrls = new Set(verified.map((v) => v.url));
     phase2 = dedupeByUrl(phase2).filter((r) => !knownUrls.has(r.url));
     phase2 = await verifyFindings(subject, phase2);
-    phase2 = await classifySourceClass(subject, phase2);
+    phase2 = classifySourceClass(subject, phase2);
   }
   // CLUSTER
   const allFindings = [...verified, ...phase2];
