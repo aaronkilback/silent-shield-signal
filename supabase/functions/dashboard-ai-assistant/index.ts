@@ -8,6 +8,7 @@ import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, 
 import { logError } from "../_shared/error-logger.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
+import { compareExposureItems } from "../_shared/subject-retrieval.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
 import { startTrace } from "../_shared/flight-recorder.ts";
 import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
@@ -7370,9 +7371,22 @@ Return a JSON object (no markdown, only valid JSON):
       const targetEntityId = ent.id;
 
       const { data: items } = await supabaseClient.from("subject_exposure_items")
-        .select("id, category, title, severity, source_class, subject_awareness")
+        .select("id, category, title, severity, is_finding, source_class, subject_awareness")
         .eq("subject_entity_id", targetEntityId).is("superseded_at", null);
       const current = items || [];
+      // location aggregates (count + best/most-prominent rank) for consequence ranking
+      const allIds = current.map((i: any) => i.id);
+      const aggByItem = new Map<string, { count: number; best: number }>();
+      if (allIds.length) {
+        const { data: allLocs } = await supabaseClient.from("subject_exposure_locations")
+          .select("exposure_item_id, found_at_rank").in("exposure_item_id", allIds);
+        for (const l of (allLocs || [])) {
+          const a = aggByItem.get(l.exposure_item_id) ?? { count: 0, best: 999 };
+          a.count += 1; a.best = Math.min(a.best, l.found_at_rank ?? 999);
+          aggByItem.set(l.exposure_item_id, a);
+        }
+      }
+      for (const i of current) { const a = aggByItem.get(i.id) ?? { count: 0, best: 999 }; (i as any).location_count = a.count; (i as any).obscurity_rank = a.best; }
       const { data: runs } = await supabaseClient.from("subject_scan_runs")
         .select("scope, finished_at, started_at").eq("subject_entity_id", targetEntityId).eq("status", "completed")
         .order("started_at", { ascending: false }).limit(1);
@@ -7392,16 +7406,19 @@ Return a JSON object (no markdown, only valid JSON):
         if (!latestRun) return { success: true, subject: ent.name, status: "no_scan", message: `Nothing on file for "${ent.name}" — no scan has been run. This is NOT "nothing found." Offer run_subject_scan to run one.` };
         return { success: true, subject: ent.name, status: "scanned_empty", denominator: { reputational_sweep: repSweep, reputational_depth: repDepth }, message: `Scanned ${repSweep}${repDepth ? ` (${repDepth})` : ""} — nothing currently on file for "${ent.name}". State the sweep date.` };
       }
-      const tp = current.filter((i: any) => i.source_class !== "self_published" && i.category !== "data_breach");
-      const sp = current.filter((i: any) => i.source_class === "self_published");
+      // CONSEQUENCE-FIRST ranking — SAME comparator as the report (findings > non-findings, severity,
+      // corroboration, obscurity tiebreaker). No arbitrary insertion order; non-findings never top the list.
+      const tp = current.filter((i: any) => i.source_class !== "self_published" && i.category !== "data_breach").sort(compareExposureItems);
+      const sp = current.filter((i: any) => i.source_class === "self_published").sort(compareExposureItems);
+      const findingsCount = tp.filter((i: any) => i.is_finding).length;
       const denomLine = `${current.length} current items · reputational sweep ${repSweep ?? "never"}${repDepth ? ` (${repDepth})` : ""}${breachChecked ? ` · breach check ${breachChecked}` : ""}`;
       return {
         success: true, subject: ent.name, status: "has_items",
         denominator: { current_items: current.length, reputational_sweep: repSweep, reputational_depth: repDepth, breach_check: breachChecked },
         denominator_line: denomLine,
-        third_party: tp.slice(0, 15).map((i: any) => ({ title: i.title, category: i.category, severity: i.severity, awareness: i.subject_awareness })),
-        counts: { third_party: tp.length, self_published: sp.length, breach: breachItems.length },
-        message: `${denomLine}. You MUST state this denominator (with dates) in your answer.`,
+        third_party: tp.slice(0, 15).map((i: any) => ({ title: i.title, category: i.category, severity: i.severity, is_finding: i.is_finding, locations: i.location_count, awareness: i.subject_awareness })),
+        counts: { third_party: tp.length, third_party_findings: findingsCount, self_published: sp.length, breach: breachItems.length },
+        message: `${denomLine}. Lead with the real findings (is_finding=true), highest-severity first; items marked is_finding=false are bare mentions — do NOT present them as findings. You MUST state the denominator (with dates).`,
       };
     }
 

@@ -45,7 +45,22 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: numb
 }
 interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; rank?: number; source_class?: "third_party" | "self_published"; }
 export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; found_at_rank?: number; }
-export interface ExposureItem { title: string; category: string; summary?: string; severity?: string; fingerprint: string; source_class?: "third_party" | "self_published"; locations: ExposureLocation[]; }
+export interface ExposureItem { title: string; category: string; summary?: string; severity?: string; is_finding?: boolean; fingerprint: string; source_class?: "third_party" | "self_published"; locations: ExposureLocation[]; }
+
+// Consequence-first ranking used by BOTH surfaces (AEGIS get_subject_exposure + the report) so they never
+// disagree. Order (operator ruling 2026-08-20): (1) real finding before non-finding; (2) severity from what
+// the thing IS; (3) corroboration = location count; (4) obscurity is the TIEBREAKER among items equal on
+// the above — a buried real finding beats a prominent one, but obscurity NEVER promotes a non-finding.
+const SEV_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+export function compareExposureItems(
+  a: { is_finding?: boolean; severity?: string | null; location_count?: number; obscurity_rank?: number },
+  b: { is_finding?: boolean; severity?: string | null; location_count?: number; obscurity_rank?: number },
+): number {
+  return (Number(b.is_finding ?? false) - Number(a.is_finding ?? false))                 // findings first
+    || ((SEV_RANK[b.severity ?? ""] ?? 0) - (SEV_RANK[a.severity ?? ""] ?? 0))            // consequence
+    || ((b.location_count ?? 0) - (a.location_count ?? 0))                                // corroboration
+    || ((b.obscurity_rank ?? 0) - (a.obscurity_rank ?? 0));                               // obscurity tiebreaker (buried = higher rank first)
+}
 
 const ALL_CATEGORIES = ["legal", "financial", "professional", "media", "social", "corporate", "property"];
 const domainOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return undefined; } };
@@ -428,20 +443,35 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
       if (hit && groups.has(hit.key) && hit.key !== key) { groups.get(hit.key)!.push(...fs); groups.delete(key); }
     }
   }
-  // Build items. category + first-pass severity are deterministic; Module #2 refines severity later.
+  // Build items. CLASSIFY FROM CONTENT, not from which query found the item — provenance ("a legal query
+  // surfaced it") is not classification ("it is a legal matter"). Conflating them tagged junk as legal/High.
   const items: ExposureItem[] = [];
   for (const [key, fs] of groups) {
     const source_class = fs.some((f) => f.source_class === "third_party") ? "third_party" : "self_published";
-    const category = mostCommon(fs.map((f) => f.category)) || "other";
-    const isLegal = key.startsWith("case:") || key.startsWith("cite:") || category === "legal";
-    const severity = isLegal ? "high" : (category === "financial" || category === "professional") ? "medium" : undefined;
+    const blob = fs.map((f) => `${f.title} ${f.snippet}`).join(" ");
+    const isCase = key.startsWith("case:") || key.startsWith("cite:");
+    // A real LEGAL finding carries a case name, a citation, or a STRONG legal-action signal — NOT merely a
+    // legal search term. Uses a precision regex (NOT the loose pivot LEGAL_CONTEXT, whose common words
+    // "court"/"liable"/"immunity"/"charged" match ordinary prose). Otherwise it loses the legal category
+    // too, not just the severity — provenance (a legal query found it) is not classification.
+    const STRONG_LEGAL = /\b(sued|lawsuit|prosecut(?:ion|ed|ing)|convicted|acquitted|plaintiff|defendant|litigation|disbarred|indicted|pleaded guilty|found liable|class action|malicious prosecution|reasons for judgment|statement of claim|wrongful (?:dismissal|death)|settlement)\b/i;
+    const isRealLegal = isCase || matchCaseName(blob) != null || matchCitation(blob) !== "" || STRONG_LEGAL.test(blob);
+    const hasFinancial = /\b(bankrupt(?:cy)?|insolvency|lien|creditor|foreclosure|receivership|tax lien|judgment debt|garnish(?:ment)?)\b/i.test(blob);
+    const hasProfessional = /\b(disciplinary|sanction(?:ed)?|reprimand|licen[cs]e (?:revoked|suspended)|struck off|disbarred|professional misconduct|malpractice)\b/i.test(blob);
+    const hasMediaEvent = /\b(arrested|indicted|embezzl|defrauded|sexual assault|criminal charges?|restraining order)\b/i.test(blob);
+    let category: string, severity: string | undefined, is_finding: boolean;
+    if (isRealLegal) { category = "legal"; severity = "high"; is_finding = true; }
+    else if (hasFinancial) { category = "financial"; severity = "medium"; is_finding = true; }
+    else if (hasProfessional) { category = "professional"; severity = "medium"; is_finding = true; }
+    else if (hasMediaEvent) { category = "media"; severity = "medium"; is_finding = true; }
+    else { category = "mention"; severity = "low"; is_finding = false; }   // bare web mention, NOT a finding
     const rep = fs.slice().sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999))[0];
-    const title = key.startsWith("case:") ? `Legal case: ${key.slice(5).split("|").map(cap).join(" v. ")}` : (rep.title || _subjectName);
+    const title = isCase ? `Legal case: ${key.slice(5).split("|").map(cap).join(" v. ")}` : (rep.title || _subjectName);
     // dedupe identical URLs into one location (same place found by 2 queries is not two findings)
     const seen = new Set<string>();
     const locations: ExposureLocation[] = [];
     for (const f of fs) { if (seen.has(f.url)) continue; seen.add(f.url); locations.push({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase, found_at_rank: f.rank }); }
-    items.push({ title, category: isLegal ? "legal" : category, summary: undefined, severity, source_class, fingerprint: key.replace(/[^a-z0-9]+/g, "-").slice(0, 80), locations });
+    items.push({ title, category, summary: undefined, severity, is_finding, source_class, fingerprint: key.replace(/[^a-z0-9]+/g, "-").slice(0, 80), locations });
   }
   return items;
 }
@@ -450,7 +480,7 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
   for (const item of items) {
     const { data: row, error } = await supabase.from("subject_exposure_items").upsert({
       subject_entity_id: subject.entityId ?? null, client_id: owner?.clientId ?? null, tenant_id: owner?.tenantId ?? null,
-      category: item.category || "other", title: item.title, summary: item.summary ?? null, severity: item.severity ?? null,
+      category: item.category || "other", title: item.title, summary: item.summary ?? null, severity: item.severity ?? null, is_finding: item.is_finding ?? true,
       source_class: item.source_class ?? null,
       fingerprint: item.fingerprint, scan_id: scanId, matcher_version: SUBJECT_RETRIEVAL_VERSION, created_by: createdBy ?? null, updated_at: new Date().toISOString(),
       superseded_at: null,   // re-found this scan → current again (un-supersede if it had aged out)

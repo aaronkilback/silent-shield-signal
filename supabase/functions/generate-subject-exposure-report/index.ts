@@ -8,6 +8,8 @@ import {
   createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient,
 } from "../_shared/supabase-client.ts";
 
+import { compareExposureItems } from "../_shared/subject-retrieval.ts";
+
 const REPORT_BUCKET = "generated-reports";   // private bucket (migration 20260212143009), signed-URL only
 
 const ALL7 = ["legal", "financial", "professional", "media", "social", "corporate", "property"];
@@ -48,7 +50,7 @@ Deno.serve(async (req) => {
 
     // ── gather: CURRENT items only (superseded/aged-out excluded), their locations, family disposition ──
     const { data: items } = await supabase.from("subject_exposure_items")
-      .select("id, category, title, summary, severity, source_class, fingerprint, subject_awareness, first_seen_date")
+      .select("id, category, title, summary, severity, is_finding, source_class, fingerprint, subject_awareness, first_seen_date")
       .eq("subject_entity_id", entityId).is("superseded_at", null);
     const ids = (items ?? []).map((i: any) => i.id);
     let locs: any[] = [];
@@ -61,11 +63,12 @@ Deno.serve(async (req) => {
     for (const l of locs) { if (!byItem.has(l.exposure_item_id)) byItem.set(l.exposure_item_id, []); byItem.get(l.exposure_item_id)!.push(l); }
     const enriched = (items ?? []).map((i: any) => {
       const ls = (byItem.get(i.id) ?? []).sort((a, b) => (a.found_at_rank ?? 999) - (b.found_at_rank ?? 999));
-      return { ...i, locations: ls, obscurity_rank: ls.length ? Math.min(...ls.map((l) => l.found_at_rank ?? 999)) : 999 };
+      return { ...i, locations: ls, location_count: ls.length, obscurity_rank: ls.length ? Math.min(...ls.map((l) => l.found_at_rank ?? 999)) : 999 };
     });
-    const byObscurity = (a: any, b: any) => b.obscurity_rank - a.obscurity_rank;   // buried-first
-    const thirdParty = enriched.filter((i: any) => i.source_class !== "self_published" && i.category !== "data_breach").sort(byObscurity);
-    const selfPublished = enriched.filter((i: any) => i.source_class === "self_published").sort(byObscurity);
+    // CONSEQUENCE-FIRST ranking (shared with AEGIS get_subject_exposure so they never disagree): real
+    // findings before non-findings, then severity, then corroboration, then obscurity as tiebreaker.
+    const thirdParty = enriched.filter((i: any) => i.source_class !== "self_published" && i.category !== "data_breach").sort(compareExposureItems);
+    const selfPublished = enriched.filter((i: any) => i.source_class === "self_published").sort(compareExposureItems);
     const breaches = enriched.filter((i: any) => i.category === "data_breach").sort((a, b) => (b.first_seen_date ?? "").localeCompare(a.first_seen_date ?? ""));
 
     // AGGREGATED DENOMINATOR (b) — latest-of-each-producer, HONEST ABOUT AGE. A category swept 6 days ago

@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
       const dc: string[] = breach.DataClasses ?? [];
       const { data: item } = await supabase.from("subject_exposure_items").upsert({
         subject_entity_id: entityId, client_id: entity.client_id ?? null, tenant_id: entity.tenant_id ?? null,
-        category: "data_breach", source_class: "third_party",
+        category: "data_breach", source_class: "third_party", is_finding: true,
         title: `Data breach: ${breach.Title ?? name}`,
         summary: `Affected account(s): ${affected.join(", ")}. Breach date ${breach.BreachDate ?? "unknown"}. Data exposed: ${dc.join(", ") || "unspecified"}.${breach.IsSensitive ? " (sensitive breach)" : ""}`,
         severity: severityFor(dc, !!breach.IsSensitive),
