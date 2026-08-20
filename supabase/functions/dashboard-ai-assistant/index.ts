@@ -270,6 +270,75 @@ const PROPOSE_TRAVEL_EDIT_TOOL = {
 };
 const tools = [...aegisToolDefinitions, PROPOSE_TRAVEL_EDIT_TOOL];
 
+// ── Subject-entity resolution for get_subject_exposure / run_subject_scan. NEVER silently picks among
+// duplicates (that bug produced a confident empty answer). Selection is by entity_index against a
+// DETERMINISTIC order; entity_id accepts a full uuid OR a prefix (prefix that matches >1 disambiguates
+// again — no arbitrary pick at the prefix layer either).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// DETERMINISTIC disambiguation ordering. entity_index is only stable if the disambiguation turn and the
+// selection turn produce the SAME order — so sort by a FIXED key (created_at DESC, matching how options are
+// displayed), NEVER by whatever the query happens to return. DO NOT "optimise" this ordering: changing the
+// sort silently makes entity_index select the wrong record across turns.
+function orderSubjectMatches(list: any[]): any[] {
+  return [...list].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+}
+async function buildSubjectOptions(sb: any, list: any[]): Promise<any[]> {
+  const ordered = orderSubjectMatches(list);
+  return Promise.all(ordered.map(async (e: any, i: number) => {
+    const { count } = await sb.from("subject_exposure_items").select("id", { count: "exact", head: true }).eq("subject_entity_id", e.id).is("superseded_at", null);
+    const { data: c } = e.client_id ? await sb.from("clients").select("name").eq("id", e.client_id).maybeSingle() : { data: null };
+    return { option: i + 1, entity_id: e.id, name: e.name, client: c?.name ?? null, created: String(e.created_at ?? "").slice(0, 10), current_items: count ?? 0 };
+  }));
+}
+type SubjectResolution =
+  | { kind: "resolved"; entity: any }
+  | { kind: "ambiguous"; options: any[]; name: string }
+  | { kind: "bad_index"; options: any[]; name: string; given: number }
+  | { kind: "not_found"; label: string };
+async function resolveSubjectEntity(sb: any, args: { entity_id?: string; entity_name?: string; entity_index?: number }): Promise<SubjectResolution> {
+  const entity_id = args.entity_id?.trim();
+  const entity_name = args.entity_name?.trim();
+  const entity_index = args.entity_index;
+
+  if (entity_id) {
+    if (UUID_RE.test(entity_id)) {
+      const { data } = await sb.from("entities").select("id, name, client_id, created_at").eq("id", entity_id).maybeSingle();
+      return data ? { kind: "resolved", entity: data } : { kind: "not_found", label: entity_id };
+    }
+    // PREFIX-tolerant (e.g. a model echoing the 8-char display form). uuid columns can't LIKE via PostgREST,
+    // so scan person entities and prefix-match in JS. >1 hit → disambiguate (no arbitrary prefix pick).
+    const prefix = entity_id.toLowerCase().replace(/[^0-9a-f]/g, "");
+    if (prefix.length >= 4) {
+      const { data: cand } = await sb.from("entities").select("id, name, client_id, created_at").eq("type", "person").limit(5000);
+      const hits = (cand || []).filter((e: any) => String(e.id).toLowerCase().startsWith(prefix));
+      if (hits.length === 0) return { kind: "not_found", label: entity_id };
+      if (hits.length === 1) return { kind: "resolved", entity: hits[0] };
+      return { kind: "ambiguous", options: await buildSubjectOptions(sb, hits), name: entity_name ?? hits[0].name };
+    }
+    return { kind: "not_found", label: entity_id };
+  }
+
+  if (!entity_name) return { kind: "not_found", label: "(no entity given)" };
+  const { data: matches } = await sb.from("entities").select("id, name, client_id, created_at").ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
+  const list = matches || [];
+  if (list.length === 0) return { kind: "not_found", label: entity_name };
+  if (list.length === 1) return { kind: "resolved", entity: list[0] };
+  if (entity_index != null) {
+    const ordered = orderSubjectMatches(list);
+    const idx = Number(entity_index);
+    if (!Number.isInteger(idx) || idx < 1 || idx > ordered.length) return { kind: "bad_index", options: await buildSubjectOptions(sb, list), name: entity_name, given: idx };
+    return { kind: "resolved", entity: ordered[idx - 1] };
+  }
+  return { kind: "ambiguous", options: await buildSubjectOptions(sb, list), name: entity_name };
+}
+function subjectAmbiguityResult(r: { options: any[]; name: string }, tool: string, bad?: number): any {
+  const opts = r.options.map((m: any) => `#${m.option}: ${m.name} — client ${m.client ?? "—"}, created ${m.created}, ${m.current_items} exposure items`).join(" · ");
+  return {
+    success: true, status: bad != null ? "bad_index" : "ambiguous", options: r.options,
+    message: `${bad != null ? `Index ${bad} is out of range. ` : ""}There are ${r.options.length} records matching "${r.name}". Ask the user which one, then call ${tool} again with entity_index set to that option number (1-${r.options.length}). Map the user's words to a number — "the first one" → 1, "the Aug 18 record" or "the one with 148 items" → whichever option matches. NEVER ask the user to type or echo a UUID. Options: ${opts}.`,
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // P0 TENANT-BOUNDARY ENFORCEMENT (Bug 4/5b P0 — application-layer trust boundary)
 //
@@ -7291,31 +7360,14 @@ Return a JSON object (no markdown, only valid JSON):
       // READ current exposure from the shared retrieval module (no scan). States its OWN denominator with
       // dates; distinguishes "nothing on file / no scan run" from "scanned, nothing found".
       assertTenantContext("get_subject_exposure", tenantId);
-      const { entity_id, entity_name } = args;
+      const { entity_id, entity_name, entity_index } = args;
       if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
-      let targetEntityId = entity_id;
-      let ent: any = null;
-      if (targetEntityId) {
-        const { data: f } = await supabaseClient.from("entities").select("id, name").eq("id", targetEntityId).maybeSingle();
-        if (!f) return { error: `Entity not found: ${targetEntityId}` };
-        ent = f;
-      } else {
-        // Resolve by name — NEVER guess among duplicates. Silent ONLY when exactly one entity matches;
-        // otherwise return a disambiguation and let the caller (via the user) choose. This also surfaces
-        // the duplicate-entity problem instead of hiding it behind a lucky pick.
-        const { data: matches } = await supabaseClient.from("entities").select("id, name, client_id, created_at").ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
-        const list = matches || [];
-        if (list.length === 0) return { error: `Entity not found: ${entity_name}. Use search_entities.` };
-        if (list.length > 1) {
-          const opts = await Promise.all(list.map(async (e: any) => {
-            const { count } = await supabaseClient.from("subject_exposure_items").select("id", { count: "exact", head: true }).eq("subject_entity_id", e.id).is("superseded_at", null);
-            const { data: c } = e.client_id ? await supabaseClient.from("clients").select("name").eq("id", e.client_id).maybeSingle() : { data: null };
-            return { entity_id: e.id, name: e.name, client: c?.name ?? null, created: String(e.created_at).slice(0, 10), current_items: count ?? 0 };
-          }));
-          return { success: true, status: "ambiguous", matches: opts, message: `I have ${opts.length} records matching "${entity_name}". Do NOT guess — tell the user there are ${opts.length} records and ask which one, then call get_subject_exposure again with that entity_id. Options: ${opts.map((m: any) => `${m.name} — client ${m.client ?? "—"}, created ${m.created}, ${m.current_items} exposure items (id ${String(m.entity_id).slice(0, 8)})`).join(" · ")}.` };
-        }
-        ent = list[0]; targetEntityId = ent.id;
-      }
+      const rez = await resolveSubjectEntity(supabaseClient, { entity_id, entity_name, entity_index });
+      if (rez.kind === "not_found") return { error: `Entity not found: ${rez.label}. Use search_entities.` };
+      if (rez.kind === "ambiguous") return subjectAmbiguityResult(rez, "get_subject_exposure");
+      if (rez.kind === "bad_index") return subjectAmbiguityResult(rez, "get_subject_exposure", rez.given);
+      const ent = rez.entity;
+      const targetEntityId = ent.id;
 
       const { data: items } = await supabaseClient.from("subject_exposure_items")
         .select("id, category, title, severity, source_class, subject_awareness")
@@ -7355,29 +7407,14 @@ Return a JSON object (no markdown, only valid JSON):
 
     case "run_subject_scan": {
       assertTenantContext("run_subject_scan", tenantId);
-      const { entity_id, entity_name } = args;
+      const { entity_id, entity_name, entity_index } = args;
       if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
-      let targetEntityId = entity_id;
-      let ent: any = null;
-      if (targetEntityId) {
-        const { data: f } = await supabaseClient.from("entities").select("id, name").eq("id", targetEntityId).maybeSingle();
-        if (!f) return { error: `Entity not found: ${targetEntityId}` };
-        ent = f;
-      } else {
-        // NEVER guess which entity to scan among duplicates — disambiguate first.
-        const { data: matches } = await supabaseClient.from("entities").select("id, name, client_id, created_at").ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
-        const list = matches || [];
-        if (list.length === 0) return { error: `Entity not found: ${entity_name}.` };
-        if (list.length > 1) {
-          const opts = await Promise.all(list.map(async (e: any) => {
-            const { count } = await supabaseClient.from("subject_exposure_items").select("id", { count: "exact", head: true }).eq("subject_entity_id", e.id).is("superseded_at", null);
-            const { data: c } = e.client_id ? await supabaseClient.from("clients").select("name").eq("id", e.client_id).maybeSingle() : { data: null };
-            return { entity_id: e.id, name: e.name, client: c?.name ?? null, created: String(e.created_at).slice(0, 10), current_items: count ?? 0 };
-          }));
-          return { success: true, status: "ambiguous", matches: opts, message: `I have ${opts.length} records matching "${entity_name}". Do NOT scan a guess — ask the user which one, then call run_subject_scan with that entity_id. Options: ${opts.map((m: any) => `${m.name} — client ${m.client ?? "—"}, created ${m.created}, ${m.current_items} exposure items (id ${String(m.entity_id).slice(0, 8)})`).join(" · ")}.` };
-        }
-        ent = list[0]; targetEntityId = ent.id;
-      }
+      const rez = await resolveSubjectEntity(supabaseClient, { entity_id, entity_name, entity_index });
+      if (rez.kind === "not_found") return { error: `Entity not found: ${rez.label}.` };
+      if (rez.kind === "ambiguous") return subjectAmbiguityResult(rez, "run_subject_scan");
+      if (rez.kind === "bad_index") return subjectAmbiguityResult(rez, "run_subject_scan", rez.given);
+      const ent = rez.entity;
+      const targetEntityId = ent.id;
       const _u = Deno.env.get("SUPABASE_URL"); const _k = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
       const resp = await fetch(`${_u}/functions/v1/subject-exposure`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${_k}` },

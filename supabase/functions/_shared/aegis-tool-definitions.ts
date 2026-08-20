@@ -1170,8 +1170,9 @@ Provide client_id for operational proximity context against client locations.`,
       parameters: {
         type: "object",
         properties: {
-          entity_id: { type: "string", description: "UUID of the entity" },
+          entity_id: { type: "string", description: "Full UUID of the entity (exact). A short prefix also works." },
           entity_name: { type: "string", description: "Name of the entity (if entity_id not provided)" },
+          entity_index: { type: "number", description: "When a prior call returned status=ambiguous, the option number (1-based) the user chose. Use this to select among duplicate records — never ask the user for a UUID." },
         },
       },
     },
@@ -1184,8 +1185,9 @@ Provide client_id for operational proximity context against client locations.`,
       parameters: {
         type: "object",
         properties: {
-          entity_id: { type: "string", description: "UUID of the entity" },
+          entity_id: { type: "string", description: "Full UUID of the entity (exact). A short prefix also works." },
           entity_name: { type: "string", description: "Name of the entity (if entity_id not provided)" },
+          entity_index: { type: "number", description: "When a prior call returned status=ambiguous, the option number (1-based) the user chose. Use this to select among duplicate records — never ask the user for a UUID." },
         },
       },
     },
