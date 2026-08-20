@@ -11717,7 +11717,11 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               scopedTenantId: userTenantId ?? null,
               outcome: (_recOk && _recOk.success === false) ? 'refused' : 'ok',
               refusalReason: (_recOk && _recOk.success === false) ? String(_recOk.error ?? '').slice(0, 300) : null,
-              returnedObjectCount: _recOk && Array.isArray((_recOk as { data?: unknown }).data) ? ((_recOk as { data: unknown[] }).data.length) : undefined,
+              // Count both a bare-array result AND a { data: [...] } wrapper — a null count sitting next to a
+              // populated result_summary makes a trace reader distrust both fields.
+              returnedObjectCount: Array.isArray(result)
+                ? result.length
+                : (_recOk && Array.isArray((_recOk as { data?: unknown }).data) ? (_recOk as { data: unknown[] }).data.length : undefined),
               // redacted summary of WHAT was returned (beside the count) — top-level shape + bounded preview;
               // the recorder further strips secrets/embeddings and truncates.
               resultSummary: _recOk
