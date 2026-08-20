@@ -314,7 +314,9 @@ function isSelfPublished(url: string, handles: string[], ownDomains: string[], c
   // (@handle) or a "View profile for {name}" byline. Mere name-presence is NOT enough (a third-party
   // article about them also has the name); we require an authorship marker.
   if (contentText) {
-    const t = contentText.toLowerCase();
+    // strip separators so "@aaron_kilbackdisrupted" (underscore in the displayed handle) matches the
+    // normalized handle "aaronkilbackdisrupted" — his OWN account must not read as third-party exposure.
+    const t = contentText.toLowerCase().replace(/[_.\-]/g, "");
     if (handles.some((h) => t.includes("@" + h))) return true;
     if (subjectNameLc && t.includes(`view profile for ${subjectNameLc}`)) return true;
   }

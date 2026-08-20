@@ -202,6 +202,11 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, chi
   .caveat { background: #fff8e6; border-left: 3px solid #e6a817; padding: 8px 12px; font-size: 13px; margin: 10px 0; }
   .rem-placeholder { color: #888; font-style: italic; border: 1px dashed #ccc; padding: 16px; border-radius: 6px; }
   .empty-note { color: #888; font-style: italic; font-size: 13px; }
+  .mentions { margin: 14px 0; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 14px; background: #fafafa; }
+  .mentions summary { cursor: pointer; font-size: 13px; color: #444; }
+  .mention-row { font-size: 12px; color: #555; padding: 4px 0; border-top: 1px solid #eee; margin-top: 6px; word-break: break-word; }
+  .mention-row .cat { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; color: #999; margin-right: 5px; }
+  .mention-row a { color: #1a4a8a; }
   .draft-banner { background: #7a1f1f; color: #fff; padding: 12px 16px; border-radius: 6px; font-weight: bold; margin: 16px 0; font-size: 14px; }
   .draft-tag { display: inline-block; background: #7a1f1f; color: #fff; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 3px; letter-spacing: .05em; margin-left: 8px; vertical-align: middle; }
   .cs-block { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
@@ -230,8 +235,14 @@ ${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this re
 </div>
 
 <h2>2 · Third-Party Exposure</h2>
-<p class="section-intro">What is out there about you, written by others — ordered by how buried it is (most obscure first, because what you already see weekly is not the concern).</p>
-${thirdParty.length ? thirdParty.map(itemBlock).join("") : '<p class="empty-note">No third-party exposure surfaced in the searched categories.</p>'}
+<p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
+${(() => {
+  const findings = thirdParty.filter((i) => i.is_finding);
+  const mentions = thirdParty.filter((i) => !i.is_finding);
+  const findingsHtml = findings.length ? findings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>';
+  const mentionsHtml = mentions.length ? `<details class="mentions"><summary><strong>Also found — ${mentions.length} mention${mentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> These are pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${mentions.map((m) => `<div class="mention-row"><span class="cat">${esc(m.category)}</span> ${esc(m.title)} — ${m.locations.map((l) => `<a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>`).join(", ")}</div>`).join("")}</details>` : "";
+  return findingsHtml + mentionsHtml;
+})()}
 
 <h2>3 · Self-Published Footprint</h2>
 <p class="section-intro">What you publish about yourself — reported separately. This is within your control; it is here for completeness, not as a finding.</p>
