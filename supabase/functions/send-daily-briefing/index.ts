@@ -294,7 +294,7 @@ MANDATORY INTELLIGENCE TRADECRAFT RULES:
 - Open the SITUATION OVERVIEW section with a BLUF (Bottom Line Up Front) — one sentence stating the single most important thing the reader needs to know before anything else.
 - For each section, state the trajectory: ESCALATING / STABLE / DE-ESCALATING with one sentence of evidence.
 - Label all analytical conclusions with DEDUCTIONS: in the EMERGING PATTERNS section.
-- In RECOMMENDED POSTURE, every recommendation must include a named owner role (e.g., Security Operations, Physical Security Lead, Intelligence Analyst) and a specific timeframe (Immediate / 24 hours / 48 hours / This week).
+- In RECOMMENDED POSTURE, every recommendation must include a specific timeframe (Immediate / 24 hours / 48 hours / This week) and an owner. The owner MUST be either a specific named individual explicitly provided in the input, or the literal word "Unassigned" — NEVER a role or team category. Do NOT write "Security Operations", "Intelligence Analyst", "Physical Security Lead", "Cyber Security Lead", or any role title as an owner; a role is not an owner (finding #4 — no static role strings). If no named individual is provided, the owner is "Unassigned".
 - If a section has no relevant activity, state clearly: "No significant activity in this category during the reporting period." Do not pad with generic filler content.
 - Never use vague language like "may pose risks" or "could potentially" — state the specific risk and the specific implication for the client directly.
 
@@ -305,7 +305,7 @@ Structure:
 2. KEY METRICS (bullet-style numbers with context, not just raw counts)
 3. PRIORITY SIGNALS (top 3-5 actionable signals with specifics: what, where, severity, and why it matters). The ACTIONABLE SIGNALS below are pre-sorted by severity then proximity — any critical-severity, proximity-verified, or authoritative-source (BCWS/CAP/CISA/court) signal MUST lead this section and MUST NOT be omitted in favour of a lower-severity but broader item. A specific evacuation Order near an asset outranks a provincewide advisory.
 4. EMERGING PATTERNS (any trends or clusters with DEDUCTIONS: label — if none, say "No significant activity in this category during the reporting period.")
-5. RECOMMENDED POSTURE (specific actions with named owner role and timeframe — not generic advice)
+5. RECOMMENDED POSTURE (specific actions with a timeframe and an owner that is a real named individual or "Unassigned" — never a role title — not generic advice)
 
 Tone: Calm, authoritative, measured. Like a senior intelligence officer delivering a classified briefing. Zero filler words.`,
         },

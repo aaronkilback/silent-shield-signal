@@ -437,29 +437,64 @@ Deno.serve(async (req) => {
     const cancelledRe = /\b(cancel(?:led|ed)?|lifted|all\s*clear|stand\s*down|rescinded)\b/i;
     freshSignals = freshSignals.filter((s: any) => !cancelledRe.test(s.title ?? ''));
 
-    // F. INTERIM GENERATOR-LEVEL DEDUP (consolidated ruling — temporary until
-    // upstream dedup): merge claims sharing entity+event+date instead of
-    // double-counting. Beyond CAP identifiers, fall back to a normalized
-    // title + received-day key so near-duplicate signals (e.g. "Massive Wildfires
-    // Near Clinton" / "Massive wildfires near Clinton" same day) collapse to one.
-    const seenEvents = new Map<string, any>();
+    // F. GENERATOR-LEVEL DEDUP (2026-08-20 — fuzzy cross-outlet merge). Two outlets writing the SAME story
+    // never share an exact title, so the old exact-normalized-title key left both in the brief with divergent
+    // severities (e.g. Kitimat Eco Depot: "Funding for Eco Depot in Kitimat" Medium + "Eco Depot Funding" High).
+    // Now: CAP-identifier / event+area exact keys stay (reliable structured dedup); non-CAP signals cluster by
+    // same received-day + trigram title similarity >= SIM_THRESHOLD. The trigram function is pg_trgm-equivalent
+    // (per-word "  w " padding, set Jaccard), so the threshold transfers from the DB calibration: 0.50 catches
+    // the Kitimat pair (0.563) and sits above the noisy <0.50 band where distinct events start appearing.
+    // On merge: keep the HIGHER severity and cite BOTH sources — one event, N outlets, mirroring the exposure
+    // report's one-item-N-locations.
+    const SIM_THRESHOLD = 0.50;
+    const _sevRank: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+    const _pgTrigrams = (str: string): Set<string> => {
+      const set = new Set<string>();
+      for (const w of (str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean)) {
+        const p = '  ' + w + ' ';
+        for (let i = 0; i + 3 <= p.length; i++) set.add(p.slice(i, i + 3));
+      }
+      return set;
+    };
+    const _trigramSim = (a: string, b: string): number => {
+      const A = _pgTrigrams(a), B = _pgTrigrams(b);
+      if (A.size === 0 || B.size === 0) return 0;
+      let inter = 0; for (const t of A) if (B.has(t)) inter++;
+      return inter / (A.size + B.size - inter);
+    };
+    const _srcName = (s: any): string => {
+      const rj = (s.raw_json && typeof s.raw_json === 'object') ? s.raw_json : {};
+      return String(rj.source_name || rj.source || rj.publisher || getHostname(s.source_url) || 'source');
+    };
+    const _mergeInto = (rep: any, s: any) => {
+      rep._sources = rep._sources || [{ name: _srcName(rep), url: rep.source_url || null }];
+      const nm = _srcName(s), url = s.source_url || null;
+      if (!rep._sources.some((x: any) => x.name === nm && x.url === url)) rep._sources.push({ name: nm, url });
+      rep._merge_count = (rep._merge_count || 1) + 1;
+      // keep the higher severity + score (client sees the more serious assessment, not an arbitrary pick)
+      if ((_sevRank[s.severity] ?? -1) > (_sevRank[rep.severity] ?? -1)) rep.severity = s.severity;
+      if ((s.severity_score ?? 0) > (rep.severity_score ?? 0)) rep.severity_score = s.severity_score;
+    };
+    const _capSeen = new Map<string, any>();
+    const _fuzzyReps: any[] = [];
     for (const s of freshSignals) {
       const cap = (s.raw_json && typeof s.raw_json === 'object') ? s.raw_json.cap : null;
-      const normTitle = (s.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
       const day = String(s.received_at || s.created_at || '').slice(0, 10);
-      const dedupKey = cap?.identifier
-        ? `cap:${cap.identifier}`
-        : cap
-          ? `evt:${cap.event}|${cap.area_desc ?? cap.areaDesc ?? ''}`
-          : normTitle
-            ? `evt:${normTitle}|${day}`
-            : `id:${s.id}`;
-      const existing = seenEvents.get(dedupKey);
-      if (!existing || new Date(s.created_at) > new Date(existing.created_at)) {
-        seenEvents.set(dedupKey, s);
+      if (cap) { // structured CAP: exact key, keep latest (unchanged behavior)
+        const key = cap.identifier ? `cap:${cap.identifier}` : `evt:${cap.event}|${cap.area_desc ?? cap.areaDesc ?? ''}`;
+        const existing = _capSeen.get(key);
+        if (!existing || new Date(s.created_at) > new Date(existing.created_at)) _capSeen.set(key, s);
+        continue;
       }
+      let rep: any = null;
+      for (const r of _fuzzyReps) {
+        const rday = String(r.received_at || r.created_at || '').slice(0, 10);
+        if (rday === day && _trigramSim(r.title || '', s.title || '') >= SIM_THRESHOLD) { rep = r; break; }
+      }
+      if (rep) { _mergeInto(rep, s); }
+      else { s._sources = [{ name: _srcName(s), url: s.source_url || null }]; s._merge_count = 1; _fuzzyReps.push(s); }
     }
-    freshSignals = Array.from(seenEvents.values());
+    freshSignals = [..._capSeen.values(), ..._fuzzyReps];
 
     // ── A. TIERED RELEVANCE GATE (consolidated brief-quality ruling 2026-07-28) ──
     // relevance_score is 0–1. ≥0.60 = MAIN tier (exec flash, client issues,
@@ -1539,7 +1574,11 @@ Rules: plain prose, no markdown, no asterisks, no headers. Total length UNDER 25
           const isPattern = s.signal_type === 'pattern';
           const patternTag = isPattern ? ' [INTERNAL PATTERN DETECTOR — describes signal volume, not observed threat activity]' : '';
           const dateStr = new Date(s.received_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-          return `${i + 1}. [${s.severity?.toUpperCase()}]${patternTag} ${cleanSignalExcerpt(s.normalized_text)} (Source: ${getHostname(s.source_url)}, ${dateStr})`;
+          // Merged cross-outlet event: cite ALL outlets (one event, N sources) instead of one arbitrary pick.
+          const srcCite = (s._merge_count > 1 && Array.isArray(s._sources))
+            ? `Sources: ${s._sources.map((x: any) => x.name).filter(Boolean).join('; ')}`
+            : `Source: ${getHostname(s.source_url)}`;
+          return `${i + 1}. [${s.severity?.toUpperCase()}]${patternTag} ${cleanSignalExcerpt(s.normalized_text)} (${srcCite}, ${dateStr})`;
         };
 
         const narrativePrompt = `Write a professional intelligence narrative about ${getCategoryDisplay(category)} threats for ${client.name}. Apply the specialist knowledge and agent assessments below.
@@ -2228,7 +2267,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
         ${item.signals.slice(0, 3).map((signal: any) => `
           <div class="evidence-citation">
             <div style="display: flex; justify-content: space-between; margin-bottom: 4pt;">
-              <span style="font-weight: 700; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.5pt;">Source: ${((citeLineById.get(signal.id) || '').split(',')[0] || getHostname(signal.source_url) || 'unattributed').replace(/[<>]/g, '')}</span>
+              <span style="font-weight: 700; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.5pt;">${(signal._merge_count > 1 && Array.isArray(signal._sources)) ? 'Sources: ' + signal._sources.map((x: any) => String(x.name)).filter(Boolean).join('; ').replace(/[<>]/g, '') : 'Source: ' + ((citeLineById.get(signal.id) || '').split(',')[0] || getHostname(signal.source_url) || 'unattributed').replace(/[<>]/g, '')}</span>
               <span style="font-family: monospace; font-size: 7.5pt; color: #666;">${new Date(signal.received_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</span>
             </div>
             <p style="margin: 0 0 4pt; line-height: 1.5;">
