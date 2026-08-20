@@ -405,7 +405,27 @@ The hold was encountered from the outside 11 days after enactment — it blocked
 ### Recommended (operator decision — NOT built; Option 1 = wait was chosen)
 A hold is not a decision, it is a deferral — and a deferral needs an owner and a review date. Minimum: a `next_review_at` + `reason` + `set_by` on the hold, and a probe that surfaces any `legal_hold=true` set > N days ago with no review. Deferred pending operator direction (consistent with "wait").
 
+## Amendment 12 2026-08-20 — a hold-touch was raised (entity dedup) and DECLINED by the operator; the hold held
+
+During WO-ENTITY-DEDUP, a duplicate-entity cleanup surfaced entity **`3c9cfe5d-a44f-42fe-bdee-094cc4f7a5e7`**
+("Aaron Kilback (Founder, Silent Shield)") — the operator's own name, auto-extracted from Petronas content and
+mis-filed onto the PECL client `0f5c809d` (`visibility_class='extracted'`, `entity_status='suggested'`, **0
+references**, already `deleted_at=2026-04-07`, `merged_into` NULL). It is one of the frozen set; a soft-delete
+write was **blocked by `block_legal_hold_writes()`** as designed.
+
+**Operator ruling (2026-08-20): DECLINED the touch. The hold holds — no exception.** Verbatim reasoning:
+*"My ruling was no exceptions and this is precisely the kind of case that tests it — small, harmless, my own
+name, and convenient. It has zero references and is already soft-deleted, so nothing leaks by waiting. Granting
+an exception for tidiness is how holds die."* This is the concrete instance of the Amendment-11 principle ("a
+hold suspendable for convenience is not a hold") being upheld against a live temptation to suspend it.
+
+**Disposition:** `3c9cfe5d` is **deferred to the hold-lift pass** — when the hold lifts it is soft-deleted
+(operator's personal entity, does not belong on a client, never to be consolidated onto PECL) **in the same pass
+as the rest of the 788**. Reason recorded here in lieu of a `deleted_reason` write (which the hold blocks).
+No workaround, no exclusion list, no trigger exception was built (consistent with Amendment-11 Option 1).
+
 ## Open
+- **Dedup-raised entity `3c9cfe5d` (Amendment 12):** soft-delete DECLINED under the hold; deferred to the hold-lift pass (soft-delete + reason then). Tracked here so it is not forgotten when the hold is worked.
 - ai-tools-query re-enable stays gated behind the caller→scope gate (Generic Tool Path Clearance Phase B).
 - Item 4 (full triage of the 232 verify_jwt=false functions + the ~25 request-client-scoped list) pending.
 - Notify CRT (vinced) and consider customer disclosure per PIPEDA — operator decision.
