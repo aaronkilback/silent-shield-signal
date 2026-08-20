@@ -681,40 +681,23 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     if (!entityId) return;
     setRunningInvestigation(true);
     try {
+      // Investigate now fires the SHARED retrieval module (subject-exposure rescan → subject-retrieval async,
+      // 7-category deep). Replaces the disabled investigate-poi + generate-poi-report path (both 503 under
+      // INC-AITOOLS-XTENANT). Fire-and-persist: results land in subject_exposure_items, shown in the Exposure tab.
+      const { data, error } = await supabase.functions.invoke('subject-exposure', {
+        body: { action: 'rescan', entityId },
+      });
+      const res = (data as any)?.data ?? data;
+      if (error || res?.error) throw new Error(res?.error || (error as any)?.message || 'Scan failed to start');
       toast({
-        title: "Investigation Started",
-        description: "Running OSINT investigation. This may take 1-2 minutes...",
+        title: "Deep scan started",
+        description: `Reputational scan ${String(res?.scanId ?? '').slice(0, 8)} running (~1 min · 7 categories). Open the Exposure tab and Refresh to see findings when it completes.`,
+        duration: 8000,
       });
-      const { data, error } = await supabase.functions.invoke('investigate-poi', {
-        body: { entity_id: entityId }
-      });
-      if (error || data?.error) {
-        const detail = data?.error || (error as any)?.message || 'Investigation failed';
-        throw new Error(detail);
-      }
-      queryClient.invalidateQueries({ queryKey: ['poi-investigation', entityId] });
-      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
-      toast({
-        title: "Investigation Complete",
-        description: `Found ${data?.results_found || 0} sources. Generating AI report...`,
-      });
-      // Auto-generate the report now that data is collected
-      setSynthesizing(true);
-      const { data: reportData, error: reportError } = await supabase.functions.invoke('generate-poi-report', {
-        body: { entity_id: entityId, investigation_id: data?.investigation_id }
-      });
-      setSynthesizing(false);
-      if (!reportError && reportData?.report_markdown) {
-        queryClient.invalidateQueries({ queryKey: ['poi-report', entityId] });
-        toast({ title: "Report Ready", description: "View the full report in the Report tab.", duration: 8000 });
-      }
+      queryClient.invalidateQueries({ queryKey: ['subject-exposure', entityId] });
     } catch (error: any) {
-      console.error('Error running investigation:', error);
-      toast({
-        title: "Investigation Failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      console.error('Error starting scan:', error);
+      toast({ title: "Scan failed to start", description: error.message, variant: "destructive" });
     } finally {
       setRunningInvestigation(false);
     }

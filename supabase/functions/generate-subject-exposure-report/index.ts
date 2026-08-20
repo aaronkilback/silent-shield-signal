@@ -46,10 +46,10 @@ Deno.serve(async (req) => {
     if (!(await authorize(supabase, caller, entity.client_id))) return errorResponse("NOT_AUTHORIZED", 403);
     const { data: client } = entity.client_id ? await supabase.from("clients").select("name").eq("id", entity.client_id).maybeSingle() : { data: null };
 
-    // ── gather: items + locations, latest scan run, family disposition ──
+    // ── gather: CURRENT items only (superseded/aged-out excluded), their locations, family disposition ──
     const { data: items } = await supabase.from("subject_exposure_items")
       .select("id, category, title, summary, severity, source_class, fingerprint, subject_awareness, first_seen_date")
-      .eq("subject_entity_id", entityId);
+      .eq("subject_entity_id", entityId).is("superseded_at", null);
     const ids = (items ?? []).map((i: any) => i.id);
     let locs: any[] = [];
     if (ids.length) {
@@ -68,14 +68,25 @@ Deno.serve(async (req) => {
     const selfPublished = enriched.filter((i: any) => i.source_class === "self_published").sort(byObscurity);
     const breaches = enriched.filter((i: any) => i.category === "data_breach").sort((a, b) => (b.first_seen_date ?? "").localeCompare(a.first_seen_date ?? ""));
 
-    const { data: scan } = await supabase.from("subject_scan_runs").select("id, scope, counts, started_at, finished_at, status")
-      .eq("subject_entity_id", entityId).eq("status", "completed").order("started_at", { ascending: false }).limit(1).maybeSingle();
-    const scope = scan?.scope ?? {};
-    const counts = scan?.counts ?? {};
-    const catsScanned: string[] = scope.categories ?? [];
+    // AGGREGATED DENOMINATOR (b) — latest-of-each-producer, HONEST ABOUT AGE. A category swept 6 days ago
+    // and a breach checked today are stated per producer WITH their date. "Searched" without a date is the
+    // same defect one level up.
+    const { data: runs } = await supabase.from("subject_scan_runs").select("scope, counts, started_at, finished_at")
+      .eq("subject_entity_id", entityId).eq("status", "completed").order("started_at", { ascending: false });
+    const runsArr = runs ?? [];
+    const dstr = (r: any) => (r?.finished_at || r?.started_at || "").slice(0, 10);
+    const categorySweeps: Record<string, { last_swept: string; depth: string; queries: number } | null> = {};
+    for (const cat of ALL7) {
+      const run = runsArr.find((r: any) => (r.scope?.categories || []).includes(cat));
+      categorySweeps[cat] = run ? { last_swept: dstr(run), depth: run.scope?.depth ?? "—", queries: run.counts?.battery_queries ?? null } : null;
+    }
+    const catsSwept = ALL7.filter((c) => categorySweeps[c]);
+    const catsNeverSwept = ALL7.filter((c) => !categorySweeps[c]);
     const catsWithFindings = [...new Set([...thirdParty, ...selfPublished].map((i: any) => i.category))];
-    const catsEmpty = catsScanned.filter((c: string) => !catsWithFindings.includes(c));
-    const catsOutOfScope = ALL7.filter((c) => !catsScanned.includes(c));
+    const catsEmpty = catsSwept.filter((c: string) => !catsWithFindings.includes(c));
+    // Breach producer — last time HIBP was checked (latest capture among current breach locations).
+    const breachDates = breaches.flatMap((b: any) => (b.locations || []).map((l: any) => l.date_captured)).filter(Boolean).sort();
+    const breachLastChecked = breachDates.length ? String(breachDates[breachDates.length - 1]).slice(0, 10) : null;
 
     // family NOT scanned — the edges of coverage, per person, with the reason
     const { data: family } = await supabase.from("entities").select("name, attributes")
@@ -118,11 +129,12 @@ Deno.serve(async (req) => {
       generated_at: new Date().toISOString(),
       child_safety: childSafety ? { included: true, selected_platforms: childPlatforms, contains_draft: childSafety.contains_draft } : { included: false },
       coverage: {
-        scan_id: scan?.id ?? null, depth: scope.depth ?? null,
-        queries_run: counts.battery_queries ?? null, phase1_verified: counts.phase1_verified ?? null, phase2_verified: counts.phase2_verified ?? null,
-        search_errors: counts.search_errors ?? 0,
-        categories_scanned: catsScanned, categories_with_findings: catsWithFindings, categories_empty: catsEmpty,
-        not_searched: { categories_out_of_scope: catsOutOfScope, sources_not_covered: SOURCES_NOT_COVERED, family_not_scanned: familyNotScanned },
+        producers: {
+          reputational_by_category: categorySweeps,                       // per-category last-swept + depth (age-honest)
+          breach: breachLastChecked ? { last_checked: breachLastChecked, current_findings: breaches.length } : null,
+        },
+        categories_with_findings: catsWithFindings, categories_swept_empty: catsEmpty,
+        not_searched: { categories_never_swept: catsNeverSwept, sources_not_covered: SOURCES_NOT_COVERED, family_not_scanned: familyNotScanned },
       },
       counts: { third_party: thirdParty.length, self_published: selfPublished.length, breaches: breaches.length },
       remediation,
@@ -138,7 +150,7 @@ Deno.serve(async (req) => {
     const { error: insErr } = await supabase.from("reports").insert({
       id: reportId, type: "reputational_exposure", subject_entity_id: entityId,
       client_id: entity.client_id ?? null, tenant_id: entity.tenant_id ?? null,
-      period_start: scan?.started_at ?? new Date().toISOString(), period_end: new Date().toISOString(),
+      period_start: runsArr[0]?.started_at ?? new Date().toISOString(), period_end: new Date().toISOString(),
       storage_url: path, issuable: false, rendered_persisted_at: new Date().toISOString(), meta_json: meta,
     });
     if (insErr) return errorResponse(`report persist failed: ${insErr.message}`, 500);
@@ -200,15 +212,15 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, chi
 ${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this report contains family &amp; child-safety guidance (Section 6) that has NOT been reviewed or signed by a child-safety professional. It must not be delivered to a client in this state.</div>` : ""}
 
 <h2>1 · Scope &amp; Method</h2>
-<p class="section-intro">What we searched, how much, and — equally — what we did not. A finding is only as meaningful as the space it was found in.</p>
+<p class="section-intro">What we searched, when, and — equally — what we did not. A finding is only as meaningful as the space it was found in; and "searched" is only meaningful with a date. Each producer below is dated on its own last sweep.</p>
 <table class="cov">
-  <tr><td>Queries run</td><td>${esc(cov.queries_run ?? "—")} across ${cov.categories_scanned.length} categories (depth: ${esc(cov.depth ?? "—")})</td></tr>
-  <tr><td>Results verified</td><td>${esc(cov.phase1_verified ?? "—")} primary + ${esc(cov.phase2_verified ?? "—")} propagation${cov.search_errors ? ` · ${esc(cov.search_errors)} query error(s)` : ""}</td></tr>
+  <tr><td>Reputational sweep — by category</td><td>${ALL7.map((c) => { const s = (cov.producers.reputational_by_category || {})[c]; return s ? `<span class="pill">${esc(c)} — swept ${esc(s.last_swept)} (${esc(s.depth)})</span>` : `<span class="pill oos">${esc(c)} — not searched</span>`; }).join("")}</td></tr>
+  <tr><td>Breach check (HIBP)</td><td>${cov.producers.breach ? `checked ${esc(cov.producers.breach.last_checked)} · ${esc(cov.producers.breach.current_findings)} current finding(s)` : '<span class="empty-note">not run</span>'}</td></tr>
   <tr><td>Categories with findings</td><td>${cov.categories_with_findings.length ? cov.categories_with_findings.map((c: string) => `<span class="pill">${esc(c)}</span>`).join("") : '<span class="empty-note">none</span>'}</td></tr>
-  <tr><td>Categories searched, empty</td><td>${cov.categories_empty.length ? cov.categories_empty.map((c: string) => `<span class="pill empty">${esc(c)}</span>`).join("") : '<span class="empty-note">none — every searched category returned something</span>'}</td></tr>
+  <tr><td>Categories swept, no current findings</td><td>${cov.categories_swept_empty.length ? cov.categories_swept_empty.map((c: string) => `<span class="pill empty">${esc(c)}</span>`).join("") : '<span class="empty-note">none — every swept category has a current finding</span>'}</td></tr>
 </table>
 <div class="notsearched"><strong>What was NOT searched — the edges of this assessment:</strong>
-  ${cov.not_searched.categories_out_of_scope.length ? `<div>Categories out of scope: ${cov.not_searched.categories_out_of_scope.map((c: string) => `<span class="pill oos">${esc(c)}</span>`).join("")}</div>` : "<div>All seven exposure categories were in scope.</div>"}
+  ${cov.not_searched.categories_never_swept.length ? `<div>Categories never swept for this subject: ${cov.not_searched.categories_never_swept.map((c: string) => `<span class="pill oos">${esc(c)}</span>`).join("")}</div>` : "<div>All seven exposure categories have been swept at least once.</div>"}
   <div style="margin-top:6px">Sources this method does not cover:</div>
   <ul>${cov.not_searched.sources_not_covered.map((s: string) => `<li>${esc(s)}</li>`).join("")}</ul>
   ${cov.not_searched.family_not_scanned.length ? `<div style="margin-top:6px">Household members not scanned:</div><ul>${cov.not_searched.family_not_scanned.map((f: any) => `<li><strong>${esc(f.name)}</strong> — ${esc(f.reason)}</li>`).join("")}</ul>` : ""}

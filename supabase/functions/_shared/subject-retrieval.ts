@@ -444,6 +444,7 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
       category: item.category || "other", title: item.title, summary: item.summary ?? null, severity: item.severity ?? null,
       source_class: item.source_class ?? null,
       fingerprint: item.fingerprint, scan_id: scanId, matcher_version: SUBJECT_RETRIEVAL_VERSION, created_by: createdBy ?? null, updated_at: new Date().toISOString(),
+      superseded_at: null,   // re-found this scan → current again (un-supersede if it had aged out)
     }, { onConflict: "subject_entity_id,fingerprint" }).select("id").single();
     if (error || !row) continue;
     for (const loc of item.locations) {
@@ -545,6 +546,16 @@ export async function retrieveSubject(supabase: any, subject: Subject, scope: Sc
   if (opts.persist) {
     await persist(supabase, subject, opts.owner, opts.createdBy, scanId, exposureItems);
     await persistLearnedTerms(supabase, subject, scanId, allFindings, learned);   // learn facts for next scan
+    // RETIRE/DECAY: supersede items in the swept categories that THIS scan did not re-find (they kept an
+    // older scan_id). Keeps the cumulative set from accumulating stale findings forever. Breach/household
+    // items (categories outside the reputational sweep) are untouched — their own producers retire them.
+    if (subject.entityId) {
+      const sweptCats = scope.categories?.length ? scope.categories : ALL_CATEGORIES;
+      try {
+        await supabase.from("subject_exposure_items").update({ superseded_at: new Date().toISOString() })
+          .eq("subject_entity_id", subject.entityId).in("category", sweptCats).neq("scan_id", scanId).is("superseded_at", null);
+      } catch (_) { /* retire best-effort */ }
+    }
   }
   // PS2 ranking: source_class (third_party bucket first), then obscurity (an item's obscurity = the
   // shallowest rank it appears at anywhere; more buried = higher value). subject_awareness applies later.
