@@ -253,13 +253,20 @@ async function verifyFindings(subject: Subject, rows: Raw[], urlQueries?: Map<st
   const kept: Raw[] = [];
   const residual: Raw[] = [];
   for (const r of rows) {
-    const g = nameGate(subject, `${r.title} ${r.snippet} ${r.url}`);
+    const blob = `${r.title} ${r.snippet} ${r.url}`;
+    // DIRECTORY / INDEX artifact — the name appears only as one alphabetical index entry, not about the
+    // subject (e.g. linkedin.com/directory/posts/a-12 "Aaron Gavant… Aaron Gentry… Aaron Kilback…"). Reject.
+    if (/\/directory\//i.test(r.url ?? "")) continue;
+    const g = nameGate(subject, blob);
     if (g === "reject") continue;                    // deterministic homonym drop — provenance CANNOT rescue a clear different-first-name
     if (g === "pass") { kept.push(r); continue; }
-    // residual (bare surname, no name in snippet): a URL returned by a case query DERIVED from this subject
-    // (surname in the key) is about them even if the snippet never names them (e.g. wiselaw's archive fragment).
+    // provenance keep: a URL returned by a case query DERIVED from this subject (surname in the key) is
+    // about them even if the snippet never names them (e.g. wiselaw's archive fragment).
     const pk = caseKeyFromQueries(r.url, urlQueries);
     if (pk && pk.split("|").includes(surname)) { kept.push(r); continue; }
+    // NOT-THE-SUBJECT: with no full name, no provenance, the surname must at least APPEAR — a result that
+    // never mentions the subject (a topical match like Nate Lange's insider-threat post) is not about them.
+    if (!new RegExp(`\\b${escapeRegex(surname)}\\b`, "i").test(blob)) continue;   // reject — no subject reference
     residual.push(r);
   }
   const anchors = [subject.anchors?.employer && `Known employer(s): ${subject.anchors.employer}`, subject.anchors?.location && `Known location(s): ${subject.anchors.location}`, subject.anchors?.role && `Known role(s): ${subject.anchors.role}`].filter(Boolean).join("\n") || "(no anchors)";
@@ -295,17 +302,29 @@ function deriveHandles(subject: Subject): string[] {
   for (const h of (subject.anchors?.knownHandles || [])) { const n = h.toLowerCase().replace(/[^a-z0-9]+/g, ""); if (n) hs.add(n); }
   return [...hs].filter((h) => h.length >= 5);
 }
-function isSelfPublished(url: string, handles: string[], ownDomains: string[]): boolean {
+function isSelfPublished(url: string, handles: string[], ownDomains: string[], contentText?: string, subjectNameLc?: string): boolean {
   let host = "", path = "";
   try { const x = new URL(url); host = x.hostname.replace(/^www\./, "").toLowerCase(); path = x.pathname.toLowerCase().replace(/[^a-z0-9]+/g, ""); } catch { return false; }
   if (ownDomains.some((d) => host === d || host.endsWith("." + d))) return true;
-  if (SOCIAL_HOSTS.some((s) => host === s || host.endsWith("." + s))) return handles.some((h) => path.includes(h));
+  const isSocial = SOCIAL_HOSTS.some((s) => host === s || host.endsWith("." + s));
+  if (!isSocial) return false;
+  if (handles.some((h) => path.includes(h))) return true;
+  // The URL path did not carry the handle (Instagram permalinks /p/{id} & /reel/{id}; a comment under
+  // another user's post URL). Fall back to an AUTHORSHIP marker in the CONTENT — the subject's handle
+  // (@handle) or a "View profile for {name}" byline. Mere name-presence is NOT enough (a third-party
+  // article about them also has the name); we require an authorship marker.
+  if (contentText) {
+    const t = contentText.toLowerCase();
+    if (handles.some((h) => t.includes("@" + h))) return true;
+    if (subjectNameLc && t.includes(`view profile for ${subjectNameLc}`)) return true;
+  }
   return false;
 }
 function classifySourceClass(subject: Subject, rows: Raw[]): Raw[] {
   const handles = deriveHandles(subject);
   const ownDomains = (subject.anchors?.ownDomains || []).map((d) => d.toLowerCase());
-  for (const r of rows) r.source_class = isSelfPublished(r.url, handles, ownDomains) ? "self_published" : "third_party";
+  const nameLc = subject.name.toLowerCase();
+  for (const r of rows) r.source_class = isSelfPublished(r.url, handles, ownDomains, `${r.title} ${r.snippet}`, nameLc) ? "self_published" : "third_party";
   return rows;
 }
 
@@ -465,8 +484,11 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
     const LEGAL_CONTEXT_CLASSIFY = /\b(court|ruling|judg(?:e|ment|ement)|tribunal|BCSC|BCCA|SCC|ONSC|ONCA|ABQB|justice|plaintiff|defendant|prosecution|lawsuit|litigation|appeal|liable|sued)\b/i;
     const realCase = (isCase || matchCaseName(blob) != null) && LEGAL_CONTEXT_CLASSIFY.test(blob);
     const isRealLegal = matchCitation(blob) !== "" || STRONG_LEGAL.test(blob) || realCase;
-    const hasFinancial = /\b(bankrupt(?:cy)?|insolvency|lien|creditor|foreclosure|receivership|tax lien|judgment debt|garnish(?:ment)?)\b/i.test(blob);
-    const hasProfessional = /\b(disciplinary|sanction(?:ed)?|reprimand|licen[cs]e (?:revoked|suspended)|struck off|disbarred|professional misconduct|malpractice)\b/i.test(blob);
+    // Financial/professional/media findings require the SUBJECT to be the subject of the event, so these use
+    // specific distress PHRASES, not bare topic words ("bankruptcy" matched metaphors like "Silent bankruptcy";
+    // "disciplinary"/"reprimand" matched his own posts ABOUT workplace discipline).
+    const hasFinancial = /\b(filed for bankruptcy|declared bankruptcy|bankruptcy filing|chapter (?:7|11|13)|insolvency proceeding|tax lien against|foreclosure (?:on|proceeding)|placed in receivership|wage garnishment)\b/i.test(blob);
+    const hasProfessional = /\b(disciplinary action|was (?:sanctioned|reprimanded|suspended|disbarred)|licen[cs]e (?:revoked|suspended)|struck off (?:the )?(?:register|roll)|professional misconduct (?:finding|complaint)|malpractice (?:suit|claim|judgment))\b/i.test(blob);
     const hasMediaEvent = /\b(arrested|indicted|embezzl|defrauded|sexual assault|criminal charges?|restraining order)\b/i.test(blob);
     let category: string, severity: string | undefined, is_finding: boolean;
     if (isRealLegal) { category = "legal"; severity = "high"; is_finding = true; }
