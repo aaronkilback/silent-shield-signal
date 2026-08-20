@@ -119,8 +119,8 @@ Deno.serve(async (req) => {
     const emailList = [...new Set([intakeData.primaryEmail, ...(intakeData.secondaryEmails || "").split("\n").map((s) => s.trim())].filter(Boolean))];
     const phoneList = [...new Set([intakeData.primaryPhone, ...(intakeData.secondaryPhones || "").split("\n").map((s) => s.trim())].filter(Boolean))];
 
-    // ── 1. VIP entity (fail-loud) ──
-    const { data: entity, error: entityError } = await supabase.from("entities").insert({
+    // ── 1. VIP entity — FIND-OR-CREATE by (name + client) ──
+    const _entFields = {
       name: intakeData.fullLegalName,
       type: "person",
       entity_status: "confirmed",
@@ -129,7 +129,6 @@ Deno.serve(async (req) => {
       client_id: clientId,
       visibility_class: "curated",   // deliberately operator-entered/verified, not auto-extracted
       legal_hold: false,
-      created_by: actorUserId,       // provenance: acting user
       aliases,
       current_location: primaryAddress,
       attributes: {
@@ -179,12 +178,23 @@ Deno.serve(async (req) => {
           social_media_analysis: intakeData.consentSocialMediaAnalysis,
         },
       },
-    }).select("id").single();
-
-    if (entityError || !entity) {
-      return errorResponse(`Failed to create VIP entity: ${entityError?.message ?? "no row returned"}`, 500);
+    };
+    // Reuse the existing (non-merged, non-deleted) person entity for this name+client instead of INSERTing
+    // a fresh one every intake (WO-ENTITY-DEDUP — vip-deep-scan was the confirmed duplicate writer). Update
+    // in place so the id + all its references (exposure, scans, relationships) are preserved.
+    const { data: _existingVip } = await supabase.from("entities").select("id")
+      .eq("client_id", clientId).eq("type", "person").ilike("name", intakeData.fullLegalName)
+      .is("merged_into", null).is("deleted_at", null).order("created_at", { ascending: true }).limit(1).maybeSingle();
+    let vipEntityId: string;
+    if (_existingVip) {
+      const { error: updErr } = await supabase.from("entities").update({ ..._entFields, updated_at: nowIso }).eq("id", _existingVip.id);
+      if (updErr) return errorResponse(`Failed to update existing VIP entity ${_existingVip.id}: ${updErr.message}`, 500);
+      vipEntityId = _existingVip.id;
+    } else {
+      const { data: entity, error: entityError } = await supabase.from("entities").insert({ ..._entFields, created_by: actorUserId }).select("id").single();
+      if (entityError || !entity) return errorResponse(`Failed to create VIP entity: ${entityError?.message ?? "no row returned"}`, 500);
+      vipEntityId = entity.id as string;
     }
-    const vipEntityId = entity.id as string;
 
     // Minor check — hard block. Unknown/invalid DOB → cannot confirm ≥18 → fail CLOSED (not scannable).
     const minorStatus = (dob?: string): boolean | null => {
@@ -198,10 +208,10 @@ Deno.serve(async (req) => {
     for (const m of (intakeData.familyMembers || [])) {
       if (!m?.name) continue;
       const minor = minorStatus(m.dateOfBirth);
-      const { data: fam, error: famErr } = await supabase.from("entities").insert({
+      const _famFields = {
         name: m.name, type: "person", entity_status: "confirmed", is_active: true,
         active_monitoring_enabled: true, client_id: clientId,
-        visibility_class: "curated", legal_hold: false, created_by: actorUserId,
+        visibility_class: "curated", legal_hold: false,
         attributes: {
           origin: "vip_deep_scan_intake", vip_family_member: true, parent_vip_entity_id: vipEntityId,
           relationship_to_vip: m.relationship, date_of_birth: m.dateOfBirth, social_media: m.socialMedia,
@@ -210,19 +220,38 @@ Deno.serve(async (req) => {
           scan_consent: { granted: m.consentToScan === true, consent_date: m.consentDate ?? null, consent_name: m.name },
           is_minor: minor,
         },
-      }).select("id").single();
-      if (famErr || !fam) {
-        return errorResponse(`Failed to create family entity "${m.name}" (VIP entity ${vipEntityId} already created): ${famErr?.message ?? "no row"}`, 500);
+      };
+      // FIND-OR-CREATE the family member too — re-running intake was stacking duplicate family entities +
+      // fresh relationship edges every run (WO-ENTITY-DEDUP). Reuse the existing non-merged/non-deleted one.
+      const { data: _existingFam } = await supabase.from("entities").select("id")
+        .eq("client_id", clientId).eq("type", "person").ilike("name", m.name)
+        .is("merged_into", null).is("deleted_at", null).order("created_at", { ascending: true }).limit(1).maybeSingle();
+      let famId: string;
+      if (_existingFam) {
+        const { error: updErr } = await supabase.from("entities").update({ ..._famFields, updated_at: nowIso }).eq("id", _existingFam.id);
+        if (updErr) return errorResponse(`Failed to update existing family entity ${_existingFam.id} ("${m.name}"): ${updErr.message}`, 500);
+        famId = _existingFam.id;
+      } else {
+        const { data: fam, error: famErr } = await supabase.from("entities").insert({ ..._famFields, created_by: actorUserId }).select("id").single();
+        if (famErr || !fam) return errorResponse(`Failed to create family entity "${m.name}" (VIP entity ${vipEntityId} already created): ${famErr?.message ?? "no row"}`, 500);
+        famId = fam.id;
       }
-      familyEntityIds.push(fam.id);
-      familyScanPlan.push({ entityId: fam.id, name: m.name, minor, consent: m.consentToScan === true });
-      const { error: relErr } = await supabase.from("entity_relationships").insert({
-        entity_a_id: vipEntityId, entity_b_id: fam.id,
-        relationship_type: `family_${m.relationship || "member"}`,
-        strength: 1.0, description: "VIP intake: declared family relationship",
-        first_observed: nowIso, last_observed: nowIso,
-      });
-      if (relErr) return errorResponse(`Failed to create relationship VIP→${m.name}: ${relErr.message}`, 500);
+      familyEntityIds.push(famId);
+      familyScanPlan.push({ entityId: famId, name: m.name, minor, consent: m.consentToScan === true });
+      // Relationship find-or-create by (a,b,type) so a re-run refreshes last_observed rather than stacking edges.
+      const relType = `family_${m.relationship || "member"}`;
+      const { data: _existingRel } = await supabase.from("entity_relationships").select("id")
+        .eq("entity_a_id", vipEntityId).eq("entity_b_id", famId).eq("relationship_type", relType).maybeSingle();
+      if (_existingRel) {
+        await supabase.from("entity_relationships").update({ last_observed: nowIso, strength: 1.0 }).eq("id", _existingRel.id);
+      } else {
+        const { error: relErr } = await supabase.from("entity_relationships").insert({
+          entity_a_id: vipEntityId, entity_b_id: famId, relationship_type: relType,
+          strength: 1.0, description: "VIP intake: declared family relationship",
+          first_observed: nowIso, last_observed: nowIso,
+        });
+        if (relErr) return errorResponse(`Failed to create relationship VIP→${m.name}: ${relErr.message}`, 500);
+      }
     }
 
     // ── 3. Investigation (fail-loud; file_number continues the shared INV-2026 sequence; VIP marked
