@@ -230,7 +230,7 @@ ${breaches.length ? breaches.map(itemBlock).join("") : '<p class="empty-note">No
 <h2>5 · Remediation</h2>
 ${meta.remediation.authored
     ? `${meta.remediation.summary ? `<p>${esc(meta.remediation.summary)}</p>` : ""}${meta.remediation.items.length ? `<ol>${meta.remediation.items.map((r: any) => `<li><strong>${esc(r.action)}</strong>${r.finding_ref ? ` <span class="rank">(${esc(r.finding_ref)})</span>` : ""}${r.rationale ? `<div class="isum">${esc(r.rationale)}</div>` : ""}</li>`).join("")}</ol>` : ""}<p class="section-intro">Remediation authored by analyst.</p>`
-    : `<div class="rem-placeholder">Remediation is authored by your analyst and added before this report is issued. It is never machine-generated. (This copy has not yet been finalized.)</div>`}
+    : `<div class="rem-placeholder"><strong>Pending analyst review.</strong> Remediation for this assessment is authored by your analyst and added before the report is issued — it is never machine-generated.</div>`}
 
 ${childSafety ? renderChildSafety(childSafety) : ""}
 
