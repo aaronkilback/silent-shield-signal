@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { webSearch } from "../_shared/subject-retrieval.ts";
 
 interface WebSearchParams {
   query: string;
@@ -199,19 +200,19 @@ async function performRealGoogleSearch(
   maxResults: number = 5
 ): Promise<SearchResult[]> {
   const enhancedQuery = geographic_focus ? `${query} ${geographic_focus}` : query;
-  
-  const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${engineId}&q=${encodeURIComponent(enhancedQuery)}&num=${Math.min(maxResults, 10)}`;
-  
-  const response = await fetch(searchUrl);
-  
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("[perform-external-web-search] Google API error:", response.status, errorText);
-    throw new Error(`Google Search API error: ${response.status}`);
+
+  // SHIM (operator ruling 2026-08-20): general web search now runs on the module's provider (Serper), not
+  // the thin CSE index that could not see the wiselaw case. One provider, two capabilities — this is NOT
+  // the subject-retrieval pipeline, just its search backend. (apiKey/engineId retained for signature/CSE
+  // fallback; SEARCH_PROVIDER=cse still works.)
+  const sr = await webSearch(enhancedQuery, Math.max(1, Math.min(Math.ceil(maxResults / 10), 2)));
+  if (!sr.ok) {
+    console.error("[perform-external-web-search] provider error:", sr.error);
+    throw new Error(`Search provider error (${sr.provider}): ${sr.error}`);
   }
-  
-  const data = await response.json();
-  const items = data.items || [];
+  // Map to the CSE item shape the downstream date-extraction expects ({title, link, snippet}); the URL-date
+  // fallback in extractPublishedDate works without CSE pagemap metatags.
+  const items = sr.results.slice(0, maxResults).map((r) => ({ title: r.title, link: r.url, snippet: r.snippet }));
   
   const extractPublishedDate = (item: any): string | undefined => {
     const metatags = item.pagemap?.metatags?.[0] || {};

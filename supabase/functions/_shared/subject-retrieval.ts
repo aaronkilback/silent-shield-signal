@@ -149,6 +149,15 @@ async function searchProvider(query: string, pages: number): Promise<SearchResul
   return searchSerper(query, pages);
 }
 
+// GENERAL web search on the module's provider (Serper, not the thin CSE index). This is a DIFFERENT
+// capability from subject retrieval — a free-text query, not the battery/pivot/cluster pipeline — but it
+// runs on the SAME provider so there is one search backend, not two. Used by perform-external-web-search
+// (AEGIS + agent-chat ad-hoc web search) to get off the CSE index that could not see the wiselaw case.
+export async function webSearch(query: string, pages = 2): Promise<{ ok: boolean; error?: string; provider: string; results: Array<{ title: string; url: string; snippet: string; domain?: string; rank?: number }> }> {
+  const sr = await searchProvider(query, pages);
+  return { ok: sr.ok, error: sr.error, provider: sr.provider, results: sr.results.map((r) => ({ title: r.title, url: r.url, snippet: r.snippet, domain: r.domain, rank: r.rank })) };
+}
+
 async function searchSerper(query: string, pages: number): Promise<SearchResult> {
   const key = Deno.env.get("SERPER_API_KEY");
   if (!key) return { ok: false, error: "SERPER_API_KEY not set", results: [], provider: "serper" };
