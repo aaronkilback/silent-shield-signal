@@ -10401,6 +10401,9 @@ Deno.serve(async (req) => {
       conversationId: (body as { conversation_id?: string }).conversation_id ?? null,
       functionName: 'dashboard-ai-assistant',
       actorSurface: 'aegis',
+      // the full tool menu offered to the model this request (names only) — forensics can see what it COULD
+      // have called, not just what it did.
+      offeredTools: tools.map((t) => (t as { function?: { name?: string }; name?: string }).function?.name ?? (t as { name?: string }).name ?? 'unknown'),
     });
     
     // ── COMMON OPERATING PICTURE ────────────────────────────────────────────
@@ -11057,12 +11060,29 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     const writeRaw = async (bytes: Uint8Array) => { try { await sseWriter.write(bytes); } catch {} };
     const writeSSEText = async (text: string) => writeRaw(sseEnc.encode(text));
     const writeDone = () => writeSSEText('data: [DONE]\n\n');
+    // Flight recorder: accumulate the final assistant TEXT actually streamed to the user, so a trace retains
+    // what Aegis SAID (not just a path). Appended at the first-stream content point (no-tool answers) AND in
+    // pipeResponseBody (post-tool answers). Best-effort — parsing never affects the streamed bytes.
+    let recFinalText = '';
     const pipeResponseBody = async (body: ReadableStream<Uint8Array>) => {
       const r = body.getReader();
+      const _dec = new TextDecoder();
+      let _buf = '';
       while (true) {
         const { done, value } = await r.read();
         if (done) break;
         await writeRaw(value);
+        try {
+          _buf += _dec.decode(value, { stream: true });
+          const lines = _buf.split('\n');
+          _buf = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]' || !raw) continue;
+            try { const c = JSON.parse(raw).choices?.[0]?.delta?.content; if (c) recFinalText += c; } catch { /* skip */ }
+          }
+        } catch { /* accumulation never affects the stream */ }
       }
     };
 
@@ -11256,6 +11276,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               if (!delta) continue;
               if (delta.content) {
                 streamedContent += delta.content;
+                recFinalText += delta.content; // flight recorder: retain what was said (no-tool answer path)
                 await writeSSEText(`${line}\n\n`); // forward in OpenAI SSE format
               }
               if (delta.tool_calls) {
@@ -11697,6 +11718,11 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               outcome: (_recOk && _recOk.success === false) ? 'refused' : 'ok',
               refusalReason: (_recOk && _recOk.success === false) ? String(_recOk.error ?? '').slice(0, 300) : null,
               returnedObjectCount: _recOk && Array.isArray((_recOk as { data?: unknown }).data) ? ((_recOk as { data: unknown[] }).data.length) : undefined,
+              // redacted summary of WHAT was returned (beside the count) — top-level shape + bounded preview;
+              // the recorder further strips secrets/embeddings and truncates.
+              resultSummary: _recOk
+                ? { success: _recOk.success ?? true, keys: Object.keys(_recOk).slice(0, 40), preview: _resultStr.slice(0, 2000) }
+                : { preview: _resultStr.slice(0, 2000) },
             });
             return {
               tool_call_id: toolCall.id,
@@ -11715,6 +11741,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               toolName: toolCall.function.name, args,
               scopedTenantId: userTenantId ?? null,
               outcome: 'error', refusalReason: errorMessage.slice(0, 300),
+              resultSummary: { error: errorMessage.slice(0, 2000) },
             });
             // PROD-T.3 (2026-05-23) — sanitize tool error before LLM exposure.
             // Raw provider text (OPENAI_API_KEY, quota, RESOURCE_EXHAUSTED, etc.)
@@ -11806,7 +11833,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // have an accumulator). runProseLintAtFinish is intentionally unused here.
         void runProseLintAtFinish; // referenced to silence TS unused-var.
         // Flight recorder flush — post-stream, best-effort (the seam swallows errors).
-        await rec.finish({ status: recResponsePath === 'error' ? 'error' : 'ok', finalResponsePath: recResponsePath });
+        await rec.finish({ status: recResponsePath === 'error' ? 'error' : 'ok', finalResponsePath: recResponsePath, finalResponseText: recFinalText || undefined });
         try { await sseWriter.close(); } catch {}
       }
     })();

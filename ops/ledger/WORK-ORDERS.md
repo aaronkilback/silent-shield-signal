@@ -2705,3 +2705,10 @@ ROOT (reported, fix awaits ruling) — docs/platform-operations/backlog/WO-CLIEN
 580 BOUNDARY (reported, no cleanup): 54 INSIDE frozen 788 (persons, 0-ref, untouchable until hold lifts) / 526 outside (1 person, 525 nonperson; 521 zero-ref junk, 5 fabricated-edge incl. 3 on Aaron survivor, 9 already soft-deleted). Operator thinking about it.
 
 NEXT: Item 2 flight-recorder additions (offered-tools list, redacted result summary, confirm final-response retained).
+
+## Item 2 — flight-recorder additions BUILT + deployed, 2026-08-20
+Operator approved 3 additions + phantom-table drop. Phantom drop done earlier (aegis_tool_calls/aegis_invocations dropped, migration 20260820140000). Additions (migration 20260820150000, applied prod + committed):
+- aegis_request_trace.offered_tools (jsonb): full tool menu offered to the model this request (names) — set in the startTrace header from tools.map. Forensics see what Aegis COULD call, not just what it did.
+- aegis_request_trace.final_response_text (+ final_response_sha256): the REDACTED final assistant text actually streamed to the user + sha256 of the full text. Previously only final_response_path (a status label) was kept — "what did Aegis say?" was unanswerable. Accumulated via recFinalText at the first-stream content point (no-tool answers) AND inside pipeResponseBody (post-tool answers); passed to rec.finish. Best-effort parse, never affects the stream.
+- aegis_tool_trace.result_summary (jsonb): redacted summary of WHAT each tool returned (top-level keys + success + bounded 2000-char preview) beside returned_object_count. Added to both rec.tool sites (success + error).
+flight-recorder.ts: TraceHeader.offeredTools + setOfferedTools(); ToolTrace.resultSummary; finish() finalResponseText -> redactDeep + sha256. All redaction enforced in the recorder (secrets/embeddings stripped, truncated). Deployed dashboard-ai-assistant (verify_jwt=false matched). VERIFY: columns populate on the next real chat — query aegis_request_trace (offered_tools, final_response_text) + aegis_tool_trace (result_summary) by debug_trace_id.

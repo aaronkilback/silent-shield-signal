@@ -25,6 +25,7 @@ export interface TraceHeader {
   actorUserId?: string | null;
   actorSurface?: "aegis" | "aegis_ops" | "agent";
   functionName: string;
+  offeredTools?: string[]; // the full tool menu presented to the model this request (not just what it called)
 }
 
 export interface PromptTrace {
@@ -50,6 +51,7 @@ export interface ToolTrace {
   scopedTenantId?: string | null;
   scopedClientId?: string | null;
   returnedObjectCount?: number;
+  resultSummary?: unknown; // redacted/truncated summary of WHAT the tool returned (beside the count)
   refusalReason?: string | null;
   outcome?: "ok" | "error" | "refused" | string;
   timingMs?: number;
@@ -129,17 +131,25 @@ export class Recorder {
     if (s.actorUserId !== undefined) this.header.actorUserId = s.actorUserId;
   }
 
+  /** Record the full tool menu offered to the model this request (names only). */
+  setOfferedTools(names: string[]) { this.header.offeredTools = names; }
+
   prompt(p: PromptTrace) { this.prompts.push(p); }
   retrieval(r: RetrievalTrace) { this.retrievals.push(r); }
   tool(t: ToolTrace) { this.tools.push(t); }
   grounding(g: GroundingTrace) { this.groundings.push(g); }
 
   /** Flush header + all buffered child traces. Best-effort: never throws. */
-  async finish(opts: { status?: string; finalResponsePath?: string } = {}): Promise<void> {
+  async finish(opts: { status?: string; finalResponsePath?: string; finalResponseText?: string } = {}): Promise<void> {
     if (this.finished) return;
     this.finished = true;
     const tid = this.traceId;
     const tenant = this.header.tenantId ?? null;
+    // Retain the final response TEXT (redacted + truncated), not merely a path pointer — so a trace can be
+    // replayed to what Aegis actually SAID, with a sha256 of the full text for integrity/truncation detection.
+    const finalText = opts.finalResponseText ?? null;
+    const finalTextRedacted = finalText ? (redactDeep(finalText) as string) : null;
+    const finalTextSha = finalText ? await sha256(finalText) : null;
     try {
       await this.sb.from("aegis_request_trace").upsert({
         debug_trace_id: tid,
@@ -151,8 +161,11 @@ export class Recorder {
         actor_user_id: this.header.actorUserId ?? null,
         actor_surface: this.header.actorSurface ?? "aegis",
         function_name: this.header.functionName,
+        offered_tools: this.header.offeredTools ?? null,
         status: opts.status ?? "ok",
         final_response_path: opts.finalResponsePath ?? null,
+        final_response_text: finalTextRedacted,
+        final_response_sha256: finalTextSha,
         completed_at: new Date().toISOString(),
         duration_ms: Date.now() - this.startedAt,
       });
@@ -186,6 +199,7 @@ export class Recorder {
           tool_name: t.toolName, args: redactDeep(t.args ?? {}),
           scoped_tenant_id: t.scopedTenantId ?? null, scoped_client_id: t.scopedClientId ?? null,
           returned_object_count: t.returnedObjectCount ?? null,
+          result_summary: t.resultSummary !== undefined ? redactDeep(t.resultSummary) : null,
           refusal_reason: t.refusalReason ?? null, outcome: t.outcome ?? null, timing_ms: t.timingMs ?? null,
         })));
       }
