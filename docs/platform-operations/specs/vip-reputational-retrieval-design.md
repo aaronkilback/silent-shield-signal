@@ -103,11 +103,24 @@ The report's value is **what the client did not know** — a forgotten indexed r
 
 **PS1 — subject_awareness is the real metric.** Every finding carries `subject_awareness ∈ {known, unknown, disputed}`, **captured at DELIVERY** (with the client, not by the scan). A scan surfacing 12 items where the client knew 11 has FAILED, however cleanly the pipeline ran. This metric — not item count — grades a scan. (Substrate: `subject_exposure_items.subject_awareness`, null until delivery.)
 
-**PS2 — obscurity is a value signal; it changes ranking.** Ranking is NOT relevance-to-query; it is **likely-unknown-to-subject**. Default order:
-1. **source_class** — self-published content is almost always known, so `self_published` ranks BELOW `third_party` by default.
-2. **obscurity** — a page-four result the subject has never seen outranks a page-one result they see weekly. Captured as `subject_exposure_locations.found_at_rank` (deeper = more valuable); an item's obscurity = the shallowest rank at which it appears anywhere (buried everywhere = highest value).
-3. **subject_awareness** (post-delivery) — `unknown` > `disputed` > `known`; a `known` item drops regardless of how prominent it is.
-The scan sets source_class + obscurity; delivery sets awareness; the report ranks by all three.
+**PS2 — obscurity is a TIEBREAKER among real findings, not a primary sort (CORRECTED 2026-08-20).** The
+earlier wording ("obscurity changes ranking") was stated too broadly — it read as a primary sort and let a
+buried NON-finding outrank a prominent real one. Obscurity was always meant to rank EQUIVALENT findings: a
+buried real finding beats a prominent one because the client has not seen it. A junk result at rank 40 is
+not valuable for being buried; it is junk that happens to be buried. Corrected order (implemented as
+`compareExposureItems` in `_shared/subject-retrieval.ts`, used by BOTH AEGIS `get_subject_exposure` and the
+report so they never disagree):
+1. **is_finding** — a real finding (legal matter, breach, documented event) ALWAYS ranks above a bare
+   mention. Non-findings never rank above findings regardless of obscurity. Classified from CONTENT, not
+   from which query found the item (provenance ≠ classification).
+2. **consequence (severity)** — computed from what the thing IS (case name / citation / strong legal-action
+   signal → high; financial/professional/media event → medium), NOT from the query that surfaced it.
+3. **corroboration** — location count. 18 locations is spread; 1 location is a mention.
+4. **obscurity** — the TIEBREAKER among items equal on the above. `found_at_rank` (deeper = higher value);
+   an item's obscurity = the shallowest rank it appears at anywhere.
+5. **source_class** — `self_published` reported separately (almost always known).
+6. **subject_awareness** (post-delivery) — `unknown` > `disputed` > `known`.
+The scan sets is_finding + severity + source_class + obscurity; delivery sets awareness.
 
 ## COST (per scan)
 CSE JSON API: **$5 / 1,000 queries**, 1 query = 1 request (≤10 results); 100 free/day; **hard cap 10,000/day**.

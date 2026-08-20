@@ -137,13 +137,17 @@ async function persistLearnedTerms(supabase: any, subject: Subject, scanId: stri
     if (seen.has(k) || have.has(k)) return; seen.add(k);
     rows.push({ term_type, term_value: v, url });
   };
+  // Learn litigants/cases ONLY from real legal context — otherwise a pub race ("Craggs v Gavin … race") or
+  // a directory list poisons the learned battery with fake litigants that fabricate cases every future scan.
+  const LEGAL_CTX = /\b(court|ruling|judg(?:e|ment|ement)|tribunal|BCSC|BCCA|SCC|ONSC|justice|plaintiff|defendant|prosecution|lawsuit|litigation|appeal|liable|sued)\b/i;
   for (const f of findings) {
     if (f.source_class !== "third_party") continue;
     const blob = `${f.title} ${f.snippet}`;
+    const ci = matchCitation(blob); if (ci) push("citation", ci, f.url);   // citations stand alone (unambiguous)
+    if (!LEGAL_CTX.test(blob)) continue;                                    // no legal context → learn nothing
     const cn = matchCaseName(blob);
     if (cn) { push("case_name", `${cn.a} v. ${cn.b}`, f.url); for (const p of [cn.a, cn.b]) if (p.toLowerCase() !== surnameLc && p.toLowerCase() !== firstLc) push("litigant", p, f.url); }
-    const ci = matchCitation(blob); if (ci) push("citation", ci, f.url);
-    if (LEGAL_CONTEXT.test(blob)) for (const o of litigants(blob, subject)) push("litigant", o, f.url);
+    for (const o of litigants(blob, subject)) push("litigant", o, f.url);
   }
   if (!rows.length) return;
   try {
@@ -455,7 +459,12 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
     // "court"/"liable"/"immunity"/"charged" match ordinary prose). Otherwise it loses the legal category
     // too, not just the severity — provenance (a legal query found it) is not classification.
     const STRONG_LEGAL = /\b(sued|lawsuit|prosecut(?:ion|ed|ing)|convicted|acquitted|plaintiff|defendant|litigation|disbarred|indicted|pleaded guilty|found liable|class action|malicious prosecution|reasons for judgment|statement of claim|wrongful (?:dismissal|death)|settlement)\b/i;
-    const isRealLegal = isCase || matchCaseName(blob) != null || matchCitation(blob) !== "" || STRONG_LEGAL.test(blob);
+    // A case NAME ("X v. Y") is only a real case with LEGAL CONTEXT nearby — otherwise "v" is versus in a
+    // pub race / a directory list / a rabbit registry (the false-case junk). Citation or strong-legal words
+    // stand alone; a bare "X v. Y" needs court/judgment/ruling context.
+    const LEGAL_CONTEXT_CLASSIFY = /\b(court|ruling|judg(?:e|ment|ement)|tribunal|BCSC|BCCA|SCC|ONSC|ONCA|ABQB|justice|plaintiff|defendant|prosecution|lawsuit|litigation|appeal|liable|sued)\b/i;
+    const realCase = (isCase || matchCaseName(blob) != null) && LEGAL_CONTEXT_CLASSIFY.test(blob);
+    const isRealLegal = matchCitation(blob) !== "" || STRONG_LEGAL.test(blob) || realCase;
     const hasFinancial = /\b(bankrupt(?:cy)?|insolvency|lien|creditor|foreclosure|receivership|tax lien|judgment debt|garnish(?:ment)?)\b/i.test(blob);
     const hasProfessional = /\b(disciplinary|sanction(?:ed)?|reprimand|licen[cs]e (?:revoked|suspended)|struck off|disbarred|professional misconduct|malpractice)\b/i.test(blob);
     const hasMediaEvent = /\b(arrested|indicted|embezzl|defrauded|sexual assault|criminal charges?|restraining order)\b/i.test(blob);
@@ -466,7 +475,9 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
     else if (hasMediaEvent) { category = "media"; severity = "medium"; is_finding = true; }
     else { category = "mention"; severity = "low"; is_finding = false; }   // bare web mention, NOT a finding
     const rep = fs.slice().sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999))[0];
-    const title = isCase ? `Legal case: ${key.slice(5).split("|").map(cap).join(" v. ")}` : (rep.title || _subjectName);
+    // Only a REAL case gets the "Legal case: X v. Y" title; a fabricated one (no legal context) keeps its
+    // page title and is a mention, so the report never presents a pub race as a court case.
+    const title = (isCase && realCase) ? `Legal case: ${key.slice(5).split("|").map(cap).join(" v. ")}` : (rep.title || _subjectName);
     // dedupe identical URLs into one location (same place found by 2 queries is not two findings)
     const seen = new Set<string>();
     const locations: ExposureLocation[] = [];
