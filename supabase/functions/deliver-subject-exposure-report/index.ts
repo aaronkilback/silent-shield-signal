@@ -16,8 +16,9 @@ Deno.serve(async (req) => {
     const caller = await getCallerIdentity(req);
     if (caller.kind === "unauthorized") return errorResponse(caller.error, caller.status);
     const body = await req.json().catch(() => null);
-    const reportId = body?.reportId, recipient = body?.recipient;
-    if (!reportId || !recipient) return errorResponse("reportId + recipient (email) required", 400);
+    const action = body?.action ?? "deliver";
+    const reportId = body?.reportId;
+    if (!reportId) return errorResponse("reportId required", 400);
     const supabase = createServiceClient();
 
     const { data: report } = await supabase.from("reports").select("id, client_id, issuable, meta_json").eq("id", reportId).maybeSingle();
@@ -27,6 +28,21 @@ Deno.serve(async (req) => {
       if (!ok) { const { data: sa } = await supabase.from("user_roles").select("role").eq("user_id", caller.userId).eq("role", "super_admin").maybeSingle(); ok = !!sa; }
       if (!ok) return errorResponse("NOT_AUTHORIZED", 403);
     }
+
+    // ── REVOKE — kill this report's live tokens NOW (finer than issuable=false, which kills all report
+    //    links). Records who + why; the reason is surfaced to the viewer, so write it CLIENT-SAFE (the
+    //    common case is "a corrected version is available"). "Wait for expiry" is not an answer. ──
+    if (action === "revoke") {
+      const reason = String(body?.reason ?? "").trim() || "An updated version of this report is being prepared.";
+      const { data: revoked, error } = await supabase.from("report_delivery_tokens")
+        .update({ revoked_at: new Date().toISOString(), revoked_by: caller.kind === "user" ? caller.userId : null, revoked_reason: reason })
+        .eq("report_id", reportId).is("revoked_at", null).select("id");
+      if (error) return errorResponse(`revoke failed: ${error.message}`, 500);
+      return successResponse({ ok: true, action: "revoke", report_id: reportId, tokens_revoked: revoked?.length ?? 0, reason });
+    }
+
+    const recipient = body?.recipient;
+    if (!recipient) return errorResponse("recipient (email) required for delivery", 400);
 
     // ── ISSUABLE GATE (deny-by-default) ──
     if (report.issuable !== true) return errorResponse("REPORT_NOT_ISSUABLE: an operator must set reports.issuable=true (issuance gate) before this report can be delivered", 409);
