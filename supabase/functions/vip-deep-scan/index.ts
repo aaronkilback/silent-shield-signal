@@ -380,38 +380,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 5. Tracking signal — via ingest-signal per doctrine (surfaced, non-fatal) ──
-    const scanTasks = scanResults.filter((s) => s.ok).map((s) => s.scan);
-    let signalOk = false, signalError: string | undefined;
-    try {
-      // ingest-signal has verify_jwt=false and gates on its OWN getCallerIdentity (exact service-key
-      // match). functions.invoke does not reliably forward the service-role key as Authorization, so
-      // pass it explicitly — otherwise ingest-signal 401s (proof run #2, 2026-08-18).
-      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-      const { data: sigData, error: sigErr } = await supabase.functions.invoke("ingest-signal", {
-        headers: { Authorization: `Bearer ${serviceRoleKey}` },
-        body: {
-          origin: "vip_deep_scan",
-          text: `VIP Deep Scan initiated for ${intakeData.fullLegalName} (${intakeData.priorityLevel} priority). Investigation ${investigation.file_number}. Scans queued: ${scanTasks.join(", ") || "none"}. Due ${dueDateIso}.`,
-          client_id: clientId,
-          // Internal, consent-vetted intake signal: provenance is the authenticated intake, not an
-          // external URL. skip_relevance_gate marks it pre-vetted (satisfies ingest-signal F-034.1,
-          // which rejects a null source_url otherwise) and keeps this tracking record from being
-          // relevance-dropped. source_url points at the created investigation for auditability.
-          source_url: `https://fortress.silentshieldsecurity.com/investigations/${investigation.id}`,
-          skip_relevance_gate: true,
-          sourceType: "vip_intake_wizard",
-          sourceData: { entity_id: vipEntityId, investigation_id: investigation.id, investigation_file_number: investigation.file_number, priority: intakeData.priorityLevel, scan_tasks: scanTasks },
-        },
-      });
-      // ingest-signal returns rejections as HTTP 200 {status:'rejected', reason} — inspect the body,
-      // not just sigErr, so a rejection is not misreported as success.
-      const rejected = (sigData as { status?: string })?.status === "rejected";
-      signalOk = !sigErr && !rejected;
-      signalError = sigErr
-        ? (sigErr as { message?: string })?.message
-        : (rejected ? `ingest-signal rejected: ${(sigData as { reason?: string })?.reason ?? "unknown"}` : undefined);
-    } catch (e) { signalError = e instanceof Error ? e.message : String(e); }
+    // ── 5. (REMOVED 2026-08-20 — operator ruling, FINDING-INTERNAL-ACTIVITY-SIGNALS) No tracking signal
+    //    is emitted. The investigation record (INV-####) IS the audit record for a scan initiation.
+    //    `signals` are observations about the WORLD, not about us — emitting a "VIP Deep Scan initiated"
+    //    signal duplicated a platform-activity audit event into the intelligence feed, where on a quiet
+    //    day it surfaced as the PRIORITY signal with an LLM-invented threat reading of our own tracking.
+    //    A scan initiation is an audit record; it does not belong in the signals table.
 
     // ── 6. Travel-itinerary gap (decision #3: skip creation, report the gap; NO fabricated origin) ──
     const travelGap = (intakeData.travelPlans || []).length > 0 ? {
@@ -431,7 +405,7 @@ Deno.serve(async (req) => {
       // Per-member scan outcomes — states plainly who was scanned and who was skipped (minor/consent).
       family_scans: familyScans,
       investigation: { id: investigation.id, file_number: investigation.file_number },
-      tracking_signal: { via: "ingest-signal", ok: signalOk, error: signalError },
+      tracking_signal: { emitted: false, audit_record: `investigation ${investigation.file_number}`, note: "No signal emitted — the investigation record is the audit trail; signals are world-observations, not platform activity (operator ruling 2026-08-20)." },
       enrichment_scans: scanResults,
       // requirement (b): state plainly what was fired and where results will appear — never silent success.
       reputational_scan: reputationalScan
