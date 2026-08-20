@@ -247,7 +247,16 @@ Deno.serve(async (req) => {
           await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limiting
         }
 
-        // PART 2: Perform AI-powered relationship analysis
+        // PART 2 — DISABLED 2026-08-20 (operator ruling, WO-ENTITY-DEDUP). This block asked an LLM to
+        // GUESS up to 5 related entities, then INSERTed those guesses as real entities + relationships
+        // (e.g. "John Smith", "San Francisco, CA", "akilback@gmail.com" as relationships of a scanned
+        // subject). That is ungrounded free-association (Grounding-State + Provenance Doctrine) — and the
+        // insert set no client_id, so a DB default mis-stamped Kilbacks-scan rows onto Petronas. No entity
+        // and no relationship may be born from parametric model output. Part 1 (grounded content
+        // gathering) above is retained. DO NOT re-enable without grounding each inferred edge in scraped
+        // evidence + explicit client scoping + find-or-create dedup.
+        const RELATIONSHIP_INFERENCE_ENABLED = false;
+        if (RELATIONSHIP_INFERENCE_ENABLED) {
         const relationshipResult = await callAiGateway({
           model: 'gpt-4o-mini',
           messages: [
@@ -376,6 +385,7 @@ Deno.serve(async (req) => {
             }
           }
         }
+        } // end if (RELATIONSHIP_INFERENCE_ENABLED) — Part 2 LLM relationship inference disabled 2026-08-20
 
         // Update entity's last scan timestamp
         await supabase
