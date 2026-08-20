@@ -1,7 +1,23 @@
 # WO-CLIENT-ID-AUTOASSIGN-TRIGGER — the root of the cross-client mis-attribution (2026-08-20)
 
-**Class:** provenance / cross-tenant integrity. **Status:** REPORTED — fix awaits operator ruling.
-**Priority:** outranks the 580 mis-attributed rows it produced (root vs. symptom).
+**Class:** provenance / cross-tenant integrity + governance defect. **Status:** RESOLVED 2026-08-20.
+**Priority:** outranked the 580 mis-attributed rows it produced (root vs. symptom).
+
+## RESOLUTION (operator ruling 2026-08-20 — "ownership must never be inferred; fail closed")
+Migration `20260820160000_drop_client_id_autoassign_fail_closed.sql` (applied prod, committed):
+- **Dropped** `trg_auto_assign_entity_client_id` + `auto_assign_entity_client_id()`.
+- **Fail-closed** on null client_id: descriptive BEFORE-INSERT trigger `trg_entities_require_client_id` (clear
+  error) + `client_id SET NOT NULL` (non-bypassable DB backstop). Negative-tested: a client_id-less insert is
+  rejected (probe raised + rolled back, no row persisted).
+- **Blast radius confirmed before drop:** 0 null-client_id entities existed; only osint-entity-scan omitted
+  client_id in live code (already disabled); only DB inserter `approve_entity_suggestion_batch()` sets it. Nothing
+  else fails.
+- **580 symptom cleaned (operator-approved):** 517 outside-hold osint-fabricated entities soft-deleted (never
+  hard-deleted) + 5 fabricated relationship edges deleted (incl. the 3 on the Aaron survivor). The 54 inside the
+  INC-AITOOLS-XTENANT hold wait for the hold-lift pass. Aaron survivor verified: only 3 real family edges remain.
+
+---
+### Original report (retained)
 
 ## What it is
 A BEFORE-INSERT trigger on `public.entities` silently attributes any client_id-less insert to a real customer.
