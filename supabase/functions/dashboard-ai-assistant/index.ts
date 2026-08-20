@@ -351,7 +351,8 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   "guide_decision_tree",
   "track_mitigation_effectiveness",
   "get_threat_intel_feeds",
-  "run_entity_deep_scan",
+  "get_subject_exposure",
+  "run_subject_scan",
   "search_social_media",
   "enrich_entity_descriptions",
   "extract_signal_insights",
@@ -7286,93 +7287,84 @@ Return a JSON object (no markdown, only valid JSON):
       };
     }
 
-    case "run_entity_deep_scan": {
-      // P0 Phase-C — fail-closed tenant gate
-      assertTenantContext("run_entity_deep_scan", tenantId);
+    case "get_subject_exposure": {
+      // READ current exposure from the shared retrieval module (no scan). States its OWN denominator with
+      // dates; distinguishes "nothing on file / no scan run" from "scanned, nothing found".
+      assertTenantContext("get_subject_exposure", tenantId);
       const { entity_id, entity_name } = args;
       if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
-
       let targetEntityId = entity_id;
+      let ent: any = null;
       if (!targetEntityId && entity_name) {
-        const { data: foundEntity } = await supabaseClient.from("entities")
-          .select("id, name, type").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
-        if (!foundEntity) return { error: `Entity not found: ${entity_name}. Use search_entities to find the correct name.` };
-        targetEntityId = foundEntity.id;
+        const { data: f } = await supabaseClient.from("entities").select("id, name").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
+        if (!f) return { error: `Entity not found: ${entity_name}. Use search_entities.` };
+        targetEntityId = f.id; ent = f;
+      } else {
+        const { data: f } = await supabaseClient.from("entities").select("id, name").eq("id", targetEntityId).maybeSingle();
+        ent = f;
+      }
+      if (!ent) return { error: `Entity not found: ${targetEntityId}` };
+
+      const { data: items } = await supabaseClient.from("subject_exposure_items")
+        .select("id, category, title, severity, source_class, subject_awareness")
+        .eq("subject_entity_id", targetEntityId).is("superseded_at", null);
+      const current = items || [];
+      const { data: runs } = await supabaseClient.from("subject_scan_runs")
+        .select("scope, finished_at, started_at").eq("subject_entity_id", targetEntityId).eq("status", "completed")
+        .order("started_at", { ascending: false }).limit(1);
+      const latestRun = (runs || [])[0];
+      const repSweep = latestRun ? String(latestRun.finished_at || latestRun.started_at).slice(0, 10) : null;
+      const repDepth = latestRun?.scope?.depth ?? null;
+      const breachItems = current.filter((i: any) => i.category === "data_breach");
+      let breachChecked: string | null = null;
+      if (breachItems.length) {
+        const { data: bl } = await supabaseClient.from("subject_exposure_locations")
+          .select("date_captured").in("exposure_item_id", breachItems.map((i: any) => i.id)).order("date_captured", { ascending: false }).limit(1);
+        breachChecked = bl?.[0]?.date_captured ? String(bl[0].date_captured).slice(0, 10) : null;
       }
 
-      // Aggregate all available data for this entity in parallel
-      const [entityRes, contentRes, investigationsRes] = await Promise.all([
-        supabaseClient.from("entities").select("id, name, type, description, risk_level, threat_score, created_at, updated_at").eq("id", targetEntityId).maybeSingle(),
-        supabaseClient.from("entity_content").select("id, title, sentiment, content_type, published_date, source_url").eq("entity_id", targetEntityId).order("published_date", { ascending: false }).limit(30),
-        supabaseClient.from("investigations").select("id, title, status, created_at").eq("entity_id", targetEntityId).order("created_at", { ascending: false }).limit(5),
-      ]);
-
-      const entity = entityRes.data;
-      if (!entity) return { error: `Entity not found: ${targetEntityId}` };
-
-      const content = contentRes.data || [];
-      const investigations = investigationsRes.data || [];
-
-      // Also search signals that mention this entity
-      const { data: signals } = await excludeTestAndDeleted(supabaseClient.from("signals").eq("tenant_id", tenantId)
-        .select("id, title, severity, category, received_at, location")
-        .or(`normalized_text.ilike.%${entity.name}%,title.ilike.%${entity.name}%`)
-        .order("received_at", { ascending: false }).limit(20));
-
-      // Sentiment analysis
-      const sentBreakdown: Record<string, number> = {};
-      for (const c of content) { const s = c.sentiment || "unknown"; sentBreakdown[s] = (sentBreakdown[s] || 0) + 1; }
-      const negCount = sentBreakdown["negative"] || 0;
-      const posCount = sentBreakdown["positive"] || 0;
-
-      // Signal severity breakdown
-      const sigSevBreakdown: Record<string, number> = {};
-      for (const s of (signals || [])) { const sv = s.severity || "unknown"; sigSevBreakdown[sv] = (sigSevBreakdown[sv] || 0) + 1; }
-
-      const overallRisk = entity.risk_level || (
-        (entity.threat_score || 0) >= 80 ? "critical" :
-        (entity.threat_score || 0) >= 60 ? "high" :
-        (entity.threat_score || 0) >= 40 ? "medium" : "low"
-      );
-
-      // Try to also call the edge function for OSINT data (non-blocking, short timeout)
-      let osintData: any = null;
-      const _dsUrl = Deno.env.get("SUPABASE_URL");
-      const _dsKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-      if (_dsUrl && _dsKey) {
-        try {
-          const dsResp = await fetch(`${_dsUrl}/functions/v1/entity-deep-scan`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_dsKey}` },
-            body: JSON.stringify({ entity_id: targetEntityId }),
-            signal: AbortSignal.timeout(10000),
-          });
-          if (dsResp.ok) osintData = await dsResp.json();
-        } catch (_) { /* edge function unavailable — DB data only */ }
+      // EMPTY DISTINCTION — required by the product
+      if (current.length === 0) {
+        if (!latestRun) return { success: true, subject: ent.name, status: "no_scan", message: `Nothing on file for "${ent.name}" — no scan has been run. This is NOT "nothing found." Offer run_subject_scan to run one.` };
+        return { success: true, subject: ent.name, status: "scanned_empty", denominator: { reputational_sweep: repSweep, reputational_depth: repDepth }, message: `Scanned ${repSweep}${repDepth ? ` (${repDepth})` : ""} — nothing currently on file for "${ent.name}". State the sweep date.` };
       }
-
+      const tp = current.filter((i: any) => i.source_class !== "self_published" && i.category !== "data_breach");
+      const sp = current.filter((i: any) => i.source_class === "self_published");
+      const denomLine = `${current.length} current items · reputational sweep ${repSweep ?? "never"}${repDepth ? ` (${repDepth})` : ""}${breachChecked ? ` · breach check ${breachChecked}` : ""}`;
       return {
-        success: true,
-        entity,
-        overall_risk: overallRisk,
-        threat_score: entity.threat_score,
-        signal_summary: {
-          total: signals?.length || 0,
-          by_severity: sigSevBreakdown,
-          most_recent: signals?.[0] || null,
-        },
-        intelligence_summary: {
-          content_items: content.length,
-          sentiment_breakdown: sentBreakdown,
-          negative_ratio: content.length ? Math.round((negCount / content.length) * 100) : 0,
-          positive_ratio: content.length ? Math.round((posCount / content.length) * 100) : 0,
-          recent_headlines: content.slice(0, 5).map((c: any) => ({ title: c.title, sentiment: c.sentiment, published: c.published_date, url: c.source_url })),
-        },
-        investigations: { total: investigations.length, list: investigations },
-        osint_scan: osintData ? { status: "complete", findings_count: osintData.findings_count, overall_risk: osintData.overall_risk } : { status: "unavailable" },
-        scanned_at: new Date().toISOString(),
-        message: `Entity deep scan for "${entity.name}": Risk ${overallRisk?.toUpperCase()}, Threat score ${entity.threat_score || "N/A"}/100. ${signals?.length || 0} signals, ${content.length} intelligence items, ${investigations.length} investigations.`,
+        success: true, subject: ent.name, status: "has_items",
+        denominator: { current_items: current.length, reputational_sweep: repSweep, reputational_depth: repDepth, breach_check: breachChecked },
+        denominator_line: denomLine,
+        third_party: tp.slice(0, 15).map((i: any) => ({ title: i.title, category: i.category, severity: i.severity, awareness: i.subject_awareness })),
+        counts: { third_party: tp.length, self_published: sp.length, breach: breachItems.length },
+        message: `${denomLine}. You MUST state this denominator (with dates) in your answer.`,
       };
+    }
+
+    case "run_subject_scan": {
+      assertTenantContext("run_subject_scan", tenantId);
+      const { entity_id, entity_name } = args;
+      if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
+      let targetEntityId = entity_id;
+      let ent: any = null;
+      if (!targetEntityId && entity_name) {
+        const { data: f } = await supabaseClient.from("entities").select("id, name").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
+        if (!f) return { error: `Entity not found: ${entity_name}.` };
+        targetEntityId = f.id; ent = f;
+      } else {
+        const { data: f } = await supabaseClient.from("entities").select("id, name").eq("id", targetEntityId).maybeSingle();
+        ent = f;
+      }
+      if (!ent) return { error: `Entity not found: ${targetEntityId}` };
+      const _u = Deno.env.get("SUPABASE_URL"); const _k = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const resp = await fetch(`${_u}/functions/v1/subject-exposure`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${_k}` },
+        body: JSON.stringify({ action: "rescan", entityId: targetEntityId }),
+      });
+      const j = await resp.json().catch(() => ({}));
+      const d = (j as any)?.data ?? j;
+      if (!resp.ok || d?.error) return { error: `Scan failed to start: ${d?.error ?? resp.status}` };
+      return { success: true, subject: ent.name, scan_id: d?.scanId, status: "started", message: `Deep scan started for "${ent.name}" (7 categories, ~1 min, fire-and-persist). Results will land in the exposure set — do NOT claim results now; tell the user to check back shortly or use get_subject_exposure.` };
     }
 
     case "perform_external_web_search": {
@@ -10198,7 +10190,7 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
     case "investigate_poi": {
       // P0 Phase-C — fail-closed tenant gate (kept even though endpoint returns stub)
       assertTenantContext("investigate_poi", tenantId);
-      return { error: "investigate_poi is not available — the OSINT investigation engine is not deployed. Use run_entity_deep_scan to access available intelligence, or perform_external_web_search for live OSINT." };
+      return { error: "investigate_poi is retired. Use get_subject_exposure to read a subject's current exposure (with its denominator), or run_subject_scan to run a fresh 7-category deep scan via the shared retrieval module." };
     }
 
     case "generate_poi_report": {
@@ -10217,18 +10209,20 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
         return { success: false, error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. POI report refused.` };
       }
 
+      // Successor: generate-subject-exposure-report (the disabled generate-poi-report is retired). Persists
+      // issuable=false — a report is generated but NOT deliverable until an operator issues it.
       const { data: rptData, error: rptErr } = await supabaseClient.functions.invoke(
-        'generate-poi-report',
-        { body: { entity_id, investigation_id: investigation_id || undefined, tenant_id: tenantId } }
+        'generate-subject-exposure-report',
+        { body: { entityId: entity_id } }
       );
-      if (rptErr) return { success: false, error: rptErr.message };
+      const rpt = (rptData as any)?.data ?? rptData;
+      if (rptErr || rpt?.error) return { success: false, error: rptErr?.message ?? rpt?.error };
       return {
         success: true,
-        report_id: rptData?.report_id,
+        report_id: rpt?.reportId,
         entity_id,
-        confidence_score: rptData?.confidence_score,
-        threat_level: rptData?.threat_level,
-        summary: `Intelligence report generated for entity. Confidence: ${rptData?.confidence_score}%. Threat level: ${rptData?.threat_level?.toUpperCase()}. View the full report in the Entity Detail dialog under the Report tab.`,
+        issuable: false,
+        summary: `Reputational exposure report generated for the entity (${rpt?.counts?.third_party ?? 0} third-party, ${rpt?.counts?.breaches ?? 0} breach items). It is PERSISTED but issuable=false — an operator must review and issue it before delivery. Remediation is operator-authored.`,
       };
     }
 

@@ -621,50 +621,20 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     setDeepScanResults(null);
     
     try {
-      toast({ 
-        title: "🔍 Deep Scan Started", 
-        description: "Running comprehensive OSINT analysis including dark web, breaches, and relationship mapping..."
+      // Deep Scan now fires the SHARED retrieval module (subject-exposure rescan → subject-retrieval async,
+      // 7-category deep). Replaces the disabled entity-deep-scan (503). Fire-and-persist → Exposure tab.
+      const { data, error } = await supabase.functions.invoke('subject-exposure', {
+        body: { action: 'rescan', entityId },
       });
-      
-      // Simulate progress updates
-      const progressInterval = setInterval(() => {
-        setDeepScanProgress(prev => Math.min(prev + 8, 85));
-      }, 1000);
-      
-      const { data, error } = await supabase.functions.invoke('entity-deep-scan', {
-        body: { entity_id: entityId }
-      });
-
-      clearInterval(progressInterval);
+      const res = (data as any)?.data ?? data;
+      if (error || res?.error) throw new Error(res?.error || (error as any)?.message || 'Scan failed to start');
       setDeepScanProgress(100);
-
-      if (error) {
-        // Surface the actual error from the function body if available
-        const detail = (data as any)?.error || error.message;
-        throw new Error(detail);
-      }
-
-      setDeepScanResults({
-        findings_count: data.findings_count || 0,
-        critical_count: data.critical_count || 0,
-        high_count: data.high_count || 0,
-        overall_risk: data.overall_risk || 'low',
-        categories: data.categories || []
+      toast({
+        title: "🔍 Deep scan started",
+        description: `Reputational scan ${String(res?.scanId ?? '').slice(0, 8)} running (~1 min · 7 categories). Open the Exposure tab and Refresh to see findings when it completes.`,
+        duration: 8000,
       });
-      
-      const riskEmoji = data.critical_count > 0 ? '🚨' : data.high_count > 0 ? '⚠️' : '✅';
-      
-      toast({ 
-        title: `${riskEmoji} Deep Scan Complete`, 
-        description: `Found ${data.findings_count} items: ${data.critical_count} critical, ${data.high_count} high risk. Overall: ${data.overall_risk}`,
-        duration: 10000
-      });
-      
-      // Refresh all entity data
-      queryClient.invalidateQueries({ queryKey: ['entity-detail', entityId] });
-      queryClient.invalidateQueries({ queryKey: ['entity-content', entityId] });
-      queryClient.invalidateQueries({ queryKey: ['entity-relationships', entityId] });
-      queryClient.invalidateQueries({ queryKey: ['entities'] });
+      queryClient.invalidateQueries({ queryKey: ['subject-exposure', entityId] });
     } catch (error: any) {
       console.error('Error running deep scan:', error);
       toast({ 

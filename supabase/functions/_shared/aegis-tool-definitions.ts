@@ -1165,12 +1165,26 @@ Provide client_id for operational proximity context against client locations.`,
   {
     type: "function",
     function: {
-      name: "run_entity_deep_scan",
-      description: `ENTITY DEEP SCAN: Comprehensive OSINT intelligence gathering for any entity. Multi-phase scanning across dark web, breaches, social media, news, and relationship networks.`,
+      name: "get_subject_exposure",
+      description: `SUBJECT EXPOSURE (READ): Return the CURRENT reputational exposure already on file for a subject — verified, deduplicated exposure items (third-party, self-published, breach) from the shared retrieval module. This READS what exists; it does not run a scan. ALWAYS state the denominator in your answer, with dates, exactly as returned (e.g. "14 current items · reputational sweep 20 Aug (deep) · breach check 19 Aug") — an answer without a date is a defect. If the subject has NO items, distinguish "nothing on file — no scan has been run" (status=no_scan) from "scanned, nothing found" (status=scanned_empty); these are different statements and you MUST NOT collapse them.`,
       parameters: {
         type: "object",
         properties: {
-          entity_id: { type: "string", description: "UUID of the entity to scan" },
+          entity_id: { type: "string", description: "UUID of the entity" },
+          entity_name: { type: "string", description: "Name of the entity (if entity_id not provided)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_subject_scan",
+      description: `SUBJECT SCAN (RUN): Fire a fresh 7-category deep reputational scan for a subject via the shared retrieval module. FIRE-AND-PERSIST and ASYNC — returns a scan_id and starts a ~1-minute background scan; results land in the exposure set, NOT in your reply. Do NOT claim results after calling this; tell the user the scan started and findings will be available shortly (via get_subject_exposure or the Exposure tab). Use only when the user explicitly wants a fresh scan, or when get_subject_exposure returned status=no_scan.`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: { type: "string", description: "UUID of the entity" },
           entity_name: { type: "string", description: "Name of the entity (if entity_id not provided)" },
         },
       },
