@@ -7295,15 +7295,27 @@ Return a JSON object (no markdown, only valid JSON):
       if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
       let targetEntityId = entity_id;
       let ent: any = null;
-      if (!targetEntityId && entity_name) {
-        const { data: f } = await supabaseClient.from("entities").select("id, name").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
-        if (!f) return { error: `Entity not found: ${entity_name}. Use search_entities.` };
-        targetEntityId = f.id; ent = f;
-      } else {
+      if (targetEntityId) {
         const { data: f } = await supabaseClient.from("entities").select("id, name").eq("id", targetEntityId).maybeSingle();
+        if (!f) return { error: `Entity not found: ${targetEntityId}` };
         ent = f;
+      } else {
+        // Resolve by name — NEVER guess among duplicates. Silent ONLY when exactly one entity matches;
+        // otherwise return a disambiguation and let the caller (via the user) choose. This also surfaces
+        // the duplicate-entity problem instead of hiding it behind a lucky pick.
+        const { data: matches } = await supabaseClient.from("entities").select("id, name, client_id, created_at").ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
+        const list = matches || [];
+        if (list.length === 0) return { error: `Entity not found: ${entity_name}. Use search_entities.` };
+        if (list.length > 1) {
+          const opts = await Promise.all(list.map(async (e: any) => {
+            const { count } = await supabaseClient.from("subject_exposure_items").select("id", { count: "exact", head: true }).eq("subject_entity_id", e.id).is("superseded_at", null);
+            const { data: c } = e.client_id ? await supabaseClient.from("clients").select("name").eq("id", e.client_id).maybeSingle() : { data: null };
+            return { entity_id: e.id, name: e.name, client: c?.name ?? null, created: String(e.created_at).slice(0, 10), current_items: count ?? 0 };
+          }));
+          return { success: true, status: "ambiguous", matches: opts, message: `I have ${opts.length} records matching "${entity_name}". Do NOT guess — tell the user there are ${opts.length} records and ask which one, then call get_subject_exposure again with that entity_id. Options: ${opts.map((m: any) => `${m.name} — client ${m.client ?? "—"}, created ${m.created}, ${m.current_items} exposure items (id ${String(m.entity_id).slice(0, 8)})`).join(" · ")}.` };
+        }
+        ent = list[0]; targetEntityId = ent.id;
       }
-      if (!ent) return { error: `Entity not found: ${targetEntityId}` };
 
       const { data: items } = await supabaseClient.from("subject_exposure_items")
         .select("id, category, title, severity, source_class, subject_awareness")
@@ -7347,15 +7359,25 @@ Return a JSON object (no markdown, only valid JSON):
       if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
       let targetEntityId = entity_id;
       let ent: any = null;
-      if (!targetEntityId && entity_name) {
-        const { data: f } = await supabaseClient.from("entities").select("id, name").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
-        if (!f) return { error: `Entity not found: ${entity_name}.` };
-        targetEntityId = f.id; ent = f;
-      } else {
+      if (targetEntityId) {
         const { data: f } = await supabaseClient.from("entities").select("id, name").eq("id", targetEntityId).maybeSingle();
+        if (!f) return { error: `Entity not found: ${targetEntityId}` };
         ent = f;
+      } else {
+        // NEVER guess which entity to scan among duplicates — disambiguate first.
+        const { data: matches } = await supabaseClient.from("entities").select("id, name, client_id, created_at").ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
+        const list = matches || [];
+        if (list.length === 0) return { error: `Entity not found: ${entity_name}.` };
+        if (list.length > 1) {
+          const opts = await Promise.all(list.map(async (e: any) => {
+            const { count } = await supabaseClient.from("subject_exposure_items").select("id", { count: "exact", head: true }).eq("subject_entity_id", e.id).is("superseded_at", null);
+            const { data: c } = e.client_id ? await supabaseClient.from("clients").select("name").eq("id", e.client_id).maybeSingle() : { data: null };
+            return { entity_id: e.id, name: e.name, client: c?.name ?? null, created: String(e.created_at).slice(0, 10), current_items: count ?? 0 };
+          }));
+          return { success: true, status: "ambiguous", matches: opts, message: `I have ${opts.length} records matching "${entity_name}". Do NOT scan a guess — ask the user which one, then call run_subject_scan with that entity_id. Options: ${opts.map((m: any) => `${m.name} — client ${m.client ?? "—"}, created ${m.created}, ${m.current_items} exposure items (id ${String(m.entity_id).slice(0, 8)})`).join(" · ")}.` };
+        }
+        ent = list[0]; targetEntityId = ent.id;
       }
-      if (!ent) return { error: `Entity not found: ${targetEntityId}` };
       const _u = Deno.env.get("SUPABASE_URL"); const _k = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
       const resp = await fetch(`${_u}/functions/v1/subject-exposure`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${_k}` },
