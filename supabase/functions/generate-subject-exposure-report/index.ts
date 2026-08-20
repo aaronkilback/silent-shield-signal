@@ -176,6 +176,11 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, chi
   const awareness = (a: string) => a ? `<span class="aware aware-${esc(a)}">${a === "unknown" ? "not previously known" : esc(a)}</span>` : "";
   const locList = (ls: any[]) => `<ul class="locs">${ls.map((l) => `<li><a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${typeof l.found_at_rank === "number" ? ` <span class="rank">rank ${l.found_at_rank}</span>` : ""}<div class="prov">found via <code>${esc(l.found_by_query || "—")}</code>${l.date_captured ? ` · captured ${esc(String(l.date_captured).slice(0, 10))}` : ""}</div></li>`).join("")}</ul>`;
   const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${i.locations.length} source${i.locations.length === 1 ? "" : "s"}:</div>${locList(i.locations)}</div>`;
+  // Third-party split: real findings render prominently; bare mentions are counted + collapsed (web) or
+  // moved to Appendix A (print), so the PDF the client keeps never silently omits the mention volume.
+  const tpFindings = (thirdParty || []).filter((i: any) => i.is_finding);
+  const tpMentions = (thirdParty || []).filter((i: any) => !i.is_finding);
+  const mentionRow = (m: any) => `<div class="mention-row"><span class="cat">${esc(m.category)}</span> ${esc(m.title)} — ${(m.locations || []).map((l: any) => `<a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${l.date_captured ? ` <span class="rank">(captured ${esc(String(l.date_captured).slice(0, 10))})</span>` : ""}`).join(", ")}</div>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Reputational Exposure — ${esc(meta.subject.name)}</title>
 <style>
@@ -207,6 +212,13 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, chi
   .mention-row { font-size: 12px; color: #555; padding: 4px 0; border-top: 1px solid #eee; margin-top: 6px; word-break: break-word; }
   .mention-row .cat { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; color: #999; margin-right: 5px; }
   .mention-row a { color: #1a4a8a; }
+  /* print vs screen are mutually exclusive media types: a PDF renderer applies @media print (never screen),
+     a browser applies @media screen. So web gets the collapse, print gets Appendix A, and if a renderer
+     applies NEITHER, everything shows — nothing is ever silently omitted from the deliverable. */
+  @media print { .screen-collapse { display: none !important; } }
+  @media screen { .print-ptr, .print-appendix { display: none; } }
+  .print-ptr { font-size: 13px; color: #444; margin: 12px 0; }
+  .print-appendix { margin-top: 40px; page-break-before: always; }
   .draft-banner { background: #7a1f1f; color: #fff; padding: 12px 16px; border-radius: 6px; font-weight: bold; margin: 16px 0; font-size: 14px; }
   .draft-tag { display: inline-block; background: #7a1f1f; color: #fff; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 3px; letter-spacing: .05em; margin-left: 8px; vertical-align: middle; }
   .cs-block { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
@@ -236,13 +248,9 @@ ${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this re
 
 <h2>2 · Third-Party Exposure</h2>
 <p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
-${(() => {
-  const findings = thirdParty.filter((i) => i.is_finding);
-  const mentions = thirdParty.filter((i) => !i.is_finding);
-  const findingsHtml = findings.length ? findings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>';
-  const mentionsHtml = mentions.length ? `<details class="mentions"><summary><strong>Also found — ${mentions.length} mention${mentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> These are pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${mentions.map((m) => `<div class="mention-row"><span class="cat">${esc(m.category)}</span> ${esc(m.title)} — ${m.locations.map((l) => `<a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>`).join(", ")}</div>`).join("")}</details>` : "";
-  return findingsHtml + mentionsHtml;
-})()}
+${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>'}
+${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
+<p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
 
 <h2>3 · Self-Published Footprint</h2>
 <p class="section-intro">What you publish about yourself — reported separately. This is within your control; it is here for completeness, not as a finding.</p>
@@ -259,6 +267,12 @@ ${meta.remediation.authored
     : `<div class="rem-placeholder"><strong>Pending analyst review.</strong> Remediation for this assessment is authored by your analyst and added before the report is issued — it is never machine-generated.</div>`}
 
 ${childSafety ? renderChildSafety(childSafety) : ""}
+
+${tpMentions.length ? `<div class="print-appendix">
+<h2>Appendix A — Mentions (${tpMentions.length})</h2>
+<p class="section-intro">Every page where the subject's name appeared WITHOUT a finding attached — included in full so the complete search space is on the record, not silently omitted from the deliverable. URL and capture date for each.</p>
+${tpMentions.map(mentionRow).join("")}
+</div>` : ""}
 
 <footer>Silent Shield Security · Reputational Exposure Assessment · Confidential. Every finding above carries the source URL and the query that surfaced it — this report is auditable end to end.</footer>
 </body></html>`;
