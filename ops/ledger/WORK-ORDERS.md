@@ -2780,3 +2780,23 @@ Operator: fixes were proven against the DB, never on the surface where the defec
 PROOF DISCIPLINE: (b) data-path live (page reads client row). (a)/(c)-render require the frontend Worker deploy (else (c) gets WORSE: nulled data + old ||50 = "50"). Frontend built clean (vite 7.95s, undefined-id gate pass). Deploying prod Worker silent-shield-signal (--name discipline, INC-WRANGLER-MISFIRE). Proof: exact read-path queries + deployed worker version.
 
 Also answered operator Q2 (job-worker invisibility): job-worker (function_jobs) dispatches ~16 actions; only 2-3 write heartbeats (consolidate-signals [added today], wraith-vuln-scan, agent-self-learning-proactive) — 14 INVISIBLE like consolidate was. Full list in report.
+
+## REPORTS (before fixing), 2026-08-21 — daily briefing + soft-delete leak class + storage_url + heartbeat cost
+
+SOFT-DELETE/RETIRE LEAK CLASS (operator Q1 — is it elsewhere): YES, systemic across tables, not just signals.
+- incidents: deleted_at filter MISSING on ~6 client-facing surfaces (ClientDetail:151, TripwireAlerts, ThreatGlobe, SLAMetrics, FortifiedPosture x2, proactive-intelligence-push); CORRECT on Incidents.tsx:83 + ThreatStatusBar.
+- entities: deleted_at AND merged_into MISSING on ~7 (Entities.tsx:64, ThreatGlobe:323, EntitySuggestionsPanel x2, InvestigationDetail x2, monitor-entity-proximity); NONE filter merged_into -> merged-away entities can render.
+- reports: deleted_at MISSING on deliver/view-subject-exposure-report + dashboard-ai-assistant report list.
+- subject_exposure_items: superseded_at MISSING on subject-exposure/index.ts:72 (client endpoint leaks retired items); CORRECT in generate-subject-exposure-report + dashboard-ai-assistant. Root: filter discipline discovered mid-project, never back-ported. Needs a systemic sweep + ideally a shared excludeSoftDeleted helper per table.
+
+HEARTBEAT COST (operator Q2 — cost for all 14 invisible job-worker actions): CHEAP if done at the DISPATCHER not per-function. job-worker dispatches ~16 actions, 14 invisible. Option A: edit 14 functions (import+recordHeartbeat each) + 14 redeploys (~1-2h, 14 deploy risk surfaces). Option B (recommended): ONE edit in job-worker/index.ts — on each action completion write recordHeartbeat('jobworker-<action>', ...). 1 function + 1 deploy covers all 14 uniformly + any future action. Low risk (heartbeat best-effort).
+
+DAILY BRIEFING (4 defects, report-only — it IS sending: 4 heartbeats, last 2026-08-21 13:05):
+1. FORMAT: markdown NOT converted. formatBriefingLines() (L464-475) only maps ALLCAPS->h3 and "- "->"<p>› ", wraps rest in <p> verbatim. No **bold**/markdown->HTML. Literal ** and › render. Fix = convert markdown OR prompt plain-structured-text the template styles.
+2. PRIORITY SIGNALS forced-fill: prompt L306 "top 3-5 actionable signals" is mandatory; the "No significant activity" rule (L298) is overridden. Quiet-day skip exists (L204-217) but ONLY when signals_24h=0 AND incidents=0 AND actions=0 — NOT a "nothing actionable" path. So low-value items get promoted.
+3. TRAJECTORY: computed from raw crit+high count delta (L234: <0.8x=DE-ESCALATING); coverage caveat (twitter dark / failed monitors) appended to FOOTER text (L240-264) but direction NOT set to UNKNOWN. Asserts a trend it says it can't measure.
+4. DEDUP: send-daily-briefing has ZERO dedup; the fuzzy trigram dedup was added to generate-executive-report only. Kitimat Eco Depot shows twice.
+
+NULL storage_url CRITICAL: 275 of 312 reports (88%) have NULL storage_url (18 in last 7d, newest 2026-08-20 21:49 = the latest PECL exec brief cf6299db). Report rows exist but rendered HTML never persisted -> view/deliver return "Report not available". Reports generated-but-unviewable.
+
+STRATEGIC (operator): at ~6 signals/day the briefing manufactures content (forced 3-5, fabricated trajectory, dups). Recommend: send-only-when-something-to-say (extend quiet-day to "nothing actionable"), honest empty priority section, UNKNOWN trajectory under degraded coverage, dedup + markdown render. Aligns attention doctrine (silence acceptable, noise not).
