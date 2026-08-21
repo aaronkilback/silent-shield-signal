@@ -2823,3 +2823,14 @@ send-daily-briefing, all operator rulings:
 Deployed verify_jwt=false (also corrects the flag from the earlier phantom-owner deploy).
 
 FALSE-POSITIVE LESSON (operator, for the record): today's storage_url critical fired on an insufficient-data stub that correctly has no body = false positive. Chasing WHY found the real 88% persistence gap nobody had flagged. Logged as memory feedback_investigate_false_positives: investigate false positives, don't suppress them — a false alarm is a lead; fix probe precision AND run down the class it points near.
+
+## #3 LEAK-SWEEP COUNT (before fixing), 2026-08-21 — soft-delete/retire filter across 4 tables
+Combined frontend (src/) + edge-fn read-site census. A "read" = .from(table).select (excludes writes/realtime).
+| table | total reads | client-facing | internal | client-facing CORRECT | client-facing MISSING |
+| signals | 304 | 75 | 229 | 2 | 73 |
+| incidents | 135 | 53 | 82 | 5 | 48 |
+| entities | 141 | 57 | 84 | 0 | 57 |
+| subject_exposure_items | 5 | 5 | 0 | 3 | 2 |
+| TOTAL | 585 | 190 | 395 | 10 | 180 |
+=> 180 CLIENT-FACING read sites need the helper (only 10 already correct). Entities = 100% miss (57/57) — merged-away entities from this week's dedup CAN render. dashboard-ai-assistant is the biggest single concentration (~24 missing across signals/incidents/entities). Internal reads (395) intentionally unfiltered (monitors/ingest/scoring/correlation/watchdog) — leave, but the CI gate must not flag them.
+PLAN (operator): per-table NAMED helpers (excludeDeletedSignals [deleted_at+quarantine], excludeDeletedIncidents [deleted_at], excludeMergedEntities [deleted_at+merged_into], excludeSupersededExposure [superseded_at]) in BOTH src/lib + _shared; meaning-in-the-name (no generic helper hiding different predicates). CI gate: a client-facing read of these tables NOT calling its helper fails detection (like the proper-noun/undefined-identifier gate); internal reads exempt (tag or path-based). Sequence proposed: CI gate (audit-only first) -> highest-traffic (dashboard-ai-assistant, send-daily-briefing, report generators, ClientDetail) -> long tail; promote gate to blocking after the tail clears.
