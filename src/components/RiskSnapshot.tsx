@@ -73,6 +73,8 @@ export const RiskSnapshot = () => {
       .from('signals')
       .select('id, normalized_text, severity, category, location, confidence, entity_tags, received_at')
       .eq('client_id', selectedClientId)
+      .is('deleted_at', null)          // hide soft-deleted (client-facing surface)
+      .eq('quality_status', 'active')  // hide quarantined (Quarantine Doctrine)
       .gte('received_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
       .order('received_at', { ascending: false });
 

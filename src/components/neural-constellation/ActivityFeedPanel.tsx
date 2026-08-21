@@ -60,6 +60,8 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
         .from("signals")
         .select("*")
         .in("client_id", activeIds)
+        .is("deleted_at", null)          // hide soft-deleted (feed surface)
+        .eq("quality_status", "active")  // hide quarantined (Quarantine Doctrine)
         .neq("is_test", true)
         // 2026-05-08: hide synthetic [PATTERN] frequency-spike signals
         // from the operator-facing feed. They're aggregates produced by

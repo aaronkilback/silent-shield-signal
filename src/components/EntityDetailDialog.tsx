@@ -102,6 +102,9 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         `)
         .eq('entity_id', entityId)
         .not('signal_id', 'is', null)
+        // hide soft-deleted + quarantined on the embedded signals (entity-facing surface, Quarantine Doctrine)
+        .is('signals.deleted_at', null)
+        .eq('signals.quality_status', 'active')
         .order('created_at', { ascending: false })
         .limit(50);
       if (error) throw error;

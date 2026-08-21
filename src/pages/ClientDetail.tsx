@@ -132,11 +132,15 @@ const ClientDetail = () => {
 
       setClient(clientData as unknown as Client);
 
-      // Fetch related signals
+      // Fetch related signals — MUST hide soft-deleted + quarantined rows (Quarantine Doctrine; this is a
+      // client-facing surface). Without these, a soft-deleted/quarantined signal renders to the client
+      // (e.g. the internal "VIP Deep Scan initiated" audit record kept showing after soft-delete).
       const { data: signalsData, error: signalsError } = await supabase
         .from("signals")
         .select("*")
         .eq("client_id", id)
+        .is("deleted_at", null)
+        .eq("quality_status", "active")
         .order("received_at", { ascending: false })
         .limit(10);
 
@@ -174,9 +178,13 @@ const ClientDetail = () => {
     return null;
   }
 
-  const riskScore = client.risk_assessment?.risk_score || 50;
-  const riskLevel = riskScore >= 75 ? "Critical" : riskScore >= 50 ? "High" : riskScore >= 25 ? "Medium" : "Low";
-  const riskColor = riskScore >= 75 ? "text-red-500" : riskScore >= 50 ? "text-orange-500" : riskScore >= 25 ? "text-yellow-500" : "text-green-500";
+  // A risk score renders ONLY when a real one is stored. Absence must show "Not assessed" — never a
+  // fabricated fallback (the old `|| 50` presented an LLM-onboarding guess / a missing value as a computed
+  // 50/High). Same class as the nulled 97/100 posture + BC Place 75.
+  const riskScore = typeof client.risk_assessment?.risk_score === "number" ? client.risk_assessment.risk_score : null;
+  const hasRisk = riskScore !== null;
+  const riskLevel = !hasRisk ? "Not assessed" : riskScore >= 75 ? "Critical" : riskScore >= 50 ? "High" : riskScore >= 25 ? "Medium" : "Low";
+  const riskColor = !hasRisk ? "text-muted-foreground" : riskScore >= 75 ? "text-red-500" : riskScore >= 50 ? "text-orange-500" : riskScore >= 25 ? "text-yellow-500" : "text-green-500";
 
   return (
     <div className="min-h-screen bg-background">
@@ -217,8 +225,8 @@ const ClientDetail = () => {
                     <Shield className={`w-5 h-5 ${riskColor}`} />
                     <span className="text-sm text-muted-foreground">Risk Score</span>
                   </div>
-                  <div className={`text-3xl font-bold ${riskColor}`}>{riskScore}</div>
-                  <div className="text-sm text-muted-foreground">{riskLevel} Risk</div>
+                  <div className={`text-3xl font-bold ${riskColor}`}>{hasRisk ? riskScore : "—"}</div>
+                  <div className="text-sm text-muted-foreground">{hasRisk ? `${riskLevel} Risk` : "Not assessed"}</div>
                 </div>
                 <Button
                   variant="destructive"
@@ -262,9 +270,9 @@ const ClientDetail = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Risk Assessment</span>
-                <span className={`font-semibold ${riskColor}`}>{riskScore}%</span>
+                <span className={`font-semibold ${riskColor}`}>{hasRisk ? `${riskScore}%` : "Not assessed"}</span>
               </div>
-              <Progress value={riskScore} className="h-2" />
+              <Progress value={hasRisk ? riskScore : 0} className="h-2" />
             </div>
           </CardContent>
         </Card>

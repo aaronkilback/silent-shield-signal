@@ -146,6 +146,8 @@ export const LiveEventFeed = () => {
       let query = supabase
         .from('signals')
         .select('*')
+        .is('deleted_at', null)          // hide soft-deleted (client-facing feed)
+        .eq('quality_status', 'active')  // hide quarantined (Quarantine Doctrine)
         .neq('status', 'false_positive')
         .gte('created_at', feedWindowISO) // Only signals ingested in last 30 days
         .order('received_at', { ascending: false })

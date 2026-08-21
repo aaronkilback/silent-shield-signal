@@ -20,6 +20,8 @@ export const EntityUnifiedProfile = ({ entityId, entityName }: EntityUnifiedProf
         .from('signals')
         .select('*')
         .contains('auto_correlated_entities', [entityId])
+        .is('deleted_at', null)          // hide soft-deleted (entity-facing surface)
+        .eq('quality_status', 'active')  // hide quarantined (Quarantine Doctrine)
         .order('created_at', { ascending: false })
         .limit(20);
       
