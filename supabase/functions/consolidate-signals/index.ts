@@ -1,17 +1,24 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 
 /**
- * Signal Consolidation Engine
+ * Signal Consolidation Engine — TITLE-SIMILARITY dedup, SOFT-DELETE only.
  *
- * Runs post-ingestion to merge related signals from different sources
- * into a single primary signal with nested updates (timeline).
+ * Rewritten 2026-08-21 (operator rulings 1/2/3, FINDING-CONSOLIDATE-SIGNALS-DELETER):
+ *   1. The HARD-DELETE path is GONE. A duplicate is SOFT-DELETED (deleted_at + reason + quarantined),
+ *      like everything else on the platform. No `signals.delete()`. No DEDUP_DELETER_ENABLED flag — a
+ *      flag that could be flipped is not "off"; the destructive path is removed by construction.
+ *   2. Strategies A (location+event / location-only) and D (same-source keyword-overlap) are REMOVED.
+ *      They merged distinct events at sim 0.10–0.29 (a homicide trial + a wildfire into unrelated
+ *      primaries) and no threshold rescues them. Strategy B (same-source+actor) is removed as the same
+ *      class (same actor != same event). Only title similarity remains.
+ *   3. The remaining strategy is a FUZZY TITLE MERGE, scoped to the SAME client + SAME day, using a
+ *      pg_trgm-equivalent trigram similarity (per-word "  w " padding, set Jaccard). Exact-title
+ *      (old Strategy C) is the sim=1.0 special case. Threshold 0.50 — DB-calibrated (catches reworded
+ *      cross-outlet dups like the Kitimat pair at 0.563; below 0.50 distinct events appear).
  *
- * Strategy:
- * 1. Fetch recent signals (last 24h) that haven't been consolidated
- * 2. Extract location + event-type keywords to build cluster keys
- * 3. Group signals sharing the same cluster key
- * 4. Keep the earliest signal as primary; move others to signal_updates
- * 5. Delete the duplicate signals
+ * Preservation before soft-delete is unchanged: the duplicate is copied to signal_updates (full content +
+ * source + original metadata) and its content_hash recorded in rejected_content_hashes. The surviving
+ * primary keeps the HIGHER severity.
  */
 
 interface SignalRow {
@@ -27,120 +34,25 @@ interface SignalRow {
   raw_json: Record<string, unknown> | null;
 }
 
-// ── Keyword extraction ──────────────────────────────────────────────────
+const SIM_THRESHOLD = 0.50;
+const SEV_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 
-const LOCATION_PATTERNS = [
-  // Canadian cities / regions likely to appear in signals
-  /\b(tumbler\s*ridge|prince\s*george|kamloops|kelowna|vancouver|victoria|surrey|burnaby|nanaimo|kitimat|terrace|fort\s*st\s*john|dawson\s*creek|prince\s*rupert|whitehorse|yellowknife|edmonton|calgary|saskatoon|regina|winnipeg|thunder\s*bay|toronto|ottawa|montreal|quebec\s*city|halifax|fredericton|charlottetown|st\.?\s*john'?s?)\b/gi,
-  // Province abbreviations and names
-  /\b(b\.?c\.?|british\s*columbia|alberta|saskatchewan|manitoba|ontario|quebec|nova\s*scotia|new\s*brunswick|pei|newfoundland|yukon|nwt|nunavut)\b/gi,
-];
-
-const EVENT_TYPE_PATTERNS: Array<{ pattern: RegExp; eventType: string }> = [
-  // Emergency / violence
-  { pattern: /\b(active\s*shooter|mass\s*shoot|shooting|shooter|shots?\s*fired|gunm[ae]n|gunfire)\b/i, eventType: 'shooting' },
-  { pattern: /\b(bomb\s*threat|explosion|bombing|ied|suspicious\s*package|detonat)\b/i, eventType: 'bombing' },
-  { pattern: /\b(hostage|barricade|standoff|stand-off)\b/i, eventType: 'hostage' },
-  { pattern: /\b(stabb?ing|knife\s*attack|bladed?\s*weapon|machete)\b/i, eventType: 'stabbing' },
-  { pattern: /\b(amber\s*alert|child\s*abduction|missing\s*child)\b/i, eventType: 'amber_alert' },
-  { pattern: /\b(wildfire|forest\s*fire|bush\s*fire)\b/i, eventType: 'wildfire' },
-  { pattern: /\b(flood|flooding|flash\s*flood)\b/i, eventType: 'flood' },
-  { pattern: /\b(tornado|hurricane|cyclone)\b/i, eventType: 'tornado' },
-  { pattern: /\b(earthquake|seismic)\b/i, eventType: 'earthquake' },
-  { pattern: /\b(evacuation\s*order|civil\s*emergency)\b/i, eventType: 'civil_emergency' },
-  { pattern: /\b(terrorist|terrorism|radicali[sz])\b/i, eventType: 'terrorism' },
-  { pattern: /\b(mass\s*casualty|multiple\s*deaths|deaths?\s*reported|fatalities|tragedy|tragic|massacre)\b/i, eventType: 'mass_casualty' },
-  { pattern: /\b(lockdown|shelter[\s-]in[\s-]place|police\s*incident|critical\s*incident)\b/i, eventType: 'critical_incident' },
-  // Specific protest events (only physical actions, not broad "campaigns")
-  { pattern: /\b(blockade|occupation|sit[\s-]?in|road\s*block)\b/i, eventType: 'direct_action' },
-];
-
-function extractLocations(text: string): string[] {
-  const locations = new Set<string>();
-  for (const pattern of LOCATION_PATTERNS) {
-    // Reset lastIndex for global patterns
-    pattern.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = pattern.exec(text)) !== null) {
-      locations.add(m[1].toLowerCase().replace(/\s+/g, ' ').trim());
-    }
+// pg_trgm-equivalent trigram similarity: split into words, pad each "  word ", set-Jaccard on trigrams.
+function pgTrigrams(str: string): Set<string> {
+  const set = new Set<string>();
+  for (const w of (str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean)) {
+    const p = '  ' + w + ' ';
+    for (let i = 0; i + 3 <= p.length; i++) set.add(p.slice(i, i + 3));
   }
-  return [...locations];
+  return set;
 }
-
-function extractEventTypes(text: string): string[] {
-  const types = new Set<string>();
-  for (const { pattern, eventType } of EVENT_TYPE_PATTERNS) {
-    if (pattern.test(text)) {
-      types.add(eventType);
-    }
-  }
-  return [...types];
+function trigramSim(a: string, b: string): number {
+  const A = pgTrigrams(a), B = pgTrigrams(b);
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0; for (const t of A) if (B.has(t)) inter++;
+  return inter / (A.size + B.size - inter);
 }
-
-/**
- * Build a cluster key from a signal's text.
- * Format: "location|eventType" — signals sharing any cluster key belong together.
- * Returns multiple keys if multiple locations/events are found.
- */
-function buildClusterKeys(text: string): string[] {
-  const locations = extractLocations(text);
-  const eventTypes = extractEventTypes(text);
-
-  if (locations.length === 0 || eventTypes.length === 0) return [];
-
-  // Filter out province-level locations — too broad for clustering
-  const PROVINCE_LEVEL = new Set(['b.c.', 'bc', 'british columbia', 'alberta', 'saskatchewan', 'manitoba', 'ontario', 'quebec', 'nova scotia', 'new brunswick', 'pei', 'newfoundland', 'yukon', 'nwt', 'nunavut']);
-  const specificLocations = locations.filter(loc => !PROVINCE_LEVEL.has(loc));
-
-  if (specificLocations.length === 0) return [];
-
-  const keys: string[] = [];
-  for (const loc of specificLocations) {
-    for (const et of eventTypes) {
-      keys.push(`${loc}|${et}`);
-    }
-  }
-  return keys;
-}
-
-// ── Actor / organization extraction for campaign dedup ──────────────────
-
-const ACTOR_PATTERNS = [
-  /\b(stand\.?earth|stand\s+earth)\b/i,
-  /\b(dogwood\s*bc|dogwood)\b/i,
-  /\b(sierra\s*club\s*bc|sierra\s*club)\b/i,
-  /\b(greenpeace)\b/i,
-  /\b(my\s*sea\s*to\s*sky)\b/i,
-  /\b(we[\s-]?can)\b/i,
-  /\b(bc\s*climate\s*emergency\s*campaign)\b/i,
-  /\b(frack\s*free\s*bc)\b/i,
-  /\b(code\s*blue\s*bc)\b/i,
-  /\b(extinction\s*rebellion|xr)\b/i,
-  /\b(350\.?org)\b/i,
-  /\b(idle\s*no\s*more)\b/i,
-  /\b(coastal\s*first\s*nations)\b/i,
-  /\b(wet'suwet'en|wetsuweten)\b/i,
-  /\b(cape[\s_]doctors|cape)\b/i,
-  /\b(marbem|maritime\s*beyond\s*methane)\b/i,
-  /\b(north\s*shore\s*counter[\s-]info)\b/i,
-  /\b(warrior\s*up)\b/i,
-  /\b(raven\s*trust)\b/i,
-];
-
-function extractActors(text: string): string[] {
-  const actors = new Set<string>();
-  for (const pattern of ACTOR_PATTERNS) {
-    if (pattern.test(text)) {
-      // Normalize actor name to lowercase key
-      const match = text.match(pattern);
-      if (match) actors.add(match[0].toLowerCase().replace(/[\s.]+/g, '_'));
-    }
-  }
-  return [...actors];
-}
-
-// ── Main handler ────────────────────────────────────────────────────────
+const dayOf = (iso: string) => String(iso || '').slice(0, 10);
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -148,20 +60,7 @@ Deno.serve(async (req) => {
 
   const supabase = createServiceClient();
 
-  // WO-DEL quarantine (2026-07-04): deleter disabled unless DEDUP_DELETER_ENABLED='true'.
-  // Fail-safe (default unset = no deletes). 200 so job-worker sees success (no retry/poison);
-  // best-effort no-op log to cron_heartbeat for enqueue-frequency visibility.
-  if (Deno.env.get('DEDUP_DELETER_ENABLED') !== 'true') {
-    console.log('[QUARANTINE] consolidate-signals invoked but disabled — no action taken');
-    try {
-      await supabase.from('cron_heartbeat').insert({ job_name: 'consolidate-signals-quarantined', status: 'succeeded',
-        result_summary: { quarantined: true, at: new Date().toISOString() } });
-    } catch (_) { /* best-effort */ }
-    return successResponse({ status: 'quarantined', message: 'quarantined, no action', deleted: 0 }, 200);
-  }
-
   try {
-    // Parse optional body params
     let hoursBack = 24;
     let dryRun = false;
     try {
@@ -171,372 +70,125 @@ Deno.serve(async (req) => {
     } catch { /* no body is fine */ }
 
     const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
-
     console.log(`[Consolidate] Scanning signals since ${cutoff} (dry_run=${dryRun})`);
 
-    // 1. Fetch recent signals
+    // Fetch recent ACTIVE signals only — never re-touch already soft-deleted / quarantined rows.
     const { data: signals, error: fetchErr } = await supabase
       .from('signals')
       .select('id, normalized_text, title, category, severity, content_hash, created_at, client_id, source_id, raw_json')
       .gte('created_at', cutoff)
+      .eq('quality_status', 'active')
+      .is('deleted_at', null)
       .order('created_at', { ascending: true });
 
     if (fetchErr) throw new Error(`Failed to fetch signals: ${fetchErr.message}`);
     if (!signals || signals.length === 0) {
-      return successResponse({ success: true, message: 'No recent signals to consolidate', merged: 0 });
+      return successResponse({ success: true, message: 'No recent signals to consolidate', merged: 0, dry_run: dryRun });
+    }
+    console.log(`[Consolidate] Found ${signals.length} active signals in window`);
+
+    // ── FUZZY TITLE CLUSTERING, scoped to (client_id, day). Cross-client NEVER merges (bucket key
+    //    includes client_id). Greedy: each signal joins the first same-bucket cluster whose representative
+    //    title is trigram-similar >= threshold, else opens a new cluster. Earliest is the primary. ──
+    const buckets = new Map<string, SignalRow[]>();  // `${client_id}|${day}` -> signals (created_at asc)
+    for (const s of signals as SignalRow[]) {
+      if (!s.title || s.title.length < 6) continue; // untitled/degenerate rows are never fuzzy-merged
+      const key = `${s.client_id ?? 'null'}|${dayOf(s.created_at)}`;
+      (buckets.get(key) ?? buckets.set(key, []).get(key)!).push(s);
     }
 
-    console.log(`[Consolidate] Found ${signals.length} signals in window`);
-
-    // 2. Build clusters
-    // Map: clusterKey → signal IDs that share it
-    const clusterMap = new Map<string, string[]>();
-    const signalMap = new Map<string, SignalRow>();
-
-    // Track location-only clusters for aggressive matching
-    const locationMap = new Map<string, string[]>();
-    const PROVINCE_LEVEL = new Set(['b.c.', 'bc', 'british columbia', 'alberta', 'saskatchewan', 'manitoba', 'ontario', 'quebec', 'nova scotia', 'new brunswick', 'pei', 'newfoundland', 'yukon', 'nwt', 'nunavut']);
-
-    // Strategy C: Title-similarity clustering
-    const titleMap = new Map<string, string[]>();
-
-    // Track same-source + actor clusters for campaign dedup
-    const sourceActorMap = new Map<string, string[]>();
-
-    // Strategy D: Same-source + keyword overlap
-    // Group signals by source, then compare keyword sets for overlap
-    const sourceSignals = new Map<string, string[]>();
-    const signalKeywords = new Map<string, Set<string>>();
-
-    // Stopwords for keyword extraction
-    const STOPWORDS = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','shall','can','not','no','its','it','this','that','these','those','as','if','then','than','so','up','out','about','into','over','after','before','between','under','above','such','each','which','their','there','they','them','we','our','you','your','he','she','his','her','who','what','when','where','how','all','both','few','more','most','other','some','any','only','very','also','just','because','through','during','while','new','old','first','last','long','great','little','own','same','big','even','still','now','back','well','much','here','many']);
-
-    function extractKeywords(text: string): Set<string> {
-      const words = text.toLowerCase()
-        .replace(/[^a-z0-9\s]/g, '')
-        .split(/\s+/)
-        .filter(w => w.length > 3 && !STOPWORDS.has(w));
-      return new Set(words);
-    }
-
-    function keywordOverlap(a: Set<string>, b: Set<string>): number {
-      if (a.size === 0 || b.size === 0) return 0;
-      let intersection = 0;
-      for (const w of a) { if (b.has(w)) intersection++; }
-      const smaller = Math.min(a.size, b.size);
-      return intersection / smaller;
-    }
-
-    for (const sig of signals) {
-      signalMap.set(sig.id, sig as SignalRow);
-      const text = `${sig.title || ''} ${sig.normalized_text || ''}`;
-      const keys = buildClusterKeys(text);
-      for (const key of keys) {
-        if (!clusterMap.has(key)) clusterMap.set(key, []);
-        clusterMap.get(key)!.push(sig.id);
-      }
-
-      // Aggressive location-only clustering — only for small towns, not major cities
-      const MAJOR_CITIES = new Set(['vancouver', 'victoria', 'surrey', 'burnaby', 'nanaimo', 'kelowna', 'kamloops', 'prince george', 'edmonton', 'calgary', 'toronto', 'ottawa', 'montreal', 'winnipeg', 'saskatoon', 'regina', 'halifax', 'quebec city']);
-      const locations = extractLocations(text);
-      for (const loc of locations) {
-        if (PROVINCE_LEVEL.has(loc) || MAJOR_CITIES.has(loc)) continue;
-        const locKey = `loc_only|${loc}`;
-        if (!locationMap.has(locKey)) locationMap.set(locKey, []);
-        locationMap.get(locKey)!.push(sig.id);
-      }
-
-      // Same-source + same-actor clustering for campaign-type signals
-      const actors = extractActors(text);
-      const sourceId = (sig as SignalRow).source_id || 'unknown';
-      for (const actor of actors) {
-        const saKey = `${sourceId}|${actor}`;
-        if (!sourceActorMap.has(saKey)) sourceActorMap.set(saKey, []);
-        sourceActorMap.get(saKey)!.push(sig.id);
-      }
-
-      // Strategy C: Normalize title for near-duplicate matching
-      const title = (sig as SignalRow).title || '';
-      if (title.length > 15) {
-        const normalizedTitle = title.toLowerCase()
-          .replace(/[^a-z0-9\s]/g, '')  // strip punctuation
-          .replace(/\s+/g, ' ')
-          .trim();
-        if (normalizedTitle.length > 10) {
-          if (!titleMap.has(normalizedTitle)) titleMap.set(normalizedTitle, []);
-          titleMap.get(normalizedTitle)!.push(sig.id);
+    const clusters: SignalRow[][] = [];
+    for (const bucketSignals of buckets.values()) {
+      const reps: SignalRow[][] = []; // each entry is a cluster; [0] is the representative (earliest)
+      for (const s of bucketSignals) {
+        let placed = false;
+        for (const cluster of reps) {
+          if (trigramSim(cluster[0].title || '', s.title || '') >= SIM_THRESHOLD) { cluster.push(s); placed = true; break; }
         }
+        if (!placed) reps.push([s]);
       }
-
-      // Strategy D: Track keywords by source
-      if (sourceId !== 'unknown') {
-        if (!sourceSignals.has(sourceId)) sourceSignals.set(sourceId, []);
-        sourceSignals.get(sourceId)!.push(sig.id);
-        signalKeywords.set(sig.id, extractKeywords(text));
-      }
+      for (const cluster of reps) if (cluster.length > 1) clusters.push(cluster);
     }
 
-    // Strategy D: Build pairs from same-source signals with high keyword overlap
-    const keywordOverlapPairs: [string, string][] = [];
-    for (const [_srcId, ids] of sourceSignals) {
-      if (ids.length < 2 || ids.length > 50) continue; // skip sources with too many signals
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          const kwA = signalKeywords.get(ids[i]);
-          const kwB = signalKeywords.get(ids[j]);
-          if (kwA && kwB && keywordOverlap(kwA, kwB) >= 0.5) {
-            keywordOverlapPairs.push([ids[i], ids[j]]);
-          }
-        }
-      }
-    }
-    console.log(`[Consolidate] Strategy D: found ${keywordOverlapPairs.length} keyword-overlap pairs`);
-
-    // 3. Merge overlapping clusters via union-find
-    // Use separate union-finds to prevent cross-contamination between strategies
-
-    // Strategy A: Location + Event Type (emergency-focused)
-    const parentA = new Map<string, string>();
-    function findA(id: string): string {
-      if (!parentA.has(id)) parentA.set(id, id);
-      if (parentA.get(id) !== id) parentA.set(id, findA(parentA.get(id)!));
-      return parentA.get(id)!;
-    }
-    function unionA(a: string, b: string) {
-      const ra = findA(a), rb = findA(b);
-      if (ra !== rb) parentA.set(rb, ra);
-    }
-
-    for (const ids of clusterMap.values()) {
-      for (let i = 1; i < ids.length; i++) {
-        unionA(ids[0], ids[i]);
-      }
-    }
-
-    // Small-town location-only clustering
-    for (const ids of locationMap.values()) {
-      if (ids.length > 1) {
-        for (let i = 1; i < ids.length; i++) {
-          unionA(ids[0], ids[i]);
-        }
-      }
-    }
-
-    // Strategy B: Same-source + same-actor (campaign dedup)
-    const parentB = new Map<string, string>();
-    function findB(id: string): string {
-      if (!parentB.has(id)) parentB.set(id, id);
-      if (parentB.get(id) !== id) parentB.set(id, findB(parentB.get(id)!));
-      return parentB.get(id)!;
-    }
-    function unionB(a: string, b: string) {
-      const ra = findB(a), rb = findB(b);
-      if (ra !== rb) parentB.set(rb, ra);
-    }
-
-    for (const ids of sourceActorMap.values()) {
-      if (ids.length > 1) {
-        for (let i = 1; i < ids.length; i++) {
-          unionB(ids[0], ids[i]);
-        }
-      }
-    }
-
-    // Strategy C: Exact title match (catches reworded same-event signals)
-    const parentC = new Map<string, string>();
-    function findC(id: string): string {
-      if (!parentC.has(id)) parentC.set(id, id);
-      if (parentC.get(id) !== id) parentC.set(id, findC(parentC.get(id)!));
-      return parentC.get(id)!;
-    }
-    function unionC(a: string, b: string) {
-      const ra = findC(a), rb = findC(b);
-      if (ra !== rb) parentC.set(rb, ra);
-    }
-
-    for (const ids of titleMap.values()) {
-      if (ids.length > 1) {
-        for (let i = 1; i < ids.length; i++) {
-          unionC(ids[0], ids[i]);
-        }
-      }
-    }
-
-    // Strategy D: Same-source + keyword overlap
-    const parentD = new Map<string, string>();
-    function findD(id: string): string {
-      if (!parentD.has(id)) parentD.set(id, id);
-      if (parentD.get(id) !== id) parentD.set(id, findD(parentD.get(id)!));
-      return parentD.get(id)!;
-    }
-    function unionD(a: string, b: string) {
-      const ra = findD(a), rb = findD(b);
-      if (ra !== rb) parentD.set(rb, ra);
-    }
-
-    for (const [a, b] of keywordOverlapPairs) {
-      unionD(a, b);
-    }
-
-    // Collect groups from all strategies (deduplicate by checking if already grouped)
-    const groups = new Map<string, string[]>();
-
-    // Helper: check if signal is already in a multi-member group
-    function isAlreadyClustered(id: string): boolean {
-      for (const members of groups.values()) {
-        if (members.length > 1 && members.includes(id)) return true;
-      }
-      return false;
-    }
-
-    // Groups from Strategy A
-    for (const id of signalMap.keys()) {
-      if (!parentA.has(id)) continue;
-      const root = `A_${findA(id)}`;
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root)!.push(id);
-    }
-
-    // Groups from Strategy B — only add signals not already in a Strategy A cluster
-    for (const id of signalMap.keys()) {
-      if (!parentB.has(id)) continue;
-      if (isAlreadyClustered(id)) continue;
-      const root = `B_${findB(id)}`;
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root)!.push(id);
-    }
-
-    // Groups from Strategy C — only add signals not already clustered
-    for (const id of signalMap.keys()) {
-      if (!parentC.has(id)) continue;
-      if (isAlreadyClustered(id)) continue;
-      const root = `C_${findC(id)}`;
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root)!.push(id);
-    }
-
-    // Groups from Strategy D — only add signals not already clustered
-    for (const id of signalMap.keys()) {
-      if (!parentD.has(id)) continue;
-      if (isAlreadyClustered(id)) continue;
-      const root = `D_${findD(id)}`;
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root)!.push(id);
-    }
-
-    // 4. For each group with >1 signal, keep earliest, nest others
+    // ── For each multi-member cluster: keep earliest as primary, SOFT-DELETE the rest (preserving them). ──
     let totalMerged = 0;
-    const mergeDetails: Array<{ primary: string; merged_count: number; cluster_key: string }> = [];
+    const mergeDetails: Array<{ primary: string; primary_title: string; merged_count: number; sample: string; min_sim: number }> = [];
 
-    for (const [_root, memberIds] of groups) {
-      if (memberIds.length <= 1) continue;
+    for (const cluster of clusters) {
+      cluster.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      const primary = cluster[0];
+      const dups = cluster.slice(1);
+      let minSim = 1;
+      for (const d of dups) minSim = Math.min(minSim, trigramSim(primary.title || '', d.title || ''));
 
-      // Sort by created_at ascending — earliest first
-      memberIds.sort((a, b) => {
-        const sa = signalMap.get(a)!, sb = signalMap.get(b)!;
-        return new Date(sa.created_at).getTime() - new Date(sb.created_at).getTime();
-      });
-
-      const primaryId = memberIds[0];
-      const primary = signalMap.get(primaryId)!;
-      const duplicateIds = memberIds.slice(1);
-
-      // Determine a representative cluster key for logging
-      const primaryText = `${primary.title || ''} ${primary.normalized_text || ''}`;
-      const repKeys = buildClusterKeys(primaryText);
-
-      console.log(`[Consolidate] Merging ${duplicateIds.length} signals into primary ${primaryId} (${repKeys[0] || 'unknown'})`);
+      console.log(`[Consolidate] ${dryRun ? '[DRY] ' : ''}Merging ${dups.length} into ${primary.id} ("${(primary.title || '').slice(0, 60)}") minSim=${minSim.toFixed(2)}`);
 
       if (!dryRun) {
-        for (const dupId of duplicateIds) {
-          const dup = signalMap.get(dupId)!;
-
-          // Generate a content hash for update dedup
-          const encoder = new TextEncoder();
-          const updateHashData = encoder.encode(`consolidate|${primaryId}|${dupId}`);
-          const hashBuffer = await crypto.subtle.digest('SHA-256', updateHashData);
-          const hashArray = Array.from(new Uint8Array(hashBuffer));
-          const updateContentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-          // Check if this update already exists
-          const { data: existingUpdate } = await supabase
-            .from('signal_updates')
-            .select('id')
-            .eq('content_hash', updateContentHash)
-            .maybeSingle();
-
+        for (const dup of dups) {
+          // Preserve the duplicate to signal_updates (timeline of the primary) — unchanged.
+          const enc = new TextEncoder().encode(`consolidate|${primary.id}|${dup.id}`);
+          const hashBuf = await crypto.subtle.digest('SHA-256', enc);
+          const updateContentHash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+          const { data: existingUpdate } = await supabase.from('signal_updates').select('id').eq('content_hash', updateContentHash).maybeSingle();
           if (!existingUpdate) {
-            // Create signal_update entry
-            const sourceUrl = dup.raw_json?.url as string || dup.raw_json?.source_url as string || null;
-            const sourceName = dup.raw_json?.source as string || dup.raw_json?.source_name as string || 'consolidated';
-
-            await supabase
-              .from('signal_updates')
-              .insert({
-                signal_id: primaryId,
-                content: dup.normalized_text || dup.title || 'Related signal merged',
-                source_name: sourceName,
-                source_url: sourceUrl,
-                content_hash: updateContentHash,
-                metadata: {
-                  original_signal_id: dupId,
-                  original_created_at: dup.created_at,
-                  original_category: dup.category,
-                  original_severity: dup.severity,
-                  consolidated: true,
-                },
-              });
+            const rj = (dup.raw_json ?? {}) as Record<string, unknown>;
+            await supabase.from('signal_updates').insert({
+              signal_id: primary.id,
+              content: dup.normalized_text || dup.title || 'Related signal merged',
+              source_name: (rj.source as string) || (rj.source_name as string) || 'consolidated',
+              source_url: (rj.url as string) || (rj.source_url as string) || null,
+              content_hash: updateContentHash,
+              metadata: {
+                original_signal_id: dup.id, original_created_at: dup.created_at,
+                original_category: dup.category, original_severity: dup.severity,
+                consolidated: true, merge_similarity: trigramSim(primary.title || '', dup.title || ''),
+              },
+            });
           }
-
-          // Save content hash to rejected list so it doesn't get re-ingested
+          // Prevent re-ingestion of the same content.
           if (dup.content_hash) {
-            await supabase
-              .from('rejected_content_hashes')
-              .upsert({
-                content_hash: dup.content_hash,
-                client_id: dup.client_id,
-                reason: 'consolidated_duplicate',
-                original_signal_title: (dup.title || '').slice(0, 200),
-              }, { onConflict: 'content_hash,client_id', ignoreDuplicates: true });
+            await supabase.from('rejected_content_hashes').upsert({
+              content_hash: dup.content_hash, client_id: dup.client_id,
+              reason: 'consolidated_duplicate', original_signal_title: (dup.title || '').slice(0, 200),
+            }, { onConflict: 'content_hash,client_id', ignoreDuplicates: true });
           }
-
-          // Delete the duplicate signal
-          await supabase.from('signals').delete().eq('id', dupId);
+          // SOFT-DELETE the duplicate (operator ruling 1 — tombstone, never hard-delete). Reversible;
+          // leaves the analyst/brief surfaces via quality_status + deleted_at.
+          await supabase.from('signals').update({
+            deleted_at: new Date().toISOString(),
+            quality_status: 'quarantined',
+            quarantine_reason: 'consolidated_duplicate',
+            deletion_reason: `Consolidated into primary signal ${primary.id} (title-similarity ${trigramSim(primary.title || '', dup.title || '').toFixed(2)}). Soft-deleted; content preserved in signal_updates. WO consolidate-signals rewrite 2026-08-21.`,
+          }).eq('id', dup.id);
         }
-
-        // Upgrade severity on primary if any duplicate was higher
-        const severityRank: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
-        let maxSeverity = severityRank[primary.severity || 'low'] || 1;
-        for (const dupId of duplicateIds) {
-          const dup = signalMap.get(dupId)!;
-          const rank = severityRank[dup.severity || 'low'] || 1;
-          if (rank > maxSeverity) maxSeverity = rank;
-        }
-        const severityName = Object.entries(severityRank).find(([_, v]) => v === maxSeverity)?.[0] || primary.severity;
-        if (severityName !== primary.severity) {
-          await supabase.from('signals').update({ severity: severityName }).eq('id', primaryId);
+        // Upgrade the primary to the cluster's highest severity.
+        let maxRank = SEV_RANK[primary.severity || 'low'] ?? 1;
+        for (const d of dups) maxRank = Math.max(maxRank, SEV_RANK[d.severity || 'low'] ?? 1);
+        const maxName = Object.entries(SEV_RANK).find(([, v]) => v === maxRank)?.[0];
+        if (maxName && maxName !== primary.severity) {
+          await supabase.from('signals').update({ severity: maxName }).eq('id', primary.id);
         }
       }
 
-      totalMerged += duplicateIds.length;
+      totalMerged += dups.length;
       mergeDetails.push({
-        primary: primaryId,
-        merged_count: duplicateIds.length,
-        cluster_key: repKeys[0] || 'unknown',
+        primary: primary.id, primary_title: (primary.title || '').slice(0, 80),
+        merged_count: dups.length, sample: (dups[0]?.title || '').slice(0, 80), min_sim: Number(minSim.toFixed(2)),
       });
     }
 
-    console.log(`[Consolidate] Done. Merged ${totalMerged} signals into ${mergeDetails.length} primaries.`);
-
+    console.log(`[Consolidate] Done. ${dryRun ? 'WOULD merge' : 'Soft-deleted'} ${totalMerged} duplicates into ${mergeDetails.length} primaries.`);
     return successResponse({
       success: true,
       signals_scanned: signals.length,
-      signals_merged: totalMerged,
+      duplicates_merged: totalMerged,
       clusters: mergeDetails.length,
-      details: mergeDetails,
+      method: 'fuzzy_title_same_client_same_day',
+      threshold: SIM_THRESHOLD,
+      soft_delete: true,
       dry_run: dryRun,
+      details: mergeDetails.slice(0, 100),
     });
-
   } catch (error) {
     console.error('[Consolidate] Error:', error);
     return errorResponse(error instanceof Error ? error.message : String(error), 500);
