@@ -18,6 +18,7 @@ import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { DashboardClientSelector } from "@/components/ClientSelector";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 import { useTenant } from "@/hooks/useTenant";
 import { LocationsMap } from "@/components/LocationsMap";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -60,9 +61,9 @@ export default function Entities() {
     queryKey: ['entities', searchTerm, selectedType, selectedClientId, currentTenant?.id, isAllTenantsView],
     enabled: !!user && isContextReady,
     queryFn: async () => {
-      let query = supabase
+      let query = excludeMergedEntities(supabase
         .from('entities')
-        .select('*')
+        .select('*'))
         .eq('is_active', true)
         // Main Entities = approved operational entities only. Unreviewed machine
         // extractions (visibility_class='extracted') live in the Suggested review
@@ -110,9 +111,9 @@ export default function Entities() {
     queryKey: ['entities-total-count', selectedClientId, currentTenant?.id, isAllTenantsView],
     enabled: !!user && isContextReady,
     queryFn: async () => {
-      let query = supabase
+      let query = excludeMergedEntities(supabase
         .from('entities')
-        .select('*', { count: 'exact', head: true })
+        .select('*', { count: 'exact', head: true }))
         .eq('is_active', true)
         .neq('visibility_class', 'extracted');
 

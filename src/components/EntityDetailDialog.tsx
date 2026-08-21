@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { format } from "date-fns";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -79,10 +80,10 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     queryKey: ['entity-detail', entityId],
     queryFn: async () => {
       if (!entityId) return null;
-      const { data, error } = await supabase
+      const { data, error } = await excludeMergedEntities(supabase
         .from('entities')
         .select('*')
-        .eq('id', entityId)
+        .eq('id', entityId))
         .single();
       if (error) throw error;
       return data;
