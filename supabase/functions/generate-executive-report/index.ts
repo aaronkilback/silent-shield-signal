@@ -2308,14 +2308,38 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     if (!reportTenantId) {
       return new Response(JSON.stringify({ error: 'PROVENANCE: client has no tenant_id; cannot write a tenant-owned report.' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
+    // ── WO-REPORT-PERSIST-02 (2026-08-21): BODY BEFORE ROW. A report row is not creatable without a
+    //    persisted body. Upload the rendered HTML first (retry ×3, failure SURFACED — not swallowed to a
+    //    console.error trusting the watchdog; that comment was the defect written down). Only then insert
+    //    the row, with storage_url already set. Persist now precedes the tail work (manifest/evidence/
+    //    action-items/quality-log), so a SIGKILL in the tail can no longer lose the body. Mirrors
+    //    generate-subject-exposure-report — the path that never lost a body (10/10 persisted). ──
+    const reportId = crypto.randomUUID();
+    const storagePath = `reports/executive/${reportId}.html`;
+    let bodyPersisted = false, lastPersistErr = '';
+    for (let attempt = 1; attempt <= 3 && !bodyPersisted; attempt++) {
+      const up = await supabase.storage.from('osint-media')
+        .upload(storagePath, new Blob([html], { type: 'text/html' }), { upsert: true, contentType: 'text/html' });
+      if (!up.error) { bodyPersisted = true; break; }
+      lastPersistErr = up.error.message;
+      console.warn(`[generate-executive-report] body persist attempt ${attempt}/3 failed: ${lastPersistErr}`);
+    }
+    if (!bodyPersisted) {
+      // Surface + fail closed: do NOT create a body-less report row (the 88%-null defect).
+      return new Response(JSON.stringify({ error: `REPORT_PERSIST_FAILED: rendered body could not be stored after 3 attempts (${lastPersistErr}). No report row created.` }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     const { data: report, error: reportError } = await supabase
       .from('reports')
       .insert({
+        id: reportId,
         type: 'executive_intelligence',
         client_id,
         tenant_id: reportTenantId,
         period_start: periodStart.toISOString(),
         period_end: periodEnd.toISOString(),
+        storage_url: storagePath,
+        rendered_persisted_at: new Date().toISOString(),
         meta_json: {
           client_id,
           client_name: client.name,
@@ -2371,22 +2395,11 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
 
     if (reportError) throw reportError;
 
-    // ── WO-REPORT-PERSIST-01 — persist rendered output + durable claim manifest ──
-    // Pillar-1: every report's rendered body is stored (storage_url populated) so it is auditable
-    // after the fact — the 6027f0ac gap (direct-invoke HTML lost, prose unrecoverable) never recurs.
+    // ── Durable tail (claim manifest + evidence sources + action items + quality log). Runs AFTER the body
+    //    is already persisted (WO-REPORT-PERSIST-02 above), so a SIGKILL here can no longer lose the rendered
+    //    body — only the non-critical manifest, which is regenerable. ──
     try {
       if (report?.id) {
-        const path = `reports/executive/${report.id}.html`;
-        const up = await supabase.storage.from('osint-media')
-          .upload(path, new Blob([html], { type: 'text/html' }), { upsert: true, contentType: 'text/html' });
-        if (up.error) {
-          console.error('[generate-executive-report] storage persist FAILED (watchdog will flag null storage_url):', up.error.message);
-        } else {
-          await supabase.from('reports')
-            .update({ storage_url: path, rendered_persisted_at: new Date().toISOString() })
-            .eq('id', report.id);
-        }
-
         // Claim manifest: one row per rendered [SIG] citation + its resolver verdict. bound_signal_id
         // and supports_claim stay NULL until binding-at-derivation (WO-GROUNDING-01) grades them.
         const plain = html.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ');

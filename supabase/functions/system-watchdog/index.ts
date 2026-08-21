@@ -3192,7 +3192,16 @@ Deno.serve(async (req) => {
         // nulls incl. the 4 07-30 13:25–17:17 reports), not a live persistence failure. Only post-cutoff
         // null-storage reports indicate the fix regressed or is unwired on some path.
         const PERSIST_FIX_LIVE = '2026-07-30T18:00:00Z';
-        const unpersisted = (recentReports ?? []).filter((r: any) => !r.storage_url && String(r.created_at ?? '') >= PERSIST_FIX_LIVE);
+        // Exclude rows explicitly marked body_not_persisted (2026-08-21): those are ACKNOWLEDGED historical
+        // gaps (silent-upload-failure era, pre WO-REPORT-PERSIST-02), deliberately NOT re-rendered (honest
+        // absence over a fabricated old-dated artifact). The probe flags only UNEXPLAINED live failures —
+        // if WO-REPORT-PERSIST-02 regresses, a new null-storage brief has no such marker and still fires.
+        // Also exclude insufficient_data stubs: those never rendered a body (no data to report), so a null
+        // storage_url is correct, not a persistence failure. The probe flags only reports that HAD a body
+        // and failed to persist it.
+        const unpersisted = (recentReports ?? []).filter((r: any) =>
+          !r.storage_url && String(r.created_at ?? '') >= PERSIST_FIX_LIVE
+          && r.meta_json?.body_not_persisted !== true && r.meta_json?.insufficient_data !== true);
         if (unpersisted.length > 0) {
           behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
             title: `Report persistence: ${unpersisted.length} report(s) generated in 24h with NULL storage_url`,
