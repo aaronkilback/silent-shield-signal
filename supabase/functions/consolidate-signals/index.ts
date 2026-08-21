@@ -1,4 +1,5 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { recordHeartbeat } from "../_shared/heartbeat.ts";
 
 /**
  * Signal Consolidation Engine — TITLE-SIMILARITY dedup, SOFT-DELETE only.
@@ -178,6 +179,15 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[Consolidate] Done. ${dryRun ? 'WOULD merge' : 'Soft-deleted'} ${totalMerged} duplicates into ${mergeDetails.length} primaries.`);
+    // Tracked heartbeat under a STABLE name (Registry-is-a-Promise): this job runs via the job-worker, not
+    // cron — without a named heartbeat it is invisible, which is how the old deleter stayed unseen. Records
+    // per-run outcome so "is dedup running + what did it do" is answerable.
+    if (!dryRun) {
+      await recordHeartbeat(supabase, 'consolidate-signals', 'completed', {
+        signals_scanned: signals.length, duplicates_soft_deleted: totalMerged, clusters: mergeDetails.length,
+        method: 'fuzzy_title_same_client_same_day', threshold: SIM_THRESHOLD,
+      });
+    }
     return successResponse({
       success: true,
       signals_scanned: signals.length,
