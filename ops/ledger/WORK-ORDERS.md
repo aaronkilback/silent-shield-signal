@@ -2812,3 +2812,14 @@ FIX (generate-executive-report, deployed WO-REPORT-PERSIST-02): body BEFORE row.
 235 EXISTING: marked meta_json.body_not_persisted=true + reason (NOT re-rendered — a re-render from today's data would be a fabricated artifact wearing an old date; honest absence over reconstructed presence). The 4 insufficient_data stubs left as-is.
 WATCHDOG (system-watchdog probe d, deployed): excludes body_not_persisted (acknowledged historical gaps) AND insufficient_data (legitimately body-less stubs) — flags only reports that HAD a body and failed to persist. CONFIRMED: probe fires 0 now (cf6299db was an insufficient_data stub false-positive, now excluded); clears on next run + stays quiet; a real regression (no marker) still fires.
 PRODUCT UNAFFECTED throughout: reputational_exposure 10/10 persisted.
+
+## Daily briefing reworked (5 rulings) + false-positive lesson logged, 2026-08-21 (deployed)
+send-daily-briefing, all operator rulings:
+1. TRAJECTORY -> UNKNOWN when coverage degraded. Coverage-integrity gate computed FIRST (failed monitors OR twitter dark in the comparison window) -> direction='UNKNOWN' (arrow '?'), not a direction with a footnote. Only computes ESCALATING/DE-ESCALATING/STABLE from the delta when coverage held. Prompt allows UNKNOWN; "do not contradict the provided overall trajectory".
+2. PRIORITY HONESTY. Dropped the "top 3-5" mandate -> "0 to 5, NEVER padded; if none rise to priority write exactly 'No priority signals this period.' — do NOT manufacture items."
+3. QUIET-DAY -> "nothing actionable" (no priority-worthy signal AND no open incident), and SEND a proof-of-life note (not skip). Note states the exposure-report-style denominator: "Quiet period. N signals collected across M categories, K monitors ran, no priority items. Coverage note: X monitor(s) failed (...)". buildQuietNote() helper; logs quiet_day + denominator + heartbeat.
+4. FORMAT -> prompt for PLAIN TEXT the template styles (no markdown **/__/#/backtick/›); NO converter added (operator ruling). formatBriefingLines got a strip-only safety net (removes stray markers, does not translate) + accepts "› " bullets.
+5. DEDUP -> ported the pg_trgm-equivalent fuzzy merge (same client + same day + title sim >= 0.50) after the severity sort; Kitimat "Eco Depot" collapses to one.
+Deployed verify_jwt=false (also corrects the flag from the earlier phantom-owner deploy).
+
+FALSE-POSITIVE LESSON (operator, for the record): today's storage_url critical fired on an insufficient-data stub that correctly has no body = false positive. Chasing WHY found the real 88% persistence gap nobody had flagged. Logged as memory feedback_investigate_false_positives: investigate false positives, don't suppress them — a false alarm is a lead; fix probe precision AND run down the class it points near.

@@ -147,6 +147,36 @@ Deno.serve(async (req) => {
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
+    // FUZZY CROSS-OUTLET DEDUP (ported from generate-executive-report 2026-08-21). Two outlets writing the
+    // same story never share an exact title (the Kitimat "Eco Depot" grant appeared twice). Merge same-client
+    // same-day signals whose titles are trigram-similar >= 0.50 (pg_trgm-equivalent), keeping the highest-
+    // ranked (briefingSignals is already severity-sorted, so the first-seen representative is the strongest).
+    {
+      const _pgTri = (str: string): Set<string> => {
+        const set = new Set<string>();
+        for (const w of (str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean)) {
+          const p = '  ' + w + ' ';
+          for (let i = 0; i + 3 <= p.length; i++) set.add(p.slice(i, i + 3));
+        }
+        return set;
+      };
+      const _sim = (a: string, b: string): number => {
+        const A = _pgTri(a), B = _pgTri(b);
+        if (A.size === 0 || B.size === 0) return 0;
+        let inter = 0; for (const t of A) if (B.has(t)) inter++;
+        return inter / (A.size + B.size - inter);
+      };
+      const _day = (iso: string) => String(iso || '').slice(0, 10);
+      const kept: any[] = [];
+      for (const s of briefingSignals) {
+        if (!kept.some((r: any) => r.client_id === s.client_id && _day(r.created_at) === _day(s.created_at) && _sim(r.title || '', s.title || '') >= 0.50)) {
+          kept.push(s);
+        }
+      }
+      briefingSignals.length = 0;
+      briefingSignals.push(...kept);
+    }
+
     // Risk score formula — was previously just `recentScans?.[0]?.risk_score`,
     // which gave 100/100 with 0 critical signals because the autonomous
     // scan tracked something orthogonal. Compute directly from today's
@@ -201,19 +231,40 @@ Deno.serve(async (req) => {
       return successResponse({ success: true, message: 'Briefing already sent within 20 hours', sent: 0, deduplicated: true });
     }
 
-    const hasNewActivity = metrics.signals_24h > 0 || metrics.open_incidents > 0 || metrics.autonomous_actions > 0;
-    
-    if (!hasNewActivity) {
-      await supabase.from('autonomous_actions_log').insert({
-        action_type: 'daily_email_briefing', trigger_source: 'cron',
-        action_details: { skipped: true, reason: 'no_new_activity', date: dateContext.currentDateISO }, status: 'skipped',
-      });
+    // QUIET-DAY (2026-08-21 ruling): send when there is something to SAY. "Something" = an ACTIONABLE item
+    // (a priority-worthy signal or an open incident), not merely "any activity" — a low-value Eco-Depot grant
+    // should not force a full briefing. On a quiet day, send a one-line PROOF-OF-LIFE note that states the
+    // denominator the way the exposure report's Section 1 does — collected / covered / ran / failed — so a
+    // client can tell "nothing happened" from "nothing was looked at". Silence could be a broken cron; a
+    // stated denominator is proof of coverage, and the strongest thing the briefing can say on a slow day.
+    const priorityWorthy = briefingSignals.filter((s: any) =>
+      s.severity === 'critical' || s.severity === 'high' || isProximityVerified(s) || isAuthoritative(s));
+    const hasActionable = priorityWorthy.length > 0 || openIncidentsList.length > 0;
 
+    if (!hasActionable) {
+      const { data: hb24 } = await supabase.from('cron_heartbeat')
+        .select('job_name, status').gte('started_at', cutoff24h).limit(500);
+      const ranJobs = new Set((hb24 ?? []).filter((r: any) => ['succeeded', 'completed'].includes(r.status)).map((r: any) => r.job_name));
+      const failedJobs = [...new Set((hb24 ?? []).filter((r: any) => r.status === 'failed').map((r: any) => r.job_name))];
+      const collected = (recentSignals ?? []).length;
+      const categories = new Set((recentSignals ?? []).map((s: any) => s.category).filter(Boolean));
+      const denomLine = `Quiet period. ${collected} signal${collected === 1 ? '' : 's'} collected across ${categories.size} categor${categories.size === 1 ? 'y' : 'ies'}, ${ranJobs.size} monitor${ranJobs.size === 1 ? '' : 's'} ran, no priority items`
+        + (failedJobs.length ? `. Coverage note: ${failedJobs.length} monitor(s) failed (${failedJobs.slice(0, 4).join(', ')})${failedJobs.length > 4 ? '…' : ''}.` : '.');
+      const quietHtml = buildQuietNote(denomLine, dateContext);
+      let qsent = 0;
       for (const config of briefingConfigs) {
+        for (const email of (config.recipient_emails || [])) {
+          try { await resend.emails.send({ from: fromEmail, to: [email], subject: `🛡️ Fortress Daily Briefing — ${dateContext.currentDateFormatted} (quiet period)`, html: quietHtml }); qsent++; }
+          catch (err) { console.error('[DailyBriefing] quiet-note send failed:', err); }
+        }
         await supabase.from('scheduled_briefings').update({ last_run_at: new Date().toISOString() }).eq('id', config.id);
       }
-
-      return successResponse({ success: true, message: 'No new activity — briefing skipped', sent: 0, skipped: true });
+      await supabase.from('autonomous_actions_log').insert({
+        action_type: 'daily_email_briefing', trigger_source: 'cron',
+        action_details: { quiet_day: true, sent_count: qsent, denominator: denomLine, date: dateContext.currentDateISO }, status: 'completed',
+      });
+      await completeHeartbeat(supabase, hb, { sent: qsent, quiet_day: true, signals_collected: collected, monitors_ran: ranJobs.size, monitors_failed: failedJobs.length });
+      return successResponse({ success: true, quiet_day: true, sent: qsent, denominator: denomLine });
     }
 
     // Calculate trajectory vs previous 7-day period
@@ -231,37 +282,30 @@ Deno.serve(async (req) => {
     const previousTotalPriority = previousCriticalCount + previousHighCount;
     const currentTotalPriority = metrics.critical_signals + metrics.high_signals;
 
-    const trajectoryDirection = currentTotalPriority > previousTotalPriority * 1.2 ? 'ESCALATING' :
-      currentTotalPriority < previousTotalPriority * 0.8 ? 'DE-ESCALATING' : 'STABLE';
-
-    const trajectoryDelta = currentTotalPriority - previousTotalPriority;
-    let trajectoryReason = `${Math.abs(trajectoryDelta)} ${trajectoryDelta >= 0 ? 'more' : 'fewer'} priority signals vs previous 7-day period (${previousTotalPriority} → ${currentTotalPriority})`;
-
-    // Trajectory caveat: a drop in priority signals can be a real
-    // de-escalation OR a coverage-gap blackout (twitter disabled,
-    // news quiet, monitor degraded). Check the comparison period for
-    // monitors that had degraded coverage and disclaim accordingly,
-    // so the operator doesn't read a sensor outage as good news.
-    if (trajectoryDirection === 'DE-ESCALATING') {
-      const { data: monitorIssues } = await supabase
-        .from('cron_heartbeat')
-        .select('job_name')
-        .gte('started_at', previousPeriodStart)
-        .lt('started_at', cutoff24h)
-        .eq('status', 'failed')
-        .limit(50);
+    // COVERAGE-INTEGRITY GATE (2026-08-21 ruling): a trajectory is a claim about the world, and it can only
+    // be made if coverage was intact. If monitors failed or a feed was dark during the comparison window,
+    // the direction is UNKNOWN — NOT a direction with a footnote (a direction with a disclaimer is worse
+    // than no direction: the reader takes the direction and ignores the footnote). Check coverage FIRST;
+    // only compute a delta-based direction when coverage held.
+    let coverageDegraded = false;
+    const coverageCauses: string[] = [];
+    {
+      const { data: monitorIssues } = await supabase.from('cron_heartbeat')
+        .select('job_name').gte('started_at', previousPeriodStart).lt('started_at', cutoff24h)
+        .eq('status', 'failed').limit(50);
       const failedMonitorNames = new Set((monitorIssues ?? []).map((r: any) => r.job_name));
-      const { data: twitterCron } = await supabase
-        .from('cron_heartbeat').select('job_name').eq('job_name', 'monitor-twitter-30min')
-        .gte('started_at', previousPeriodStart).limit(1).maybeSingle();
-      const twitterDark = !twitterCron;
-      if (failedMonitorNames.size > 0 || twitterDark) {
-        const causes: string[] = [];
-        if (twitterDark) causes.push('monitor-twitter dark for the comparison period');
-        if (failedMonitorNames.size > 0) causes.push(`${failedMonitorNames.size} monitor(s) had failures`);
-        trajectoryReason += ` — caveat: ${causes.join(' + ')} during comparison window, so part of the drop may be coverage gap rather than real de-escalation`;
-      }
+      const { data: twitterCron } = await supabase.from('cron_heartbeat')
+        .select('job_name').eq('job_name', 'monitor-twitter-30min').gte('started_at', previousPeriodStart).limit(1).maybeSingle();
+      if (!twitterCron) { coverageDegraded = true; coverageCauses.push('monitor-twitter dark for the comparison period'); }
+      if (failedMonitorNames.size > 0) { coverageDegraded = true; coverageCauses.push(`${failedMonitorNames.size} monitor(s) failed during the comparison window`); }
     }
+    const trajectoryDelta = currentTotalPriority - previousTotalPriority;
+    const trajectoryDirection = coverageDegraded ? 'UNKNOWN'
+      : currentTotalPriority > previousTotalPriority * 1.2 ? 'ESCALATING'
+      : currentTotalPriority < previousTotalPriority * 0.8 ? 'DE-ESCALATING' : 'STABLE';
+    const trajectoryReason = coverageDegraded
+      ? `coverage was degraded (${coverageCauses.join(' + ')}) — the trend cannot be measured, so it is reported as UNKNOWN rather than inferred from an incomplete signal count`
+      : `${Math.abs(trajectoryDelta)} ${trajectoryDelta >= 0 ? 'more' : 'fewer'} priority signals vs previous 7-day period (${previousTotalPriority} → ${currentTotalPriority})`;
 
     // Footer line — replaces the old "doctrine quote" boilerplate
     // (operators tuned the inspirational quote out anyway). Now a
@@ -269,7 +313,8 @@ Deno.serve(async (req) => {
     // trajectory direction + delta vs the prior 7-day baseline.
     const arrow =
       trajectoryDirection === 'ESCALATING' ? '↑' :
-      trajectoryDirection === 'DE-ESCALATING' ? '↓' : '→';
+      trajectoryDirection === 'DE-ESCALATING' ? '↓' :
+      trajectoryDirection === 'UNKNOWN' ? '?' : '→';
     const footerLine =
       `Trajectory ${arrow} ${trajectoryDirection.replace(/-/g, ' ').toLowerCase()} — ` +
       `${trajectoryReason}.`;
@@ -288,11 +333,12 @@ CRITICAL RULES:
 - If there are few signals, say so honestly. A quiet day is valuable intelligence.
 - Prioritize: What changed? What's new? What requires action?
 - Name specific entities, locations, and categories. Vague language like "various threats were detected" is unacceptable.
+- FORMAT — PLAIN TEXT ONLY. Do NOT use markdown: no **, __, #, backticks, or the › character — they render literally in the email. Section headings are UPPERCASE lines (e.g. SITUATION OVERVIEW). Bullets start with "- ". The email template styles UPPERCASE headings and "- " bullets; any other markup appears as raw characters to the client.
 
 MANDATORY INTELLIGENCE TRADECRAFT RULES:
 - Write ALL surnames of named individuals in CAPITALS throughout (e.g., activist BROOKS, journalist NUNES, organizer MEYER). This is non-negotiable.
 - Open the SITUATION OVERVIEW section with a BLUF (Bottom Line Up Front) — one sentence stating the single most important thing the reader needs to know before anything else.
-- For each section, state the trajectory: ESCALATING / STABLE / DE-ESCALATING with one sentence of evidence.
+- For each section, state the trajectory: ESCALATING / STABLE / DE-ESCALATING / UNKNOWN with one sentence of evidence. Use UNKNOWN when coverage was degraded (a monitor failed or a feed was dark) — never assert a direction the data cannot support. The overall trajectory is provided to you; do not contradict it.
 - Label all analytical conclusions with DEDUCTIONS: in the EMERGING PATTERNS section.
 - In RECOMMENDED POSTURE, every recommendation must include a specific timeframe (Immediate / 24 hours / 48 hours / This week) and an owner. The owner MUST be either a specific named individual explicitly provided in the input, or the literal word "Unassigned" — NEVER a role or team category. Do NOT write "Security Operations", "Intelligence Analyst", "Physical Security Lead", "Cyber Security Lead", or any role title as an owner; a role is not an owner (finding #4 — no static role strings). If no named individual is provided, the owner is "Unassigned".
 - If a section has no relevant activity, state clearly: "No significant activity in this category during the reporting period." Do not pad with generic filler content.
@@ -303,7 +349,7 @@ Current date: ${dateContext.currentDateFormatted}, ${dateContext.currentTime24h}
 Structure:
 1. SITUATION OVERVIEW (2-3 sentences — open with BLUF, then overall posture and trajectory)
 2. KEY METRICS (bullet-style numbers with context, not just raw counts)
-3. PRIORITY SIGNALS (top 3-5 actionable signals with specifics: what, where, severity, and why it matters). The ACTIONABLE SIGNALS below are pre-sorted by severity then proximity — any critical-severity, proximity-verified, or authoritative-source (BCWS/CAP/CISA/court) signal MUST lead this section and MUST NOT be omitted in favour of a lower-severity but broader item. A specific evacuation Order near an asset outranks a provincewide advisory.
+3. PRIORITY SIGNALS (ONLY the genuinely actionable signals — anywhere from 0 to 5, NEVER padded to a count. For each: what, where, severity, why it matters. The ACTIONABLE SIGNALS below are pre-sorted by severity then proximity — any critical-severity, proximity-verified, or authoritative-source (BCWS/CAP/CISA/court) signal MUST lead this section and MUST NOT be omitted in favour of a lower-severity but broader item; a specific evacuation Order near an asset outranks a provincewide advisory. If NONE of the signals rise to genuine priority, write exactly: "No priority signals this period." — do NOT manufacture items to fill the section. An honestly empty priority list is a true and better statement than a promoted non-event.)
 4. EMERGING PATTERNS (any trends or clusters with DEDUCTIONS: label — if none, say "No significant activity in this category during the reporting period.")
 5. RECOMMENDED POSTURE (specific actions with a timeframe and an owner that is a real named individual or "Unassigned" — never a role title — not generic advice)
 
@@ -462,16 +508,34 @@ When you write the EMERGING PATTERNS section, USE the ACTIVE SIGNAL SEQUENCES li
 });
 
 function formatBriefingLines(text: string): string {
-  return text.split('\n').map(line => {
+  // Safety net (NOT a converter): the LLM is prompted for plain text the template styles. If a stray
+  // markdown marker slips through, strip it so it never renders literally (the ** / › defect) — we remove
+  // markers, we do not translate them to a second formatting system.
+  const strip = (s: string) => s.replace(/\*\*|__|`/g, '').replace(/^\s*#+\s*/, '');
+  return text.split('\n').map(raw => {
+    const line = strip(raw);
     if (!line.trim()) return '<br>';
     if (line.trim().match(/^[A-Z\s]{4,}:?$/)) {
       return '<h3 style="color:#f1f5f9; font-size:13px; text-transform:uppercase; letter-spacing:1px; margin:20px 0 8px; border-bottom:1px solid #334155; padding-bottom:6px;">' + line.trim() + '</h3>';
     }
-    if (line.trim().startsWith('- ') || line.trim().startsWith('• ')) {
-      return '<p style="margin:4px 0; padding-left:16px; color:#94a3b8;">› ' + line.trim().slice(2) + '</p>';
+    if (line.trim().startsWith('- ') || line.trim().startsWith('• ') || line.trim().startsWith('› ')) {
+      return '<p style="margin:4px 0; padding-left:16px; color:#94a3b8;">› ' + line.trim().replace(/^[-•›]\s*/, '') + '</p>';
     }
     return '<p style="margin:6px 0;">' + line + '</p>';
   }).join('\n');
+}
+
+// Quiet-day proof-of-life note (2026-08-21 ruling): sent instead of a full briefing when nothing is
+// actionable. States the denominator (collected / covered / ran / failed) so silence is informative.
+function buildQuietNote(denomLine: string, dateContext: { currentDateFormatted: string }): string {
+  const safe = denomLine.replace(/[<>]/g, '');
+  return `<!DOCTYPE html><html><body style="margin:0;background:#0f172a;color:#e2e8f0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+  <div style="max-width:560px;margin:0 auto;padding:28px 24px;">
+    <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#64748b;">Fortress Daily Briefing — ${dateContext.currentDateFormatted}</div>
+    <h2 style="font-size:16px;color:#f1f5f9;margin:14px 0 8px;">Quiet period</h2>
+    <p style="font-size:14px;line-height:1.6;color:#cbd5e1;margin:0 0 14px;">${safe}</p>
+    <p style="font-size:12px;color:#64748b;margin:0;">No item rose to priority today, so there is no full briefing. This note states what the pipeline collected and which monitors ran — proof of coverage, not an empty send.</p>
+  </div></body></html>`;
 }
 
 function buildBriefingEmail(
