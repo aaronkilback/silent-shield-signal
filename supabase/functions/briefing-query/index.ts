@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { excludeMergedEntities } from "../_shared/soft-delete-filters.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -123,9 +124,9 @@ async function handleAskQuestion(
   // Fetch entities linked to the mission
   let entities: any[] = [];
   if (mission.client_id) {
-    const { data: entityData } = await supabase
+    const { data: entityData } = await excludeMergedEntities(supabase
       .from("entities")
-      .select("id, name, type, description, risk_level")
+      .select("id, name, type, description, risk_level"))
       .eq("client_id", mission.client_id)
       .eq("is_active", true)
       .limit(20);

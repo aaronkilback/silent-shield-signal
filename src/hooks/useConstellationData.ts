@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { useTenant } from "@/hooks/useTenant";
 import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 export const ACTIVITY_METRICS_VERSION = "2.0.0-absolute-thresholds"; // f08c87c
 
@@ -899,9 +900,9 @@ export function useConstellationEntities(enabled: boolean) {
     queryKey: ["constellation-entities"],
     queryFn: async () => {
       const [entitiesRes, relsRes] = await Promise.all([
-        supabase
+        excludeMergedEntities(supabase
           .from("entities")
-          .select("id, name, type, risk_level, threat_score, description, is_active")
+          .select("id, name, type, risk_level, threat_score, description, is_active"))
           .eq("is_active", true)
           .order("threat_score", { ascending: false })
           .limit(30),

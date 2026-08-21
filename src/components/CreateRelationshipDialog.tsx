@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 interface CreateRelationshipDialogProps {
   entityId: string;
@@ -62,9 +63,9 @@ export const CreateRelationshipDialog = ({
   const { data: entities = [] } = useQuery({
     queryKey: ['entities-for-relationships'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('id, name, type')
+        .select('id, name, type'))
         .neq('id', entityId)
         .order('name');
       if (error) throw error;

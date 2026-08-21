@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 interface COPCanvasProps {
   workspaceId: string;
@@ -106,9 +107,9 @@ export function COPCanvas({ workspaceId, briefingId }: COPCanvasProps) {
       
       // Fetch entity names separately
       const entityIds = [...new Set(data.flatMap(l => [l.entity_a_id, l.entity_b_id]))];
-      const { data: entities } = await supabase
+      const { data: entities } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('id, name, type')
+        .select('id, name, type'))
         .in('id', entityIds);
       
       const entityMap = new Map(entities?.map(e => [e.id, e]) || []);
@@ -131,9 +132,9 @@ export function COPCanvas({ workspaceId, briefingId }: COPCanvasProps) {
         supabase
           .from('signals')
           .select('id', { count: 'exact', head: true }),
-        supabase
+        excludeMergedEntities(supabase
           .from('entities')
-          .select('id', { count: 'exact', head: true }),
+          .select('id', { count: 'exact', head: true })),
         supabase
           .from('workspace_evidence')
           .select('id', { count: 'exact', head: true })

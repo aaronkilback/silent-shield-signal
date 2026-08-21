@@ -58,6 +58,7 @@ export const EntityMergeDialog = ({
     queryFn: async () => {
       if (!sourceEntityId) return null;
       const { data, error } = await supabase
+        // @soft-delete-exempt: entity-merge tooling — must read merged rows
         .from('entities')
         .select('*')
         .eq('id', sourceEntityId)
@@ -108,7 +109,9 @@ export const EntityMergeDialog = ({
     mutationFn: async ({ sourceId, targetId }: { sourceId: string; targetId: string }) => {
       // Get both entities
       const [sourceResult, targetResult] = await Promise.all([
+        // @soft-delete-exempt: entity-merge tooling — must read merged rows
         supabase.from('entities').select('*').eq('id', sourceId).single(),
+        // @soft-delete-exempt: entity-merge tooling — must read merged rows
         supabase.from('entities').select('*').eq('id', targetId).single()
       ]);
 

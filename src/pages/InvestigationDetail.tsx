@@ -32,6 +32,7 @@ import DOMPurify from 'dompurify';
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { EntityPersonLookup } from "@/components/investigations/EntityPersonLookup";
 import { InvestigationComms } from "@/components/investigations/InvestigationComms";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 // Configure DOMPurify for safe HTML rendering in reports
 const sanitizeHtml = (html: string): string => {
@@ -296,9 +297,9 @@ const InvestigationDetail = () => {
         return [];
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('*')
+        .select('*'))
         .eq('type', 'location')
         .in('id', investigation.correlated_entity_ids);
       
@@ -536,9 +537,9 @@ const InvestigationDetail = () => {
       if (error) throw error;
 
       // Sync to linked entity if one exists with the same name
-      const { data: linkedEntity } = await supabase
+      const { data: linkedEntity } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('id, attributes')
+        .select('id, attributes'))
         .ilike('name', editingPersonData.name)
         .eq('type', 'person')
         .limit(1)
@@ -815,9 +816,9 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
 
     try {
       // Check if entity already exists
-      const { data: existing } = await supabase
+      const { data: existing } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('id, name')
+        .select('id, name'))
         .ilike('name', person.name)
         .limit(1)
         .maybeSingle();
@@ -891,9 +892,9 @@ Entries: ${entries.map(e => e.entry_text).join('\n')}
       const companyName = person.company.trim();
 
       // Check if entity already exists
-      const { data: existing } = await supabase
+      const { data: existing } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('id, name')
+        .select('id, name'))
         .ilike('name', companyName)
         .limit(1)
         .maybeSingle();

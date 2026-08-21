@@ -9,6 +9,7 @@ import {
 } from "../_shared/supabase-client.ts";
 
 import { compareExposureItems } from "../_shared/subject-retrieval.ts";
+import { excludeMergedEntities } from "../_shared/soft-delete-filters.ts";
 
 const REPORT_BUCKET = "generated-reports";   // private bucket (migration 20260212143009), signed-URL only
 
@@ -43,7 +44,7 @@ Deno.serve(async (req) => {
     if (!entityId) return errorResponse("entityId required", 400);
     const supabase = createServiceClient();
 
-    const { data: entity } = await supabase.from("entities").select("id, name, client_id, tenant_id, attributes").eq("id", entityId).maybeSingle();
+    const { data: entity } = await excludeMergedEntities(supabase.from("entities").select("id, name, client_id, tenant_id, attributes")).eq("id", entityId).maybeSingle();
     if (!entity) return errorResponse("entity not found", 404);
     if (!(await authorize(supabase, caller, entity.client_id))) return errorResponse("NOT_AUTHORIZED", 403);
     const { data: client } = entity.client_id ? await supabase.from("clients").select("name").eq("id", entity.client_id).maybeSingle() : { data: null };
@@ -92,7 +93,7 @@ Deno.serve(async (req) => {
     const breachLastChecked = breachDates.length ? String(breachDates[breachDates.length - 1]).slice(0, 10) : null;
 
     // family NOT scanned — the edges of coverage, per person, with the reason
-    const { data: family } = await supabase.from("entities").select("name, attributes")
+    const { data: family } = await excludeMergedEntities(supabase.from("entities").select("name, attributes"))
       .eq("client_id", entity.client_id).contains("attributes", { parent_vip_entity_id: entityId });
     const familyNotScanned = (family ?? []).map((f: any) => {
       const a = f.attributes ?? {};

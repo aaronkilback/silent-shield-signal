@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -149,9 +150,9 @@ export function useGodsEyeData(enabled: boolean) {
       const allClusters: GodsEyeCluster[] = [];
 
       // 1. Entities
-      const { data: entities } = await supabase
+      const { data: entities } = await excludeMergedEntities(supabase
         .from("entities")
-        .select("id, name, type, current_location, risk_level")
+        .select("id, name, type, current_location, risk_level"))
         .not("current_location", "is", null)
         .eq("is_active", true);
 

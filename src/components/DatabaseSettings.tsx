@@ -25,6 +25,7 @@ export const DatabaseSettings = () => {
     queryFn: async () => {
       let signalsQuery = supabase.from('signals').select('*', { count: 'exact', head: true });
       let incidentsQuery = supabase.from('incidents').select('*', { count: 'exact', head: true });
+      // @soft-delete-exempt: operator diagnostic surface (DB settings), not client-facing
       let entitiesQuery = supabase.from('entities').select('*', { count: 'exact', head: true });
       if (Array.isArray(clientIds)) {
         signalsQuery = signalsQuery.in('client_id', clientIds);

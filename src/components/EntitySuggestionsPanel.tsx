@@ -15,6 +15,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
 import { useTenant } from "@/hooks/useTenant";
 import { useClientSelection } from "@/hooks/useClientSelection";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 export const EntitySuggestionsPanel = () => {
   const { user } = useAuth();
@@ -103,12 +104,12 @@ export const EntitySuggestionsPanel = () => {
   const { data: entities } = useQuery({
     queryKey: ['entities'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('id, name, type')
+        .select('id, name, type'))
         .eq('is_active', true)
         .order('name');
-      
+
       if (error) throw error;
       return data;
     }
@@ -306,9 +307,9 @@ export const EntitySuggestionsPanel = () => {
       if (error) throw error;
 
       // Add as alias to existing entity
-      const { data: entity } = await supabase
+      const { data: entity } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('aliases')
+        .select('aliases'))
         .eq('id', targetEntityId)
         .single();
 

@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Layers, Radio, Shield, AlertTriangle, MapPin, Clock, ChevronRight, Zap } from "lucide-react";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -320,9 +321,9 @@ export const ThreatGlobe = () => {
       const allPins: GlobePin[] = [];
 
       // 1. Entities (existing behavior)
-      let entitiesQuery = supabase
+      let entitiesQuery = excludeMergedEntities(supabase
         .from("entities")
-        .select("id, name, type, current_location, risk_level")
+        .select("id, name, type, current_location, risk_level"))
         .not("current_location", "is", null)
         .eq("is_active", true);
       if (Array.isArray(clientIds)) entitiesQuery = entitiesQuery.in("client_id", clientIds);

@@ -58,6 +58,7 @@ export const DuplicateDetectionPanel = () => {
     setIsScanning(true);
     try {
       const { data: entities, error } = await supabase
+        // @soft-delete-exempt: entity-management surface — must show merged/duplicate rows to manage them
         .from('entities')
         .select('id, name, type, aliases')
         .eq('is_active', true)
@@ -242,13 +243,15 @@ export const DuplicateDetectionPanel = () => {
     mutationFn: async ({ keepId, mergeId }: { keepId: string; mergeId: string }) => {
       // Get the entity to merge (will be deleted)
       const { data: mergeEntity } = await supabase
+        // @soft-delete-exempt: entity-management surface — must show merged/duplicate rows to manage them
         .from('entities')
         .select('name, aliases')
         .eq('id', mergeId)
         .single();
-      
+
       // Get the entity to keep
       const { data: keepEntity } = await supabase
+        // @soft-delete-exempt: entity-management surface — must show merged/duplicate rows to manage them
         .from('entities')
         .select('aliases')
         .eq('id', keepId)
@@ -370,12 +373,14 @@ export const DuplicateDetectionPanel = () => {
           await supabase.from('archival_documents').delete().eq('id', detection.source_id);
         } else if (detection.detection_type === 'entity') {
           const { data: targetEntity } = await supabase
+            // @soft-delete-exempt: entity-management surface — must show merged/duplicate rows to manage them
             .from('entities')
             .select('aliases')
             .eq('id', detection.duplicate_id)
             .single();
 
           const { data: sourceEntity } = await supabase
+            // @soft-delete-exempt: entity-management surface — must show merged/duplicate rows to manage them
             .from('entities')
             .select('name')
             .eq('id', detection.source_id)

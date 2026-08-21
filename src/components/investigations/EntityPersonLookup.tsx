@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, Users, Building2, User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { excludeMergedEntities } from "@/lib/soft-delete-filters";
 
 interface Entity {
   id: string;
@@ -53,9 +54,9 @@ export const EntityPersonLookup = ({ value, onChange, onEntitySelect, placeholde
       return;
     }
     debounceRef.current = setTimeout(async () => {
-      const { data } = await supabase
+      const { data } = await excludeMergedEntities(supabase
         .from("entities")
-        .select("id, name, type, description, attributes, aliases")
+        .select("id, name, type, description, attributes, aliases"))
         .or(`name.ilike.%${value}%,aliases.cs.{${value}}`)
         .in("type", ["person", "organization"])
         .eq("is_active", true)
@@ -75,9 +76,9 @@ export const EntityPersonLookup = ({ value, onChange, onEntitySelect, placeholde
     if (!browseOpen) return;
     setIsSearching(true);
     const timeout = setTimeout(async () => {
-      let query = supabase
+      let query = excludeMergedEntities(supabase
         .from("entities")
-        .select("id, name, type, description, attributes, aliases")
+        .select("id, name, type, description, attributes, aliases"))
         .in("type", ["person", "organization"])
         .eq("is_active", true)
         .order("name")

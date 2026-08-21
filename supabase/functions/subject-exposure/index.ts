@@ -8,6 +8,7 @@ import {
   createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient,
 } from "../_shared/supabase-client.ts";
 import { retrieveSubject, startScanRun } from "../_shared/subject-retrieval.ts";
+import { excludeMergedEntities } from "../_shared/soft-delete-filters.ts";
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
@@ -50,7 +51,7 @@ Deno.serve(async (req) => {
 
     const entityId = body?.entityId;
     if (!entityId) return errorResponse("entityId required", 400);
-    const { data: entity } = await supabase.from("entities").select("id, name, client_id").eq("id", entityId).maybeSingle();
+    const { data: entity } = await excludeMergedEntities(supabase.from("entities").select("id, name, client_id")).eq("id", entityId).maybeSingle();
     if (!entity) return errorResponse("entity not found", 404);
     if (!(await authorize(supabase, caller, entity.client_id))) return errorResponse("NOT_AUTHORIZED", 403);
 
