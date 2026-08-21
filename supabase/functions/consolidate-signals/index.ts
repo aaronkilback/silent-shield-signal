@@ -2,10 +2,10 @@ import { createServiceClient, handleCors, successResponse, errorResponse } from 
 
 /**
  * Signal Consolidation Engine
- * 
+ *
  * Runs post-ingestion to merge related signals from different sources
  * into a single primary signal with nested updates (timeline).
- * 
+ *
  * Strategy:
  * 1. Fetch recent signals (last 24h) that haven't been consolidated
  * 2. Extract location + event-type keywords to build cluster keys
@@ -92,7 +92,7 @@ function buildClusterKeys(text: string): string[] {
   // Filter out province-level locations — too broad for clustering
   const PROVINCE_LEVEL = new Set(['b.c.', 'bc', 'british columbia', 'alberta', 'saskatchewan', 'manitoba', 'ontario', 'quebec', 'nova scotia', 'new brunswick', 'pei', 'newfoundland', 'yukon', 'nwt', 'nunavut']);
   const specificLocations = locations.filter(loc => !PROVINCE_LEVEL.has(loc));
-  
+
   if (specificLocations.length === 0) return [];
 
   const keys: string[] = [];
@@ -147,6 +147,18 @@ Deno.serve(async (req) => {
   if (corsResponse) return corsResponse;
 
   const supabase = createServiceClient();
+
+  // WO-DEL quarantine (2026-07-04): deleter disabled unless DEDUP_DELETER_ENABLED='true'.
+  // Fail-safe (default unset = no deletes). 200 so job-worker sees success (no retry/poison);
+  // best-effort no-op log to cron_heartbeat for enqueue-frequency visibility.
+  if (Deno.env.get('DEDUP_DELETER_ENABLED') !== 'true') {
+    console.log('[QUARANTINE] consolidate-signals invoked but disabled — no action taken');
+    try {
+      await supabase.from('cron_heartbeat').insert({ job_name: 'consolidate-signals-quarantined', status: 'succeeded',
+        result_summary: { quarantined: true, at: new Date().toISOString() } });
+    } catch (_) { /* best-effort */ }
+    return successResponse({ status: 'quarantined', message: 'quarantined, no action', deleted: 0 }, 200);
+  }
 
   try {
     // Parse optional body params
@@ -282,7 +294,7 @@ Deno.serve(async (req) => {
 
     // 3. Merge overlapping clusters via union-find
     // Use separate union-finds to prevent cross-contamination between strategies
-    
+
     // Strategy A: Location + Event Type (emergency-focused)
     const parentA = new Map<string, string>();
     function findA(id: string): string {
