@@ -43,6 +43,56 @@ the WO-LEDGER-RECONCILE hazard in its most dangerous form: git is the unsafe ver
 - Net: exact-title (C) and same-content merges were correct; location-only (A) and keyword-overlap (D) merges were
   not safe and did collapse distinct rows. All recoverable per above.
 
+## #4 RECONSTRUCTION REPORT on the 6,113 deleted rows (2026-08-21)
+
+### Synthetic vs real
+- **3,692 synthetic `[PATTERN]` rows** (3,566 crit/high, all `active_threat`) — internal pattern-detector output
+  (entity-escalation / geographic-cluster / threat-type-cluster). Regenerable; low restore value.
+- **2,421 REAL observations** (2,347 crit/high) across 17 categories (civil_emergency, wildfire, activism,
+  crime, malware, phishing, protest, regulatory, operational, environmental, litigation, …). **Not "mostly
+  synthetic" — 40% were real.**
+
+### Real observations by client + defensibility (similarity of deleted row to its surviving primary)
+| client | real rows | defensible dup (sim≥0.6) | OVER-MERGE (sim<0.5) | avg sim |
+|---|---|---|---|---|
+| Kilbacks (test/personal) | 2,106 | 2,078 | 27 | 0.98 |
+| BC Place | 206 | 194 | 12 | 0.77 |
+| **Cascade Energy** | 57 | 11 | **39** | 0.39 |
+| **Petronas Canada** | 11 | 2 | **8** | 0.34 |
+| test/_qa/_benchmark | ~43 | ~25 | ~11 | — |
+
+- **Correct (Strategy C, exact title / same content):** the bulk — Kilbacks 0.98 avg = near-exact re-reports.
+- **NOT defensible (Strategy A location-only + D keyword-overlap):** **~59 distinct real observations for actual
+  customers** (Cascade 39, Petronas 8, BC Place 12) collapsed at sim 0.10–0.29 into unrelated/over-generic
+  primaries. Examples (Cascade): a **homicide trial** ("Crown delivers closing submissions … Christopher
+  Cathcart") → "Evacuation Order Issued" (0.10); an **out-of-control wildfire near Boston Bar** → "Alberta
+  Proposes New Pipeline" (0.10); distinct **West Kelowna / Lytton / Boston Bar evacuation orders** (critical/high
+  civil_emergency) → generic "Wildfire Activity in B.C." These are real, operationally-significant events wrongly
+  destroyed. This is what strategies A and D do — no threshold rescues them (ruling #2 removes them).
+
+### What a reconstruction from signal_updates restores — PARTIAL (not full row, better than reference)
+Preserved per deleted row: `content` (normalized_text/title), `source_name`, `source_url`, `original_category`,
+`original_severity`, `original_created_at`, `original_signal_id`. Client is recoverable from the surviving
+primary (same cluster). **LOST:** `signal_number`, `severity_score` (numeric), `raw_json` (the full evidence
+payload — IOC indicators, CAP identifiers, `entity_tags`, publisher provenance), `event_date`, `relevance_score`,
+`tenant_id`. So a restore faithfully re-creates the OBSERVATION (text + source + category + severity + date) but
+NOT the original row identity or structured evidence. Adequate for news/observation signals; lossy for
+structured IOC/CAP signals (their indicators lived in raw_json).
+
+### Downstream references — NONE (chain of custody INTACT)
+- `incidents.signal_id` → deleted: **0** · `incident_signals.signal_id` → deleted: **0** ·
+  `alert_emission_refusals.signal_id` → deleted: **0**.
+- reports/briefs `meta_json` → deleted: **0** (scan validated — 107 meta_json UUID mentions match *existing*
+  signals, 0 match deleted). **No delivered brief cites a hard-deleted signal.**
+- `signal_updates` rows pointing at a hard-gone primary: **0** (every survivor exists; 87 Kilbacks primaries are
+  soft-deleted-but-present). No broken provenance chains anywhere.
+
+### Restore recommendation (operator decides)
+Do NOT restore the 3,692 synthetic `[PATTERN]` rows or the ~2,100 correct near-exact dups. The restore candidates
+are the **~59 real-customer over-merges** (Cascade 39, Petronas 8, BC Place 12) — distinct real observations
+wrongly deleted, reconstructable as PARTIAL signals (content/source/category/severity/date; no raw_json). Nothing
+downstream breaks either way, so restore is a completeness decision, not a chain-repair emergency.
+
 ## Does it need to stop? It already has. What needs a RULING:
 1. **Do NOT re-enable the deleter** (`DEDUP_DELETER_ENABLED` must stay unset). Strategies A/D are unsafe as written.
 2. **Reconcile git → prod** so the repo no longer holds the dangerous always-delete version (commit the deployed
