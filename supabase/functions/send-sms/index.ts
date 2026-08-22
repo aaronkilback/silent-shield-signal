@@ -118,9 +118,9 @@ Deno.serve(async (req: Request) => {
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      console.log(`[SendSMS operator_alert] sent to ${oaTo} (no investigation logging)`);
+      console.log("[SendSMS operator_alert] sent (recipient redacted; no investigation logging)");
       return new Response(
-        JSON.stringify({ success: true, mode: "operator_alert", message_sid: oaResult.sid }),
+        JSON.stringify({ success: true, mode: "operator_alert", message_sid: oaResult.sid, from: oaResult.from }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
