@@ -44,16 +44,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
-      return new Response(
-        JSON.stringify({ error: "Invalid token" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    const userId = claimsData.claims.sub as string;
 
-    // Parse request
+    // Parse request body once (both the operator-alert and investigation paths use it).
     const body = await req.json();
     const {
       investigation_id,
@@ -64,15 +56,15 @@ Deno.serve(async (req: Request) => {
     } = body;
 
     // ── Operator-alert mode (WO-AEGIS-QUALIFIER Step 2) ─────────────────────────────────────
-    // ADDITIVE + GATED. Sends a bare operator alert (to_number + message) with NO investigation_id
-    // and NO investigation logging (investigation_entries / investigation_communications). Reachable
-    // ONLY when operator_alert === true AND the caller is service_role — the qualifier handoff runs
-    // server-side with the service-role JWT. The flag alone is NOT a gate (the anon key is public, so
-    // flag-only would be an open SMS endpoint = toll-fraud/spam). No investigation code path is touched.
+    // ADDITIVE service-role path — authenticated by presenting the SERVICE-ROLE KEY directly, handled
+    // BEFORE the user-JWT getClaims path below (which is for investigator callers and rejects service
+    // tokens). Sends a bare alert to the configured operator number (AARON_ALERT_NUMBER env) with NO
+    // investigation_id and NO investigation logging. The flag alone is NOT a gate (the anon key is
+    // public, so flag-only would be an open SMS endpoint = toll-fraud/spam).
     if (operator_alert === true) {
-      if (claimsData.claims.role !== "service_role") {
+      if (token !== supabaseServiceKey) {
         return new Response(
-          JSON.stringify({ error: "operator_alert requires a service_role caller" }),
+          JSON.stringify({ error: "operator_alert requires the service-role key" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -124,6 +116,16 @@ Deno.serve(async (req: Request) => {
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // Investigator (user) auth for the normal investigation flow — user JWTs only.
+    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+    if (claimsError || !claimsData?.claims) {
+      return new Response(
+        JSON.stringify({ error: "Invalid token" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const userId = claimsData.claims.sub as string;
 
     if (!investigation_id || !to_number || !message) {
       return new Response(
