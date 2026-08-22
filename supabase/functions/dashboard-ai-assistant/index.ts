@@ -4645,6 +4645,8 @@ Deno.serve(async (req) => {
         ? iocScopedClientIds
         : ['00000000-0000-0000-0000-000000000000'];
 
+      // @soft-delete-exempt: EXISTENCE check — "have I seen this IOC indicator before?"; a prior sighting in
+      // a since-deleted signal still counts as seen. (excludeTestAndDeleted retained for test-fixture hygiene.)
       const { data: iocMatches, error: iocError } = await excludeTestAndDeleted(supabaseClient
         .from('signals')
         .select('id, title, severity, confidence, received_at, source_url, raw_json, client_id, clients(name)')
@@ -5390,11 +5392,11 @@ The signal is now in the database with status 'triaged' and rules have been appl
         .select("*, clients(name, industry)")).eq("id", incident_id).maybeSingle();
       if (incErr || !incident) return { error: "Incident not found", incident_id };
 
-      const { data: relatedSignals } = await excludeTestAndDeleted(supabaseClient.from("signals").eq("tenant_id", tenantId)
+      const { data: relatedSignals } = await excludeDeletedSignals(excludeTestAndDeleted(supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("id, title, severity, category, description, entity_tags, location, received_at")
         .eq("client_id", incident.client_id)
         .gte("received_at", new Date(Date.now() - 7 * 86400000).toISOString())
-        .order("received_at", { ascending: false }).limit(10));
+        .order("received_at", { ascending: false }).limit(10)));
 
       const ageMs = Date.now() - new Date(incident.opened_at).getTime();
       const ageHours = Math.round(ageMs / 3600000);
