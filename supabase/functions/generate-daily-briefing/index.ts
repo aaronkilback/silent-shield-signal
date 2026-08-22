@@ -9,6 +9,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -82,18 +83,18 @@ Deno.serve(async (req) => {
       { data: recentDebates },
     ] = await Promise.all([
       supabase.from("clients").select("id, name, industry, locations").eq("id", clientId).single(),
-      supabase
+      excludeDeletedSignals(supabase
         .from("signals")
-        .select("id, title, category, severity, normalized_text, created_at, relevance_score")
+        .select("id, title, category, severity, normalized_text, created_at, relevance_score"))
         .eq("client_id", clientId)
         .gte("created_at", cutoff24h)
         .neq("status", "false_positive")
         .neq("status", "archived")
         .order("created_at", { ascending: false })
         .limit(30),
-      supabase
+      excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("id, title, priority, status, opened_at")
+        .select("id, title, priority, status, opened_at"))
         .eq("client_id", clientId)
         .eq("status", "open")
         .limit(20),

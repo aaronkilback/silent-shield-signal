@@ -37,6 +37,9 @@ Deno.serve(async (req) => {
       supabase.from('entity_suggestions').select('suggested_name, suggested_type, context, confidence, source_type, status')
         .order('created_at', { ascending: false }).limit(200),
       supabase.from('incident_outcomes').select('incident_id, false_positive, was_accurate').limit(200),
+      // @soft-delete-exempt: learning pipeline — must train on quarantined/deleted signals too
+      // (analyst feedback marking a now-quarantined signal as irrelevant still trains the gate;
+      //  mirrors the process-feedback learning exemption). NOT a display read.
       supabase.from('signals').select('id, normalized_text, category, severity, relevance_score, raw_json, created_at')
         .order('created_at', { ascending: false }).limit(1000),
       supabase.from('implicit_feedback_events').select('signal_id, user_id, event_type, event_value, created_at')

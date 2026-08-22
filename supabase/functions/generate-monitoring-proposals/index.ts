@@ -1,5 +1,6 @@
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { requireInternalCaller } from "../_shared/require-internal-caller.ts";
+import { excludeDeletedSignals } from "../_shared/soft-delete-filters.ts";
 import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 import { recordTelemetry } from "../_shared/observability.ts";
 
@@ -98,9 +99,9 @@ Deno.serve(async (req) => {
       .limit(20);
 
     // 2. Get recent high-value signals to identify trending topics
-    const { data: recentSignals } = await supabase
+    const { data: recentSignals } = await excludeDeletedSignals(supabase
       .from('signals')
-      .select('id, title, normalized_text, signal_type, category, severity_score, client_id')
+      .select('id, title, normalized_text, signal_type, category, severity_score, client_id'))
       .gte('created_at', sevenDaysAgo.toISOString())
       .gte('severity_score', 60)
       .order('severity_score', { ascending: false })

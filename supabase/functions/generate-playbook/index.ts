@@ -8,6 +8,7 @@
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -27,17 +28,17 @@ Deno.serve(async (req) => {
     let contextSignal: any = null;
 
     if (signal_id) {
-      const { data } = await supabase.from('signals')
+      const { data } = await excludeDeletedSignals(supabase.from('signals')
         .select('id, category, severity, normalized_text, entity_tags, client_id')
-        .eq('id', signal_id).single();
+        .eq('id', signal_id)).single();
       contextSignal = data;
       category = category || data?.category;
     }
 
     if (incident_id && !category) {
-      const { data } = await supabase.from('incidents')
+      const { data } = await excludeDeletedIncidents(supabase.from('incidents')
         .select('id, signal_id, priority, status, signals(category, severity)')
-        .eq('id', incident_id).single();
+        .eq('id', incident_id)).single();
       category = (data as any)?.signals?.category;
     }
 
@@ -78,8 +79,8 @@ Deno.serve(async (req) => {
       { data: feedbackData },
     ] = await Promise.all([
       // Past incidents in this category
-      supabase.from('incidents')
-        .select('id, priority, status, severity_level, resolution_summary, lessons_learned, opened_at, resolved_at, signal_id')
+      excludeDeletedIncidents(supabase.from('incidents')
+        .select('id, priority, status, severity_level, resolution_summary, lessons_learned, opened_at, resolved_at, signal_id'))
         .order('opened_at', { ascending: false })
         .limit(50),
       // Past investigations
@@ -88,8 +89,8 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: false })
         .limit(30),
       // Signals in this category to understand patterns
-      supabase.from('signals')
-        .select('id, category, severity, normalized_text, entity_tags')
+      excludeDeletedSignals(supabase.from('signals')
+        .select('id, category, severity, normalized_text, entity_tags'))
         .eq('category', category)
         .order('created_at', { ascending: false })
         .limit(100),

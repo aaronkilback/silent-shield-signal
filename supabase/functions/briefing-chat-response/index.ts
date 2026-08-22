@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { validateString, validateUUID, validateAll } from "../_shared/input-validation.ts";
 import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
+import { excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 import {
   getAntiHallucinationPrompt,
   getCriticalDateContext,
@@ -175,12 +176,12 @@ Respond naturally and briefly.`
     };
 
     const loadClientP1P2Incidents = async (clientId: string) => {
-      const { data, error } = await excludeTestAndDeleted(supabase
+      const { data, error } = await excludeDeletedIncidents(excludeTestAndDeleted(supabase
         .from('incidents')
         .select('id, title, summary, priority, status, opened_at, created_at, client_id')
         .eq('client_id', clientId)
         .in('priority', ['P1', 'P2'])
-        .limit(50));
+        .limit(50)));
 
       if (error) {
         console.warn('Failed to load client P1/P2 incidents:', error);
@@ -193,10 +194,10 @@ Respond naturally and briefly.`
 
     // Fetch incident-specific context if scoped to an incident
     if (effectiveScope.incident_id) {
-      const { data: incident } = await supabase
+      const { data: incident } = await excludeDeletedIncidents(supabase
         .from('incidents')
         .select('*, clients(name), signals(normalized_text, category, severity, location, source_url, raw_json)')
-        .eq('id', effectiveScope.incident_id)
+        .eq('id', effectiveScope.incident_id))
         .single();
 
       if (incident) {

@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { excludeDeletedSignals } from "../_shared/soft-delete-filters.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1708,9 +1709,9 @@ Deno.serve(async (req) => {
 
     // ── 5. Query recent wildfire signals from DB ──────────────────────────────
     const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: dbSignals } = await supabase
+    const { data: dbSignals } = await excludeDeletedSignals(supabase
       .from('signals')
-      .select('id, title, severity, created_at, raw_json')
+      .select('id, title, severity, created_at, raw_json'))
       .in('category', ['wildfire', 'industrial_flaring'])
       .gte('created_at', cutoff)
       .order('created_at', { ascending: false })

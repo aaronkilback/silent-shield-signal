@@ -9,7 +9,7 @@ import {
 } from "../_shared/supabase-client.ts";
 
 import { compareExposureItems } from "../_shared/subject-retrieval.ts";
-import { excludeMergedEntities } from "../_shared/soft-delete-filters.ts";
+import { excludeMergedEntities, excludeSupersededExposure } from "../_shared/soft-delete-filters.ts";
 
 const REPORT_BUCKET = "generated-reports";   // private bucket (migration 20260212143009), signed-URL only
 
@@ -50,9 +50,9 @@ Deno.serve(async (req) => {
     const { data: client } = entity.client_id ? await supabase.from("clients").select("name").eq("id", entity.client_id).maybeSingle() : { data: null };
 
     // ── gather: CURRENT items only (superseded/aged-out excluded), their locations, family disposition ──
-    const { data: items } = await supabase.from("subject_exposure_items")
-      .select("id, category, title, summary, severity, is_finding, source_class, fingerprint, subject_awareness, first_seen_date")
-      .eq("subject_entity_id", entityId).is("superseded_at", null);
+    const { data: items } = await excludeSupersededExposure(supabase.from("subject_exposure_items")
+      .select("id, category, title, summary, severity, is_finding, source_class, fingerprint, subject_awareness, first_seen_date"))
+      .eq("subject_entity_id", entityId);
     const ids = (items ?? []).map((i: any) => i.id);
     let locs: any[] = [];
     if (ids.length) {

@@ -8,7 +8,7 @@ import {
   createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, userCanAccessClient,
 } from "../_shared/supabase-client.ts";
 import { retrieveSubject, startScanRun } from "../_shared/subject-retrieval.ts";
-import { excludeMergedEntities } from "../_shared/soft-delete-filters.ts";
+import { excludeMergedEntities, excludeSupersededExposure } from "../_shared/soft-delete-filters.ts";
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
@@ -70,8 +70,8 @@ Deno.serve(async (req) => {
     }
 
     // ── read — list existing items + their N locations (NO scan) ──
-    const { data: items } = await supabase.from("subject_exposure_items")
-      .select("id, category, title, summary, severity, source_class, fingerprint, subject_awareness, scan_id, updated_at")
+    const { data: items } = await excludeSupersededExposure(supabase.from("subject_exposure_items")
+      .select("id, category, title, summary, severity, source_class, fingerprint, subject_awareness, scan_id, updated_at"))
       .eq("subject_entity_id", entityId);
     const ids = (items ?? []).map((i: any) => i.id);
     let locs: any[] = [];

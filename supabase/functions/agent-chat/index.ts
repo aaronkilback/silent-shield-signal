@@ -7,6 +7,7 @@ import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-pictur
 import { startTrace, type Recorder } from "../_shared/flight-recorder.ts";
 import { getAntiHallucinationPrompt } from "../_shared/anti-hallucination.ts";
 import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents, excludeMergedEntities } from "../_shared/soft-delete-filters.ts";
 import {
   getReliabilityFirstPrompt,
   getReliabilitySettings,
@@ -552,12 +553,12 @@ Respond naturally and briefly.`
     // COP is fetched in the parallel block below — placeholder added after results resolve
     
     if (authoritativeClientId && agent.input_sources.includes('signals')) {
-      const { data: signals } = await supabase
+      const { data: signals } = await excludeDeletedSignals(supabase
         .from('signals')
-        .select('id, title, source_id, severity, created_at, rule_category, raw_json, source_url')
+        .select('id, title, source_id, severity, created_at, rule_category, raw_json, source_url'))
         // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
         // agent reasoning context. See src/lib/signal-query-filters.ts.
-        .eq('quality_status', 'active')
+        // (quality_status='active' + deleted_at now enforced by excludeDeletedSignals wrap.)
         .eq('client_id', authoritativeClientId) // Wave 1: scope to authoritative client; fail closed
         .order('created_at', { ascending: false })
         .limit(10);
@@ -574,10 +575,10 @@ Respond naturally and briefly.`
     }
 
     if (authoritativeClientId && agent.input_sources.includes('incidents')) {
-      const { data: incidents } = await supabase
+      const { data: incidents } = await excludeDeletedIncidents(supabase
         .from('incidents')
-        .select('title, priority, status, opened_at, incident_type')
-        .is('deleted_at', null) // Exclude soft-deleted incidents
+        .select('title, priority, status, opened_at, incident_type'))
+        // (deleted_at now enforced by excludeDeletedIncidents wrap.)
         .eq('client_id', authoritativeClientId) // Wave 1: scope to authoritative client; fail closed
         .order('opened_at', { ascending: false })
         .limit(10);
@@ -592,9 +593,9 @@ Respond naturally and briefly.`
 
     if (authoritativeClientId && agent.input_sources.includes('entities')) {
       const [{ data: entities }, { data: watchedEntities }] = await Promise.all([
-        supabase
+        excludeMergedEntities(supabase
           .from('entities')
-          .select('name, type, risk_level, threat_score, quality_score, description, ai_assessment')
+          .select('name, type, risk_level, threat_score, quality_score, description, ai_assessment'))
           .eq('is_active', true)
           .eq('client_id', authoritativeClientId) // Wave 1: scope to authoritative client; fail closed
           .order('threat_score', { ascending: false, nullsFirst: false })
@@ -1923,13 +1924,13 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             const cutoffDate = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
             if (args.query_type === 'signals' || args.query_type === 'comprehensive') {
-              let query = supabase
+              let query = excludeDeletedSignals(supabase
                 .from('signals')
-                .select('id, title, severity, source_id, created_at, rule_category')
+                .select('id, title, severity, source_id, created_at, rule_category'))
                 .gte('created_at', cutoffDate)
                 // PROD-S Track H1 (2026-05-23) — exclude quarantined signals
                 // from agent-chat reasoning. See src/lib/signal-query-filters.ts.
-                .eq('quality_status', 'active')
+                // (quality_status='active' + deleted_at now enforced by excludeDeletedSignals wrap.)
                 .eq('client_id', authoritativeClientId) // Wave 1: authoritative scope
                 .order('created_at', { ascending: false })
                 .limit(limit);
@@ -1958,9 +1959,9 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             toolResults.push({ tool: 'cross_reference_entities', result: { success: false, fail_closed: true, error: 'Select a client before cross-referencing entities.' } });
           } else {
             for (const name of entityNames) {
-              const { data: entities } = await supabase
+              const { data: entities } = await excludeMergedEntities(supabase
                 .from('entities')
-                .select('id, name, type, risk_level, aliases')
+                .select('id, name, type, risk_level, aliases'))
                 .eq('client_id', authoritativeClientId) // Wave 1: authoritative scope
                 .or(`name.ilike.%${name}%,aliases.cs.{${name}}`);
 
@@ -2108,12 +2109,12 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           console.log('[Briefing] Generating intelligence summary:', { hoursBack, cutoff, client_id, focusAreas });
           
           // Build signals query - FIXED: proper client_id filtering and source URL extraction
-          let signalsQuery = supabase.from('signals')
-            .select('id, title, severity, source_id, created_at, rule_category, normalized_text, client_id, description, signal_type, source_url, raw_json')
+          let signalsQuery = excludeDeletedSignals(supabase.from('signals')
+            .select('id, title, severity, source_id, created_at, rule_category, normalized_text, client_id, description, signal_type, source_url, raw_json'))
             .gte('created_at', cutoff)
             // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
             // intelligence briefings. See src/lib/signal-query-filters.ts.
-            .eq('quality_status', 'active')
+            // (quality_status='active' + deleted_at now enforced by excludeDeletedSignals wrap.)
             .order('created_at', { ascending: false })
             .limit(50);
           
@@ -2122,9 +2123,9 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           signalsQuery = signalsQuery.eq('client_id', SCOPE_OR_EMPTY);
           
           // Build incidents query with client_id filter (exclude soft-deleted)
-          let incidentsQuery = supabase.from('incidents')
-            .select('id, title, priority, status, incident_type, summary, opened_at, client_id, location, acknowledged_at, resolved_at')
-            .is('deleted_at', null) // Exclude soft-deleted incidents
+          let incidentsQuery = excludeDeletedIncidents(supabase.from('incidents')
+            .select('id, title, priority, status, incident_type, summary, opened_at, client_id, location, acknowledged_at, resolved_at'))
+            // (deleted_at now enforced by excludeDeletedIncidents wrap.)
             .gte('opened_at', cutoff)
             .order('opened_at', { ascending: false })
             .limit(20);
@@ -2135,8 +2136,8 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           const [signalsResult, incidentsResult, entitiesResult] = await Promise.all([
             signalsQuery,
             incidentsQuery,
-            supabase.from('entities')
-              .select('id, name, type, risk_level, threat_score, description, last_checked')
+            excludeMergedEntities(supabase.from('entities')
+              .select('id, name, type, risk_level, threat_score, description, last_checked'))
               .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: authoritative scope, fail closed
               .order('threat_score', { ascending: false })
               .limit(15),
@@ -2151,9 +2152,9 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           });
           
           // Also fetch ALL open high-priority incidents (regardless of time range)
-          let highPriorityQuery = supabase
+          let highPriorityQuery = excludeDeletedIncidents(supabase
             .from('incidents')
-            .select('id, title, priority, status, incident_type, summary, opened_at, location')
+            .select('id, title, priority, status, incident_type, summary, opened_at, location'))
             .in('priority', ['p1', 'p2'])
             .eq('status', 'open')
             .order('opened_at', { ascending: false })
@@ -2849,18 +2850,18 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
           let entity = null;
           
           if (args.entity_id) {
-            const { data } = await supabase
+            const { data } = await excludeMergedEntities(supabase
               .from('entities')
-              .select('*')
+              .select('*'))
               .eq('id', args.entity_id)
               .eq('type', 'person')
               .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: entity must belong to authoritative client; fail closed
               .single();
             entity = data;
           } else if (args.entity_name) {
-            const { data } = await supabase
+            const { data } = await excludeMergedEntities(supabase
               .from('entities')
-              .select('*')
+              .select('*'))
               .eq('type', 'person')
               .eq('client_id', SCOPE_OR_EMPTY) // Wave 1: authoritative scope, fail closed
               .or(`name.ilike.%${args.entity_name}%,aliases.cs.{${args.entity_name}}`)
@@ -3321,10 +3322,12 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               // not-found for analyst. The downstream `if (sig)` guard
               // (line ~3200) naturally treats null as "no signal" — same
               // behavior as if the row simply did not exist.
-              const sigQuery = supabase
+              const sigQuery = excludeDeletedSignals(supabase
                 .from('signals')
-                .select('id, title, severity, client_id, normalized_text, signal_number')
-                .eq('quality_status', 'active')
+                .select('id, title, severity, client_id, normalized_text, signal_number'))
+                // (quality_status='active' + deleted_at enforced by excludeDeletedSignals wrap;
+                //  a deleted/quarantined signal must not resolve to spawn a debate — same
+                //  Quarantine-doctrine indistinguishability the quality_status filter provided.)
                 .eq('client_id', SCOPE_OR_EMPTY); // Wave 1: only the authoritative client's signals; fail closed
               let sig: any = null;
               if (isFullSignalNumber) {
@@ -3367,6 +3370,8 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
               // points incidents → signals, so we query incidents). If
               // none, create one.
               if (sig) {
+                // @soft-delete-exempt: existence check — "does an incident already exist for
+                // this signal (reuse) or must one be created" (see the create branch below).
                 const { data: existingIncident } = await supabase
                   .from('incidents')
                   .select('id')

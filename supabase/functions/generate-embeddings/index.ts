@@ -1,4 +1,5 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getUserFromRequest } from "../_shared/supabase-client.ts";
+import { excludeDeletedSignals } from "../_shared/soft-delete-filters.ts";
 
 /**
  * Generate embeddings for archival documents and signals.
@@ -265,9 +266,9 @@ Deno.serve(async (req) => {
       const signalLimit = limit || 50;
 
       // Get recent signals with text content
-      const { data: signals } = await supabase
+      const { data: signals } = await excludeDeletedSignals(supabase
         .from('signals')
-        .select('id, normalized_text, category, severity, location, entity_tags, created_at')
+        .select('id, normalized_text, category, severity, location, entity_tags, created_at'))
         .not('normalized_text', 'is', null)
         .order('created_at', { ascending: false })
         .limit(signalLimit);

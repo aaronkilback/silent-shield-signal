@@ -8,6 +8,7 @@ import { getCriticalDateContext } from "../_shared/anti-hallucination.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 import { applyAnalystSignalFilter } from "../_shared/signal-query-filters.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -57,16 +58,16 @@ Deno.serve(async (req) => {
     ] = await Promise.all([
       // Quality filter (WO-CLIENT-THREAT-RELEVANCE 2026-08-12): quarantine filter so the briefing
       // never surfaces quarantined signals; attribution_type='none' exclusion applied post-fetch below.
-      applyAnalystSignalFilter(supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence, client_id, raw_json')
+      excludeDeletedSignals(applyAnalystSignalFilter(supabase.from('signals').select('id, category, severity, title, normalized_text, created_at, quality_score, relevance_score, triage_override, event_date, confidence, client_id, raw_json')
         .gte('created_at', cutoff24h)
         .neq('status', 'false_positive')
         .neq('is_test', true)
         .in('client_id', activeClientIds)
-        .order('created_at', { ascending: false }).limit(50)),
-      supabase.from('incidents').select('id, priority, status, opened_at, title, signal_id, client_id')
+        .order('created_at', { ascending: false }).limit(50))),
+      excludeDeletedIncidents(supabase.from('incidents').select('id, priority, status, opened_at, title, signal_id, client_id')
         .eq('status', 'open').neq('is_test', true)
         .in('client_id', activeClientIds)
-        .order('opened_at', { ascending: false }).limit(50),
+        .order('opened_at', { ascending: false }).limit(50)),
       // Filter operator-irrelevant action types out of the briefing.
       // proactive_intelligence_push fires every 15 min; >95% of records
       // are "delivered to 0 recipients" platform plumbing. document_*
@@ -269,9 +270,9 @@ Deno.serve(async (req) => {
 
     // Calculate trajectory vs previous 7-day period
     const previousPeriodStart = new Date(Date.now() - 8 * 24 * 3600000).toISOString();
-    const { data: previousSignals } = await supabase
+    const { data: previousSignals } = await excludeDeletedSignals(supabase
       .from('signals')
-      .select('id, severity')
+      .select('id, severity'))
       .gte('created_at', previousPeriodStart)
       .lt('created_at', cutoff24h)
       .neq('status', 'false_positive')

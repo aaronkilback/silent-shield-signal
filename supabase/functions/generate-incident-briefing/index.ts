@@ -1,6 +1,7 @@
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getUniversalGuardrails } from "../_shared/ai-gateway.ts";
+import { excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
@@ -21,7 +22,7 @@ Deno.serve(async (req) => {
     console.log(`[generate-incident-briefing] Generating ${format} briefing for incident ${incident_id}`);
 
     // Fetch comprehensive incident data
-    const { data: incident, error: incidentError } = await supabase
+    const { data: incident, error: incidentError } = await excludeDeletedIncidents(supabase
       .from("incidents")
       .select(`
         *,
@@ -30,7 +31,7 @@ Deno.serve(async (req) => {
         incident_outcomes(outcome_type, false_positive, was_accurate, lessons_learned),
         improvements(description, shot_or_brick, status)
       `)
-      .eq("id", incident_id)
+      .eq("id", incident_id))
       .single();
 
     if (incidentError || !incident) {

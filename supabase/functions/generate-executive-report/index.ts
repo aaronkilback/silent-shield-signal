@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 import { callAiGateway, callAiGatewayJson } from "../_shared/ai-gateway.ts";
 import { logError } from "../_shared/error-logger.ts";
 import { runEvidenceGate, getReliabilityFirstPrompt, DEFAULT_RELIABILITY_SETTINGS } from "../_shared/reliability-first.ts";
@@ -275,18 +276,17 @@ Deno.serve(async (req) => {
     // (deleted_at IS NOT NULL means the operator dismissed it — must NOT appear
     // in executive output), and historical-tagged signals (signal_type='historical'
     // or triage_override='historical' — these are old context, not current intel).
-    const { data: signalsRaw, error: signalsError } = await supabase
+    const { data: signalsRaw, error: signalsError } = await excludeDeletedSignals(supabase
       .from('signals')
-      .select('*')
+      .select('*'))
       .eq('client_id', client_id)
       .gte('received_at', periodStart.toISOString())
       .lte('received_at', periodEnd.toISOString())
       .neq('status', 'archived')
       .neq('is_test', true)
-      .is('deleted_at', null)
       // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
       // executive reports. See src/lib/signal-query-filters.ts.
-      .eq('quality_status', 'active')
+      // (deleted_at + quality_status now enforced by excludeDeletedSignals wrap.)
       .or('signal_type.is.null,signal_type.neq.historical')
       .or('triage_override.is.null,triage_override.neq.historical')
       .order('received_at', { ascending: false });
@@ -562,7 +562,7 @@ Deno.serve(async (req) => {
     console.log(`[generate-executive-report] citability tiering: ${freshSignals.length} main-citable · ${reviewQueueSignals.length} review-queue (rel>=${REL_MAIN}, non-citable) · ${awarenessSignals.length} awareness · review-queue ids: ${reviewQueueSignals.map((s: any) => s.signal_number || s.id?.slice(0, 8)).join(', ')}`);
 
     // Fetch incidents with classification rationale (excluding deleted + test)
-    const { data: incidents, error: incidentsError } = await supabase
+    const { data: incidents, error: incidentsError } = await excludeDeletedIncidents(supabase
       .from('incidents')
       .select(`
         *,
@@ -572,12 +572,12 @@ Deno.serve(async (req) => {
           rationale,
           classified_at
         )
-      `)
+      `))
       .eq('client_id', client_id)
       .gte('opened_at', periodStart.toISOString())
       .lte('opened_at', periodEnd.toISOString())
       .neq('is_test', true)
-      .is('deleted_at', null)
+      // (deleted_at now enforced by excludeDeletedIncidents wrap.)
       // G(b): exclude superseded (merged-away duplicate) incidents.
       .is('superseded_by', null)
       // CANONICAL active-incident filter (zombie-incident fix). Only genuinely-open
@@ -603,10 +603,10 @@ Deno.serve(async (req) => {
       const incSigIds = [...new Set((incidents ?? []).map((i: any) => i.signal_id).filter(Boolean))];
       const incSigCitable = new Set<string>();
       if (incSigIds.length) {
-        const { data: incSigs } = await excludeTestAndDeleted(supabase.from('signals')
+        const { data: incSigs } = await excludeDeletedSignals(excludeTestAndDeleted(supabase.from('signals')
           .select('id, source_id, source_url, raw_json, received_at, event_date')
           .eq('client_id', client_id)  // defense-in-depth: an incident's supporting signal must be same-client
-          .in('id', incSigIds));
+          .in('id', incSigIds)));
         const extraSrc = [...new Set((incSigs ?? []).map((r: any) => r.source_id).filter(Boolean).filter((id: string) => !provById.has(id)))];
         if (extraSrc.length) { const { data: more } = await supabase.from('sources').select('id, publisher_kind, publisher_name, provenance_path').in('id', extraSrc); for (const r of (more ?? [])) provById.set(r.id, r); }
         for (const r of (incSigs ?? [])) if (citeFor(r).citable) incSigCitable.add(r.id);

@@ -1,6 +1,7 @@
 import { corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
 Deno.serve(async (req) => {
@@ -29,21 +30,21 @@ Deno.serve(async (req) => {
 
     const locationTerms = [city, country, `${city}, ${country}`];
 
-    const { data: signals } = await supabaseClient
+    const { data: signals } = await excludeDeletedSignals(supabaseClient
       .from("signals")
-      .select("title, content, category, severity, source_type, created_at, location")
+      .select("title, content, category, severity, source_type, created_at, location"))
       .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
       .gte("created_at", thirtyDaysAgo.toISOString())
       .neq("status", "archived")
       .order("created_at", { ascending: false })
       .limit(50);
 
-    const { data: incidents } = await excludeTestAndDeleted(supabaseClient
+    const { data: incidents } = await excludeDeletedIncidents(excludeTestAndDeleted(supabaseClient
       .from("incidents")
       .select("title, description, severity, created_at, location")
       .or(locationTerms.map(term => `location.ilike.%${term}%`).join(","))
       .gte("created_at", thirtyDaysAgo.toISOString())
-      .limit(20));
+      .limit(20)));
 
     const { data: existingReports } = await supabaseClient
       .from("security_reports")

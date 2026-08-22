@@ -33,6 +33,7 @@
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { getSignedUrl } from "../_shared/storage.ts";
+import { excludeDeletedSignals } from "../_shared/soft-delete-filters.ts";
 
 const MODEL = "gpt-4o-mini";
 const SITE_AUDIT_MEDIA_BUCKET = "site-audit-media" as const;
@@ -149,9 +150,9 @@ Deno.serve(async (req) => {
         // Count wildfire signals near this asset's location in last 90 days.
         // The signals table doesn't have a uniform geom column, so we filter
         // by signal_type + recency + client and accept a coarse count.
-        const { count: wfCount } = await supabase
+        const { count: wfCount } = await excludeDeletedSignals(supabase
           .from("signals")
-          .select("id", { count: "exact", head: true })
+          .select("id", { count: "exact", head: true }))
           .eq("client_id", (audit.asset as { client_id?: string }).client_id ?? "")
           .or("signal_type.eq.wildfire,category.eq.wildfire,signal_type.eq.ambiguous_near_facility")
           .gte("created_at", new Date(Date.now() - 90 * 86_400_000).toISOString());

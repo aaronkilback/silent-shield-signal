@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 import { isIncidentActive } from "../_shared/incident-status.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "../_shared/soft-delete-filters.ts";
 import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
@@ -113,9 +114,9 @@ Deno.serve(async (req) => {
     // Fetch signals in time window — actionable, relevant, real-client only.
     // Exclude: false_positive, archived, irrelevant (relevance_score < 0.45),
     // is_test=true, sandbox clients.
-    const { data: signals, error: signalsError } = await supabaseClient
+    const { data: signals, error: signalsError } = await excludeDeletedSignals(supabaseClient
       .from('signals')
-      .select('*')
+      .select('*'))
       .in('client_id', allowedClientIds)
       .or('is_test.is.null,is_test.eq.false')
       .gte('received_at', periodStart.toISOString())
@@ -124,7 +125,7 @@ Deno.serve(async (req) => {
       .neq('status', 'false_positive')
       // WO-GATE-KEYWORD-PRESCORE-01 suppression: exclude quarantined signals (incl. the 611
       // fabricated-client-match rows). Mirrors generate-executive-report + the analyst filter.
-      .eq('quality_status', 'active')
+      // (quality_status='active' + deleted_at now enforced by excludeDeletedSignals wrap.)
       .not('category', 'eq', 'industrial_flaring')
       .not('normalized_text', 'ilike', '%industrial flaring%')
       .not('normalized_text', 'ilike', '%thermal anomaly%flaring%')
@@ -151,9 +152,9 @@ Deno.serve(async (req) => {
     // should not show up under "Notable Incidents" as if they need
     // attention. The BCCH false-positive incident closed earlier today
     // was leaking through here because the query ignored status.
-    const { data: incidents, error: incidentsError } = await supabaseClient
+    const { data: incidents, error: incidentsError } = await excludeDeletedIncidents(supabaseClient
       .from('incidents')
-      .select('*')
+      .select('*'))
       .in('client_id', allowedClientIds)
       .in('status', ['open', 'acknowledged', 'investigating'])
       .gte('opened_at', periodStart.toISOString())
