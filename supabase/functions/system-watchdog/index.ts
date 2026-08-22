@@ -458,6 +458,12 @@ INCIDENT-QA INVARIANTS (WO-INCIDENT-QA Step 5, 2026-07-28) — telemetry.inciden
 - creationSpike (bool) — creationLast24h > max(5, 3× prior-7d daily avg). true = an incident-creation spike; investigate whether the creation gate regressed or a real event cluster occurred. creationLast24h/creationPrior7dDailyAvg give context.
 - All three counts EXPECTED 0; creationSpike EXPECTED false. Any violation = an incident-QA defect.
 
+SOFT-DELETE / RETIRE LEAK INVARIANTS (WO-LEAK-SWEEP, 2026-08-22) — telemetry.softDeleteLeak:
+- The leak sweep filters client-facing reads of signals/incidents/entities/subject_exposure_items through 4 named helpers (excludeDeletedSignals/excludeDeletedIncidents/excludeMergedEntities/excludeSupersededExposure); a BLOCKING CI gate (scripts/check-soft-delete-filters.mjs) fails any client-facing read that neither calls its helper nor carries an explicit @soft-delete-exempt marker. This telemetry is the RUNTIME backstop to that build-time gate.
+- softDeletedSignalsInOpenIncidents — open, non-test incidents whose signal_id points to a signal that is soft-deleted (deleted_at NOT NULL) or quarantined (quality_status='quarantined'). EXPECTED 0. Nonzero = a retired signal is surfacing via an open (client-facing) incident.
+- mergedEntitiesStillMonitored — entities with merged_into NOT NULL that still have active_monitoring_enabled=true. EXPECTED 0. Nonzero = a merged-away (tombstone) entity is still in monitoring queues; the merge writer or a monitoring path bypassed the merge.
+- BOTH EXPECTED 0. Any nonzero = a soft-deleted/merged row is reaching a client surface — run the CI gate + audit the offending row; it is the leak class the sweep closed.
+
 ### Communications Infrastructure (HIGH)
 - Two-way SMS via Twilio: send-sms (outbound), ingest-communication (inbound webhook)
 - list-communications provides thread queries per case/contact/investigator
@@ -680,6 +686,7 @@ interface TelemetryData {
   dailyBriefing: { sentToday: boolean; suppressionLikely: boolean; recipientCount: number };
   dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number; newOrphanArchivalDocs: number; unflaggedTestBeliefs: number; unflaggedTestEntities: number };
   incidentQA: { unknownClassificationOver24h: number; zeroLinkedSignals: number; openHazardEventEnded: number; creationLast24h: number; creationPrior7dDailyAvg: number; creationSpike: boolean };
+  softDeleteLeak: { softDeletedSignalsInOpenIncidents: number; mergedEntitiesStillMonitored: number };
   bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number; recurringPatterns: string[] };
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
@@ -1319,6 +1326,30 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     incidentQA.creationSpike = (c24 || 0) > Math.max(5, incidentQA.creationPrior7dDailyAvg * 3);
   } catch (_e) { /* best-effort probe; watchdog self-validation covers hard failures */ }
 
+  // ── WO-LEAK-SWEEP self-validation probe (2026-08-22) ── runtime backstop to the blocking
+  // soft-delete CI gate + the 4 named helpers. Soft-deleted / merged rows must not surface on a
+  // client-facing surface. Both EXPECTED 0; nonzero = a retired row reached a client surface.
+  const softDeleteLeak = { softDeletedSignalsInOpenIncidents: 0, mergedEntitiesStillMonitored: 0 };
+  try {
+    const { data: openIncSig } = await supabase.from('incidents')
+      .select('signal_id')
+      .eq('status', 'open').is('deleted_at', null).neq('is_test', true)
+      .not('signal_id', 'is', null);
+    const sigIds = [...new Set((openIncSig || []).map((r: any) => r.signal_id))];
+    if (sigIds.length > 0) {
+      const { count: badSigs } = await supabase.from('signals')
+        .select('id', { count: 'exact', head: true })
+        .in('id', sigIds)
+        .or('deleted_at.not.is.null,quality_status.eq.quarantined');
+      softDeleteLeak.softDeletedSignalsInOpenIncidents = badSigs || 0;
+    }
+    const { count: mergedMon } = await supabase.from('entities')
+      .select('id', { count: 'exact', head: true })
+      .not('merged_into', 'is', null)
+      .eq('active_monitoring_enabled', true);
+    softDeleteLeak.mergedEntitiesStillMonitored = mergedMon || 0;
+  } catch (_e) { /* best-effort probe; watchdog self-validation covers hard failures */ }
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -1331,6 +1362,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
     dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0, newOrphanArchivalDocs: newOrphanArchivalDocsCount || 0, unflaggedTestBeliefs, unflaggedTestEntities },
     incidentQA,
+    softDeleteLeak,
     bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
     database: { connected: dbConnected, responseTimeMs: dbResponseTimeMs },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
