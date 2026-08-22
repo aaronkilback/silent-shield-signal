@@ -3068,6 +3068,10 @@ Be thorough and include every piece of visible text and data.`,
 
       // P0 Phase-C — if feedback targets a signal, verify the signal is in caller's tenant
       if (object_type === 'signal' && object_id) {
+        // @soft-delete-exempt: the learning pipeline MUST accept feedback on quarantined/soft-deleted signals —
+        // analyst feedback marking a now-quarantined signal false_positive still trains the gate (CLAUDE.md
+        // Quarantine Doctrine; process-feedback:347 intentional service-role exclusion). Filtering here would
+        // drop legitimate feedback. A write gate, but EXEMPT for that documented reason — not filtered.
         const { data: sigCheck } = await supabaseClient
           .from('signals').eq("tenant_id", tenantId)
           .select('id, tenant_id')
@@ -4845,17 +4849,20 @@ Deno.serve(async (req) => {
 
       // Pre-check: target entity must belong to the caller's tenant.
       // .eq('tenant_id', …) rejects NULL-tenant entities (Provenance Doctrine).
-      const { data: urpOwnedEntity } = await supabaseClient
+      const { data: urpOwnedEntity } = await excludeMergedEntities(supabaseClient
         .from('entities')
-        .select('id')
+        .select('id'))
         .eq('id', urpEntityId)
         .eq('tenant_id', tenantId)
         .maybeSingle();
       if (!urpOwnedEntity) {
-        return {
-          error: `entity_id ${urpEntityId} not found in current tenant scope`,
-          entity_id: urpEntityId,
-        };
+        // Write gate refuses WITH A REASON (never redirect a write to a survivor). @soft-delete-exempt:
+        // existence lookup to say WHY the target is absent (merged / deleted / not-in-tenant).
+        const { data: urpGone } = await supabaseClient.from('entities').select('merged_into, deleted_at').eq('id', urpEntityId).eq('tenant_id', tenantId).maybeSingle();
+        const urpReason = urpGone?.merged_into ? "that entity has been merged into another record"
+          : urpGone?.deleted_at ? "that entity was deleted"
+          : "no entity with that id exists in your tenant";
+        return { error: `Cannot update risk profile: ${urpReason}.`, entity_id: urpEntityId };
       }
 
       const { error: urpUpdateError } = await supabaseClient
@@ -7659,12 +7666,18 @@ Return a JSON object (no markdown, only valid JSON):
       // P0 Phase-C — if a specific incident_id is provided, verify it belongs to caller's tenant
       if (args.incident_id) {
         const asiScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
-        const { data: incCheck } = await supabaseClient
+        const { data: incCheck } = await excludeDeletedIncidents(supabaseClient
           .from('incidents').eq("tenant_id", tenantId)
-          .select('id, client_id')
+          .select('id, client_id'))
           .eq('id', args.incident_id)
           .maybeSingle();
-        if (!incCheck || !asiScopedClientIds.includes(incCheck.client_id)) {
+        if (!incCheck) {
+          // Write gate refuses WITH A REASON. @soft-delete-exempt: existence lookup (deleted / not-in-tenant).
+          const { data: incGone } = await supabaseClient.from('incidents').select('deleted_at').eq('id', args.incident_id).eq('tenant_id', tenantId).maybeSingle();
+          const incReason = incGone?.deleted_at ? "that incident was deleted" : `no incident with that id exists in tenant ${tenantName}`;
+          return { error: `Cannot summarize: ${incReason}.` };
+        }
+        if (!asiScopedClientIds.includes(incCheck.client_id)) {
           return {
             error: `TENANT_BOUNDARY: incident ${args.incident_id} is not in tenant ${tenantName}. auto_summarize_incidents refused.`,
           };
@@ -8277,14 +8290,19 @@ Return a JSON object (no markdown, only valid JSON):
 
       // P0 Phase-C — entity must be linked to a client in caller's tenant before alert preferences can be configured
       // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
-      const { data: cpaEntity } = await supabaseClient
+      const { data: cpaEntity } = await excludeMergedEntities(supabaseClient
         .from("entities")
-        .select("id")
+        .select("id"))
         .eq("id", entity_id)
         .eq("tenant_id", tenantId)
         .maybeSingle();
       if (!cpaEntity) {
-        return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. configure_principal_alerts refused.` };
+        // Write gate refuses WITH A REASON. @soft-delete-exempt: existence lookup (merged/deleted/not-in-tenant).
+        const { data: cpaGone } = await supabaseClient.from("entities").select("merged_into, deleted_at").eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
+        const cpaReason = cpaGone?.merged_into ? "that entity has been merged into another record"
+          : cpaGone?.deleted_at ? "that entity was deleted"
+          : `no entity with that id exists in tenant ${tenantName}`;
+        return { error: `Cannot configure alerts: ${cpaReason}.` };
       }
 
       const updateData: any = { entity_id, updated_at: new Date().toISOString() };
@@ -10300,14 +10318,19 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
       const { entity_id, investigation_id } = args;
 
       // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
-      const { data: gprEntity } = await supabaseClient
+      const { data: gprEntity } = await excludeMergedEntities(supabaseClient
         .from("entities")
-        .select("id")
+        .select("id"))
         .eq("id", entity_id)
         .eq("tenant_id", tenantId)
         .maybeSingle();
       if (!gprEntity) {
-        return { success: false, error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. POI report refused.` };
+        // Write gate refuses WITH A REASON (never redirect to a survivor). @soft-delete-exempt: existence lookup.
+        const { data: gprGone } = await supabaseClient.from("entities").select("merged_into, deleted_at").eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
+        const gprReason = gprGone?.merged_into ? "that entity has been merged into another record"
+          : gprGone?.deleted_at ? "that entity was deleted"
+          : `no entity with that id exists in tenant ${tenantName}`;
+        return { success: false, error: `Cannot generate report: ${gprReason}.` };
       }
 
       // Successor: generate-subject-exposure-report (the disabled generate-poi-report is retired). Persists

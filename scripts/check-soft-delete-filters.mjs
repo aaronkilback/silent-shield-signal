@@ -19,6 +19,13 @@
  *   - "have I seen this content_hash before?" (ingest/dedup): a quarantined signal HAS been seen; filtering
  *     would let deliberately-quarantined content return on the next ingest. Exempt.
  * A read that SHOWS rows to a human is FILTERED (call the helper). Existence is not display.
+ * A read that GATES A WRITE / side-effecting invoke (ownership check before update/report/summarize) is
+ *   FILTERED and REFUSES WITH A REASON — never redirects. A read may resolve to the survivor (reading the
+ *   survivor answers the question); a WRITE may not (the operator asked about a specific record and may not
+ *   know it was merged — a silent redirect is the substitution defect). Refuse explaining WHY ("that entity
+ *   has been merged into another record" / "that incident was deleted"), never a bare "not found" that sends
+ *   the operator hunting a bug. Pattern: filtered read (helper) → if empty, an exempt existence lookup of
+ *   merged_into/deleted_at to produce the reason → refuse.
  * When exempting, the @soft-delete-exempt reason must say which of these it is.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
