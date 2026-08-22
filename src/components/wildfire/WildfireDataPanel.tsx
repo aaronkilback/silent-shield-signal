@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { applyAnalystSignalFilter } from '@/lib/signal-query-filters';
+import { excludeDeletedSignals } from '@/lib/soft-delete-filters';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,7 +52,7 @@ export function WildfireDataPanel() {
         .eq('category', 'wildfire')
         .order('created_at', { ascending: false })
         .limit(50);
-      const { data, error } = await applyAnalystSignalFilter(baseQuery);
+      const { data, error } = await excludeDeletedSignals(applyAnalystSignalFilter(baseQuery));
       if (error) throw error;
       return data;
     },

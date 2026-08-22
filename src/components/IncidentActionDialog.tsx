@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
-import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
+import { excludeDeletedIncidents, excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Swords, Target } from "lucide-react";
@@ -107,7 +107,7 @@ export const IncidentActionDialog = ({
           .from("signals")
           .select("location, normalized_text")
           .eq("id", incident.signal_id);
-        const { data } = await applyAnalystSignalFilter(baseQuery).maybeSingle();
+        const { data } = await excludeDeletedSignals(applyAnalystSignalFilter(baseQuery)).maybeSingle();
         setSignalLocation(data?.location ?? null);
         setSignalText(data?.normalized_text ?? "");
       } catch (error) {

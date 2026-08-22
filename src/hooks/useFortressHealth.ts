@@ -58,6 +58,8 @@ export function useFortressHealth(enabled: boolean = true) {
       ] = await Promise.all([
         supabase.from("autonomous_actions_log").select("created_at", { count: "exact" }).gte("created_at", now24h).order("created_at", { ascending: false }).limit(1),
         supabase.from("watchdog_learnings").select("created_at", { count: "exact" }).gte("created_at", now24h).order("created_at", { ascending: false }).limit(1),
+        // @soft-delete-exempt: reliability liveness telemetry — "are signals arriving?" (24h count), a health
+        // probe not a display; a since-deleted signal still flowed, so it counts toward liveness.
         supabase.from("signals").select("created_at", { count: "exact" }).gte("created_at", now24h).order("created_at", { ascending: false }).limit(1),
         supabase.from("expert_knowledge").select("created_at", { count: "exact" }).gte("created_at", now24h).order("created_at", { ascending: false }).limit(1),
         supabase.from("signal_updates").select("created_at", { count: "exact" }).gte("created_at", now24h).order("created_at", { ascending: false }).limit(1),
@@ -74,6 +76,7 @@ export function useFortressHealth(enabled: boolean = true) {
         // "Closed" = closer ran in the last 24h, regardless of whether it produced output.
         supabase.from("cron_heartbeat").select("last_run_at, status").eq("job_name", "fortress-loop-closer-6h").maybeSingle(),
         // Signal integrity — last 7 days
+        // @soft-delete-exempt: reliability integrity probe (internal telemetry over source_id/type), not a display.
         supabase.from("signals").select("source_id, title, signal_type").gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString()),
       ]);
 

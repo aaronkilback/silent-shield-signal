@@ -56,6 +56,8 @@ export function useTenantRelevantSourceIds(): {
       const cutoff = new Date(
         Date.now() - RELEVANCE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
       ).toISOString();
+      // @soft-delete-exempt: internal scoping derivation — collects source_ids to scope OTHER queries, not a
+      // display of signal rows. A deleted signal's source is still a relevant source for this tenant.
       const { data: rows, error } = await supabase
         .from("signals")
         .select("source_id")

@@ -126,7 +126,7 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
     // surface via console / network panel.
     const signalId = item.id.replace("sig-", "");
     const baseQuery = supabase.from("signals").select("*").eq("id", signalId);
-    const { data } = await applyAnalystSignalFilter(baseQuery).maybeSingle();
+    const { data } = await excludeDeletedSignals(applyAnalystSignalFilter(baseQuery)).maybeSingle();
     if (data) onSignalClick({ ...data, primary_signal_id: data.id });
   };
 

@@ -14,6 +14,7 @@ import { ReportPdfDownload } from "@/components/chat/ReportPdfDownload";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
 import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
+import { excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import { useTenant } from "@/hooks/useTenant";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { Switch } from "@/components/ui/switch";
@@ -1255,7 +1256,7 @@ This command **bypasses the AI entirely** and directly injects a test signal int
             .from('signals')
             .select('id, normalized_text, client_id, status, created_at')
             .eq('id', signalId);
-          const { data: signalCheck } = await applyAnalystSignalFilter(baseQuery).maybeSingle();
+          const { data: signalCheck } = await excludeDeletedSignals(applyAnalystSignalFilter(baseQuery)).maybeSingle();
           verificationResult = signalCheck;
         }
 
