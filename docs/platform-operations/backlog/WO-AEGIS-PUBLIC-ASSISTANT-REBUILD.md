@@ -14,6 +14,33 @@
    - Small model (gpt-4o-mini class). Log to `aegis_invocations` (currently empty because the fn is off) so volume is actually observable this time.
 4. **Abuse floor:** per-IP/session rate limit (`rate_limit_tracking`), and the daily ceiling as the absolute backstop.
 
+## CATEGORY CONSTRAINT (2026-08-22) — the root cause, not the 503
+`AegisChat` was a coded implementation of a **sell-by-chat DM playbook (Martell) + Hormozi offer mechanics**,
+applied to **anonymous cold web traffic**. Those playbooks assume a **warm prospect, a human operator, and
+qualification before any offer** — none of the three were present. **That is the root cause, not the 503.**
+
+**Category constraint:** Silent Shield sells **protective intelligence, not coaching.** The buyer is
+screening for **discretion and accuracy.** Conversion mechanics that work where the downside is a refund
+**actively disqualify us** where the downside is being wrong about someone's safety.
+
+**Prohibited on any public-facing surface, permanently:**
+- urgency or scarcity language (spots remaining, limited, act now)
+- priority/expedite upsells or order bumps
+- exit-intent capture or objection-harvesting prompts
+- automated systems speaking in Aaron's voice to a stranger
+- any generated artifact offered as a free sample of Fortress output
+
+**Retained and correct:**
+- discovery before offer; no pain, no next step
+- current state, desired state, roadblock, cost of inaction
+- one clear next step per surface
+- leaning out rather than pushing
+
+**Lead product = the Digital Exposure Report ($1,000, one business day, sourced findings).** It is the
+free-tier replacement: real work, real findings, no pressure mechanics. **Nothing generated and unverified
+is ever offered to a prospect.** This supersedes AegisChat's "Free Preliminary Snapshot — AI-generated, not
+verified" and its `/free-risk-snapshot` route; both are retired, not carried into `src/config/products.ts`.
+
 ## Cost at plausible traffic
 gpt-4o-mini, ~5K input + ~1K output per session ≈ **$0.002/session**.
 - 50 sessions/day → ~$0.10/day (~$3/mo)
