@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import { History, AlertCircle, Trash2, ExternalLink, Clock, Calendar, Archive, ShieldCheck, Globe, AlertTriangle, ShieldOff, HelpCircle } from "lucide-react";
 import { formatDistanceToNow, isToday, isThisWeek, isThisMonth, differenceInDays } from "date-fns";
 import { useClientSelection } from "@/hooks/useClientSelection";
@@ -228,7 +229,7 @@ export const SignalHistory = () => {
 
   const loadSignals = async () => {
     try {
-      let query = supabase
+      let query = excludeDeletedSignals(supabase
         .from('signals')
         .select(`
           id,
@@ -274,8 +275,7 @@ export const SignalHistory = () => {
             name,
             type
           )
-        `)
-        .is('deleted_at', null)
+        `))
         .neq('status', 'archived')
         // Hide signals an agent has dismissed as false positives.
         // review-signal-agent writes status='false_positive' when its
@@ -286,9 +286,9 @@ export const SignalHistory = () => {
         .neq('status', 'false_positive')
         .or('signal_type.neq.pattern,signal_type.is.null')
         .neq('is_test', true)
-        // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from
-        // analyst feed. See src/lib/signal-query-filters.ts.
-        .eq('quality_status', 'active')
+        // Quarantine + soft-delete exclusion now via excludeDeletedSignals()
+        // wrapping the base builder above (deleted_at IS NULL AND
+        // quality_status='active'). See src/lib/soft-delete-filters.ts.
         .order('created_at', { ascending: false })
         .limit(50);
 

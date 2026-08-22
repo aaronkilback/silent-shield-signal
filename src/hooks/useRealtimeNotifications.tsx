@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { excludeDeletedSignals, excludeDeletedIncidents } from '@/lib/soft-delete-filters';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { differenceInDays } from 'date-fns';
@@ -92,9 +93,9 @@ export const useRealtimeNotifications = () => {
   // tenant filter (RLS bypass would otherwise return every tenant's rows).
   const pollForMissed = useCallback(async () => {
     try {
-      let signalsQuery = supabase
+      let signalsQuery = excludeDeletedSignals(supabase
         .from('signals')
-        .select('id, title, normalized_text, is_test, created_at, event_date')
+        .select('id, title, normalized_text, is_test, created_at, event_date'))
         .gt('created_at', lastSeenSignalAt.current)
         .eq('is_test', false)
         .order('created_at', { ascending: false })
@@ -120,9 +121,9 @@ export const useRealtimeNotifications = () => {
         }
       }
 
-      let incidentsQuery = supabase
+      let incidentsQuery = excludeDeletedIncidents(supabase
         .from('incidents')
-        .select('id, priority, opened_at')
+        .select('id, priority, opened_at'))
         .gt('opened_at', lastSeenIncidentAt.current)
         .order('opened_at', { ascending: false })
         .limit(3);

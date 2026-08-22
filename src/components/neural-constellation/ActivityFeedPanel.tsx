@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Activity, Radio, Cpu, AlertTriangle, GripHorizontal } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
 import { DraggablePanel } from "./DraggablePanel";
 import type { SignalBurstEvent, MessageBurstEvent } from "@/hooks/useConstellationData";
@@ -56,12 +57,10 @@ export function ActivityFeedPanel({ latestSignal, latestMessage, recentScans = [
         .eq("status", "active");
       const activeIds = (activeClientRows || []).map((r: any) => r.id);
       if (activeIds.length === 0) return [];
-      const { data, error } = await supabase
+      const { data, error } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("*")
+        .select("*"))
         .in("client_id", activeIds)
-        .is("deleted_at", null)          // hide soft-deleted (feed surface)
-        .eq("quality_status", "active")  // hide quarantined (Quarantine Doctrine)
         .neq("is_test", true)
         // 2026-05-08: hide synthetic [PATTERN] frequency-spike signals
         // from the operator-facing feed. They're aggregates produced by

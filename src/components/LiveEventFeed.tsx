@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Shield, Activity, Zap, Link as LinkIcon, History } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
 import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
@@ -143,11 +144,9 @@ export const LiveEventFeed = () => {
       feedWindow.setDate(feedWindow.getDate() - 30); // Fetch up to 30 days of signals
       const feedWindowISO = feedWindow.toISOString();
 
-      let query = supabase
+      let query = excludeDeletedSignals(supabase
         .from('signals')
-        .select('*')
-        .is('deleted_at', null)          // hide soft-deleted (client-facing feed)
-        .eq('quality_status', 'active')  // hide quarantined (Quarantine Doctrine)
+        .select('*'))
         .neq('status', 'false_positive')
         .gte('created_at', feedWindowISO) // Only signals ingested in last 30 days
         .order('received_at', { ascending: false })

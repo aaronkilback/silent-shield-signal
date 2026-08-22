@@ -50,11 +50,13 @@ export default function AutonomousSystemStatus() {
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
       // Build query with optional client filter
+      // @soft-delete-exempt: operator diagnostic surface (Quarantine Doctrine operator-only list)
       let signalsQuery = supabase
         .from('signals')
         .select('id, status, created_at', { count: 'exact' })
         .gte('created_at', thirtyDaysAgo.toISOString());
-      
+
+      // @soft-delete-exempt: operator diagnostic surface (Quarantine Doctrine operator-only list)
       let incidentsQuery = supabase
         .from('incidents')
         .select('id, status, priority, created_at', { count: 'exact' })

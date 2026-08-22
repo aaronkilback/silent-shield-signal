@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import {
   Collapsible,
   CollapsibleContent,
@@ -83,9 +84,9 @@ export const FortifiedPosture = ({
           .select("average_response_time_seconds, metric_date")
           .order("metric_date", { ascending: false })
           .limit(2),
-        supabase
+        excludeDeletedIncidents(supabase
           .from("incidents")
-          .select("title, summary, opened_at, resolved_at")
+          .select("title, summary, opened_at, resolved_at"))
           .not("resolved_at", "is", null)
           .gte("resolved_at", yesterdayDate)
           .order("resolved_at", { ascending: false })
@@ -116,9 +117,9 @@ export const FortifiedPosture = ({
         });
       } else {
         // Fallback: calculate from resolved incidents
-        const fallbackRes = await supabase
+        const fallbackRes = await excludeDeletedIncidents(supabase
           .from("incidents")
-          .select("opened_at, resolved_at")
+          .select("opened_at, resolved_at"))
           .not("resolved_at", "is", null)
           .order("resolved_at", { ascending: false })
           .limit(10);

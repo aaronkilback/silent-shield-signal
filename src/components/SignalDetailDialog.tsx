@@ -18,6 +18,7 @@ import { SignalScoreExplainer } from "@/components/SignalScoreExplainer";
 import { useImplicitFeedback } from "@/hooks/useImplicitFeedback";
 import { CreateIncidentFromSignalDialog } from "@/components/signals/CreateIncidentFromSignalDialog";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { SignalManualOverride } from "@/components/signals/SignalManualOverride";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -122,9 +123,9 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
       // Check for linked incident
       try {
         // Direct link via signal_id
-        const { data: directIncident } = await supabase
+        const { data: directIncident } = await excludeDeletedIncidents(supabase
           .from('incidents')
-          .select('id, status, title, priority, created_at')
+          .select('id, status, title, priority, created_at'))
           .eq('signal_id', signal.id)
           .maybeSingle();
 
@@ -161,9 +162,9 @@ export const SignalDetailDialog = ({ signal, open, onOpenChange, onSignalUpdated
         if (group) {
           setCorrelationData(group);
 
-          const { data: signals } = await supabase
+          const { data: signals } = await excludeDeletedSignals(supabase
             .from('signals')
-            .select('id, normalized_text, category, severity, confidence, created_at, sources(name)')
+            .select('id, normalized_text, category, severity, confidence, created_at, sources(name)'))
             .eq('correlation_group_id', signal.correlation_group_id)
             .neq('id', signal.id)
             .order('created_at', { ascending: false });

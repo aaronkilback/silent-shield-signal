@@ -20,6 +20,7 @@ import { SignalDetailSheet } from "@/components/signals/SignalDetailSheet";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import {
   useAgentCommLinks, useActiveDebates, useScanPulses, useScanCount, useDebateCount, useAgentActivityMetrics, useRecentEscalations,
   useKnowledgeGraphEdges, useOperatorDevices, useOperatorMessageActivity, useKnowledgeGrowthData,
@@ -307,9 +308,9 @@ const NeuralConstellation = () => {
   const { data: neutralizedCount = 0 } = useQuery({
     queryKey: ["neutralized-signals-count"],
     queryFn: async () => {
-      const { count, error } = await supabase
+      const { count, error } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("id", { count: "exact", head: true })
+        .select("id", { count: "exact", head: true }))
         .in("status", ["false_positive", "resolved"]);
       if (error) throw error;
       return count || 0;
@@ -320,9 +321,9 @@ const NeuralConstellation = () => {
   const { data: signalLocations = [] } = useQuery({
     queryKey: ["signal-locations-for-globe"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("location")
+        .select("location"))
         .not("location", "is", null)
         .neq("location", "")
         .order("created_at", { ascending: false })

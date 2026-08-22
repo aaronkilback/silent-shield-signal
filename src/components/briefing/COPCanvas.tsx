@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
-import { excludeMergedEntities } from "@/lib/soft-delete-filters";
+import { excludeMergedEntities, excludeDeletedSignals } from "@/lib/soft-delete-filters";
 
 interface COPCanvasProps {
   workspaceId: string;
@@ -129,9 +129,9 @@ export function COPCanvas({ workspaceId, briefingId }: COPCanvasProps) {
     queryFn: async () => {
       // Get counts from various tables
       const [signalsRes, entitiesRes, evidenceRes, tasksRes] = await Promise.all([
-        supabase
+        excludeDeletedSignals(supabase
           .from('signals')
-          .select('id', { count: 'exact', head: true }),
+          .select('id', { count: 'exact', head: true })),
         excludeMergedEntities(supabase
           .from('entities')
           .select('id', { count: 'exact', head: true })),

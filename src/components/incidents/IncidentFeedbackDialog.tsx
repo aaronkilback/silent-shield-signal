@@ -7,6 +7,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import { excludeDeletedIncidents } from '@/lib/soft-delete-filters';
 import { useToast } from '@/hooks/use-toast';
 import { MessageSquare, ThumbsUp, ThumbsDown, Lightbulb, Target, Loader2 } from 'lucide-react';
 
@@ -67,9 +68,9 @@ export function IncidentFeedbackDialog({
         );
       } else {
         // Get incident details for response time calculation
-        const { data: incident } = await supabase
+        const { data: incident } = await excludeDeletedIncidents(supabase
           .from('incidents')
-          .select('opened_at, resolved_at')
+          .select('opened_at, resolved_at'))
           .eq('id', incidentId)
           .single();
 

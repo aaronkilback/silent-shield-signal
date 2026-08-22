@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,12 +17,10 @@ export const EntityUnifiedProfile = ({ entityId, entityName }: EntityUnifiedProf
   const { data: signals } = useQuery({
     queryKey: ['entity-signals', entityId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await excludeDeletedSignals(supabase
         .from('signals')
-        .select('*')
+        .select('*'))
         .contains('auto_correlated_entities', [entityId])
-        .is('deleted_at', null)          // hide soft-deleted (entity-facing surface)
-        .eq('quality_status', 'active')  // hide quarantined (Quarantine Doctrine)
         .order('created_at', { ascending: false })
         .limit(20);
       

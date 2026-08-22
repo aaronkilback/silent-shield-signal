@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Clock, Target, TrendingDown, TrendingUp, AlertTriangle, Activity } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { formatMinutesToDHM } from "@/lib/timeUtils";
 import { useQuery } from "@tanstack/react-query";
@@ -72,16 +73,16 @@ export const MetricsPanel = () => {
       const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const previous24Hours = new Date(now.getTime() - 48 * 60 * 60 * 1000);
 
-      const { data: recentIncidents } = await supabase
+      const { data: recentIncidents } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("opened_at, acknowledged_at, resolved_at")
+        .select("opened_at, acknowledged_at, resolved_at"))
         .eq("client_id", selectedClientId)
         .gte("opened_at", last24Hours.toISOString())
         .not("acknowledged_at", "is", null);
 
-      const { data: previousIncidents } = await supabase
+      const { data: previousIncidents } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("opened_at, acknowledged_at, resolved_at")
+        .select("opened_at, acknowledged_at, resolved_at"))
         .eq("client_id", selectedClientId)
         .gte("opened_at", previous24Hours.toISOString())
         .lt("opened_at", last24Hours.toISOString())
@@ -116,16 +117,16 @@ export const MetricsPanel = () => {
       const currentMTTR = calculateMTTR(recentIncidents || []);
       const previousMTTR = calculateMTTR(previousIncidents || []);
 
-      const { count: activeTripwires } = await supabase
+      const { count: activeTripwires } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("*", { count: "exact", head: true })
+        .select("*", { count: "exact", head: true }))
         .eq("client_id", selectedClientId)
         .in("status", ["open", "acknowledged"]);
 
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      const { count: eventsLastHour } = await supabase
+      const { count: eventsLastHour } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("*", { count: "exact", head: true })
+        .select("*", { count: "exact", head: true }))
         .eq("client_id", selectedClientId)
         .gte("received_at", oneHourAgo.toISOString());
 

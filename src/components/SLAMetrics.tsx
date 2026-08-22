@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { Clock, Target } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { formatMinutesToDHM, formatMinutesToDHMFull } from "@/lib/timeUtils";
@@ -31,9 +32,9 @@ export const SLAMetrics = () => {
   const fetchSLAMetrics = async () => {
     if (!selectedClientId) return;
 
-    const { data: incidents } = await supabase
+    const { data: incidents } = await excludeDeletedIncidents(supabase
       .from("incidents")
-      .select("opened_at, acknowledged_at, resolved_at")
+      .select("opened_at, acknowledged_at, resolved_at"))
       .eq("client_id", selectedClientId)
       .not("acknowledged_at", "is", null);
 

@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Timer, Zap, TrendingDown, Activity, Clock, ArrowDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -31,9 +32,9 @@ export function SpeedMetricsPanel({ clientId, compact = false }: SpeedMetricsPan
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
       // Get signals with their timestamps (using received_at as source timestamp proxy)
-      let signalsQuery = supabase
+      let signalsQuery = excludeDeletedSignals(supabase
         .from('signals')
-        .select('created_at, received_at, status')
+        .select('created_at, received_at, status'))
         .gte('created_at', thirtyDaysAgo.toISOString())
         .order('created_at', { ascending: false })
         .limit(500);
@@ -45,9 +46,9 @@ export function SpeedMetricsPanel({ clientId, compact = false }: SpeedMetricsPan
       const { data: signals } = await signalsQuery;
 
       // Get incident escalation data
-      let incidentsQuery = supabase
+      let incidentsQuery = excludeDeletedIncidents(supabase
         .from('incidents')
-        .select('created_at, opened_at, acknowledged_at')
+        .select('created_at, opened_at, acknowledged_at'))
         .gte('created_at', thirtyDaysAgo.toISOString());
 
       if (clientId) {

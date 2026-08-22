@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { Badge } from "@/components/ui/badge";
 import { Activity } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
@@ -42,11 +43,10 @@ export function ThreatStatusBar() {
     queryKey: ["status-bar-incidents", selectedClientId],
     queryFn: async () => {
       if (!selectedClientId) return 0;
-      const { count } = await supabase
+      const { count } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("*", { count: "exact", head: true })
+        .select("*", { count: "exact", head: true }))
         .eq("status", "open")
-        .is("deleted_at", null)
         .eq("client_id", selectedClientId);
       return count ?? 0;
     },

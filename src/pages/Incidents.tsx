@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { isIncidentActive, isTerminalIncidentStatus } from "@/lib/incident-status";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserRole } from "@/hooks/useUserRole";
@@ -77,10 +78,9 @@ const Incidents = () => {
     const loadIncidents = async () => {
       try {
         setLoading(true);
-        let query = supabase
+        let query = excludeDeletedIncidents(supabase
           .from("incidents")
-          .select("*, clients(name)")
-          .is("deleted_at", null) // Filter out soft-deleted incidents
+          .select("*, clients(name)"))
           .neq("is_test", true) // Hide synthetic QA-test incidents from operators
           .order("opened_at", { ascending: false });
 
@@ -225,9 +225,9 @@ const Incidents = () => {
       // Get signal details if exists
       let signalDetails = '';
       if (incident.signal_id) {
-        const { data: signal } = await supabase
+        const { data: signal } = await excludeDeletedSignals(supabase
           .from('signals')
-          .select('normalized_text, category, severity, location')
+          .select('normalized_text, category, severity, location'))
           .eq('id', incident.signal_id)
           .single();
         

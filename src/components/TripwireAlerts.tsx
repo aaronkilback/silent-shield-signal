@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
@@ -61,9 +62,9 @@ export const TripwireAlerts = () => {
 
     const loadIncidents = async () => {
       try {
-        let query = supabase
+        let query = excludeDeletedIncidents(supabase
           .from("incidents")
-          .select("*, clients(name)")
+          .select("*, clients(name)"))
           .in("status", ["open", "acknowledged"])
           .order("opened_at", { ascending: false })
           .limit(5);

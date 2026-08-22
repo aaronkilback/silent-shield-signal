@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,10 +36,9 @@ export function IncidentScopeGate({
   const { data: incidents = [], isLoading: incidentsLoading } = useQuery({
     queryKey: ['briefing-incidents'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await excludeDeletedIncidents(supabase
         .from('incidents')
-        .select('id, title, summary, priority, status, opened_at, clients(name)')
-        .is('deleted_at', null)
+        .select('id, title, summary, priority, status, opened_at, clients(name)'))
         .in('status', ['open', 'acknowledged', 'contained'])
         .order('opened_at', { ascending: false })
         .limit(50);

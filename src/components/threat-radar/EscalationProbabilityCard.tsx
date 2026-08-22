@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { AlertTriangle, TrendingUp, Clock, Target, ArrowUpRight, Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { cn } from "@/lib/utils";
 
 interface EscalationProbabilityCardProps {
@@ -35,9 +36,9 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
       // Get recent signals with severity data
-      let signalsQuery = supabase
+      let signalsQuery = excludeDeletedSignals(supabase
         .from('signals')
-        .select('severity, severity_score, confidence, signal_type, created_at, status')
+        .select('severity, severity_score, confidence, signal_type, created_at, status'))
         .gte('created_at', sevenDaysAgo.toISOString())
         .order('created_at', { ascending: false })
         .limit(200);
@@ -49,12 +50,11 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
       const { data: signals } = await signalsQuery;
 
       // Get recent incidents to understand escalation patterns
-      let incidentsQuery = supabase
+      let incidentsQuery = excludeDeletedIncidents(supabase
         .from('incidents')
-        .select('severity_level, status, created_at')
+        .select('severity_level, status, created_at'))
         .gte('created_at', sevenDaysAgo.toISOString())
-        .eq('status', 'open')
-        .is('deleted_at', null);
+        .eq('status', 'open');
 
       if (clientId) {
         incidentsQuery = incidentsQuery.eq('client_id', clientId);

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -65,9 +66,9 @@ export function BriefingHub({ workspaceId, briefingId, incidentId, investigation
   useEffect(() => {
     if (incidentId) {
       // Fetch incident title
-      supabase
+      excludeDeletedIncidents(supabase
         .from('incidents')
-        .select('title, summary')
+        .select('title, summary'))
         .eq('id', incidentId)
         .single()
         .then(({ data }) => {

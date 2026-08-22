@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useClientSelection } from "@/hooks/useClientSelection";
-import { excludeMergedEntities } from "@/lib/soft-delete-filters";
+import { excludeMergedEntities, excludeDeletedSignals, excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -168,9 +168,9 @@ export function useGodsEyeData(enabled: boolean) {
 
       // 2. Recent signals
       const signalCutoff = new Date(Date.now() - 7 * 24 * 3600000).toISOString();
-      const { data: signals } = await supabase
+      const { data: signals } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("id, title, location, severity, rule_category, received_at, normalized_text")
+        .select("id, title, location, severity, rule_category, received_at, normalized_text"))
         .not("location", "is", null)
         .gt("relevance_score", 0.35)
         .gte("received_at", signalCutoff)
@@ -190,9 +190,9 @@ export function useGodsEyeData(enabled: boolean) {
       });
 
       // 3. Incidents
-      const { data: incidents } = await supabase
+      const { data: incidents } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("id, status, priority, opened_at, signal_id")
+        .select("id, status, priority, opened_at, signal_id"))
         .gte("opened_at", signalCutoff)
         .order("opened_at", { ascending: false })
         .limit(50);
@@ -200,9 +200,9 @@ export function useGodsEyeData(enabled: boolean) {
       if (incidents?.length) {
         const signalIds = incidents.map(i => i.signal_id).filter(Boolean) as string[];
         if (signalIds.length > 0) {
-          const { data: incidentSignals } = await supabase
+          const { data: incidentSignals } = await excludeDeletedSignals(supabase
             .from("signals")
-            .select("id, title, location, normalized_text")
+            .select("id, title, location, normalized_text"))
             .in("id", signalIds);
 
           incidents.forEach(inc => {

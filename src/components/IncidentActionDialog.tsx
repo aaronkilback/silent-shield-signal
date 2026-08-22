@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { applyAnalystSignalFilter } from "@/lib/signal-query-filters";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Swords, Target } from "lucide-react";
@@ -76,9 +77,9 @@ export const IncidentActionDialog = ({
     if (!incident.id) return;
     
     try {
-      const { data, error } = await supabase
+      const { data, error } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("*, clients(name)")
+        .select("*, clients(name)"))
         .eq("id", incident.id)
         .single();
 

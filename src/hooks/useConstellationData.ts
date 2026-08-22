@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
 import { useTenant } from "@/hooks/useTenant";
 import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
-import { excludeMergedEntities } from "@/lib/soft-delete-filters";
+import { excludeMergedEntities, excludeDeletedSignals } from "@/lib/soft-delete-filters";
 
 export const ACTIVITY_METRICS_VERSION = "2.0.0-absolute-thresholds"; // f08c87c
 
@@ -726,9 +726,9 @@ export function useRecentEscalations(enabled: boolean) {
     refetchInterval: 30_000,
     queryFn: async (): Promise<Map<string, number>> => {
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      const { data, error } = await supabase
+      const { data, error } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("severity, composite_confidence, incident_id, raw_json")
+        .select("severity, composite_confidence, incident_id, raw_json"))
         .gte("created_at", oneHourAgo)
         .eq("is_test", false)
         .or("severity.eq.critical,composite_confidence.gte.0.85,incident_id.not.is.null")
@@ -1382,13 +1382,12 @@ export function useOpenLoops(enabled: boolean) {
       // Limit to last 7 days so we don't drag in archival.
       const cutoff = new Date(Date.now() - 7 * 86400_000).toISOString();
       const stuckThreshold = new Date(Date.now() - 60 * 60_000).toISOString();
-      const { data } = await supabase
+      const { data } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("id, composite_confidence, created_at, raw_json")
+        .select("id, composite_confidence, created_at, raw_json"))
         .gte("composite_confidence", 0.60)
         .gte("created_at", cutoff)
         .lt("created_at", stuckThreshold)
-        .is("deleted_at", null)
         .neq("is_test", true)
         .limit(500);
 
@@ -1650,13 +1649,12 @@ export function useGateHealth() {
     refetchInterval: 5 * 60_000,
     queryFn: async (): Promise<GateHealth> => {
       const since = new Date(Date.now() - 24 * 86400_000 / 24).toISOString();
-      const { data } = await supabase
+      const { data } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("composite_confidence")
+        .select("composite_confidence"))
         .gte("created_at", since)
         .not("composite_confidence", "is", null)
         .neq("is_test", true)
-        .is("deleted_at", null)
         .limit(2000);
 
       const values = (data || [])

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { PageLayout } from "@/components/PageLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -151,9 +152,9 @@ export default function TaskForce() {
         setAgents(agentMap);
       }
 
-      let query = supabase
+      let query = excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("*, clients(name)")
+        .select("*, clients(name)"))
         .order("opened_at", { ascending: false });
 
       query = query.eq("client_id", selectedClientId);

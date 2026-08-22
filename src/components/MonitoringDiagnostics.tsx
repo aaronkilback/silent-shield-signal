@@ -105,16 +105,19 @@ export function MonitoringDiagnostics() {
       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
+      // @soft-delete-exempt: operator diagnostic surface (Quarantine Doctrine operator-only list)
       const { count: last24h } = await supabase
         .from("signals")
         .select("*", { count: "exact", head: true })
         .gte("created_at", oneDayAgo.toISOString());
 
+      // @soft-delete-exempt: operator diagnostic surface (Quarantine Doctrine operator-only list)
       const { count: last7d } = await supabase
         .from("signals")
         .select("*", { count: "exact", head: true })
         .gte("created_at", sevenDaysAgo.toISOString());
 
+      // @soft-delete-exempt: operator diagnostic surface (Quarantine Doctrine operator-only list)
       const { count: total } = await supabase
         .from("signals")
         .select("*", { count: "exact", head: true });

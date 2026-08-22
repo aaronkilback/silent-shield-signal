@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Shield, AlertCircle, Activity, CheckCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals } from "@/lib/soft-delete-filters";
 import { useClientSelection } from "@/hooks/useClientSelection";
 
 interface Signal {
@@ -69,12 +70,10 @@ export const RiskSnapshot = () => {
     if (!selectedClientId) return;
 
     setLoading(true);
-    const { data, error } = await supabase
+    const { data, error } = await excludeDeletedSignals(supabase
       .from('signals')
-      .select('id, normalized_text, severity, category, location, confidence, entity_tags, received_at')
+      .select('id, normalized_text, severity, category, location, confidence, entity_tags, received_at'))
       .eq('client_id', selectedClientId)
-      .is('deleted_at', null)          // hide soft-deleted (client-facing surface)
-      .eq('quality_status', 'active')  // hide quarantined (Quarantine Doctrine)
       .gte('received_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
       .order('received_at', { ascending: false });
 

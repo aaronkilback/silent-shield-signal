@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals, excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import { useAuth } from "@/hooks/useAuth";
 import { 
   ArrowLeft, 
@@ -135,12 +136,10 @@ const ClientDetail = () => {
       // Fetch related signals — MUST hide soft-deleted + quarantined rows (Quarantine Doctrine; this is a
       // client-facing surface). Without these, a soft-deleted/quarantined signal renders to the client
       // (e.g. the internal "VIP Deep Scan initiated" audit record kept showing after soft-delete).
-      const { data: signalsData, error: signalsError } = await supabase
+      const { data: signalsData, error: signalsError } = await excludeDeletedSignals(supabase
         .from("signals")
-        .select("*")
+        .select("*"))
         .eq("client_id", id)
-        .is("deleted_at", null)
-        .eq("quality_status", "active")
         .order("received_at", { ascending: false })
         .limit(10);
 
@@ -148,9 +147,9 @@ const ClientDetail = () => {
       setSignals(signalsData || []);
 
       // Fetch related incidents
-      const { data: incidentsData, error: incidentsError } = await supabase
+      const { data: incidentsData, error: incidentsError } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("*")
+        .select("*"))
         .eq("client_id", id)
         .order("opened_at", { ascending: false })
         .limit(10);

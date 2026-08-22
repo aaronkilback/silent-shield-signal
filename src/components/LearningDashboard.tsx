@@ -19,12 +19,14 @@ export default function LearningDashboard() {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
+      // @soft-delete-exempt: operator diagnostic surface (Quarantine Doctrine operator-only list)
       const { data: signalsData } = await supabase
         .from('signals')
         .select('id, status, created_at')
         .eq('client_id', selectedClientId)
         .gte('created_at', thirtyDaysAgo.toISOString());
 
+      // @soft-delete-exempt: operator diagnostic surface (Quarantine Doctrine operator-only list)
       const { data: incidentsData } = await supabase
         .from('incidents')
         .select('id, priority, status, created_at')
