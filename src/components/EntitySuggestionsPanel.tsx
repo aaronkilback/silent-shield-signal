@@ -173,6 +173,9 @@ export const EntitySuggestionsPanel = () => {
       let clientId: string | null = null;
 
       if (suggestion.source_type === 'signal' && suggestion.source_id) {
+        // @soft-delete-exempt: PROVENANCE derivation — reads the source signal's client_id to attribute the
+        // entity being created. Filtering would null the attribution when the source is quarantined/deleted →
+        // an OWNERLESS entity (Provenance Doctrine violation). Attribution outlives the row's visibility.
         const { data: signal } = await supabase
           .from('signals')
           .select('client_id')

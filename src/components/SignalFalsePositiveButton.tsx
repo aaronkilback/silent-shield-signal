@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { excludeDeletedIncidents } from "@/lib/soft-delete-filters";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,9 +57,9 @@ export const SignalFalsePositiveButton = ({
       });
 
       // Find and handle associated incident
-      const { data: incidents, error: incidentFetchError } = await supabase
+      const { data: incidents, error: incidentFetchError } = await excludeDeletedIncidents(supabase
         .from("incidents")
-        .select("id, status, opened_at")
+        .select("id, status, opened_at"))
         .eq("signal_id", signalId);
 
       if (incidentFetchError) throw incidentFetchError;

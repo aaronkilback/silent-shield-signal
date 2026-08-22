@@ -18,6 +18,9 @@
  *     tombstone id (exemption without the follow makes it worse, not better).
  *   - "have I seen this content_hash before?" (ingest/dedup): a quarantined signal HAS been seen; filtering
  *     would let deliberately-quarantined content return on the next ingest. Exempt.
+ * A read that DERIVES OWNERSHIP / PROVENANCE (reads a row's client_id/tenant to attribute a NEW record) is
+ *   EXEMPT — the attribution outlives the row's visibility. A quarantine/soft-delete is about DISPLAY, not
+ *   ownership; filtering would null the attribution and create an OWNERLESS record (Provenance Doctrine).
  * A read that SHOWS rows to a human is FILTERED (call the helper). Existence is not display.
  * A read that GATES A WRITE / side-effecting invoke (ownership check before update/report/summarize) is
  *   FILTERED and REFUSES WITH A REASON — never redirects. A read may resolve to the survivor (reading the
