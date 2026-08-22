@@ -10,6 +10,16 @@
  *
  * Paths are used ONLY to LABEL a violation client-facing-vs-other in the report (a reporting lens), never
  * to decide exemption. `--list` prints the client-facing worklist.
+ *
+ * ── THE RULE for an ambiguous read (ratified 2026-08-21) ──────────────────────────────────────────────
+ * A read that ASKS "does this already exist?" is EXEMPT — deleted and merged rows are part of the answer.
+ *   - "does an entity with this name exist?" (create/dedup): filtering would MISS a merged-away record and
+ *     create a duplicate. Exempt — AND it must follow merged_into to the live survivor, never return the
+ *     tombstone id (exemption without the follow makes it worse, not better).
+ *   - "have I seen this content_hash before?" (ingest/dedup): a quarantined signal HAS been seen; filtering
+ *     would let deliberately-quarantined content return on the next ingest. Exempt.
+ * A read that SHOWS rows to a human is FILTERED (call the helper). Existence is not display.
+ * When exempting, the @soft-delete-exempt reason must say which of these it is.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

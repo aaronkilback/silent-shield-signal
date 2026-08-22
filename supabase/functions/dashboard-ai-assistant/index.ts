@@ -11,6 +11,7 @@ import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL
 import { compareExposureItems } from "../_shared/subject-retrieval.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
 import { startTrace } from "../_shared/flight-recorder.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents, excludeMergedEntities, excludeSupersededExposure } from "../_shared/soft-delete-filters.ts";
 import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
 import { FORTRESS_PLATFORM_OVERVIEW, FORTRESS_AEGIS_CAPABILITIES, FORTRESS_WORKFLOW_INSTRUCTIONS, AEGIS_TOOL_SUMMARIZER_PROMPT, AEGIS_REPORT_PRESENTER_PROMPT, AEGIS_AGENT_CREATION_PROMPT, AEGIS_DATA_PRESENTER_PROMPT } from "../_shared/fortress-operational-prompt.ts";
 import { FORTRESS_CORE_DIRECTIVE } from "../_shared/fortress-core-directive.ts";
@@ -303,14 +304,14 @@ async function resolveSubjectEntity(sb: any, args: { entity_id?: string; entity_
 
   if (entity_id) {
     if (UUID_RE.test(entity_id)) {
-      const { data } = await sb.from("entities").select("id, name, client_id, created_at").eq("id", entity_id).maybeSingle();
+      const { data } = await excludeMergedEntities(sb.from("entities").select("id, name, client_id, created_at")).eq("id", entity_id).maybeSingle();
       return data ? { kind: "resolved", entity: data } : { kind: "not_found", label: entity_id };
     }
     // PREFIX-tolerant (e.g. a model echoing the 8-char display form). uuid columns can't LIKE via PostgREST,
     // so scan person entities and prefix-match in JS. >1 hit → disambiguate (no arbitrary prefix pick).
     const prefix = entity_id.toLowerCase().replace(/[^0-9a-f]/g, "");
     if (prefix.length >= 4) {
-      const { data: cand } = await sb.from("entities").select("id, name, client_id, created_at").eq("type", "person").limit(5000);
+      const { data: cand } = await excludeMergedEntities(sb.from("entities").select("id, name, client_id, created_at")).eq("type", "person").limit(5000);
       const hits = (cand || []).filter((e: any) => String(e.id).toLowerCase().startsWith(prefix));
       if (hits.length === 0) return { kind: "not_found", label: entity_id };
       if (hits.length === 1) return { kind: "resolved", entity: hits[0] };
@@ -320,7 +321,7 @@ async function resolveSubjectEntity(sb: any, args: { entity_id?: string; entity_
   }
 
   if (!entity_name) return { kind: "not_found", label: "(no entity given)" };
-  const { data: matches } = await sb.from("entities").select("id, name, client_id, created_at").ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
+  const { data: matches } = await excludeMergedEntities(sb.from("entities").select("id, name, client_id, created_at")).ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
   const list = matches || [];
   if (list.length === 0) return { kind: "not_found", label: entity_name };
   if (list.length === 1) return { kind: "resolved", entity: list[0] };
@@ -781,7 +782,10 @@ async function executeTool(
       const { signal_ids, action, keep_signal_id } = args;
 
       if (!signal_ids || signal_ids.length < 2) {
-        // Dry-run scan mode: find potential duplicates from DB
+        // Dry-run scan mode: find potential duplicates from DB.
+        // @soft-delete-exempt: EXISTENCE check — "have I seen this content_hash before?" — a quarantined or
+        // deleted signal HAS been seen. Filtering to active-only would let deliberately-quarantined content
+        // return on the next ingest. Existence reads are exempt; display reads are filtered.
         const { data: dupScan } = await supabaseClient
           .from("signals").eq("tenant_id", tenantId).select("content_hash, id, title, created_at")
           .not("content_hash", "is", null).order("created_at", { ascending: false }).limit(500);
@@ -2523,19 +2527,31 @@ Be thorough and include every piece of visible text and data.`,
       assertTenantContext("create_entity", tenantId);
       const { name, type, description, aliases } = args;
       
-      // Check if entity already exists
+      // Check if entity already exists.
+      // @soft-delete-exempt: EXISTENCE check — "does this name already exist?" — must SEE merged/deleted rows,
+      // because they are part of the answer. Filtering here would find nothing when a merged-away record holds
+      // the name and create a duplicate (the exact defect the entity-dedup merge undid). Rule: existence reads
+      // are exempt; display reads are filtered (existence is not display).
       const { data: existing } = await supabaseClient
         .from("entities")
-        .select("id, name")
+        .select("id, name, merged_into")
         .ilike("name", name)
         .limit(1)
         .maybeSingle();
-      
+
       if (existing) {
+        // Follow merged_into to the LIVE survivor — never point the caller at a merged-away (dead) record,
+        // or exemption alone would make this worse: it would report a tombstone id as "the existing entity".
+        let live: { id: string; name: string } = existing;
+        if (existing.merged_into) {
+          const { data: survivor } = await supabaseClient
+            .from("entities").select("id, name").eq("id", existing.merged_into).maybeSingle();
+          if (survivor) live = survivor;
+        }
         return {
           success: false,
-          message: `Entity "${existing.name}" already exists with ID: ${existing.id}`,
-          entity_id: existing.id
+          message: `Entity "${live.name}" already exists with ID: ${live.id}`,
+          entity_id: live.id
         };
       }
 
