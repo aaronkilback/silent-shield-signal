@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { excludeDeletedSignals, excludeDeletedIncidents, excludeMergedEntities } from "@/lib/soft-delete-filters";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -83,9 +84,9 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
   const { data: entities = [] } = useQuery({
     queryKey: ['entities-for-bulletin'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await excludeMergedEntities(supabase
         .from('entities')
-        .select('id, name, type, description, threat_score, risk_level, current_location, address_city, address_province')
+        .select('id, name, type, description, threat_score, risk_level, current_location, address_city, address_province'))
         .eq('is_active', true)
         .order('name');
       if (error) throw error;
@@ -96,9 +97,9 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
   const { data: incidents = [] } = useQuery({
     queryKey: ['incidents-for-bulletin'],
     queryFn: async () => {
-      let q = supabase
+      let q = excludeDeletedIncidents(supabase
         .from('incidents')
-        .select('id, title, priority, status, opened_at')
+        .select('id, title, priority, status, opened_at'))
         .in('status', ['open', 'investigating'])
         .order('opened_at', { ascending: false })
         .limit(30);
@@ -112,9 +113,9 @@ export const SecurityBulletinGenerator = ({ preselectedEntityId }: SecurityBulle
   const { data: recentSignals = [] } = useQuery({
     queryKey: ['signals-for-bulletin', selectedClientId],
     queryFn: async () => {
-      let q = supabase
+      let q = excludeDeletedSignals(supabase
         .from('signals')
-        .select('id, normalized_text, severity, category, created_at, source_url, title')
+        .select('id, normalized_text, severity, category, created_at, source_url, title'))
         .neq('is_test', true)
         .or('signal_type.neq.pattern,signal_type.is.null')
         .order('created_at', { ascending: false })
