@@ -15,7 +15,30 @@ is that `callAiGatewayJson` does NOT throw on failure (returns `{data:null}`), s
 
 ---
 
-## Item 1 (FIRST) — multi-model-consensus: fabricated consensus_score 1.0
+## Item 0 (AHEAD OF BOTH FAIL-CLOSED ITEMS) — persist gate provenance, joined to outcome
+
+**Rationale:** Proof 1 (below) showed the ingest relevance gate leaves NO trace on an admitted signal —
+score, provider, model, and reason are all discarded, so a defaulted/degraded admit is
+indistinguishable from a genuine one and per-provider behavior is unmeasurable (Proof 2 could only
+build a crude window proxy). Every fail-closed fix in this WO is un-auditable until the decision is
+persisted. This item lands FIRST so Items 1–2 can be verified and any future outage re-scanned.
+
+**Scope:** on EVERY gate/consensus evaluation — both ADMIT and REJECT — persist, joined to the outcome
+row (signal / filtered_signals / agent_debate_records):
+- `gate_score` (the LLM score, distinct from the deterministic `scoreSignalRelevance` value)
+- `gate_provider` (`openai` | `gemini` | …) and `gate_model` (the model that actually served it —
+  read from `result.raw.model`, NOT the requested model, so a 429→Gemini fallback is visible)
+- `gate_reason` (the one-sentence justification) and `gate_outcome` (`admit` | `reject` | `default_admit` | `unavailable`)
+- `gate_evaluated_at`
+Store on the admitted `signals` row (new columns or `raw_json.relevance_gate`), on `filtered_signals`
+(already has score/reason — add provider/model/outcome), and on `agent_debate_records` (already has
+`individual_analyses` — add provider/model per participant). This satisfies the no-unauditable-gates
+doctrine and makes per-provider admission rate a direct query instead of a proxy.
+
+**Acceptance:** after this ships, "which provider served this admit, and was it a default?" is answerable
+by SELECT on a single row — no telemetry-time correlation, no fingerprint guessing.
+
+## Item 1 (FIRST fail-closed) — multi-model-consensus: fabricated consensus_score 1.0
 
 `supabase/functions/multi-model-consensus/index.ts`. On total model failure, `parseToolCallResult(null)`
 returns `{assessment:'unknown', confidence:0.5}` for BOTH models →
@@ -48,27 +71,32 @@ signals keep their existing bypass.
 
 ---
 
-## Item 3 — fallback needs its own threshold + this outage window needs re-scan (Proof 2)
+## Item 3 — fallback needs its own threshold + this outage window needs re-scan
 
-The Gemini fallback silently inherits the OpenAI gate's threshold. Aggregate admit-rate proxy over the
-outage window vs a comparable prior baseline (provider is only recorded on the gate *call*, never joined to
-the admit/reject outcome — so this is a window proxy, not a per-call join):
+**PRIMARY EVIDENCE — prompt-rule violations (deterministic, not statistical).** During the Gemini-served
+window the relevance gate ADMITTED three signals its own system prompt explicitly says to score 0.0
+("Sports leagues, tryouts, tournaments, recreational activities" / "local lifestyle news with no
+client/asset/threat nexus"):
 
-| Window | Provider (dominant) | Admits | Gate-rejects | Admit rate |
-|---|---|---|---|---|
-| Baseline 2026-08-14 16:55→08-15 14:00 | OpenAI | 4 | 34 | **10.5%** |
-| Outage   2026-08-21 16:55→08-22 14:00 | Gemini | 6 | 4  | **60%** |
+- **SIG-2026-032549** BC Place — "Vancouver Whitecaps player criticizes BC Place turf" — a sports story; **prompt-rule VIOLATION** (should be 0.0).
+- **SIG-2026-032551** BC Place — "Report Indicates Vancouver Whitecaps May Operate BC Place" — asset business news, no security nexus; **prompt-rule VIOLATION**.
+- **SIG-2026-032552** BC Place — "[PATTERN] Geographic cluster: 2 signals near BC Place" — a derived pattern built ON the two Whitecaps items (bypasses the gate), so the junk propagated into an `active_threat`-category signal.
 
-Material divergence in the direction of concern (Gemini ~6× more permissive), though small/confounded
-samples (different content windows). Per operator ruling, this trips **"diverge materially → re-scan, not
-sign-off."** All 6 outage-window admits (cheap to re-scan now OpenAI is restored):
+These are categorical rule violations, not close calls — the gate admitted content it is explicitly told to
+reject. **That is the finding.**
 
-- SIG-2026-032548 Petronas — pipeline release near Pouce Coupe (LEGIT, high)
-- SIG-2026-032549 BC Place — "Whitecaps player criticizes BC Place turf" (QUESTIONABLE — gate prompt excludes sports/recreational at 0.0)
-- SIG-2026-032550 Petronas — "Imperial Oil shuts Norman Wells NWT" (QUESTIONABLE — wrong company/region)
-- SIG-2026-032551 BC Place — "Whitecaps may operate BC Place" (BORDERLINE — asset business news, no security nexus)
-- SIG-2026-032552 BC Place — [PATTERN] geo cluster derived from the two Whitecaps items (bypasses gate)
-- SIG-2026-032553 Petronas — BCWS fire G51735 0.003 ha (wildfire proximity path, separate)
+**CONTEXT ONLY (statistical, weak — do not lead with this):** aggregate admit-rate proxy — baseline/OpenAI
+**10.5% (n=38)** vs outage/Gemini **60% (n=10)**. Directionally consistent with a more-permissive fallback,
+but **small samples (n=10 vs n=38), across different content windows, provider not joined to outcome** —
+treat as a hint, not a measurement (Item 0 makes it measurable). It does not carry the case; the three
+prompt-rule violations do.
+
+**IMPACT SCOPE (INC check, 2026-08-22):** none of the 6 reached a client — 0 incidents, 0
+reports/alerts/audio/webhook/SMS, the only daily briefing is operator-only (`ak@`), and BC Place has **zero
+client-side users**. Operator-facing only → quality WO item, **not an INC**.
+
+The other 3 admits (context): SIG-032548 Petronas pipeline release (LEGIT, high), SIG-032550 Imperial Oil
+Norman Wells NWT (questionable — wrong company/region), SIG-032553 BCWS fire (separate wildfire proximity path).
 
 **Action:** re-run the relevance gate on these 6 (now on OpenAI); demote/quarantine any that fail. Then
 give the Gemini fallback its own (stricter) admit threshold, or record the serving provider on the outcome
@@ -119,5 +147,7 @@ in the whole window). Item 2's fix must therefore also ADD a persisted marker on
 admit/quarantine so future outages ARE auditable.
 
 ## Sequencing
-Item 1 (multi-model-consensus) → Item 3 backfill query → Item 2 (ingest-signal) → Item 3 fallback threshold
-+ provider-on-outcome telemetry. Do NOT fold into the leak-sweep session (operator ruling 2026-08-22).
+**Item 0 (persist gate provenance, joined to outcome) FIRST** — everything below is un-auditable without it →
+Item 1 (multi-model-consensus fail-closed) → Item 1 backfill query → Item 2 (ingest-signal fail-closed) →
+Item 3 (fallback threshold; provider-on-outcome telemetry, largely delivered by Item 0) → re-scan the 6
+outage-window admits. Do NOT fold into the leak-sweep session (operator ruling 2026-08-22).
