@@ -1,1157 +1,1162 @@
 [
   {
     "function": "academy-build-training",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "academy-followup",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "academy-intake",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "academy-score",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "accept-invite",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "accept-operator-invite",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "accept-tenant-invitation",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "activate-dormant-specialists",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "adaptive-confidence-adjuster",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "aegis-monitor",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "aegis-stt",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "aegis-tts",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "agent-activity-scanner",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "agent-chat",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "agent-knowledge-seeker",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "agent-mesh-dispatcher",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "agent-router",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "agent-self-learning",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "aggregate-global-learnings",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "aggregate-implicit-feedback",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ai-decision-engine",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ai-tools-query",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "alert-delivery",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "alert-delivery-secure",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "alert-operator-bridge",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "analyze-image-content",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "analyze-threat-escalation",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "api-v1-security",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "apply-feedback-to-agent",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "arcgis-test-connection",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "archive-completed-itineraries",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "assess-entity",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "audit-knowledge-freshness",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "auth-email-hook",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "auto-enrich-entities",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "auto-orchestrator",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "auto-summarize-incident",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "auto-trigger-debates",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "autonomous-operations-loop",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "autonomous-source-discovery",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "autonomous-source-health-manager",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "autonomous-threat-scan",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "backfill-analysis-embeddings",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "backfill-signal-media",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "briefing-feedback",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "calculate-anticipation-index",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "calibration-updater",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "check-incident-escalation",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "cleanup-duplicate-signals",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "compute-signal-baselines",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "configure-entity-monitoring",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "correlate-entities",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "correlate-signals",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "create-agent",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "create-archival-record",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "create-invite",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "create-tenant",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "create-workspace",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "cross-reference-entities",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "cyber-sentinel",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "dashboard-ai-assistant",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "data-quality-monitor",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "decay-beliefs-from-calibration",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "detect-duplicates",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "detect-near-duplicate-signals",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "detect-signal-sequences",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "detect-threat-patterns",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "digital-twin-simulator",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "enrich-entity",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "entity-deep-scan",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "execute-approved-action",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "execute-signal-merge",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "extract-conversation-memory",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "extract-predicted-events",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "extract-signal-insights",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "fetch-url-content",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "flight-auto-scan",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "flight-lookup",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "fortress-chaos-monkey",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "fortress-document-converter",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "fortress-loop-closer",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "fortress-qa-agent",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "fuse-geospatial-intelligence",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "gemini-voice-conversation",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-academy-course",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-briefing-audio",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-daily-briefing",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-embeddings",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-executive-report",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-learning-context",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-lesson-video",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-playbook",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-poi-report",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-posture-content",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-report",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-report-visuals",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-security-bulletin",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "generate-wildfire-daily-report",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "get-login-summary",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "get-site-context",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "get-user-tenants",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "guardian-check",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "heygen-webhook",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "identify-precursor-indicators",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "incident-agent-orchestrator",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ingest-communication",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ingest-email-intel",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ingest-expert-media",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ingest-signal",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ingest-world-geography",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "ingest-world-knowledge",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "intelligence-engine",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "investigate-poi",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "investigation-autopilot",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "job-worker",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "knowledge-synthesizer",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "list-communications",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "manage-incident-ticket",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "merge-duplicate-entities",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-canadian-sources",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-cisa-kev",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-community-outreach",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-court-registry",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-csis",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-darkweb",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-domains",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-earthquakes",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-emergency-google",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-entity-proximity",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-facebook",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-github",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-instagram",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-journey-checkins",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-linkedin",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-macro-indicators",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-naad-alerts",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-news",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-news-google",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-pastebin",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-regional-apac",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-regulatory-changes",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-rss-sources",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-social",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-social-unified",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-threat-intel",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-travel-risks",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-twitter",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-weather",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-wildfire-comprehensive",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "monitor-wildfires",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "multi-agent-debate",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "multi-model-consensus",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "oauth-token",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "openai-realtime-token",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "optimize-rule-thresholds",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "osint-collector",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "osint-entity-scan",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "osint-web-search",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "parse-document",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "parse-entities-document",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "parse-travel-itinerary",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "perform-external-web-search",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "perform-impact-analysis",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "persist-report",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "prediction-tracker",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "predictive-forecast",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "predictive-incident-scorer",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "proactive-intelligence-push",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-archival-documents",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-documents-batch",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-feedback",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-geospatial-map",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-intelligence-document",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-pending-documents",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-security-report",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "process-stored-document",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "propagate-knowledge-edges",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "propose-new-monitoring-keywords",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "propose-signal-merge",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "query-expert-knowledge",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "query-fortress-data",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "query-internal-context",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "query-legal-database",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "realtime-telemetry",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "red-team-review",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "resolve-agent-predictions",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "retry-dead-letters",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "review-signal-agent",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "run-benchmark",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "scan-entity-photos",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "scheduled-report-delivery",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "score-agent-calibration",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "score-signal-anomaly",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "self-improvement-orchestrator",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "semantic-embed-knowledge",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "send-daily-briefing",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "send-mfa-code",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "send-notification-email",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "send-sms",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "send-workspace-invitation",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "signal-processor",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "simulate-fire-spread",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "snapshot-bcws-ratings",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "source-credibility-updater",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "support-chat",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "sweep-expert-knowledge",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "sync-buzzsprout",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "synthesize-entity-narratives",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "system-health-check",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "system-ops",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "system-watchdog",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "tech-radar-scanner",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "test-osint-source-connectivity",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "thread-weaver",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "threat-cluster-detector",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "threat-radar-analysis",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "travel-record-mutate",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "update-osint-source-config",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "verify-mfa-code",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "view-sra-report",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "vip-osint-discovery",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "visibility-gap-scanner",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "vision-analysis",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "voice-tool-executor",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "voice-tool-executor-v2",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "webhook-dispatcher",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "wildfire-portal-chat",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "wildfire-portal-log",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "wraith-breach-check",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "wraith-security-advisor",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
   },
   {
     "function": "wraith-snapshot-codebase",
-    "reason": "LEGACY-UNREVIEWED — pending WO item 4 triage",
+    "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
+  },
+  {
+    "function": "inbound-call-notify",
+    "reason": "Twilio status-callback receiver; auth = X-Twilio-Signature HMAC (not a Supabase JWT); no data-plane access; fires one operator SMS per terminal inbound call.",
+    "added": "2026-08-22"
   }
 ]

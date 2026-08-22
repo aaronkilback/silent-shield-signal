@@ -568,6 +568,9 @@ verify_jwt = false
 [functions.send-sms]
 verify_jwt = false
 
+[functions.inbound-call-notify]
+verify_jwt = false
+
 [functions.list-communications]
 verify_jwt = false
 
