@@ -76,10 +76,20 @@ Deno.serve(async (req: Request) => {
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      if (!to_number || !message) {
+      if (!message) {
         return new Response(
-          JSON.stringify({ error: "operator_alert requires: to_number, message" }),
+          JSON.stringify({ error: "operator_alert requires: message" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      // Target is ALWAYS the configured operator number (env secret) — never a body-supplied
+      // to_number. This means operator-alert can only ever reach the operator, and the caller
+      // (and this codebase) never needs to know the number.
+      const oaConfigured = Deno.env.get("AARON_ALERT_NUMBER");
+      if (!oaConfigured) {
+        return new Response(
+          JSON.stringify({ error: "AARON_ALERT_NUMBER not configured" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       const oaSid = Deno.env.get("TWILIO_ACCOUNT_SID");
@@ -91,7 +101,7 @@ Deno.serve(async (req: Request) => {
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      const oaTo = normalizePhone(to_number);
+      const oaTo = normalizePhone(oaConfigured);
       const oaResp = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${oaSid}/Messages.json`, {
         method: "POST",
         headers: {
