@@ -1,10 +1,14 @@
 # WO-AEGIS-PWA-STALE — retire the stale aegis. PWA (BLOCKED at Step 1)
 
 **Opened:** 2026-08-22
-**Status:** OPEN — **retire BLOCKED at Step 1** (primary app is not an installable PWA). Do NOT remove the
-custom domain / CNAME or archive the repo until unblocked.
-**Ruling (operator, 2026-08-22):** RETIRE `aegis.silentshieldsecurity.com` — single user (operator only),
-no client base, no loss. Not remediate.
+**Status:** **ACCEPTED INTERIM** — aegis stays **LIVE** until the primary app is an installable PWA. Retire
+is **contingent on the primary app gaining manifest + service worker + icons, NOT on time.** Do NOT remove
+the custom domain / CNAME or archive the repo — aegis is a **live dependency** until the primary app can
+replace it.
+**Ruling (operator, 2026-08-22):** RETIRE eventually (single user = operator only, no client base, no loss),
+but **keep aegis live in the interim** (ruling (a)). aegis (`aegis.silentshieldsecurity.com`) remains the
+**only installable client**; it is **authenticated** (all routes behind `<ProtectedRoute>`; `aegis-chat`
+verify_jwt=true + 503 stub) with **no anonymous input path**, **single operator user**, no client base.
 
 ## What aegis. is
 `aegis.silentshieldsecurity.com` (CNAME → `slow-and-steady-love.pages.dev`) serves a **complete, standalone
@@ -22,7 +26,7 @@ endpoint is `verify_jwt=true` + a 503 stub. It **is a real installable PWA** (Vi
 4. Archive the `slow-and-steady-love` repo. Do NOT delete the Pages project this session.
 5. Close this WO as **retired** (not remediated), reasoning recorded.
 
-## BLOCKER (Step 1, 2026-08-22)
+## Step 1 finding — why aegis stays live (2026-08-22)
 **The primary client app (`fortress.silentshieldsecurity.com` / repo `silent-shield-signal`) is NOT an
 installable PWA.** Evidence:
 - Repo: no `vite-plugin-pwa`/`VitePWA`, no `<link rel="manifest">` in `index.html`, no `public/manifest*` or icons.
@@ -32,10 +36,8 @@ installable PWA.** Evidence:
 
 → Retiring aegis now removes the operator's **only installable mobile app**. Step 1's gate correctly caught this.
 
-## Prerequisite before the retire sequence may resume
-Either **(a)** add PWA support to the primary app (`silent-shield-signal`): VitePWA manifest + service worker
-+ `icon-192/512`, deploy to `fortress.silentshieldsecurity.com`, and the operator installs + confirms on
-their phone; **or (b)** the operator explicitly accepts losing the installable mobile app and proceeds to
-retire aegis without a PWA replacement.
-
-**Awaiting operator ruling on (a) vs (b) before Steps 2–5.**
+## Retire trigger condition (ruling (a), 2026-08-22)
+Retire proceeds ONLY after the primary app becomes an installable PWA **and** the operator installs +
+confirms it on their phone. That work is tracked in **WO-PRIMARY-APP-PWA** (primary-app repo
+`silent-shield-signal`). Until that WO is DONE (verified install), aegis stays live and Steps 2–5 above
+stay parked. **Retire is contingent on that deliverable, not on elapsed time.**
