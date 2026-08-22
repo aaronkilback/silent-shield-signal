@@ -60,7 +60,60 @@ Deno.serve(async (req: Request) => {
       to_number,
       message,
       contact_name,
+      operator_alert,
     } = body;
+
+    // ── Operator-alert mode (WO-AEGIS-QUALIFIER Step 2) ─────────────────────────────────────
+    // ADDITIVE + GATED. Sends a bare operator alert (to_number + message) with NO investigation_id
+    // and NO investigation logging (investigation_entries / investigation_communications). Reachable
+    // ONLY when operator_alert === true AND the caller is service_role — the qualifier handoff runs
+    // server-side with the service-role JWT. The flag alone is NOT a gate (the anon key is public, so
+    // flag-only would be an open SMS endpoint = toll-fraud/spam). No investigation code path is touched.
+    if (operator_alert === true) {
+      if (claimsData.claims.role !== "service_role") {
+        return new Response(
+          JSON.stringify({ error: "operator_alert requires a service_role caller" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (!to_number || !message) {
+        return new Response(
+          JSON.stringify({ error: "operator_alert requires: to_number, message" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const oaSid = Deno.env.get("TWILIO_ACCOUNT_SID");
+      const oaToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+      const oaFrom = Deno.env.get("TWILIO_FROM_NUMBER");
+      if (!oaSid || !oaToken || !oaFrom) {
+        return new Response(
+          JSON.stringify({ error: "Twilio credentials not configured" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const oaTo = normalizePhone(to_number);
+      const oaResp = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${oaSid}/Messages.json`, {
+        method: "POST",
+        headers: {
+          "Authorization": "Basic " + btoa(`${oaSid}:${oaToken}`),
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ To: oaTo, From: oaFrom, Body: message }).toString(),
+      });
+      const oaResult = await oaResp.json();
+      if (!oaResp.ok) {
+        console.error("[SendSMS operator_alert] Twilio error:", oaResult);
+        return new Response(
+          JSON.stringify({ error: "Failed to send operator alert", details: oaResult.message }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      console.log(`[SendSMS operator_alert] sent to ${oaTo} (no investigation logging)`);
+      return new Response(
+        JSON.stringify({ success: true, mode: "operator_alert", message_sid: oaResult.sid }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     if (!investigation_id || !to_number || !message) {
       return new Response(
