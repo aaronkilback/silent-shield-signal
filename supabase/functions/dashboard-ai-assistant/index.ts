@@ -287,7 +287,7 @@ function orderSubjectMatches(list: any[]): any[] {
 async function buildSubjectOptions(sb: any, list: any[]): Promise<any[]> {
   const ordered = orderSubjectMatches(list);
   return Promise.all(ordered.map(async (e: any, i: number) => {
-    const { count } = await sb.from("subject_exposure_items").select("id", { count: "exact", head: true }).eq("subject_entity_id", e.id).is("superseded_at", null);
+    const { count } = await excludeSupersededExposure(sb.from("subject_exposure_items").select("id", { count: "exact", head: true })).eq("subject_entity_id", e.id).is("superseded_at", null);
     const { data: c } = e.client_id ? await sb.from("clients").select("name").eq("id", e.client_id).maybeSingle() : { data: null };
     return { option: i + 1, entity_id: e.id, name: e.name, client: c?.name ?? null, created: String(e.created_at ?? "").slice(0, 10), current_items: count ?? 0 };
   }));
@@ -898,9 +898,9 @@ async function executeTool(
       cutoffDate.setDate(cutoffDate.getDate() - daysBack);
 
       // P0 Phase-C — restrict signal-quality analysis to caller's tenant
-      const { data: recentSignals, error: signalsError } = await supabaseClient
+      const { data: recentSignals, error: signalsError } = await excludeDeletedSignals(supabaseClient
         .from("signals")
-        .select("id, title, confidence, status, severity, created_at, source_id")
+        .select("id, title, confidence, status, severity, created_at, source_id"))
         .eq("tenant_id", tenantId)
         .gte("created_at", cutoffDate.toISOString())
         .order("created_at", { ascending: false });
@@ -2544,6 +2544,8 @@ Be thorough and include every piece of visible text and data.`,
         // or exemption alone would make this worse: it would report a tombstone id as "the existing entity".
         let live: { id: string; name: string } = existing;
         if (existing.merged_into) {
+          // @soft-delete-exempt: resolves the merged_into survivor by exact id (live by definition); part of
+          // the existence-check follow above, not a display read.
           const { data: survivor } = await supabaseClient
             .from("entities").select("id, name").eq("id", existing.merged_into).maybeSingle();
           if (survivor) live = survivor;
@@ -2650,9 +2652,9 @@ Be thorough and include every piece of visible text and data.`,
       // Filter by entity if provided
       else if (args.entity_id) {
         // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct check)
-        const { data: ridEntLink } = await supabaseClient
+        const { data: ridEntLink } = await excludeMergedEntities(supabaseClient
           .from("entities")
-          .select("id")
+          .select("id"))
           .eq("id", args.entity_id)
           .eq("tenant_id", tenantId)
           .limit(1)
@@ -2661,9 +2663,9 @@ Be thorough and include every piece of visible text and data.`,
           return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. read_intelligence_documents refused.` };
         }
         // First, get the entity name for text search fallback
-        const { data: entity } = await supabaseClient
+        const { data: entity } = await excludeMergedEntities(supabaseClient
           .from("entities")
-          .select("name, aliases")
+          .select("name, aliases"))
           .eq("id", args.entity_id)
           .single();
 
@@ -2773,6 +2775,7 @@ Be thorough and include every piece of visible text and data.`,
 
       if (!args.signal_id) {
         // Batch mode: find recent signals sharing the same content_hash
+        // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
         const { data: dupeGroups, error: dupeErr } = await supabaseClient
           .from("signals").eq("tenant_id", tenantId)
           .select("content_hash, id, title, created_at, client_id, clients(name)")
@@ -2796,6 +2799,7 @@ Be thorough and include every piece of visible text and data.`,
       }
 
       // Get the target signal
+      // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
       const { data: signal, error: signalError } = await supabaseClient
         .from("signals").eq("tenant_id", tenantId)
         .select("id, normalized_text, title, description, content_hash, created_at")
@@ -2810,6 +2814,7 @@ Be thorough and include every piece of visible text and data.`,
       }
 
       // Check for exact hash matches first
+      // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
       const { data: hashMatches } = await supabaseClient
         .from("signals").eq("tenant_id", tenantId)
         .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
@@ -2819,6 +2824,7 @@ Be thorough and include every piece of visible text and data.`,
         .limit(limit);
 
       // Check for near-duplicates via similarity
+      // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
       const { data: recentSignals } = await supabaseClient
         .from("signals").eq("tenant_id", tenantId)
         .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
@@ -3338,9 +3344,9 @@ Be thorough and include every piece of visible text and data.`,
       const cutoffDate = new Date(Date.now() - days_back * 24 * 60 * 60 * 1000).toISOString();
 
       // Build signal query
-      let signalQuery = supabaseClient
+      let signalQuery = excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity, confidence, created_at")
+        .select("id, source_id, category, severity, confidence, created_at"))
         .gte("created_at", cutoffDate)
         .order("created_at", { ascending: false });
 
@@ -3442,9 +3448,9 @@ Be thorough and include every piece of visible text and data.`,
       const { rule_type = "all", pattern_source, confidence_threshold = 0.8 } = args;
 
       // Get recent signal patterns
-      const { data: signals } = await supabaseClient
+      const { data: signals } = await excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity")
+        .select("id, source_id, category, severity"))
         .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
         .limit(1000);
 
@@ -3647,9 +3653,9 @@ Be thorough and include every piece of visible text and data.`,
       const cutoffDate = new Date(Date.now() - time_window_days * 24 * 60 * 60 * 1000).toISOString();
 
       // Get signals across all clients
-      let query = supabaseClient
+      let query = excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, client_id, source_id, category, severity, normalized_text, created_at, clients(name)")
+        .select("id, client_id, source_id, category, severity, normalized_text, created_at, clients(name)"))
         .gte("created_at", cutoffDate)
         .order("created_at", { ascending: false });
 
@@ -3756,16 +3762,16 @@ Be thorough and include every piece of visible text and data.`,
       const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // Last 24h
 
       // Get baseline signals
-      const { data: baselineSignals } = await supabaseClient
+      const { data: baselineSignals } = await excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity, created_at")
+        .select("id, source_id, category, severity, created_at"))
         .gte("created_at", baselineCutoff)
         .lt("created_at", recentCutoff);
 
       // Get recent signals
-      const { data: recentSignals } = await supabaseClient
+      const { data: recentSignals } = await excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity, created_at")
+        .select("id, source_id, category, severity, created_at"))
         .gte("created_at", recentCutoff);
 
       const anomalies: any[] = [];
@@ -4883,8 +4889,8 @@ Deno.serve(async (req) => {
       // Fetch signal context if signal_id provided
       let signalData: any = null;
       if (signal_id) {
-        const { data: sig } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-          .select("id, title, category, severity, description, entity_tags")
+        const { data: sig } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+          .select("id, title, category, severity, description, entity_tags"))
           .eq("id", signal_id).maybeSingle();
         signalData = sig;
       }
@@ -4942,6 +4948,7 @@ Deno.serve(async (req) => {
       
       if (!primary_signal_id || !duplicate_signal_ids?.length) {
         // Return merge candidates from recent duplicate hash groups
+        // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
         const { data: dupScan } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
           .select("content_hash, id, title, created_at, client_id")
           .not("content_hash", "is", null).order("created_at", { ascending: false }).limit(500);
@@ -5182,8 +5189,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
       // Proceed even if client record is not found — still analyze signals by client_id
 
       const since = new Date(Date.now() - lookback_days * 86400000).toISOString();
-      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-        .select("raw_json, category, severity, entity_tags")
+      const { data: signals } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+        .select("raw_json, category, severity, entity_tags"))
         .eq("client_id", client_id).gte("received_at", since).limit(500);
 
       const kwCounts: Record<string, number> = {};
@@ -5296,8 +5303,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       // Analyze last 90 days of incident history to identify real failure patterns
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
-      const { data: incidents } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-        .select("id, title, status, priority, severity_level, opened_at, resolved_at, client_id, clients(name, industry)")
+      const { data: incidents } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+        .select("id, title, status, priority, severity_level, opened_at, resolved_at, client_id, clients(name, industry)"))
         .gte("opened_at", ninetyDaysAgo)
         .order("opened_at", { ascending: false }).limit(500);
 
@@ -5372,15 +5379,15 @@ The signal is now in the database with status 'triaged' and rules have been appl
       const { incident_id, format = "executive" } = args;
 
       if (!incident_id) {
-        const { data: openInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, title, status, priority, severity_level, opened_at, clients(name)")
+        const { data: openInc } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, title, status, priority, severity_level, opened_at, clients(name)"))
           .in("status", ["open", "investigating", "escalated"])
           .order("opened_at", { ascending: false }).limit(10);
         return { success: true, note: "incident_id required — showing open incidents to choose from", incidents: openInc || [], count: openInc?.length || 0 };
       }
 
-      const { data: incident, error: incErr } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-        .select("*, clients(name, industry)").eq("id", incident_id).maybeSingle();
+      const { data: incident, error: incErr } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+        .select("*, clients(name, industry)")).eq("id", incident_id).maybeSingle();
       if (incErr || !incident) return { error: "Incident not found", incident_id };
 
       const { data: relatedSignals } = await excludeTestAndDeleted(supabaseClient.from("signals").eq("tenant_id", tenantId)
@@ -5460,8 +5467,8 @@ ${(relatedSignals || []).map((s: any) => `- [${(s.severity || "").toUpperCase()}
       let incidentContext = "";
       let incidentData: any = null;
       if (incident_id) {
-        const { data } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("*, clients(name, industry, locations)").eq("id", incident_id).maybeSingle();
+        const { data } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("*, clients(name, industry, locations)")).eq("id", incident_id).maybeSingle();
         incidentData = data;
         if (incidentData) {
           incidentContext = `Incident: ${incidentData.title || "Untitled"}\nStatus: ${incidentData.status} | Priority: ${incidentData.priority} | Severity: ${incidentData.severity_level}\nClient: ${(incidentData.clients as any)?.name} | Industry: ${(incidentData.clients as any)?.industry}`;
@@ -5542,8 +5549,8 @@ Return a JSON object (no markdown, only valid JSON):
 
       // If recording specific effectiveness data for an incident
       if (incident_id && mitigation_actions && outcome) {
-        const { data: incident } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, title, priority, severity_level, opened_at, resolved_at, status, clients(name)")
+        const { data: incident } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, title, priority, severity_level, opened_at, resolved_at, status, clients(name)"))
           .eq("id", incident_id).maybeSingle();
         const resTimeHours = incident?.opened_at && incident?.resolved_at
           ? Math.round((new Date(incident.resolved_at).getTime() - new Date(incident.opened_at).getTime()) / 3600000)
@@ -5561,12 +5568,12 @@ Return a JSON object (no markdown, only valid JSON):
       // Analytics mode: real incident resolution metrics over last 90 days
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
       const [resolvedResult, openResult] = await Promise.all([
-        supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, title, priority, severity_level, opened_at, resolved_at, client_id, clients(name)")
+        excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, title, priority, severity_level, opened_at, resolved_at, client_id, clients(name)"))
           .not("resolved_at", "is", null).gte("resolved_at", ninetyDaysAgo)
           .order("resolved_at", { ascending: false }).limit(200),
-        supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, priority, severity_level, opened_at")
+        excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, priority, severity_level, opened_at"))
           .in("status", ["open", "investigating", "escalated"]).gte("opened_at", ninetyDaysAgo).limit(200),
       ]);
 
@@ -6379,7 +6386,7 @@ Return a JSON object (no markdown, only valid JSON):
       if (query_type === 'signals' || query_type === 'comprehensive') {
         // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from AEGIS
         // reasoning context. See src/lib/signal-query-filters.ts.
-        let signalsQ = supabaseClient.from('signals').eq("tenant_id", tenantId).select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json').neq('is_test', true).eq('quality_status', 'active');
+        let signalsQ = excludeDeletedSignals(supabaseClient.from('signals').eq("tenant_id", tenantId).select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json')).neq('is_test', true).eq('quality_status', 'active');
         signalsQ = applyFilters(signalsQ);
         if (filters.severity?.length) signalsQ = signalsQ.in('severity', filters.severity);
         if (filters.status?.length) signalsQ = signalsQ.in('status', filters.status);
@@ -6396,7 +6403,7 @@ Return a JSON object (no markdown, only valid JSON):
         // 2026-08-13 (Q2 ruling): exclude test + soft-deleted incidents from user-facing answers.
         // Aligns with the signals fetch (`.neq('is_test', true)`); a deleted demo incident had been
         // surfaced as a real "incident in the past year".
-        let incQ = supabaseClient.from('incidents').eq("tenant_id", tenantId).select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary')
+        let incQ = excludeDeletedIncidents(supabaseClient.from('incidents').eq("tenant_id", tenantId).select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary'))
           .neq('is_test', true).is('deleted_at', null);
         incQ = applyFilters(incQ);
         if (filters.priority?.length) incQ = incQ.in('priority', filters.priority);
@@ -6407,7 +6414,7 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query entities — tenant-scoped via client_id IN tenant's clients
       if (query_type === 'entities' || query_type === 'comprehensive') {
-        let entQ = supabaseClient.from('entities').select('id, name, type, description, risk_level, threat_score, current_location, aliases');
+        let entQ = excludeMergedEntities(supabaseClient.from('entities').select('id, name, type, description, risk_level, threat_score, current_location, aliases'));
         if (filters.client_id) {
           entQ = entQ.eq('client_id', filters.client_id);
         } else if (scopedClientIds.length === 0) {
@@ -7291,9 +7298,9 @@ Return a JSON object (no markdown, only valid JSON):
         try {
           const cutoff = new Date();
           cutoff.setDate(cutoff.getDate() - 30);
-          const { data: signalRows, error: signalRowsError } = await supabaseClient
+          const { data: signalRows, error: signalRowsError } = await excludeDeletedSignals(supabaseClient
             .from("signals").eq("tenant_id", tenantId)
-            .select("id, title, severity, status, signal_type, created_at, classification, normalized_text")
+            .select("id, title, severity, status, signal_type, created_at, classification, normalized_text"))
             .is("deleted_at", null)
             .or("signal_type.is.null,signal_type.not.in.(historical,test)")
             .gte("created_at", cutoff.toISOString())
@@ -7386,8 +7393,8 @@ Return a JSON object (no markdown, only valid JSON):
       const ent = rez.entity;
       const targetEntityId = ent.id;
 
-      const { data: items } = await supabaseClient.from("subject_exposure_items")
-        .select("id, category, title, severity, is_finding, source_class, subject_awareness")
+      const { data: items } = await excludeSupersededExposure(supabaseClient.from("subject_exposure_items")
+        .select("id, category, title, severity, is_finding, source_class, subject_awareness"))
         .eq("subject_entity_id", targetEntityId).is("superseded_at", null);
       const current = items || [];
       // location aggregates (count + best/most-prominent rank) for consequence ranking
@@ -7682,8 +7689,8 @@ Return a JSON object (no markdown, only valid JSON):
 
       if (entity_id) {
         // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct check)
-        const { data: entity } = await supabaseClient.from("entities")
-          .select("id, name, type, description, risk_level, threat_score, created_at, tenant_id")
+        const { data: entity } = await excludeMergedEntities(supabaseClient.from("entities")
+          .select("id, name, type, description, risk_level, threat_score, created_at, tenant_id"))
           .eq("id", entity_id)
           .eq("tenant_id", tenantId)
           .maybeSingle();
@@ -7703,15 +7710,15 @@ Return a JSON object (no markdown, only valid JSON):
       }
 
       // Batch: list entities with missing descriptions in caller's tenant
-      const { data: entities } = await supabaseClient.from("entities")
-        .select("id, name, type, description, risk_level, threat_score")
+      const { data: entities } = await excludeMergedEntities(supabaseClient.from("entities")
+        .select("id, name, type, description, risk_level, threat_score"))
         .eq("tenant_id", tenantId)
         .or("description.is.null,description.eq.")
         .order("threat_score", { ascending: false, nullsFirst: false })
         .limit(limit);
 
-      const { count: totalEntities } = await supabaseClient.from("entities")
-        .select("id", { count: "exact", head: true })
+      const { count: totalEntities } = await excludeMergedEntities(supabaseClient.from("entities")
+        .select("id", { count: "exact", head: true }))
         .eq("tenant_id", tenantId);
 
       return {
@@ -7732,8 +7739,8 @@ Return a JSON object (no markdown, only valid JSON):
       const { signal_id, batch_mode, limit = 10 } = args;
 
       if (signal_id) {
-        const { data: signal } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-          .select("id, title, description, severity, category, entity_tags, location, received_at, source_id, confidence, quality_score, raw_json")
+        const { data: signal } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+          .select("id, title, description, severity, category, entity_tags, location, received_at, source_id, confidence, quality_score, raw_json"))
           .eq("id", signal_id).maybeSingle();
         if (!signal) return { error: `Signal not found: ${signal_id}` };
         return {
@@ -7755,8 +7762,8 @@ Return a JSON object (no markdown, only valid JSON):
       }
 
       // Batch: aggregate insights from recent signals
-      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-        .select("id, title, severity, category, entity_tags, location, received_at, confidence, quality_score, raw_json")
+      const { data: signals } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+        .select("id, title, severity, category, entity_tags, location, received_at, confidence, quality_score, raw_json"))
         .not("is_test", "eq", true).order("received_at", { ascending: false }).limit(limit * 5);
 
       if (!signals?.length) return { success: true, insights: [], message: "No signals found for analysis" };
@@ -8150,10 +8157,10 @@ Return a JSON object (no markdown, only valid JSON):
       // P0 Phase-C — entity lookup is tenant-scoped via entities.tenant_id direct
       let entity = null;
       if (entity_id) {
-        const { data } = await supabaseClient.from("entities").select("*").eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
+        const { data } = await excludeMergedEntities(supabaseClient.from("entities").select("*")).eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
         entity = data;
       } else if (entity_name) {
-        const { data } = await supabaseClient.from("entities").select("*").eq("tenant_id", tenantId).ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
+        const { data } = await excludeMergedEntities(supabaseClient.from("entities").select("*")).eq("tenant_id", tenantId).ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
         entity = data;
       }
       if (!entity) return { error: `TENANT_BOUNDARY: principal entity not found in tenant ${tenantName}.` };
@@ -8191,16 +8198,16 @@ Return a JSON object (no markdown, only valid JSON):
 
       let resolvedEntityId = entity_id;
       if (!resolvedEntityId && entity_name) {
-        const { data: ent } = await supabaseClient.from("entities")
-          .select("id, name").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
+        const { data: ent } = await excludeMergedEntities(supabaseClient.from("entities")
+          .select("id, name")).ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
         resolvedEntityId = ent?.id;
         if (!resolvedEntityId) return { error: `Entity not found: ${entity_name}` };
       }
       if (!resolvedEntityId) return { error: "entity_id or entity_name is required" };
 
       // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
-      const { data: entity } = await supabaseClient.from("entities")
-        .select("id, name, type, risk_level, threat_score, tenant_id")
+      const { data: entity } = await excludeMergedEntities(supabaseClient.from("entities")
+        .select("id, name, type, risk_level, threat_score, tenant_id"))
         .eq("id", resolvedEntityId)
         .eq("tenant_id", tenantId)
         .maybeSingle();
@@ -8575,9 +8582,9 @@ Return a JSON object (no markdown, only valid JSON):
               const mediaSince = new Date();
               mediaSince.setDate(mediaSince.getDate() - (period_days || 7));
 
-              const { data: clientSignals } = await serviceClient
+              const { data: clientSignals } = await excludeDeletedSignals(serviceClient
                 .from("signals").eq("tenant_id", tenantId)
-                .select("id")
+                .select("id"))
                 .eq("client_id", client_id)
                 .gte("received_at", mediaSince.toISOString())
                 .limit(50);
@@ -8772,9 +8779,9 @@ Return a JSON object (no markdown, only valid JSON):
             // 1. Fetch OSINT media attachments linked to signals for this client
             let signalIds: string[] = [];
             if (client_id) {
-              const { data: clientSignals } = await serviceClient
+              const { data: clientSignals } = await excludeDeletedSignals(serviceClient
                 .from("signals").eq("tenant_id", tenantId)
-                .select("id")
+                .select("id"))
                 .eq("client_id", client_id)
                 .gte("received_at", mediaSince.toISOString())
                 .limit(100);
@@ -9030,8 +9037,8 @@ Return a JSON object (no markdown, only valid JSON):
         const errText = await orchestratorResponse.text();
         // Fallback: list recent incidents that could be investigated
         if (!incident_id) {
-          const { data: recentInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-            .select("id, title, status, priority, opened_at, client_id, clients(name)")
+          const { data: recentInc } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+            .select("id, title, status, priority, opened_at, client_id, clients(name)"))
             .in("status", ["open", "investigating"]).order("opened_at", { ascending: false }).limit(5);
           return {
             success: true,
@@ -9091,8 +9098,8 @@ Return a JSON object (no markdown, only valid JSON):
         const errText = await debateResponse.text();
         // Fallback: list open incidents for debate context
         if (!incident_id) {
-          const { data: debateInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-            .select("id, title, status, priority, opened_at, client_id, clients(name)")
+          const { data: debateInc } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+            .select("id, title, status, priority, opened_at, client_id, clients(name)"))
             .in("status", ["open", "investigating", "escalated"]).order("opened_at", { ascending: false }).limit(5);
           return {
             success: true,
@@ -9653,15 +9660,15 @@ Return a JSON object (no markdown, only valid JSON):
           .from("ai_agents")
           .select("id, call_sign, codename, specialty, mission_scope, input_sources, output_types, system_prompt")
           .eq("is_active", true),
-        supabaseClient.from("signals").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
-        supabaseClient.from("incidents").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
+        excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId).select("*", { count: "exact", head: true })),
+        excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId).select("*", { count: "exact", head: true })),
         // R3 (Task #108) — tenant-scope the entity count so the self-assessment
         // surfaces the caller-tenant's entity total, not the cross-tenant
         // global. Mirrors the signals/incidents predicate already in place.
         // Empirical: pre-fix returned 2966 (global) to a CRT user whose scope
         // is 62 entities — a visibly-wrong confident number presented to the
         // operator alongside correctly-scoped signals/incidents counts.
-        supabaseClient.from("entities").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
+        excludeMergedEntities(supabaseClient.from("entities").eq("tenant_id", tenantId).select("*", { count: "exact", head: true })),
       ]);
 
       if (agentsErr2 || !activeAgents2?.length) {

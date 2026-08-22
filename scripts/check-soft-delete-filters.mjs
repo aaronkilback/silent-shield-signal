@@ -59,7 +59,9 @@ for (const file of ROOTS.flatMap((r) => walk(r))) {
     const table = m[1];
     // Skip writes: an insert/update/delete/upsert within 2 lines of .from is a write, not a read.
     if (writeRe.test(lines[i]) || writeRe.test(lines[i + 1] || "") || writeRe.test(lines[i + 2] || "")) continue;
-    const win = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 18)).join("\n");
+    // Backward window of 6 lines so a multi-line `@soft-delete-exempt: <reason>` comment above the read is
+    // still detected (the reason often needs 2-4 lines). Forward window covers the statement body.
+    const win = lines.slice(Math.max(0, i - 6), Math.min(lines.length, i + 18)).join("\n");
     if (!/\.select\s*\(/.test(win)) continue;      // not a read
     const helper = TABLES[table];
     if (win.includes(helper)) continue;            // calls the named helper
