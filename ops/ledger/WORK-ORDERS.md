@@ -2853,3 +2853,18 @@ Every `supabase functions deploy <fn>` MUST pass the verify_jwt flag EXPLICITLY,
 
 ## #3 LEAK SWEEP — SecurityBulletinGenerator filtered (operator ruling), 2026-08-21
 Operator: a draft an operator reviews is client-facing by intent; a filter that only works when a human catches the bad row is not a filter. SecurityBulletinGenerator 3 reads wrapped: excludeMergedEntities (entities), excludeDeletedIncidents (incidents), excludeDeletedSignals (signals). Count -3.
+
+## OPENAI-OUTAGE AUDIT + WO-FAILCLOSED-DEFAULTS opened — 2026-08-22
+Trigger: operator added OpenAI credits, asked to confirm key + audit 429-fallback behavior.
+- KEY CONFIRMED: direct api.openai.com call (throwaway openai-ping, verify_jwt=false, DELETED after — CLI `functions delete`, verified absent from 364 fns) → 200, gpt-4o-mini-2024-07-18, "OK".
+- OUTAGE WINDOW: 2026-08-21 16:55 → 08-22 ~13:57 UTC (~21h), quota-429s (intermittent). `_shared/ai-gateway.ts` OpenAI-429→Gemini fallback absorbed it: 848 fallbacks OK, 1 failed (ingest-signal, Gemini 503 @18:34:09). Every gateway caller protected; raw-fetch-to-openai callers bypass fallback (embeddings/TTS/STT mostly + detect-duplicates class-C fail-open).
+- SILENT-NEUTRAL (class B): ingest-signal relevance gate (`?? 0.7` admit, :1671) + multi-model-consensus (both-null→consensus 1.0). BOTH gateway-protected → materially fired ≤1× this window; 0 bad admits (only 6 signals created in window, none at fingerprint — see Proof 1 caveat).
+- PROOF 1 (retraction): earlier "0 signals carry the 0.7 fingerprint" WITHDRAWN. Gate default is never persisted on an admitted signal (relevance_score = deterministic scorer, not the gate). NOT retro-distinguishable at the signals table.
+- PROOF 2 (no sign-off): aggregate admit-rate outage/Gemini 60% (6/10) vs baseline/OpenAI 10.5% (4/38) — material divergence → fallback needs own threshold + 6-signal window re-scan. Provider not joined to admit/reject outcome in persisted data (window proxy only).
+- WO-FAILCLOSED-DEFAULTS opened (multi-model-consensus FIRST, ingest-signal SECOND, + backfill query for agent_debate_records consensus_score=1.0 both-null). Fix NOT folded into this session (operator ruling).
+
+## #3 LEAK SWEEP — CLOSED to blocking (client-facing = 0) — 2026-08-22
+- Edge display reads across 16 generator/agent-chat fns wrapped in the 4 named helpers (43→2 client-facing).
+- 2 write-gates closed with refuse-with-reason (never silent-redirect): subject-exposure set_awareness (excludeSupersededExposure + 409 "superseded by a newer scan" to authorized; 404 indistinguishable else); agent-chat trigger_multi_agent_debate (excludeDeletedIncidents on operator-supplied incident_id; deleted-in-scope → refuse via toolResults, fall-through guarded).
+- check-soft-delete-filters.mjs PROMOTED to BLOCKING on client-facing (exit 1); 0 violations. ~445 OTHER internal reads stay audit-only (deferred backlog).
+- Deploy of swept edge fns PENDING operator go (verify_jwt per fn: agent-chat=false, subject-exposure=--no-verify-jwt).
