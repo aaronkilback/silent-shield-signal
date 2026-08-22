@@ -3289,11 +3289,25 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             // client; otherwise drop it (fail closed) so the debate cannot run on
             // another client's incident.
             let resolvedIncidentId: string | null = null;
+            let incidentRefusal: string | null = null;
             if (dIncidentId) {
-              const { data: _ownIncident } = await supabase
-                .from('incidents').select('id')
+              const { data: _ownIncident } = await excludeDeletedIncidents(supabase
+                .from('incidents').select('id'))
                 .eq('id', dIncidentId).eq('client_id', SCOPE_OR_EMPTY).maybeSingle();
               resolvedIncidentId = _ownIncident?.id ?? null;
+              if (!resolvedIncidentId) {
+                // @soft-delete-exempt: existence lookup (write-gate refuse-with-reason) — a
+                // specific incident_id the operator named that is DELETED must NOT silently
+                // redirect the debate to a signal-derived incident (substitution defect). Resolve
+                // in-scope deleted-vs-absent so we refuse with a reason rather than fall through.
+                // Cross-client rows stay indistinguishable from absent (no existence leak).
+                const { data: goneInc } = await supabase
+                  .from('incidents').select('deleted_at, client_id')
+                  .eq('id', dIncidentId).maybeSingle();
+                if (goneInc?.deleted_at && goneInc.client_id === SCOPE_OR_EMPTY) {
+                  incidentRefusal = `Incident ${dIncidentId} was deleted — I won't run a debate on a deleted incident. Re-open it, or give me the signal (SIG-…) you want analyzed instead.`;
+                }
+              }
             }
 
             // Three possible signal_id formats from operator chat:
@@ -3308,7 +3322,7 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             const isUuidPrefixFallback = /^SIG-[0-9a-f]{8}$/i.test(trimmed);
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
 
-            if (!resolvedIncidentId && dSignalId) {
+            if (!resolvedIncidentId && !incidentRefusal && dSignalId) {
               // Note: signals table does NOT have an incident_id column.
               // The relation runs the other way: incidents.signal_id
               // points to signals.id. Earlier code SELECTed incident_id
@@ -3431,10 +3445,12 @@ Returns: source_urls array with title, url, snippet, and published_date fields.`
             if (!resolvedIncidentId) {
               toolResults.push({
                 tool: 'trigger_multi_agent_debate',
-                result: {
-                  error: 'Need either incident_id or signal_id. The signal must exist; an incident will be auto-opened from it.',
-                  hint: 'Ask the operator which specific signal or incident they want analyzed.',
-                },
+                result: incidentRefusal
+                  ? { error: incidentRefusal }
+                  : {
+                      error: 'Need either incident_id or signal_id. The signal must exist; an incident will be auto-opened from it.',
+                      hint: 'Ask the operator which specific signal or incident they want analyzed.',
+                    },
               });
             } else {
               const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';

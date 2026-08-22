@@ -41,8 +41,19 @@ Deno.serve(async (req) => {
       if (!itemId || !["known", "unknown", "disputed"].includes(awareness)) {
         return errorResponse("itemId + awareness (known|unknown|disputed) required", 400);
       }
-      const { data: item } = await supabase.from("subject_exposure_items").select("id, client_id").eq("id", itemId).maybeSingle();
-      if (!item) return errorResponse("item not found", 404);
+      const { data: item } = await excludeSupersededExposure(supabase.from("subject_exposure_items").select("id, client_id")).eq("id", itemId).maybeSingle();
+      if (!item) {
+        // @soft-delete-exempt: existence lookup (write-gate refuse-with-reason) — resolve the
+        // owner to authorize AND distinguish a SUPERSEDED item from a truly-absent one, so we
+        // refuse with a reason instead of silently updating a dead item (substitution defect).
+        // The specific reason is revealed ONLY to a caller authorized for the item's client;
+        // everyone else gets the same 404 as a non-existent id (no cross-client existence leak).
+        const { data: gone } = await supabase.from("subject_exposure_items").select("client_id, superseded_at").eq("id", itemId).maybeSingle();
+        if (gone?.superseded_at && (await authorize(supabase, caller, gone.client_id))) {
+          return errorResponse("Cannot set awareness: that exposure item was superseded by a newer scan.", 409);
+        }
+        return errorResponse("item not found", 404);
+      }
       if (!(await authorize(supabase, caller, item.client_id))) return errorResponse("NOT_AUTHORIZED", 403);
       const { error } = await supabase.from("subject_exposure_items").update({ subject_awareness: awareness, updated_at: new Date().toISOString() }).eq("id", itemId);
       if (error) return errorResponse(error.message, 500);

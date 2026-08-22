@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
- * Soft-delete / retire filter gate (WO-LEAK-SWEEP, 2026-08-21). AUDIT-ONLY for now (always exit 0);
- * promote to blocking once the client-facing worklist reaches zero.
+ * Soft-delete / retire filter gate (WO-LEAK-SWEEP). BLOCKING on client-facing reads (promoted
+ * 2026-08-22 once the client-facing worklist reached zero): a client-facing read that neither calls
+ * its named helper nor carries an explicit @soft-delete-exempt marker FAILS the build (exit 1).
+ * The ~445 non-client-facing ("OTHER") reads remain AUDIT-ONLY (reported, never blocking) until each
+ * is individually marked or migrated — deferred backlog, not a build gate yet.
  *
  * Rule: every READ (.from(table).select) of a soft-deletable table must EITHER call its named helper
  * (src/lib | _shared soft-delete-filters.ts) OR carry an explicit `// @soft-delete-exempt: <reason>`
@@ -81,11 +84,17 @@ for (const file of ROOTS.flatMap((r) => walk(r))) {
 }
 
 const cf = violations.filter((v) => v.clientFacing);
-console.log(`[soft-delete-gate] AUDIT-ONLY — ${violations.length} read(s) neither call the named helper nor carry ${EXEMPT}.`);
+console.log(`[soft-delete-gate] ${violations.length} read(s) neither call the named helper nor carry ${EXEMPT} (client-facing = BLOCKING, other = audit-only).`);
 for (const t of Object.keys(TABLES)) {
   const vt = violations.filter((v) => v.table === t);
   console.log(`  ${t.padEnd(23)} ${String(vt.length).padStart(3)}  (client-facing ${vt.filter((v) => v.clientFacing).length}, other ${vt.filter((v) => !v.clientFacing).length})  -> ${TABLES[t]}`);
 }
 console.log(`  CLIENT-FACING to fix: ${cf.length}   |   OTHER (mark ${EXEMPT} or fix): ${violations.length - cf.length}`);
 if (process.argv.includes("--list")) for (const v of cf) console.log(`    ${v.file}:${v.line} [${v.table}] needs ${v.helper}`);
-process.exit(0); // audit-only
+if (cf.length > 0) {
+  console.error(`\n[soft-delete-gate] FAIL — ${cf.length} client-facing read(s) can leak soft-deleted / merged / superseded rows to a client surface.`);
+  for (const v of cf) console.error(`    ${v.file}:${v.line} [${v.table}] — call ${v.helper}(...) or add // ${EXEMPT}: <reason>`);
+  process.exit(1);
+}
+console.log(`[soft-delete-gate] PASS — 0 client-facing violations (OTHER reads audit-only).`);
+process.exit(0);
