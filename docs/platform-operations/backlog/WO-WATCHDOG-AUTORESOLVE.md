@@ -33,6 +33,19 @@ actually gone, re-checked at resolve time, never from mere absence from a subseq
   path must be explicitly gated to that class — not the default for everything.
 - A critical that flips RESOLVED must record *what was verified*, not *what wasn't seen*.
 
+## Forensic-trail retention must outlast the exposure it evidences (added 2026-08-22)
+The only forensic evidence of whether `purge_report_access_log` was invoked off-schedule is its per-invocation
+`cron_heartbeat` row — but `heartbeat-cleanup-daily` purges `cron_heartbeat` to **~3 days**. This finding was
+**open ~11 days (2026-08-11 → 2026-08-22)**, so the heartbeat trail could evidence only the last ~3 of them,
+leaving an **unclosable forensic window over most of the exposure**: an anon invocation between Aug 11 and
+Aug 19 would have left a heartbeat that was already cleaned up before anyone looked.
+
+**Requirement:** retention on any forensic/audit trail MUST exceed the worst-case detection-to-remediation
+window for the finding class it is meant to evidence. A 3-day trail cannot evidence an 11-day (or longer)
+exposure. When a finding class depends on a trail (heartbeat, decision log, access log) to prove
+tamper/invocation history, the trail's retention is part of that finding class's contract — audit them
+together, and either lengthen the trail or add a durable, non-purged record of the sensitive invocations.
+
 ## Also consider (scoping notes for when this is worked)
 - The current auto-resolver appears to blanket-apply non-detection resolution across all finding categories.
   Partition by whether the finding carries a machine-checkable post-condition.
