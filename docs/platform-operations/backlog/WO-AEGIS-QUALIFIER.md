@@ -55,3 +55,17 @@ repos with no canonical source, so a swap meant hunting every literal.
   build-time injection or a mirror constant + the same CI phone-literal guard, so both repos stay single-sourced.
 - Sequencing: this refactor + guard is follow-on to the current literal `825` swap (which was the operator's
   explicit format instruction); the guard can only go blocking once the surfaces read from the single source.
+
+## Deferred flow-polish pass (operator notes, 2026-08-24 — do NOT act until told)
+Recorded after safety was confirmed closed (backstop + intent generalization). Two conversational-pacing items
+for a later pass only:
+1. **Don't re-confirm fit once it's implied.** Turn 4 asked "are you the person affected, or reaching out for
+   someone else?" after the visitor had already said "I found disturbing content about **me**." When the fit is
+   already stated or clearly implied, treat it as settled — don't ask.
+2. **Move the invite later; match the turn-8 pacing.** Turn 6 still lands the invite too close to the disclosure.
+   Turn 8's shape (acknowledge specifically + a line of real substance about what Aaron does, no ask) is the
+   target voice — make the turn-6 beat read like turn 8, and let the invitation come on the following beat.
+
+Not to be worked now. Next up is a PRIVACY/LEGAL review of the storage/retention/"stored privately"/sharing
+notice (the widget notice is currently reduced to a non-claim placeholder pending that review) — that review is
+not an engineering task. Nothing is mounted; the widget stays off the homepage.
