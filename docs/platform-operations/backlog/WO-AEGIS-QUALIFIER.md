@@ -20,6 +20,23 @@ Qualification, not closing. Three moves, then hand off — it does not sell, pri
 - **Steps 3–5 — pending:** qualifier edge function (`aegis-qualify`, Fortress prod, verify_jwt=false, caps +
   rate-limit + zero data-plane), widget, CRM handoff write (`crm_conversations` + one SMS via operator_alert).
 
+## Observability requirement — "0" must never be ambiguous (added 2026-08-24)
+**The Live-intake panel (and any RLS-gated list) MUST visibly distinguish three states that currently all
+render as an identical "0": (a) genuinely empty (no waiting/live visitors), (b) query failed (network/500),
+(c) not authorized (no valid `auth.uid()` / RLS returned nothing / no membership).** Collapsing all three into
+"0" is exactly how a real auth regression stayed invisible: a dual-`GoTrueClient` session race (two
+`createClient()` for the CRM project on `/conversations`) invalidated the operator session, so every RLS read
+returned empty — and the panel showed a calm "0" instead of "not authorized." A silently-empty operator surface
+during a live-takeover window means a waiting visitor gets nothing.
+- The list query must surface its `error` (render "couldn't load — retry", not 0) and its auth state (render
+  "session expired — sign in" when `auth.uid()` is absent / membership check fails), separately from a true
+  empty set ("no waiting visitors").
+- **Structural fix already shipped (2026-08-24):** single shared CRM client (`src/integrations/crm/client.ts`);
+  no component may `createClient()` the CRM project again. Add a build/lint guard against a second CRM
+  `createClient` to prevent regression.
+- Ties to WO-SITE-SURFACE-MONITOR: a silent-empty operator panel is the same failure family as the silent
+  contact-form break — an absence rendered as a healthy zero.
+
 ## Fail-closed fallback string (CORRECTED 2026-08-22)
 On any model/gateway error or out-of-scope refusal, the widget/system prompt returns the FIXED line — never
 model-authored text:
