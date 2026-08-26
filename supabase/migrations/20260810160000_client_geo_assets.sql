@@ -1,25 +1,14 @@
--- WO-KILBACKS-HOUSEHOLD-CONFIG step 1: typed geo substrate for proximity anchoring.
--- clients.locations (text[]) cannot hold coordinates; this is the store the whole geo-anchoring
--- thesis depends on (Kilbacks now, PECL after). One row per protected place (house, cabin, asset).
-create table if not exists public.client_geo_assets (
-  id          uuid primary key default gen_random_uuid(),
-  client_id   uuid not null references public.clients(id) on delete cascade,
-  label       text not null,                         -- 'house', 'cabin', 'LNG Canada terminal', ...
-  place_names text[] not null default '{}',          -- for TEXT matching (news/evac articles): community + nearby named places
-  latitude    numeric(9,6),                          -- decimal degrees; NULL until geocoded + operator-confirmed
-  longitude   numeric(9,6),
-  radius_km   numeric not null default 30,           -- "within R km of this point is ours"
-  notes       text,
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now(),
-  constraint client_geo_assets_client_label_uniq unique (client_id, label)
-);
-comment on table public.client_geo_assets is
-  'Typed geo substrate for proximity anchoring (WO-KILBACKS-HOUSEHOLD-CONFIG). Proximity is COMPUTED from lat/lon + radius_km (never inferred from region co-occurrence — region-as-proxy standing rule). place_names drive text matching; lat/lon drive distance tests vs CWFIS hotspots / BCWS evac polygons / NAAD areas. Sensitive (household coordinates) — RLS deny-by-default, service-role only.';
-
+-- WO-KILBACKS-HOUSEHOLD-CONFIG step 1 — ALIGNMENT ONLY.
+-- CORRECTION (2026-08-10): public.client_geo_assets ALREADY EXISTS from WO-HAZARD-RELEVANCE Step 6
+-- (migration 20260728130000_hazard_pathway_geometry.sql) as a PostGIS table:
+--   (id, client_id, asset_name, asset_type, geom geometry(Geometry,4326), buffer_km, created_at),
+-- with a gist(geom) index and RLS already enabled. This migration does NOT re-create it (the original
+-- `create table if not exists` with a lat/lon shape was a no-op and has been removed to avoid a
+-- migration file that describes a schema the live table does not have — DR/ledger parity).
+--
+-- Kilbacks household geometry (house/cabin/school) is DATA inserted into that existing table, not
+-- schema — stored directly (env-specific, operator-confirmed coordinates), not via a repo migration.
+--
+-- The only durable schema effect here is a per-client btree index (the origin table has gist(geom)
+-- but not necessarily a btree on client_id for client-scoped lookups).
 create index if not exists client_geo_assets_client_idx on public.client_geo_assets(client_id);
-
--- RLS-at-Creation: household/asset coordinates are sensitive. Deny-by-default; service-role
--- (edge functions) read/write via bypass. No anon/authenticated policy — add an owner/tenant-scoped
--- read policy ONLY if a frontend surface needs it, scoped tightly.
-alter table public.client_geo_assets enable row level security;
