@@ -153,6 +153,22 @@ const HEARTBEAT_NO_CRON_ALLOWLIST = new Set([
   // via its own scheduled job. The legacy heartbeat call remains in this
   // function's body for now but no cron drives it.
   'self-improvement-orchestrator',
+  // Retired 2026-08-05 (migration 20260805130000_retire_monitor_social_unified.sql):
+  // 164 successful runs, 0 signals/30d — a producer that produced nothing. The cron
+  // + registry entry were removed and the watchdog social lists trimmed; the function
+  // file still writes a 'monitor-social-unified' heartbeat (preserved as inventory),
+  // which is why this entry is here. Do NOT re-add a cron without a real yield fix
+  // (CSE-only zero-yield was the structural cause — see project_social_monitor_dryup).
+  'monitor-social-unified',
+  // DE-REGISTERED 2026-08-07 (operator ruling; migration
+  // 20260807150000_deregister_monitor_community_outreach_phantom.sql). Phantom found in the
+  // 2026-07-29 Registry-is-a-Promise triage: it never had an active prod cron, so it never ran.
+  // Ruling: de-register rather than schedule — a function nobody has missed does not earn a slot,
+  // and adding a cron to it is how phantoms become real spend. The cron_job_registry row was
+  // deleted; the function file is kept as inventory and still writes this heartbeat, which is why
+  // the entry is here. If community-outreach monitoring matters later, re-register it DELIBERATELY
+  // with an output contract (WO-OUTPUT-ASSERTION-MONITORING) — do not just re-add a schedule.
+  'monitor-community-outreach',
 ]);
 
 // ── Check 1: Heartbeat name matches a cron job name ────────────────────────

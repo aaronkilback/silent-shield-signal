@@ -61,7 +61,6 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
     { data: topEntities },
     { data: watchedEntities },
     { data: activeAgents },
-    { data: riskScans },
     { data: broadcasts },
   ] = await Promise.all([
     supabase
@@ -109,12 +108,6 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       .select('call_sign, codename, specialty')
       .eq('is_active', true),
     supabase
-      .from('autonomous_scan_results')
-      .select('risk_score, created_at')
-      .not('risk_score', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(2),
-    supabase
       .from('agent_pending_messages')
       .select('message, priority, created_at')
       .eq('tenant_id', tenantId)
@@ -124,16 +117,15 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
       .limit(3),
   ]);
 
-  // Derive risk trend
-  let risk_score: number | null = null;
-  let risk_trend: COPSnapshot['risk_trend'] = 'unknown';
-  if (riskScans?.length) {
-    risk_score = riskScans[0]?.risk_score ?? null;
-    if (riskScans.length >= 2 && riskScans[0]?.risk_score != null && riskScans[1]?.risk_score != null) {
-      const delta = riskScans[0].risk_score - riskScans[1].risk_score;
-      risk_trend = delta > 5 ? 'rising' : delta < -5 ? 'falling' : 'stable';
-    }
-  }
+  // Risk posture REMOVED (2026-08-13, Q1 ruling). It was read from `autonomous_scan_results`,
+  // a GLOBAL client-agnostic threat-sweep table with NO tenant/client column. The unscoped read
+  // rendered the platform-wide latest score as a per-client "Risk posture: N/100" in EVERY tenant's
+  // COP — direction-inverted (a risk score shown as readiness) and identical across all clients.
+  // The table cannot be tenant-scoped (no scope column to filter on), so the read and the summary
+  // line are removed. Do NOT reintroduce a posture number without a real per-client metric — that
+  // is a separate decision. (INC-CTX-CONTAM §4: "carries no tenant facts" was false here.)
+  const risk_score: number | null = null;
+  const risk_trend: COPSnapshot['risk_trend'] = 'unknown';
 
   // Build plain-text summary
   const incidentCount = openIncidents?.length || 0;
@@ -142,7 +134,6 @@ export async function buildCOP(supabase: SupabaseClient, tenantId: string | null
   const escCount = escalations?.length || 0;
 
   const summary = [
-    risk_score != null ? `Risk posture: ${risk_score}/100 (${risk_trend})` : 'Risk posture: unknown',
     incidentCount > 0 ? `${incidentCount} open incident${incidentCount !== 1 ? 's' : ''}` : 'No open incidents',
     critCount > 0 ? `${critCount} CRITICAL signal${critCount !== 1 ? 's' : ''} (24h)` : null,
     highCount > 0 ? `${highCount} HIGH signal${highCount !== 1 ? 's' : ''} (24h)` : null,

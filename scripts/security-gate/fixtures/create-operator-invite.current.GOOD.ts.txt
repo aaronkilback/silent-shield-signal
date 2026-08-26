@@ -39,6 +39,7 @@ function generatePin(): string {
   return pin;
 }
 
+// @security-exempt(check5): hand-rolled caller gate is correct (admin.auth.getUser + tenant_users admin/owner membership + conversation_participants + role no-escalation allowlist); pre-dates the shared getCallerIdentity mandate — 2026-07-31
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 

@@ -32,7 +32,14 @@ export function calleeName(call) {
   return null;
 }
 
-const SCOPE_IDS = new Set(["client_id", "tenant_id", "entity_id", "clientId", "tenantId", "entityId"]);
+// Request-supplied scope ids. incident_id/signal_id/investigation_id added 2026-08-26
+// (INC-BRIEFING-XTENANT): a service-role function that loads an incident/signal/investigation by a
+// caller-supplied id with no membership check is the SAME cross-tenant shape as a client_id read —
+// generate-incident-briefing (incident_id-only) slipped the gate because these were missing.
+const SCOPE_IDS = new Set([
+  "client_id", "tenant_id", "entity_id", "incident_id", "signal_id", "investigation_id",
+  "clientId", "tenantId", "entityId", "incidentId", "signalId", "investigationId",
+]);
 const DEFAULT_REQUEST_VARS = new Set([
   "req", "request", "body", "reqBody", "requestBody", "parameters", "params",
   "payload", "input", "args", "filters",
@@ -112,6 +119,14 @@ export function hasMembershipCheck(node) {
     if (ts.isCallExpression(n)) {
       const name = calleeName(n);
       if (name === "get_user_accessible_client_ids" || name === "getAccessibleClientIds") found = true;
+      // userCanAccessClient(supabase, userId, clientId) — resolves the caller's accessible clients and
+      // checks membership (it calls getAccessibleClientIds internally). A genuine caller-membership check.
+      if (name === "userCanAccessClient") found = true;
+      // requireInternalCaller / checkInternalCaller — the shared internal-caller gate (WO-CHECK5-BURNDOWN-01).
+      // A machine-only function reachable ONLY by holders of FORTRESS_INTERNAL_SECRET has no cross-tenant
+      // exposure from request-derived scope: every caller is a trusted internal caller. This is the correct
+      // resolution for cron/service-to-service functions (which have no tenant/user caller to bind to).
+      if (name === "requireInternalCaller" || name === "checkInternalCaller") found = true;
       // supabase.rpc('get_user_accessible_client_ids')
       if (name === "rpc" && n.arguments[0] && ts.isStringLiteral(n.arguments[0]) &&
           /get_user_accessible_client_ids/.test(n.arguments[0].text)) found = true;
@@ -129,4 +144,56 @@ export function usesServiceRole(sf) {
   return found;
 }
 
-export { SCOPE_IDS };
+// ── CHECK 5 support ──
+// The request parameter identifier(s) of the Deno.serve handler. Falls back to the
+// conventional names if the handler shape can't be resolved (fail-closed).
+export function serveRequestParams(sf) {
+  const names = new Set();
+  walk(sf, (n) => {
+    if (ts.isCallExpression(n) && calleeName(n) === "serve") {
+      const cb = n.arguments[0];
+      if (cb && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb)) && cb.parameters.length) {
+        const p0 = cb.parameters[0].name;
+        if (ts.isIdentifier(p0)) names.add(p0.text);
+      }
+    }
+  });
+  if (names.size === 0) { names.add("req"); names.add("request"); }
+  return names;
+}
+
+// Does the handler READ request data — anything beyond req.method (the CORS/OPTIONS probe)?
+// req.json()/text()/formData()/headers/url/body/… all count; req.method alone does NOT.
+// Returns the first such read { line, prop } or null.
+export function readsRequestBeyondMethod(sf, reqParams) {
+  let hit = null;
+  walk(sf, (n) => {
+    if (hit) return;
+    if (ts.isPropertyAccessExpression(n)) {
+      const root = leftmostId(n.expression);
+      if (root && reqParams.has(root) && n.name.text !== "method") {
+        hit = { line: lineOf(sf, n), prop: n.name.text };
+      }
+    }
+  });
+  return hit;
+}
+
+// The shared identity / accessible-client surface in _shared/supabase-client.ts.
+// Referencing ANY of these (import or call) counts as routing through the shared helper.
+const SHARED_AUTH_HELPERS = new Set([
+  "getCallerIdentity", "getUserFromRequest", "requireAuth",
+  "getAccessibleClientIds", "userCanAccessClient",
+  "getAccessibleRowOrNull", "filterAccessibleRows",
+  // WO-CHECK5-BURNDOWN-01 — the shared internal-caller gate for machine-only functions.
+  "requireInternalCaller", "checkInternalCaller",
+]);
+export function usesSharedAuthHelper(sf) {
+  let found = false;
+  walk(sf, (n) => {
+    if (ts.isIdentifier(n) && SHARED_AUTH_HELPERS.has(n.text)) found = true;
+  });
+  return found;
+}
+
+export { SCOPE_IDS, SHARED_AUTH_HELPERS };

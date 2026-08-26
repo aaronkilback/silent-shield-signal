@@ -24,6 +24,15 @@ partial fix (`adce9554`) that missed them.
    where the role derives from request input without an allowlist. `super_admin` must never be request-grantable.
 4. **RLS on new tables** — fails any migration that creates a table without `ENABLE ROW LEVEL SECURITY` **and**
    at least one policy in the same migration.
+5. **shared-helper routing** — fails any edge function that READS request data (anything beyond `req.method` —
+   `req.json()`/`req.headers`/`req.url`/body/…) without referencing a shared identity / accessible-client helper
+   (`getCallerIdentity`, `getUserFromRequest`, `requireAuth`, `getAccessibleClientIds`, `userCanAccessClient`,
+   `getAccessibleRowOrNull`, `filterAccessibleRows`). This is the structural finding of INC-AITOOLS-XTENANT made
+   into a gate: *every hand-rolled auth gate in that incident was exposed; every function on the shared helper was
+   safe.* A 503 containment stub (reads only `req.method`) is exempt by construction and does not trip. Hand-rolled
+   auth that is *currently correct* still fails — it must adopt the shared helper OR carry an
+   `@security-exempt(check5)` annotation justifying why (see `create-operator-invite`, which hand-rolls a correct
+   `tenant_users` membership gate and is annotated).
 
 ## Baseline ratchet
 `baseline.json` records current violations by `check|file|symbol`. The gate fails on violations **not** in the
@@ -35,8 +44,15 @@ Only via an explicit, greppable source annotation carrying a reason and date, wh
 ```
 // @security-exempt(check2): <reason> — 2026-07-31
 ```
+Supported for `check1`–`check5`. The annotation must be **one line** (the matcher is single-line) and the em-dash
+before the date must be the only em-dash in it.
 
 ## Item-4 burn-down
 All 231 `verify_jwt=false` functions ship allowlisted as `LEGACY-UNREVIEWED — pending WO item 4 triage` so the
-gate ships today. The check-2 baseline (61 functions) is the item-4 triage worklist:
-`docs/platform-operations/backlog/WO-item4-check2-worklist.md`.
+gate ships today. The check-2 baseline (54 functions after INC-AITOOLS-XTENANT containments) is the item-4 triage
+worklist: `docs/platform-operations/backlog/WO-item4-check2-worklist.md`.
+
+The check-5 baseline (214 functions) is the broader hand-rolled-auth burn-down — every function that reads a
+request without the shared helper. Migrate each to `getCallerIdentity` + accessible-client scoping, or annotate
+with a justification, until the count reaches zero. This is a superset of the check-2 worklist (check-2 is the
+subset that is also service-role + request-scoped, i.e. actively exploitable today).

@@ -27,7 +27,7 @@ export async function discoverIncidentConnections(
   // Fetch the incident with signal data
   const { data: incident } = await supabase
     .from('incidents')
-    .select('*, signals(entity_tags, location, category, normalized_text)')
+    .select('*, signals!incidents_signal_id_fkey(entity_tags, location, category, normalized_text)')
     .eq('id', incidentId)
     .single();
 
@@ -42,7 +42,7 @@ export async function discoverIncidentConnections(
   const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
   const { data: recentIncidents } = await supabase
     .from('incidents')
-    .select('id, client_id, signals(entity_tags, location, category, normalized_text)')
+    .select('id, client_id, signals!incidents_signal_id_fkey(entity_tags, location, category, normalized_text)')
     .neq('id', incidentId)
     .gte('opened_at', cutoff)
     .limit(200);

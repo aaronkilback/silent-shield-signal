@@ -160,7 +160,7 @@ Returns:
 
 **CRITICAL TESTING PROTOCOL (MANDATORY):**
 
-1. **ALWAYS use client_name parameter** (e.g., 'Petronas Canada') - NEVER use client_id directly to avoid UUID format errors.
+1. **ALWAYS use client_name parameter** (the client's exact display name) - NEVER use client_id directly to avoid UUID format errors.
 
 2. **VERIFICATION WORKFLOW (REQUIRED FOR EVERY inject_test_signal CALL):**
    - Step 1: Call inject_test_signal with client_name and unique test content
@@ -186,8 +186,8 @@ Returns:
 **Example Correct Usage:**
 \`\`\`
 inject_test_signal(
-  client_name="Petronas Canada",
-  text="Test signal: Pipeline security alert near Fort St. John - " + Date.now(),
+  client_name="<client display name>",
+  text="Test signal: Security alert near a client site - " + Date.now(),
   severity="high"
 )
 // THEN IMMEDIATELY:
@@ -203,7 +203,7 @@ Inform user of successful creation and instruct to refresh if needed
           },
           client_name: {
             type: "string",
-            description: "Client name to associate this signal with (e.g., 'Petronas Canada', 'Dan Martell'). The tool will automatically look up the correct UUID.",
+            description: "Client name to associate this signal with (the exact name shown in the Clients list). The tool will automatically look up the correct UUID.",
           },
           client_id: {
             type: "string",
@@ -1165,13 +1165,29 @@ Provide client_id for operational proximity context against client locations.`,
   {
     type: "function",
     function: {
-      name: "run_entity_deep_scan",
-      description: `ENTITY DEEP SCAN: Comprehensive OSINT intelligence gathering for any entity. Multi-phase scanning across dark web, breaches, social media, news, and relationship networks.`,
+      name: "get_subject_exposure",
+      description: `SUBJECT EXPOSURE (READ). USE THIS for any question about what is known/found/findable about a PERSON: "what do we have on X", "what's out there about X", "what did we find on X", "X's exposure/reputation/breaches/findings", "is there anything on X". Do NOT answer these from the entity row and do NOT use search_entities for them. Returns the CURRENT reputational exposure already on file for a subject — verified, deduplicated exposure items (third-party, self-published, breach) from the shared retrieval module. This READS what exists; it does not run a scan. ALWAYS state the denominator in your answer, with dates, exactly as returned (e.g. "14 current items · reputational sweep 20 Aug (deep) · breach check 19 Aug") — an answer without a date is a defect. If the subject has NO items, distinguish "nothing on file — no scan has been run" (status=no_scan) from "scanned, nothing found" (status=scanned_empty); these are different statements and you MUST NOT collapse them.`,
       parameters: {
         type: "object",
         properties: {
-          entity_id: { type: "string", description: "UUID of the entity to scan" },
+          entity_id: { type: "string", description: "Full UUID of the entity (exact). A short prefix also works." },
           entity_name: { type: "string", description: "Name of the entity (if entity_id not provided)" },
+          entity_index: { type: "number", description: "When a prior call returned status=ambiguous, the option number (1-based) the user chose. Use this to select among duplicate records — never ask the user for a UUID." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_subject_scan",
+      description: `SUBJECT SCAN (RUN): Fire a fresh 7-category deep reputational scan for a subject via the shared retrieval module. FIRE-AND-PERSIST and ASYNC — returns a scan_id and starts a ~1-minute background scan; results land in the exposure set, NOT in your reply. Do NOT claim results after calling this; tell the user the scan started and findings will be available shortly (via get_subject_exposure or the Exposure tab). Use only when the user explicitly wants a fresh scan, or when get_subject_exposure returned status=no_scan.`,
+      parameters: {
+        type: "object",
+        properties: {
+          entity_id: { type: "string", description: "Full UUID of the entity (exact). A short prefix also works." },
+          entity_name: { type: "string", description: "Name of the entity (if entity_id not provided)" },
+          entity_index: { type: "number", description: "When a prior call returned status=ambiguous, the option number (1-based) the user chose. Use this to select among duplicate records — never ask the user for a UUID." },
         },
       },
     },
@@ -2146,14 +2162,14 @@ ALWAYS call this before concluding an IOC is novel. Prior ingestion from Defende
 
 Use this when:
 - A user wants an agent to actively monitor something ("have FININT watch these entities for 30 days")
-- A client situation requires dedicated agent focus ("task VERIDIAN-TANGO to assess Coastal GasLink risk through Q2")
+- A client situation requires dedicated agent focus ("task VERIDIAN-TANGO to assess a specific asset's risk through Q2")
 - You want an agent to proactively surface findings rather than waiting to be asked
 
 The agent will see this mission at the start of every conversation and treat it as an active directive. They will log findings as they occur.
 
 Examples:
-- assign_agent_mission(agent="FININT", title="Monitor Petronas transaction patterns", objective="Track all financial signals related to PECL and LNG Canada for suspicious transaction patterns or sanctions exposure. Report any findings immediately.", deadline="2026-07-01", reporting_cadence="on_finding")
-- assign_agent_mission(agent="ECHO-ALPHA", title="Assess Q2 hemispheric risk", objective="Monitor US-Canada defense posture changes and assess implications for Petronas operational security in NE BC.", deadline="2026-06-30", reporting_cadence="weekly")`,
+- assign_agent_mission(agent="FININT", title="Monitor client transaction patterns", objective="Track all financial signals related to the client's assets for suspicious transaction patterns or sanctions exposure. Report any findings immediately.", deadline="2026-07-01", reporting_cadence="on_finding")
+- assign_agent_mission(agent="ECHO-ALPHA", title="Assess Q2 hemispheric risk", objective="Monitor US-Canada defense posture changes and assess implications for the client's operational security in its operating region.", deadline="2026-06-30", reporting_cadence="weekly")`,
       parameters: {
         type: "object",
         properties: {
@@ -2196,7 +2212,7 @@ Examples:
 Use to answer questions like:
 - "What is FININT currently tasked with?"
 - "Show me all active agent missions"
-- "What missions are assigned for Petronas?"`,
+- "What missions are assigned for this client?"`,
       parameters: {
         type: "object",
         properties: {

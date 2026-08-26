@@ -39,6 +39,13 @@ interface AiGatewayRequest {
   /** If true, skip anti-hallucination injection (e.g., for image generation) */
   skipGuardrails?: boolean;
   /**
+   * JSON Schema for structured output. On the Anthropic path this becomes the forced
+   * emit_json tool's input_schema (typed fields → no JSON-in-reply leakage). Ignored by
+   * the OpenAI/Gemini paths (they use response_format). Gateway-level only — never
+   * forwarded to a provider request body.
+   */
+  jsonSchema?: Record<string, unknown>;
+  /**
    * Extra free-form fields merged into the telemetry `context` jsonb on
    * the resulting function_telemetry row. Use for caller-specific tags
    * like few-shot state, retrieval mode, or scope hints. Kept small —
@@ -300,7 +307,135 @@ function getProviderConfig(model: string): ProviderConfig {
  * Call the AI provider directly with full resilience stack + anti-hallucination guardrails.
  * Returns { content, raw, error, circuitOpen, hallucinationWarnings } — never throws.
  */
+// ═══════════════════════════════════════════════════════════════
+//  ANTHROPIC (Claude) path — different API shape from OpenAI/Gemini.
+//  Messages API: system is a top-level param (not a role), auth is x-api-key +
+//  anthropic-version, first message must be role=user, and structured output is
+//  done via a forced TOOL (no response_format json_object). We translate to/from
+//  the OpenAI-shaped {content, raw:{usage}, error} contract so callers are unchanged:
+//  when the caller asked for json_object, we force an emit_json tool and return the
+//  tool `input` STRINGIFIED as `content`, so `JSON.parse(ai.content)` still works.
+//  This removes the OpenAI-only json-mode dependency that fail-closed Gemini.
+// ═══════════════════════════════════════════════════════════════
+const ANTHROPIC_VERSION = '2023-06-01';
+
+async function callAnthropic(
+  request: AiGatewayRequest,
+  telemetryClient: ReturnType<typeof createServiceClient> | null,
+  callStartedAt: number,
+): Promise<AiGatewayResponse> {
+  const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
+  const model = request.model.startsWith('anthropic/') ? request.model.slice('anthropic/'.length) : request.model;
+
+  if (!apiKey) {
+    await logError(new Error('ANTHROPIC_API_KEY not configured'), { functionName: request.functionName, severity: 'critical' });
+    if (telemetryClient) await recordTelemetry(telemetryClient, {
+      functionName: request.functionName, durationMs: Date.now() - callStartedAt, status: 'error',
+      aiProvider: 'anthropic' as any, aiModel: model, errorClass: 'auth', errorMessage: 'ANTHROPIC_API_KEY not configured',
+    });
+    return { content: null, raw: null, error: 'ANTHROPIC_API_KEY not configured', circuitOpen: false };
+  }
+
+  const msgs = request.skipGuardrails ? request.messages : injectGuardrails(request.messages);
+  // system → top-level param (all system-role messages joined); conversation → user/assistant only.
+  const systemText = msgs.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+  let convo = msgs.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+  while (convo.length && convo[0].role !== 'user') convo.shift();          // Anthropic requires first message = user
+  const merged: Array<{ role: string; content: string }> = [];             // collapse consecutive same-role
+  for (const m of convo) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role) last.content += '\n\n' + m.content; else merged.push({ ...m });
+  }
+  convo = merged.length ? merged : [{ role: 'user', content: '(no message)' }];
+
+  const eb = (request.extraBody ?? {}) as Record<string, any>;
+  const wantsJson = eb.response_format?.type === 'json_object';
+  const maxTokens = Number(eb.max_completion_tokens ?? eb.max_tokens ?? 1024);
+
+  // Prompt caching: the system prompt is large and STATIC across turns, but the guardrails bake a per-call
+  // "CURRENT DATETIME: …" line near the top that would bust the cache every turn. Split it: the big static
+  // block gets cache_control (ephemeral, 5-min TTL) as the cached prefix; the tiny datetime rides in a
+  // trailing UNCACHED block. Turn 1 writes the cache (1.25x), turns 2+ read it (0.1x) — cheaper + faster TTFT.
+  const dtMatch = systemText.match(/CURRENT DATETIME:[^\n]*/);
+  const staticSys = (dtMatch ? systemText.replace(dtMatch[0], '') : systemText).replace(/\n{3,}/g, '\n\n').trim();
+  const systemBlocks: Array<Record<string, unknown>> = [
+    { type: 'text', text: staticSys, cache_control: { type: 'ephemeral' } },
+  ];
+  if (dtMatch) systemBlocks.push({ type: 'text', text: dtMatch[0] });
+
+  const body: Record<string, unknown> = { model, max_tokens: maxTokens, system: systemBlocks, messages: convo };
+  if (eb.temperature != null) body.temperature = eb.temperature;
+  if (wantsJson) {
+    // A TYPED input_schema (when the caller supplies one) makes the model fill named fields instead of
+    // free-forming JSON into a string field — this is what prevents JSON leaking into the reply text.
+    const inputSchema = request.jsonSchema ?? { type: 'object', additionalProperties: true };
+    body.tools = [{ name: 'emit_json', description: 'Return your response by filling these fields. Put ONLY the words you say to the visitor in "reply" — never put JSON, other fields, or field names inside it.', input_schema: inputSchema }];
+    body.tool_choice = { type: 'tool', name: 'emit_json' };
+  }
+
+  const maxRetries = request.retries ?? 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': ANTHROPIC_VERSION, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const t = await resp.text();
+        const e = new Error(`ANTHROPIC_API_KEY ${resp.status}: ${t.substring(0, 200)}`);
+        (e as any).status = resp.status;
+        throw e;
+      }
+      const data = await resp.json();
+      let content: string | null;
+      if (wantsJson) {
+        const tu = Array.isArray(data.content) ? data.content.find((b: any) => b.type === 'tool_use') : null;
+        content = tu ? JSON.stringify(tu.input) : null;
+      } else {
+        content = Array.isArray(data.content) ? data.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('') || null : null;
+      }
+      const usage = data?.usage ?? {};
+      const total = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
+      if (telemetryClient) await recordTelemetry(telemetryClient, {
+        functionName: request.functionName, durationMs: Date.now() - callStartedAt, status: 'success',
+        // ai_model = the model the API ECHOED (authoritative served version, e.g. claude-haiku-4-5-20251001),
+        // not the requested alias — so telemetry permanently records what actually served.
+        aiProvider: 'anthropic' as any, aiModel: data?.model ?? model, tokensIn: usage.input_tokens, tokensOut: usage.output_tokens,
+        context: {
+          attempt,
+          requested_model: model,
+          cache_read: usage.cache_read_input_tokens ?? 0,
+          cache_write: usage.cache_creation_input_tokens ?? 0,
+          ...(request.extraContext ?? {}),
+        },
+      });
+      return { content, raw: { ...data, usage: { ...usage, total_tokens: total } }, error: null, circuitOpen: false };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+      } else {
+        console.error(`[${request.functionName}] Anthropic all attempts failed: ${errMsg}`);
+        await logError(error instanceof Error ? error : new Error(errMsg), { functionName: request.functionName, severity: 'error' });
+        if (telemetryClient) await recordTelemetry(telemetryClient, {
+          functionName: request.functionName, durationMs: Date.now() - callStartedAt, status: 'error',
+          aiProvider: 'anthropic' as any, aiModel: model, errorClass: 'exception', errorMessage: errMsg,
+        });
+        return { content: null, raw: null, error: errMsg, circuitOpen: false };
+      }
+    }
+  }
+  return { content: null, raw: null, error: 'unreachable', circuitOpen: false };
+}
+
 export async function callAiGateway(request: AiGatewayRequest): Promise<AiGatewayResponse> {
+  // Anthropic (Claude) uses a different API shape — dispatch to its dedicated adapter.
+  if (request.model.startsWith('anthropic/') || request.model.startsWith('claude-')) {
+    const startedAt = Date.now();
+    const tClient = (() => { try { return createServiceClient(); } catch { return null; } })();
+    return await callAnthropic(request, tClient, startedAt);
+  }
   const provider = getProviderConfig(request.model);
   // Provider for telemetry: derive from URL since the keyName has historical drift
   const aiProvider: 'openai' | 'gemini' | 'perplexity' =
