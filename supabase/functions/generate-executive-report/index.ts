@@ -432,17 +432,25 @@ Deno.serve(async (req) => {
       }
       return raw;
     };
+    // ── Amendment A CORRECTED (operator ruling 2026-07-30) — non-citable is a HARD exclusion at EVERY
+    // tier, awareness included. A signal with provenance_path=none or a non-citable kind produces NO
+    // rendered claim and NO [SIG] reference ANYWHERE in the report. Awareness = low relevance AND citable.
+    // Non-citable at ANY relevance → review queue (counted in the provenance note). Citability is not a
+    // relevance question; the earlier "demote to awareness" path was laundering and is removed.
     const awarenessSignals = freshSignals.filter((s: any) => {
       const r = relScore(s);
-      return r >= REL_AWARENESS_MIN && r < REL_MAIN;
+      return r >= REL_AWARENESS_MIN && r < REL_MAIN && citableSet.has(s.id);
     });
-    // ── Amendment A — no silent demotion above the main threshold ──
-    // Non-citable signals with relScore >= 0.60 do NOT route to awareness (that would launder their
-    // content into regional context). They route to a REVIEW QUEUE: excluded from all body prose,
-    // Flash, actions, and incident refs, surfaced to the operator with id/relevance/source/reason.
-    const reviewQueueSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN && !citableSet.has(s.id));
+    const reviewQueueSignals = freshSignals.filter((s: any) => relScore(s) >= REL_AWARENESS_MIN && !citableSet.has(s.id));
+    // WO-PROVENANCE-01 Correction 1 — deterministic denominator chain, single unit = SIGNAL counts.
+    // The generator fetches client-scoped signals only, so "in-window" here is the client-gated fetch
+    // (the cross-client platform total is an analyst-external figure, not embedded in a client report).
+    const chainClientGated = signals?.length ?? 0;                                        // fetched: client + window + quality_status=active
+    const chainQuality = freshSignals.length;                                             // after stale/cancelled/dedup collapse
+    const chainRelevanceMain = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN).length;  // rel>=0.60 (citable + review-queue)
     // Main tier = relevant AND citable. A non-citable signal can never feed a main-body assertion.
     freshSignals = freshSignals.filter((s: any) => relScore(s) >= REL_MAIN && citableSet.has(s.id));
+    const chainCitable = freshSignals.length;                                             // rel>=0.60 AND citable
     console.log(`[generate-executive-report] citability tiering: ${freshSignals.length} main-citable · ${reviewQueueSignals.length} review-queue (rel>=${REL_MAIN}, non-citable) · ${awarenessSignals.length} awareness · review-queue ids: ${reviewQueueSignals.map((s: any) => s.signal_number || s.id?.slice(0, 8)).join(', ')}`);
 
     // Fetch incidents with classification rationale (excluding deleted + test)
@@ -988,7 +996,7 @@ ${agentContext}
 
 VERIFIED INTELLIGENCE DATA (use ONLY these numbers):
 - Total signals collected: ${freshSignals.length}
-- Provenance note: ${reviewQueueSignals.length} signals met the relevance threshold but were excluded for unresolvable provenance (review queue — not analyzed, not cited).
+- Provenance note: ${reviewQueueSignals.length} signals excluded for unresolvable provenance (${reviewQueueSignals.filter((s: any) => relScore(s) >= REL_MAIN).length} at main-tier relevance, ${reviewQueueSignals.filter((s: any) => relScore(s) >= REL_AWARENESS_MIN && relScore(s) < REL_MAIN).length} at awareness relevance) — review queue, not analyzed, not cited.
 - Critical severity signals: ${criticalSignals.length}
 - High severity signals: ${highSignals.length}
 - TOTAL P1/P2 Incidents: ${p1p2Incidents.length}
@@ -1076,6 +1084,18 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
     // public-figure surnames untouched; catches any private name that slipped
     // through the prompt rule.
     executiveSummary = scrubPrivateIndividualNames(executiveSummary);
+
+    // WO-PROVENANCE-01 Amendment A — the review-queue note is a DETERMINISTIC provenance
+    // disclosure, not LLM-discretionary. Appended verbatim so a reader always sees it when
+    // signals met the relevance threshold but were excluded for unresolvable provenance.
+    if (reviewQueueSignals.length > 0) {
+      const rqMain = reviewQueueSignals.filter((s: any) => relScore(s) >= REL_MAIN).length;
+      const rqAware = reviewQueueSignals.length - rqMain;
+      executiveSummary = executiveSummary +
+        `\n\nProvenance note: ${reviewQueueSignals.length} signal${reviewQueueSignals.length === 1 ? '' : 's'} ` +
+        `${reviewQueueSignals.length === 1 ? 'was' : 'were'} excluded from analysis for unresolvable provenance ` +
+        `(${rqMain} at main-tier relevance, ${rqAware} at awareness relevance) — review queue, not analyzed, not cited.`;
+    }
 
     // Generate action items grounded in actual signal evidence.
     //
@@ -2024,7 +2044,7 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
   ${awarenessSynthesis ? `
   <div class="section">
     <h2 class="section-title">Industry &amp; Community Awareness</h2>
-    <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance regional and sector context for situational awareness only — including client-adjacent items that did not rise to a cited, main-tier threat. No action items, incident references, or risk ratings derive from this section, and nothing here is asserted as a cited fact in the report body.</p>
+    <p style="font-size:12px;color:#555;margin-bottom:8px;">Lower-relevance regional and sector context for situational awareness only. Items in this section ARE individually sourced to their originating signal, but did not rise to a main-tier, client-pathway threat. No action items, incident references, or risk ratings derive from this section, and nothing here should be read as a prioritized finding.</p>
     ${awarenessSynthesis.split(/\n\n+/).filter((p) => p.trim()).map((p) => `<p style="font-size:13px;line-height:1.6;margin-bottom:8px;">${p.trim().replace(/[<>]/g, '')}</p>`).join('')}
     ${awarenessTotal > awarenessForSynthesis.length ? `<p style="font-size:11px;color:#888;margin-top:6px;">Synthesized from ${awarenessForSynthesis.length} asset-gated context items; the full awareness tier (${awarenessTotal}) is queryable in-platform.</p>` : ''}
   </div>` : ''}
@@ -2167,13 +2187,86 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
           })),
           executive_summary: executiveSummary,
           deductions,
-          narratives: narratives.map(n => ({ category: n.category, narrative: n.narrative }))
+          narratives: narratives.map(n => ({ category: n.category, narrative: n.narrative })),
+          // WO-PROVENANCE-01 — persisted to meta_json (DB column) so the review-queue note is a
+          // deterministic figure and the watchdog probe (b) can read meta_json->'review_queue'.
+          signals_analyzed: freshSignals.length,
+          distinct_citable_publishers: new Set(freshSignals.map((s: any) => citeFor(s).publisherEntity).filter(Boolean)).size,
+          review_queue_count: reviewQueueSignals.length,
+          review_queue: reviewQueueSignals.map((s: any) => ({
+            id: s.id,
+            signal_number: s.signal_number,
+            relevance: s.relevance_score,
+            source: (provById.get(s.source_id)?.publisher_kind || 'unknown'),
+            reason: citeFor(s).reason,
+          })),
+          // Deterministic denominator chain (single unit = signal counts). in_window (cross-client
+          // platform total) is analyst-external and intentionally not embedded in a client report.
+          denominator_chain: {
+            client_gated: chainClientGated,
+            quality: chainQuality,
+            relevance_main: chainRelevanceMain,
+            citable: chainCitable,
+            post_dedup: freshSignals.length,
+          },
         }
       })
       .select()
       .single();
 
     if (reportError) throw reportError;
+
+    // ── WO-REPORT-PERSIST-01 — persist rendered output + durable claim manifest ──
+    // Pillar-1: every report's rendered body is stored (storage_url populated) so it is auditable
+    // after the fact — the 6027f0ac gap (direct-invoke HTML lost, prose unrecoverable) never recurs.
+    try {
+      if (report?.id) {
+        const path = `reports/executive/${report.id}.html`;
+        const up = await supabase.storage.from('osint-media')
+          .upload(path, new Blob([html], { type: 'text/html' }), { upsert: true, contentType: 'text/html' });
+        if (up.error) {
+          console.error('[generate-executive-report] storage persist FAILED (watchdog will flag null storage_url):', up.error.message);
+        } else {
+          await supabase.from('reports')
+            .update({ storage_url: path, rendered_persisted_at: new Date().toISOString() })
+            .eq('id', report.id);
+        }
+
+        // Claim manifest: one row per rendered [SIG] citation + its resolver verdict. bound_signal_id
+        // and supports_claim stay NULL until binding-at-derivation (WO-GROUNDING-01) grades them.
+        const plain = html.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ');
+        const sigByNum = new Map<string, any>();
+        for (const s of [...(freshSignals as any[]), ...(reviewQueueSignals as any[]), ...(awarenessSignals as any[])])
+          if (s?.signal_number) sigByNum.set(s.signal_number, s);
+        const manifestRows: any[] = [];
+        const seenAssertions = new Set<string>();
+        const refRe = /SIG-2026-\d{6}/g;
+        let mm: RegExpExecArray | null;
+        while ((mm = refRe.exec(plain)) !== null) {
+          const sn = mm[0];
+          const assertion = plain.slice(Math.max(0, mm.index - 180), mm.index + sn.length + 10).replace(/\s+/g, ' ').trim();
+          const key = `${sn}::${assertion.slice(0, 60)}`;
+          if (seenAssertions.has(key)) continue;
+          seenAssertions.add(key);
+          const s = sigByNum.get(sn);
+          manifestRows.push({
+            report_id: report.id,
+            section: 'body',
+            assertion,
+            cited_signal_number: sn,
+            bound_signal_id: null,
+            citation_line: s ? (citeLineById.get(s.id) || null) : null,
+            resolver_verdict: s ? citeFor(s).reason : 'signal_not_in_pool',
+            supports_claim: null,
+            client_id,
+            tenant_id: (client as any).tenant_id ?? null,
+          });
+        }
+        if (manifestRows.length) await supabase.from('report_claim_manifest').insert(manifestRows);
+      }
+    } catch (persistErr) {
+      console.error('[generate-executive-report] persist/manifest error (non-fatal):', persistErr instanceof Error ? persistErr.message : persistErr);
+    }
 
     // Store evidence sources for traceability
     if (report && evidenceSources.length > 0) {

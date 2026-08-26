@@ -1144,3 +1144,1735 @@ The abandoned session verbally ruled three decisions that were never written to 
 
 Open-PR triage + all other scope stays parked until 2–5 land.
 
+
+## Reference provenance example — the gold standard for a traceable artifact (2026-08-13)
+
+Recorded per operator ruling (CRT demo-prep Q3) as the canonical example of a fully-traceable, signal-derived incident. Use this as the shape every client-facing artifact should be able to produce on demand:
+
+**Incident `704b2b43-97fd-4ec1-8cd4-ceced7ced0f3`** — "Protest Activity — Canada, Curaçao" (BC Place, tenant Critical Risk Team). `is_test=false`, not deleted, `provenance_type='signal'`, `created_by_function='ai-decision-engine'`.
+
+The chain:
+1. **Source article** — Vancouver Is Awesome (local news): `https://www.vancouverisawesome.com/local-news/old-growth-protesters-bc-place-security-5464816`
+2. **Signal `f7b5b257-51aa-48bb-944d-851914b76c1f`** — captured **2026-05-26 21:46:42Z** (`received_at`), `is_test=false`, `quality_status=active`. Text: "Protesters interrupted the Canada vs. Curaçao match at BC Place, reportedly reaching the field and attaching themselves to the goal posts…"
+3. **Incident** — opened **2026-05-26 23:18:18Z** by `ai-decision-engine` (~1h32m after signal capture), `provenance_id` = the signal id.
+
+article → signal (21:46:42Z) → incident (23:18:18Z), source URL intact, machine-derived end to end.
+
+**Honest caveat:** the signal's `signal_origin` is `unknown-legacy` — the ingestion-origin tag is a legacy placeholder, not a clean monitor attribution. The source URL and capture timestamp are concrete; the *which-monitor-ingested-it* link is not recorded. A fully-gold artifact would also carry a real `signal_origin`. This is the reference example precisely because everything *except* that one field is traceable.
+
+## DiD regression — traveller-aegis-chat gateway verify_jwt (2026-08-13, closed)
+
+**Classification: defense-in-depth regression, NOT an exposure** (operator ruling).
+
+During the Q1/Q2 COP-fix deploy I redeployed `traveller-aegis-chat` with `--no-verify-jwt`. Its `config.toml` declares no `verify_jwt` (platform default = true), so the flag flipped its **gateway** JWT check off for a **29-minute** window: v21 @ 2026-08-13T13:09:26Z → v22 (restored, no flag) @ 13:38:41Z.
+
+**Why it was not an exposure:** the function's **handler** authenticates independently — `traveller-aegis-chat/index.ts:230-231` calls `getCallerIdentity(req)` and rejects `unauthorized`; line 232 also rejects `service_role`. That gate was never disabled, so no request could reach the function's logic unauthenticated regardless of the gateway setting. Unlike the July INC-EXT-SIGNUP class (gateway-level exposure with NO handler gate), the load-bearing control here held. Log-level confirmation for the window was not retrievable (MCP `get_logs` is capped to the most-recent slice, no time range); the handler-gate evidence is sufficient for a 29-minute window on this endpoint (operator ruling — do not build a Logflare throwaway).
+
+**Root cause + rule:** `supabase functions deploy --project-ref <ref>` ignores `config.toml` and takes gateway `verify_jwt` from the CLI flag. `--no-verify-jwt` on a function that omits `verify_jwt` (default true) silently flips it open. **Rule: the deploy flag must match the function's declared/intended gateway auth per function — never blanket `--no-verify-jwt` across a deploy batch.** Verify by response BODY (gateway `UNAUTHORIZED_NO_AUTH_HEADER` vs handler error), not just a 200. Restored + closed same session.
+
+## FINDING (2026-08-13) — the platform discarded its venue client's crowd events as categorical noise
+
+Its own ledger entry per operator ruling — NOT a sub-item of the relevance work order. This is the finding, not a demo-quality problem.
+
+**A protective intelligence platform classified its venue-security client's core security events — concerts, matches, festivals — as categorical noise and dropped them from the pipeline.** For BC Place (a stadium), a sold-out match or a Guns N Roses concert IS the security event: crowd size, ingress/egress, protest target, threat surface. The ingest-signal relevance gate scores `sports / tournaments / concerts / festivals → 0.0` categorically (CATEGORICAL EXCLUSIONS, `ingest-signal/index.ts:1641-1649`), a rule written for the energy/principal-protection archetype.
+
+**Blast radius (measured):** `filtered_signals` holds **6,782 dropped BC Place signals** — 2,964 scored `relevance_score=0.0`, 561 with an explicit venue-event exclusion reason, 3,057 `primary_connection='none'`. Confirmed dropped: "Seattle Sounders FC at Vancouver Whitecaps", "Guns N Roses Vancouver", "Bruno Mars Vancouver".
+
+**Two independent root causes, both archetype-blind:**
+1. The dominant scoring path (RSS → `process-intelligence-document`, 2,021 signals) assigns `relevance_score` with **zero client context** — relevance modelled as a property of the signal, not a relation between signal and client. Same number serves every client.
+2. The client-aware path (`ingest-signal` gate) injects `industry` as a label but scores every client against ONE energy-centric rubric whose categorical exclusions **invert** relevance for a venue.
+
+**A correct per-client model was built and shelved:** `signal_relevance_shadow` + `compute-client-relevance` (engine `g3-v5`) computed relevance as a `(signal, client)` relation driven by `client_risk_categories` — but it ran in shadow for 1 client (Petronas), was never wired to consumers, and was hard-disabled for a cross-tenant write vulnerability (INC-AITOOLS-XTENANT-2026-07-30). BC Place was never in it (0 `client_risk_categories`). Salvage: `docs/platform-operations/recovery/g3-v5-relevance-engine-salvage.md`.
+
+**Status:** finding recorded; fix deferred (revive-vs-rebuild needs incident context — operator's call). Recovery queue intact (`filtered_signals`, 6,782 BC Place rows with text+scores+reasons).
+
+## FINDING (2026-08-13) — client_risk_categories has no population path (platform gap, not a BC Place gap)
+
+Logged separately per operator ruling. **`client_risk_categories` — the per-client input the g3-v5 relevance engine scores against — has NO population mechanism anywhere in the platform.** No edge function reads or writes it; `process-client-onboarding` does not touch it. Its only rows (6, Petronas) were created by a one-off `gate3-build` / `gate3-v2` script during the g3 pilot, `created_by` = the script, all on 2026-07-06.
+
+**Onboarding was designed to feed the per-client model and never did.** Every client created after the Petronas pilot is **structurally empty** in `client_risk_categories` — not because they were misconfigured, but because no code path populates the table. This is why the g3 engine only ever had one client's worth of rows (940, all Petronas): it wasn't a shadow-scope choice, it was the only client with inputs.
+
+**Consequence:** the revive-vs-rebuild question for g3 is downstream of this — a per-client relevance engine is inert for every client until `client_risk_categories` has a population path (onboarding-generated, or an authoring surface). Fixing the engine without fixing the input path reproduces the single-client outcome.
+
+**Status:** finding recorded. Population-path design is a platform work item, separate from BC Place onboarding and from the g3 rebuild. Related: `docs/platform-operations/recovery/g3-v5-relevance-engine-salvage.md`, the venue-noise finding above.
+
+## FINDING (2026-08-13) — ClientRiskSnapshot renders an LLM-guessed onboarding estimate as "Risk Score N/100" (97/100 class, UI)
+
+Its own item per operator ruling. `src/components/ClientRiskSnapshot.tsx:114-124` renders `client.risk_assessment.risk_score` as a **"Risk Score" label, "N/100", a color-coded progress bar, and a "High/Medium/Low Risk" level**. That value is generated by the `process-client-onboarding` AI (a gpt-4o-mini guess from industry+assets, `risk_score: 0-100`) — **not computed from signals, incidents, or any measured input.** Same class as the 97/100 posture and the reliability footers: a number that looks computed and is not.
+
+**Scope (who renders a non-null value today):**
+- **Kilbacks** — 65/100 (active), onboarding-generated 2026-06-10
+- **Trent Reznor** — 50/100 (inactive), 2026-05-19
+- BC Place was 75/100; **nulled 2026-08-13** (kept threat_profile/factors/recommendations). PECL has no `risk_score` key — unaffected.
+- **Every other client renders "0/100" there** anyway, because the component falls back to `risk_assessment?.risk_score || 0` — so the field is misleading whether populated (fabricated mid score) or empty (fake "no risk").
+
+**The fix is the component, not the data.** Nulling the stored value does NOT make it render absent (the `|| 0` fallback shows "0/100"). Options for a ruling: relabel to an honest non-score ("Onboarding baseline — AI estimate, not signal-derived"), or remove the /100 score + progress bar entirely and show only the qualitative threat_profile. Same rule as the confidence-integrity class: a score rendered to a user must derive from a computed value; if nothing computes it, it does not render. **Detector-3 gap:** the prompt-hygiene detector scans edge functions, not `src/` — a frontend variant of the class it can't currently see.
+
+**Status:** finding recorded; component fix deferred to operator ruling. Related: WO-CONFIDENCE-SIGNAL-INTEGRITY-01, the 97/100 posture (Q1).
+
+## CORRECTED FINDING (2026-08-13) — "cyber structurally capped at 0.40 by proximity" was FALSE (both of us reasoned past the code)
+
+**Attribution: shared.** The assistant asserted "proximity scoring will always cap at 0.40 no matter how good the geometry" without checking whether cyber is a hazard class; the operator carried it forward as "structurally locked out" from that line without checking the hazard class either. Neither verified against the code before building a premise on it.
+
+**The truth:** the 0.40 cap is a CEILING applied ONLY to `HAZARD_CLASSES` (`civil_emergency, wildfire, weather, natural_disaster, health_concern, amber_alert` — `incident-creation-gate.ts:24`, `generate-executive-report:465-497`, `score_signal_hazard_pathway`). Cyber / active_threat / malware are NOT hazard classes and are NEVER subject to it. Cyber reaches main-tier via the ingestion LLM gate's non-geographic connection types (`direct_naming`, `threat_actor`). Empirically both clients' cyber reaches main-tier (PECL active_threat 17, malware 6; BC Place active_threat 2) — not capped. BC Place underperforms on **config**, not a structural cap.
+
+**Lesson (again):** `feedback-negative-finding-needs-complete-search` in the other direction — a *positive* structural claim ("X is capped") is also a claim requiring the code, not an inference from a plausible sentence. A confident premise adopted by two people is still unverified until someone reads the function.
+
+**Status:** premise withdrawn; no cyber-invisibility platform finding. The lever is client configuration (see the gate-input-surface report).
+
+## RECORD (2026-08-13) — BC Place gate-input config authored, and UNMEASURED (stated honestly)
+
+BC Place `locations` (4→19: venue, transit, plazas, viaducts, downtown precincts + Rogers Arena/DTES adjacency) and `high_value_assets` (5→13: kept 5 physical, added 8 systems — retractable roof, access control, accreditation, CCTV, BMS, PA/emergency, venue Wi-Fi, PavCo network; **dropped Ticketing / POS / Broadcast-media as false-match-prone** — "ticketing" would have re-admitted the exact ticket-sales noise sitting in `filtered_signals`, a fix that worsens the noise problem while looking like a fix). These are the ONLY two fields the LLM relevance gate reads.
+
+**Explicitly unmeasured — no available proof, and why:** `relevance_score` is set at ingestion and this config only affects the `ingest-signal` 4-field gate. **0 of the 15 signals in the 2026-08-06→08-13 window touched that gate** (13 `monitor-rss-sources` = client-blind extractor; 2 `monitor-cisa-kev` = skip-gate). Re-running the window would report 9/0/9 → 9/0/9 — a false negative that flatters correct config. No test was manufactured. The config is correct and forward-beneficial for `monitor-news-google`/`social` intake; its effect is simply not observable on this client's current signal history.
+
+## FINDING (2026-08-13) — the 4-field gate is not the PECL/BC Place differentiator; the client-blind RSS path is
+
+Measured intake composition (scored, active signals per client):
+
+| client | scored | RSS-extractor (client-blind) | gate-routed | gate reach |
+|---|---|---|---|---|
+| Petronas Canada | 1330 | **720 (54%)** | 216 | **16%** |
+| Cascade Energy | 476 | 362 (76%) | 33 | 7% |
+| BC Place | 291 | **167 (57%)** | 25 | **8.6%** |
+| Kilbacks | 739 | 7 (1%) | 0 | 0% |
+
+**PECL and BC Place are both ~54-57% RSS-extractor** — the client-blind path dominates BOTH. The `ingest-signal` 4-field gate reaches only **16% of PECL** and **8.6% of BC Place** intake. **So the gate config cannot be what produces the PECL vs BC Place difference — it barely touches either client.** Whatever separates their output (volume: 1330 vs 291; the RSS extractor's generic scoring, identical for both; something else), it is NOT the gate config. Anyone reasoning "PECL scores better because its gate config is richer" is reasoning from a lever that governs <1/6 of PECL's intake.
+
+**The real lever for both clients is the client-blind RSS extractor (`process-intelligence-document`)** — 54-76% of intake, reads no client config, scores relevance as a property of the signal not a relation to the client. That is the modelling error already logged (the venue-noise finding + the g3 salvage). Config authoring helps the gated minority; it does not touch the majority path. **Config is not the lever for BC Place — the RSS client-blindness is.**
+
+## NOTED (2026-08-13, for the relevance rebuild) — the rebuild must be RULE-BASED, not a four-field LLM call
+
+The finding that matters most from the g3 Q2 analysis is **non-determinism, not ranking**. The client-blind LLM scorer gave four IDENTICAL wildfire-near-Kitimat signals `relevance_score` of **0.45 / 0.65 / 0.75 / 1.0**; g3's rule-weighted pathway scored them a consistent **0.95–0.978**. **Any LLM-based relevance scorer inherits that variance** — the same signal scores differently on re-run. So a per-client relation scorer built as a four-field *LLM call* would reproduce the variance it is meant to fix. **The rebuild should be rule-based** (deterministic signal→client relation: place/asset/keyword match against the client record, weighted), not an LLM. The quality/relevance split (signal_quality at ingestion admission + client_relevance post-match) still holds; this constrains the client_relevance scorer to be deterministic. Record from the parked relevance-rebuild direction.
+
+## SIDE FINDING (2026-08-14) — cisa-kev skips clients with empty tech_stack (config gap blocks COLLECTION, not just scoring)
+
+`monitor-cisa-kev` heartbeat: `signals_created: 0, clients_skipped_empty_tech_stack: 6`. The monitor only creates a CVE signal for a client if that client has a populated `tech_stack` to match the KEV entry against. Clients with empty `tech_stack` are **skipped entirely — no signal created**. So the config gap (empty `tech_stack`) blocks **collection**, not just relevance scoring: BC Place and PECL never receive CVE/KEV coverage because neither has `tech_stack` populated. This is the same class as the venue high_value_assets gap (no systems → nothing to match a CVE against), now shown to zero out an entire monitor's output for those clients. Populating `tech_stack` (or the systems in high_value_assets) is the unblock.
+
+## SIDE FINDING (2026-08-14) — naad emergency-alert feed produces 0 for BC clients (218 scanned, all filtered)
+
+`monitor-naad-alerts` heartbeat: `alerts_scanned: 218, signals_created: 0, french_filtered: 108, low_priority_filtered: 94`. A national emergency-alert feed (NAAD/Alert Ready) scans 218 alerts and creates **zero** signals — 108 dropped as French, 94 as low-priority. For a BC-based client roster (BC Place downtown Vancouver, PECL NE BC), an emergency-alert feed producing nothing warrants its own look: either the priority filter is too aggressive (dropping BC-relevant alerts as "low_priority") or the geographic/client matching never fires. Emergency alerts are exactly the high-value, time-critical class a protective platform should not be filtering to zero.
+
+## CORRECTION (2026-08-14) — both "dead feed" side-findings above were quiet-window snapshots; both feeds produce. Fresh evidence.
+
+The two side-findings above (cisa-kev empty-tech_stack skip; naad zero-yield) were logged from a single window ~18 days ago. Re-measured 2026-08-14 with live heartbeats + signal counts. **Both premises are false.** Neither is a fix; both are corrections of the earlier read.
+
+### CISA-KEV — tech_stack does NOT gate BC Place / PECL, and the feed produces
+- **tech_stack is populated for both flagship clients**: BC Place = 18 entries (`microsoft windows, cisco, fortinet, fortios, palo alto networks, pan-os, ivanti, citrix, netscaler, vmware, schneider electric, honeywell, johnson controls, zoom, atlassian`, …); Petronas Canada = 28 (adds OT/ICS: `siemens, rockwell automation, emerson, aveva, abb, ge digital, crowdstrike, splunk`, …). Both are **evaluated, not skipped**.
+- **Format**: `tech_stack text[]`, lower-cased vendor/product names ≥3 chars. Match (line 179): `kevHaystack = (vendorProject + ' ' + product).toLowerCase()`; a stack entry matches if `haystack.includes(entry)`. So entries must read like KEV's own vendor/product strings (`fortinet`, `pan-os`, `citrix`) — the current values already do.
+- **The 6 `clients_skipped_empty_tech_stack` are NOT the flagship clients.** Only **2 active** clients have empty tech_stack: `__platform_security__` and `Kilbacks` (internal/personal). The other 4 are inactive/shell/benchmark rows. `#256 Phase 4` (empty = skip, "no opt-in to global CVE feed") is correct policy and is doing the right thing.
+- **The feed produces**: 16 CVE signals in the last 30 days (last 2026-08-12). Last run: `recent_kev_entries: 3, signals_suppressed: 4, signals_created: 0` — the 3 recent KEV entries were **deduped** (`suppressed` = already-signalled CVE), not blocked. cisa-kev is a **precision feed by design**: output = (new KEV entries in a 3-day lookback, ~few/day) × (intersection with a client's stack). A 0-created run is the expected shape of a quiet KEV window, not a config failure. **"One field unlocks an entire feed" does not hold** — the field is per-client, both flagship clients have it, and the feed already yields.
+
+### NAAD — produces 100 signals/30d; the "0 created" window was genuinely quiet Canada-wide
+- **naad has 180 signals lifetime, 100 in the last 30 days, last 2026-08-10** (4 days before this read). It is bursty by nature — a national life-safety feed yields when a BC-relevant emergency fires, and nothing when Canada is quiet on BC. The observed `218 scanned / 0 created` is one quiet 15-min slice, not a structural zero.
+- **Priority filter (`classifyFromCap`)**: CAP severity tier → Fortress priority. Extreme→p1, Severe→p2, Moderate→p3, **everything else (Minor / Unknown) → p4**. `p4` is dropped (line 481). `responseType` evacuate/shelter bumps low/medium→high so evac orders survive regardless of tier. This drop is correct — a "Minor/Unknown" CAP alert is not an operator event.
+- **Geo-matching (line ~600)**: geography-first. `client.locations` matched **whole-word** (`\bloc\b` regex) against CAP `areaDesc`. Keyword fallback (≥6-char monitoring_keywords vs title+summary) fires **only if `areaDesc` is empty**. If no client matches AND severity≠Extreme → dropped as out-of-area (line ~640). Extreme alerts pass with `client_id=null` as platform life-safety notices.
+- **Real finding (measurability, not production): the `low_priority_filtered` counter is double-used.** It is incremented by BOTH the p4-severity drop (line 481) AND the out-of-area geo-gate drop (line ~640). So "94 low_priority" conflates "genuinely low-severity" with "BC-irrelevant / geo-elsewhere" — an operator cannot tell from the heartbeat whether the geo gate ever wrongly dropped a BC-relevant alert. The two drop reasons need separate counters before anyone can claim the geo gate is safe. **Secondary risk**: whole-word `client.locations ∈ areaDesc` is brittle against EC/CAP official area naming (forecast-region names, "Metro Vancouver – Central", etc.) — a real BC alert whose areaDesc doesn't contain a client location as a literal whole word is silently out-of-area'd. Neither is fixed here (report-only).
+
+## INVENTORY (2026-08-14) — collection surface beyond RSS news. Fleet state, no proposals.
+
+Registry + last-heartbeat, prod `kpuqukppbmwebiptqmog`. `interval=525600` (1yr sentinel) + `last_run=null` = **registered-but-dormant** (never scheduled to a real cadence). Running = recent succeeded heartbeat. "Yields" = distinct `signal_origin` in signals, last 30d.
+
+### BUILT + RUNNING (recent succeeded heartbeat)
+| Function | Cadence | Yields (30d) | Notes |
+|---|---|---|---|
+| monitor-rss-sources | 35min | **1216** (`(unset)` origin) | dominant intake; the funnel path |
+| monitor-naad-alerts | 15min (critical) | 100 | emergency/CAP — bursty |
+| monitor-geo-wildfire | 30min (critical) | 5 + bcws_active_fire 16 | wildfire |
+| monitor-cisa-kev | 12h | 16 | CVE/KEV precision feed |
+| monitor-news-google | 6h | 16 (last 07-30 — **silent 2wk**) | news API |
+| monitor-court-registry | 4h | **0 in 30d** | runs, produces nothing |
+| monitor-csis | 6h | 0 | runs, silent |
+| monitor-darkweb | 6h | 0 | runs, silent |
+| monitor-instagram | 2h | 0 | runs, silent |
+| monitor-journey-checkins | 5min | n/a (check-ins, not signals) | protective-detail |
+
+### BUILT + DORMANT (registered, never ran / 1yr sentinel interval)
+monitor-canadian-sources · monitor-community-outreach · monitor-domains · monitor-earthquakes · monitor-emergency-google · monitor-entity-proximity · monitor-facebook · monitor-github · monitor-linkedin · monitor-macro-indicators · monitor-pastebin (×2) · monitor-regional-apac · **monitor-regulatory-changes** · monitor-travel-risks · monitor-weather · monitor-wildfire-comprehensive · monitor-twitter (retired PROD-M). Function code exists; no live cadence.
+
+### Mapped to the operator's source-type list
+| Source type | State | Function |
+|---|---|---|
+| Court registry | **BUILT + running, 0 yield** | monitor-court-registry (4h, succeeded, no signals 30d) |
+| Regulatory | **BUILT + dormant** | monitor-regulatory-changes + retrieve-regulatory-document (exists, no cadence) |
+| Municipal / community | **BUILT + dormant** | monitor-community-outreach (built Feb 2026, registry sentinel, never ran) |
+| Permit | **NOT BUILT** | — |
+| Procurement | **NOT BUILT** | — |
+| Transit | **NOT BUILT** | — |
+| Event calendars | **NOT BUILT** | — |
+
+No proposals — inventory only.
+
+## REPORT (2026-08-14) — three silent/running feeds: court-registry, csis, darkweb. Sources + match + ever-produced.
+
+Evidence: `cron.job_run_details` (durable run history back to Mar 2026) + all-time `signals` origin production. All three are scheduled and running now; `cron_heartbeat` only retains ~3 days, so run history came from pg_cron's own log.
+
+### monitor-court-registry — FIXABLE FEED (wrong source + brittle match). Never produced in 806 runs.
+- **Queries** two RSS feeds: `courthouselibrary.ca/news-events/rss` (a law-**library news** feed) and `scc-csc.ca/case-dossier/info/rss-eng.aspx` (Supreme Court of Canada case dossiers). **Neither is the actual court registry** (BC Court Services Online / CSO). It is not reading filings against clients.
+- **Matches** on `content.includes(client.name.toLowerCase())` — the **full client name as a substring** ("bc place", "petronas canada"), plus a COURT_KEYWORDS gate on the SCC feed. A verbatim client name essentially never appears in a library news item or an SCC case title.
+- **Ever produced:** ran 806× (ok 640) Apr 2–Aug 14; **0 signals, ever.** Two compounding reasons (wrong source + exact-name match) → structurally zero. Never worked.
+
+### monitor-csis — REGRESSED FEED. Produced 19 signals, stopped 2026-06-23; still runs, 0 since.
+- **Queries** three live gov feeds: CSIS news atom (`canada.ca/en/security-intelligence-service.atom.xml`), Canadian Centre for Cyber Security threats API (`cyber.gc.ca/api/cccs/threats/v1/get`), Public Safety Canada publications RSS. Sources are healthy.
+- **Matches** per-client: an advisory attaches to a client if a client-name **word >3 chars** OR the client's **industry** string appears in the advisory text. **#256 removed the old `clients[0]` fallback** (which had silently cross-attributed every national advisory to the first client — a real cross-tenant defect).
+- **Ever produced:** ran 537× (ok 426) Apr 2–Aug 14; produced **19 signals May 12–Jun 23**, then **0**. The stop coincides with the #256 fallback removal: post-fix it yields only on a genuine per-client match, and generic national-security advisories rarely contain a client-name word or "energy"/"venue". Not broken — correctly strict, but the match is now too narrow to fire. Fixable via match scope; the #256 removal itself was a correctness fix (do not revert).
+
+### monitor-darkweb — PRECISION FEED, UNPROVEN. Never produced in 498 runs.
+- **Queries** HaveIBeenPwned: `breaches?domain=` (no key required) per client domain, and `pasteaccount/{email}` (requires `HIBP_API_KEY`) per client contact_email. Domain derived from `monitored_domains[]` → contact_email domain → org-name guess.
+- **Matches** a client when its domain appears in an HIBP domain-breach, or its email in a paste. 3 of 4 active clients have contact_email (Petronas, BC Place, Kilbacks) → it has inputs.
+- **Ever produced:** ran 498× (ok 424) Apr 11–Aug 14; **0 signals, ever.** Same expected-sparse shape as cisa-kev (breaches are rare), BUT 0/498 over 4 months is suspicious. Before calling it "working but quiet," worth verifying: (a) is `HIBP_API_KEY` set (else the paste half is silently skipped), and (b) does the derived domain (e.g. contact_email domain) actually match a breached domain in HIBP. Not proven fixable or dead without that check — report only.
+
+**Shapes differ, not grouped:** court-registry = never-worked (wrong source + exact-name); csis = regressed (was working, #256 narrowed the match); darkweb = precision/config, unproven (0/498 warrants a key+domain-derivation check).
+
+## RESULT (2026-08-14) — NAAD counter split deployed + measured. out_of_area is the MAJORITY of drops.
+
+Split `low_priority_filtered` into `severity_dropped` (p4 / low CAP severity) + `out_of_area_dropped` (geo-gate: no client location/keyword match, not Extreme). Instrumentation-only; `low_priority_filtered` retained as the combined total for continuity. Deployed to prod (`monitor-naad-alerts`, single-function, `--no-verify-jwt` to match its `verify_jwt=false` config; no-auth probe confirmed gateway unchanged, handler runs, 200).
+
+**Live measured split (deploy-verification run):** `scanned 216 → french 107 → severity_dropped 40 → out_of_area_dropped 53 → created 0` (40+53=93 = the old combined counter).
+- **out_of_area = 53 of 93 (57%) of the low-priority bucket, and 49% of all 109 non-french alerts.** It is the single largest drop reason after French. **NOT small — the brittleness is load-bearing, not theoretical.**
+- **Caveat before acting:** a large out_of_area is EXPECTED for a national feed on a BC roster — most of those 53 are genuinely Ontario/Alberta/Quebec/NS alerts that *should* drop. The split proves the geo gate is doing most of the filtering; it does NOT yet prove any BC-relevant alert is being wrongly dropped. The next cheap measurement is to sample the `areaDesc` of the out-of-area drops (already console.logged per drop) for BC place-names — if any BC areaDesc is being dropped on a whole-word miss, the brittleness is real; if all 53 are non-BC, it is correct. Location matching NOT changed (per ruling: measure first).
+- Retro note: the historical 30 days cannot be retroactively split (single combined counter until this deploy). The heartbeat distinguishes them going forward; the 216-alert corpus is stable hour-to-hour, so this run is representative of steady state.
+
+## REPORT (2026-08-14) — dormant-monitor triage: ever-worked vs never-wired (prep, no revive decision).
+
+For the 16 registry-dormant monitors. Evidence: ever-RAN = `cron.job_run_details` (Mar 2026→); ever-PRODUCED = `signals` origin. "Cheap revive" = code+cron proven by real output; "expensive" = never validated end-to-end.
+
+| Monitor | Ran ever? | Produced ever? | Class |
+|---|---|---|---|
+| monitor-canadian-sources | 7701× (ok 7698), last 08-14 | 24 (canadian_news_rss, last 07-22) | **LIVE** — runs as `monitor-canadian-every-30min`; registry name is stale, feed is not dormant |
+| monitor-community-outreach | 692× (ok 688), Apr22–May21 | 36 (Energetic City News) | **EVER-WORKED, stopped May 21** — cheap revive |
+| monitor-github | 228× (ok 156), Apr11–Jun7 | 2 | **EVER-WORKED (marginal), stopped Jun 7** — cheap revive, low yield |
+| monitor-macro-indicators | 124× since Apr13, last 08-14, **ok=0** | 0 | **WIRED + RUNNING + 100% FAILURE** — scheduled daily 4mo, never once succeeded. NOT cheap (needs debug) |
+| monitor-pastebin | 89× (ok 17, 81% fail), Apr11–May3 | 0 | **RAN-BUT-MOSTLY-FAILED, stopped May 3** — not cheap |
+| monitor-facebook | never ran standalone | 89 (via social-unified) | **SUPERSEDED** — facebook covered by `monitor-social-unified` (6071×, last 08-05) |
+| monitor-linkedin | never ran standalone | 0 standalone | **SUPERSEDED / never wired** — linkedin via social-unified |
+| monitor-wildfire-comprehensive | never ran (that name) | via monitor-wildfires | **SUPERSEDED** — wildfire live via `monitor-wildfires` (11496×) + `monitor-geo-wildfire` |
+| monitor-weather | **never ran** | 0 | **BUILT, NEVER WIRED** — expensive (unvalidated) |
+| monitor-earthquakes | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-domains | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-regulatory-changes | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-entity-proximity | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-emergency-google | **never ran** | 0 | **BUILT, NEVER WIRED** |
+| monitor-regional-apac | **never ran** | 0 (Channel News Asia ×2 via other path) | **BUILT, NEVER WIRED** |
+| monitor-travel-risks | **never ran** | 0 | **BUILT, NEVER WIRED** |
+
+Summary: **cheap revive** = community-outreach, github (proven, just stopped). **Broken-but-wired** = macro-indicators (running, all-fail), pastebin (stopped, mostly-failed). **Superseded** = facebook, linkedin, wildfire-comprehensive. **Never-wired (expensive, unvalidated end-to-end)** = weather, earthquakes, domains, regulatory-changes, entity-proximity, emergency-google, regional-apac, travel-risks. **Stale registry name** = canadian-sources (actually live). No revive decision made — inventory prep only.
+
+## RULING WORK (2026-08-14) — court-registry source picture, darkweb verified, csis options, NAAD item-4 measured, Task-3 CORRECTION.
+
+### Item 1 — COURT REGISTRY source picture (report before rebuild). Priority.
+**BC Court Services Online (CSO, justice.gov.bc.ca/cso) IS the real registry** — Provincial + Supreme civil, traffic, criminal records, 24/7, searchable by individual name / organization name / file number. **But it cannot be an automated commercial feed:**
+- **No API, no RSS.** eSearch is a human web form. Result-list is free; **viewing a file's details costs $6/file**, documents extra.
+- **Usage Agreement prohibits automation + commercial reuse.** No decompile/reverse-engineer, no "alter the format or content of a print or display," read-only, and court-record info "may not be copied or distributed in any fashion for **resale or other commercial use** without the express written permission" of the Chief Justice/Chief Judge. Systematic extraction for a paid product is out without written court permission.
+- **Current monitor's sources were never the registry anyway:** `courthouselibrary.ca/news-events/rss` (a law-library *news* feed) + SCC dossier RSS. Wrong target confirmed.
+
+**Viable public alternatives (free, redistributable-with-attribution, NOT the paid CSO scrape):**
+- **Daily Court Lists** (`www2.gov.bc.ca/gov/content/justice/courthouse-services/daily-court-lists`, also on CSO `courtLists.do`): criminal lists by 06:30 PST, civil by 06:00 PST, posted per courthouse. These are **hearing dockets by party name** — closest thing to "is a client/protected person a party to a proceeding." Public.
+- **BC Court of Appeal** weekly hearing list + daily chambers list (`bccourts.ca/court_of_appeal/hearing_list/`).
+- **Judgments/decisions** via bccourts.ca (recent-judgments lists, some RSS) and **CanLII** (read-only REST API, free key by request) — but CanLII's ToU says large-scale/automated retrieval should go to the *original source*, and commercial redistribution is constrained; judgments are *outcomes*, not filings.
+
+**What a filing/docket record contains to match on:** party names (plaintiff/defendant/applicant/respondent), counsel/firm, file number, registry location (courthouse), filing/hearing date, proceeding type. **Party name is the primary key.** CSO's own civil search is literally "Search Civil By Party Name."
+
+**Match target — client name vs entity graph:** court records name PARTIES (people + orgs). For a venue (BC Place) the relevant party is "BC Pavilion Corporation"/"BC Place" or a monitored person; for PECL it's Petronas/Progress Energy/Coastal GasLink or a person. Since CRT protects *people*, **matching should run on BOTH client org names AND active person-entities from the graph** (one party-name query each, like the news monitors fan out) — not the current full-client-name substring. The person-entity match is the CRT-aligned high-value case (a protected principal named in a proceeding).
+
+**Bottom line for the rebuild decision:** the source is NOT "scrape CSO." It is Daily Court Lists (dockets, by party) ± CanLII/bccourts judgments, matched per-party against client orgs + entity-graph persons. Legal/source constraint changes the shape. **Not built — awaiting ruling.**
+
+### Item 3 — DARKWEB verified: 0/498 is CORRECT, not silent failure.
+- `HIBP_API_KEY` **is set** (secret present) — the paste half is not key-starved.
+- HIBP domain endpoint **works and discriminates**: live test returned HTTP 200 + `[]` for `petronas.ca`, `bcplace.com`, `coastalgaslink.com`, and correctly returned the Adobe breach for `adobe.com`. `monitored_domains` are well-configured real corporate domains (BC Place: bcplace.com/bcpavco.com; PECL: petronas.ca/petronas.com/progressenergy.com/lngcanada.ca/coastalgaslink.com).
+- **Verdict:** those corporate domains genuinely have zero cataloged HIBP breaches. Precision feed doing its job. Only junk inputs are Kilbacks→hotmail.com (free-mail, useless for domain search) and `__platform_security__`→none — neither flagship affected. No fix needed; leave it.
+
+### Item 2 — CSIS widen-match options (no clients[0] fallback). What a CSIS/Cyber-Centre/Public-Safety advisory exposes to match on:
+- **Sector / industry tags** — advisories name target sectors ("energy", "critical infrastructure", "health", "government"). Match `client.industry` (already partially done) + a synonym/NAICS-style expansion so "oil and gas"/"LNG"/"pipeline" all hit an energy client. Deterministic, no fallback.
+- **Named infrastructure / threat actor** — advisories name systems (the same vendors as `tech_stack`: Fortinet, Ivanti, Cisco…) and named campaigns. Reuse the client `tech_stack` intersection (same mechanism as cisa-kev) so a CVE/actor advisory matching a client's stack attaches to that client.
+- **Geography** — advisories sometimes name a region/country; match `client.locations`/Canada-scope. Weak on its own (most are national) — use only as a tiebreaker.
+- **Recommended shape:** a signal attaches to a client if it matches on **≥1 of {industry-synonym, tech_stack intersection, named-infrastructure}** — never a positional fallback. This widens beyond the current "client-name-word>3 OR raw industry string" without reintroducing cross-attribution. Report only.
+
+### Item 4 — NAAD geo-gate MEASURED (bounded areaDesc sample deployed to result_summary).
+Live run: `scanned 216 → french 107 → severity 40 → out_of_area 52 → created 1`. Sampled 40 out-of-area areaDesc values:
+- **~90% other-province** (NB: Kent/Sussex/Moncton; PEI: Prince County; QC: Saguenay; NL: Cabot Strait/Port aux Basques; MB: Wallace-Woodworth; SK: Cymri; NWT: Ft. Simpson) — correctly dropped.
+- **Only BC entries dropped: South Okanagan, Eastern Fraser Valley** — real BC zones but both outside BC Place (Vancouver) and PECL (NE BC). Correct to drop for these clients.
+- **No Vancouver-area or NE-BC areaDesc was dropped.** Brittleness is **theoretical on this evidence** — geo gate is doing the right thing. Residual unexercised risk: NE-BC forecast-region naming (CAP "Peace River" vs client location "Fort St. John" would whole-word-miss). Recommend leaving matching as-is; re-check the sample after a NE-BC weather event.
+
+### Item 5 — CORRECTION before executing: "never ran" was cron-only (incomplete search space).
+Edge-function access logs (08-14 14:16) show `monitor-domains`, `monitor-weather`, `monitor-earthquakes`, `monitor-linkedin`, `monitor-social` all returning **200**, in a burst coincident with `auto-orchestrator` / `autonomous-operations-loop`. My Task-3 "never ran" labels came from `cron.job_run_details`, which only covers pg_cron — it **misses orchestrator/HTTP fan-out invocations.** So several "never-wired" monitors are actually **orchestrator-invoked, running, and producing zero signals** (no weather/earthquake/domain/linkedin origin exists in `signals`, ever). Same failure class as the prior incomplete-search findings. **Item-5 mutations HELD** — the "leave the eight never-wired" and "deregister linkedin/facebook as superseded" rulings rest on a premise that just changed (they're not idle; they're running silently via an orchestrator, and deregistering a `cron_job_registry` row does NOT stop an orchestrator from calling the function). Unaffected sub-actions (revive community-outreach+github as proven producers; fix canadian-sources registry name) can proceed on re-confirmation. Need: confirm what `auto-orchestrator`/`autonomous-operations-loop` fan out to, then re-rule.
+
+## TRACE (2026-08-14) — auto-orchestrator + autonomous-operations-loop. What fans out, cadence, overlap, zero-notice.
+
+### 1. What each fans out to + how the list is determined
+- **auto-orchestrator** — fan-out list is a **HARDCODED array in code** (`monitorActions`, index.ts:352): `['monitor-weather','monitor-earthquakes','monitor-social','monitor-linkedin','monitor-domains']`. Commented-out (disabled): `monitor-pastebin`, `monitor-darkweb` ("consistently returns 0 results"), `monitor-community` (PROD-K 2026-05-22). **Not registry-driven, not dynamic** — a literal list. Dispatch path: auto-orchestrator → **`osint-collector`** (a pure action-router: `ACTION_TO_FUNCTION` map of ~30 actions → `delegateToFunction` **re-invokes the standalone `monitor-*` function over HTTP** — this is why standalone monitors show 200s in the access log). Has a **circuit breaker**: skips a monitor with ≥3 HTTP failures in 2h (counted from `edge_function_errors`). After fan-out it calls `signal-processor` (consolidate) + `detect-threat-patterns`.
+- **autonomous-operations-loop** — **does NOT fan out to monitors.** It is the OODA decision loop: reads recent signals + `predictive_incident_scores` + open incidents, evaluates **DB-driven `auto_escalation_rules`** (active rows), and acts (create incident / send briefing / `send-notification-email`). Its "fan-out" is rule-driven escalation, not collection. (A third 30-min cron, `autonomous-threat-scan`, is separate.)
+
+### 2. Cadence + last 7 days
+| Job | Schedule | Runs 7d | Fail 7d |
+|---|---|---|---|
+| auto-orchestrator | `16,46 * * * *` = **every 30 min** (name "-5min" is wrong) | 336 | 0 |
+| autonomous-operations-loop | `22,52 * * * *` = **every 30 min** (name "-15min" is wrong) | 336 | 0 |
+| autonomous-threat-scan | `25,55 * * * *` = every 30 min | 336 | 0 |
+- Each auto-orchestrator run fans to **5 monitors** (minus circuit-broken), so **weather / earthquakes / social / linkedin / domains each get ~336 invocations/7d (~48/day)** via osint-collector. `osint-collector` itself has **no cron** — it is invoked only by the orchestrator. These fan-out invocations are NOT in `cron.job_run_details` (they aren't cron) — which is exactly why the earlier cron-only "never ran" read was wrong.
+
+### 3. Double execution (cron overlap) — NONE
+`auto-orchestrator` calls only {weather, earthquakes, social, linkedin, domains}. **None of those five has a pg_cron entry** — the code comment states they are orchestrator-owned *because* they lack direct cron. `monitor-darkweb` HAS cron (`15 */6 * * *`, every 6h) but is **orchestrator-disabled** (commented out). So **no function is invoked by both paths.** The partition is deliberate: cron owns the direct monitors; the orchestrator owns exactly the no-cron ones. (court/csis/canadian/naad/cisa-kev are cron-only; the orchestrator does not call them even though osint-collector *could* route to them.)
+
+### 4. What they do with the result — nothing notices zero
+`auto-orchestrator` checks **HTTP `response.ok` only** — increments `monitorsRun` on 200, logs to `edge_function_errors` (→ circuit breaker) on failure. **It never inspects signal count.** A monitor returning 200 with **zero signals is counted as success.** The circuit breaker trips only on HTTP failure (≥3/2h), never on silent-zero. So **weather / earthquakes / domains / linkedin / social run ~48×/day, produce zero signals, and no health check flags it.** This is the shape-of-zero blind spot (ties to source-health-registry #156): the orchestrator proves the door opened, not that anyone came through.
+
+### CORRECTED Task-3 state (supersedes the cron-only labels)
+- **Orchestrator-owned, running ~48×/day, ZERO yield, nothing notices:** `monitor-weather`, `monitor-earthquakes`, `monitor-social`, `monitor-linkedin`, `monitor-domains`. (NOT "never wired" — running silently.)
+- **Genuinely idle** (in the osint-collector router map but nothing routes to them; no cron): `monitor-regulatory-changes`, `monitor-entity-proximity`, `monitor-emergency-google`, `monitor-regional-apac`, `monitor-travel-risks`, `monitor-pastebin`, `monitor-community-outreach` (removed from orchestrator PROD-K).
+- Item 5 remains HELD; this trace is the evidence base for re-ruling it.
+
+## SCOPE (2026-08-14) — org-only Daily Court Lists monitor (report, no build; person-matching deferred pending counsel).
+
+Per ruling: source = **BC Daily Court Lists** (NOT CSO scrape, NOT CanLII). **Org-name matching only** — client organisations, not persons. Person-entity matching deferred to the INC-AITOOLS-XTENANT counsel thread (PIPEDA: an automated record of named individuals' court appearances).
+
+- **Source URLs / cadence:** BC daily court lists are served **through CSO** at `https://justice.gov.bc.ca/cso/courtLists.do` — **civil updated daily by 06:00 PST, criminal by 06:30 PST**, selected per-courthouse. **Civil lists are NOT archived** ("directs users to the court registry instead") → the monitor must **poll daily and capture forward-only** (a missed day is unrecoverable). Provincial + Supreme, civil + criminal are separate lists.
+- **⚠ ToU constraint carries over:** `courtLists.do` is **inside CSO**, so the same Usage Agreement applies — automated/systematic access + commercial reuse are restricted (no "alter the format of a display," commercial redistribution needs written court permission). **Org-only removes the PIPEDA/person-PII exposure but does NOT remove the CSO automated-access ToU question.** This must clear the SAME counsel thread before any build — it is the gating item, not the parse.
+- **Parse target:** per-courthouse court-list page (format — HTML vs PDF vs the CSO app's dynamic render — **not yet confirmed**; a build-time discovery, not assumed). Fields expected per entry: **party names**, file/court number, courtroom, time, hearing/proceeding type, registry location. The match field is **party name**.
+- **Match logic (org-only):** normalized **whole-word / token match** of client **organisation names + known legal-entity aliases** (e.g. BC Place → "BC Pavilion Corporation"/"BC Place"; PECL → "Petronas"/"Progress Energy"/"Coastal GasLink") against the party-name field. **NOT substring** (the exact defect that made the old monitor match "Canada"); **NOT person names** (deferred). A hit → one signal with the docket entry + registry location + hearing date, provenance = court list URL + date.
+- **Open items before build:** (1) CSO ToU ruling from counsel (gating); (2) confirm the live list format per courthouse (parse target); (3) courthouse scope — which registries to poll (client-location-relevant: Vancouver for BC Place; NE-BC / Prince George / Fort St. John for PECL). No build until the ToU clears and you approve the shape.
+
+## P1 SHIPPED (2026-08-14) — caller-stamped monitor_run_ledger. Orchestrator collection is now observable.
+
+WO-SILENT-ZERO-PROBE P1 (approved; built before Variant A per ruling). Design amended first: `is_precision_feed` is now **evidence-bound** — requires `expected_yield` (a rate) + `basis` (empirical artifact, darkweb's HIBP verification is the standard) + `review_by` (date; on expiry the exemption lapses and the probe fires). No permanent silencer.
+
+**Built:**
+- `public.monitor_run_ledger` (migration `20260814140000_create_monitor_run_ledger`, applied single-file; RLS-enabled at creation, service-role writes, no policy). Columns: monitor, action, caller, status, http_status, duration_ms, error, started_at. Consumer: silent-zero probe (named). Git parity file committed.
+- `osint-collector.delegateToFunction` writes one caller-stamped row per dispatch, **swallow-on-failure** (never fails dispatch — same rule as `ingest_decisions.recordDecision`). `caller` read from request body, default 'direct'.
+- `auto-orchestrator` passes `caller: 'auto-orchestrator'` in its osint-collector call.
+- Both deployed `--no-verify-jwt` (matches their `verify_jwt=false` config; no auth regression).
+
+**Verified end-to-end (live prod, one manual orchestrator run + one direct probe):**
+| monitor | caller | status | http | ms |
+|---|---|---|---|---|
+| monitor-earthquakes | p1-verify | ok | 200 | 448 |
+| monitor-earthquakes | auto-orchestrator | ok | 200 | 355 |
+| monitor-weather | auto-orchestrator | ok | 200 | 2014 |
+| monitor-social | auto-orchestrator | ok | 200 | 24434 |
+| monitor-linkedin | auto-orchestrator | ok | 200 | 3280 |
+| monitor-domains | auto-orchestrator | ok | 200 | 22520 |
+
+All five orchestrator-owned monitors — previously leaving **zero durable trace** — now have caller-stamped run records. `caller` correctly distinguishes orchestrator vs direct. This closes the P1 observability gap; the silent-zero probe's Variant A/B now has its run substrate for orchestrator monitors (cron monitors already have `cron.job_run_details` + `cron_heartbeat`).
+
+**Follow-ups (not P1):** (1) retention/purge cron for `monitor_run_ledger` (pattern: `purge-ingest-decisions-nightly`) before it grows unbounded; (2) Variant A (regression) next, per order. Forward-only — no backfill.
+
+## VARIANT A — audit-only detector run (2026-08-14). Matches expected; amendment exercised.
+
+WO-SILENT-ZERO-PROBE Variant A (regression), audit-only. Substrate: `monitor_precision_declaration` (RLS, darkweb seeded with its 2026-08-14 verification). Detector: `scripts/sql/silent-zero-variant-a-audit.sql` — every monitor reported, no silent pass. Yield from terminal `signals` by origin (not `signals_created`); runs from `cron.job_run_details` + `monitor_run_ledger` (both caller paths).
+
+**Result (16 monitors, all reported):**
+| state | monitors |
+|---|---|
+| regression | **monitor-csis** (bs=5, rr=28, was_producing_now_0), **monitor-instagram** (bs=19, rr=84, was_producing_now_0) |
+| precision_feed_exempt | **monitor-darkweb** (valid_declaration, review_by 2026-11-14) |
+| unverified_exemption | **monitor-pastebin** (DEMO — seeded expired review_by 2026-07-01; removed after run) |
+| insufficient_history | monitor-weather / -earthquakes / -domains / -linkedin (short_span_0d — ledger started today); monitor-social (never_produced_in_325_runs→VarB); monitor-court-registry (never_produced_in_806_runs→VarB); monitor-community-outreach / -github (baseline_but_<3_recent_runs — idle) |
+| healthy | monitor-cisa-kev (rs=4), monitor-naad-alerts (rs=29), monitor-canadian-sources (rs=1) |
+| unevaluable | monitor-rss-sources (origin=(unset), attribution gap P2) |
+
+**Operator's predicted set — matched exactly:** instagram + csis = regression ✓; the five orchestrator monitors = insufficient_history ✓ (weather/earthquakes/domains/linkedin via short_span; social via never-produced — both insufficient, neither silently passed as healthy); darkweb = precision_feed_exempt with a valid declaration ✓.
+
+**Amendment exercised on the first run (requirement 2):** the expired-declaration path was proven live — pastebin, seeded with `review_by=2026-07-01`, reported `unverified_exemption / "review_by expired 2026-07-01"`, NOT exempt. Demo declaration deleted after; only darkweb's real declaration remains. The precision exemption is falsifiable and self-expiring as designed.
+
+**Coverage honesty (requirement 1):** court-registry does NOT pass as healthy — it reports `never_produced_in_806_runs→VarB` (Variant B's target, correctly not a Variant A regression). rss-sources reports `unevaluable` (the (unset)-origin attribution gap, P2) rather than a false verdict.
+
+**Not yet a scheduled probe** — audit-only, per the audit-before-blocking rule. Next: triage this output with the operator, then wire the query as a registered watchdog probe emitting one finding per producer (Variant B is the never-produced half: court-registry, social).
+
+## VARIANT A WIRED (2026-08-14) — silent-zero-probe registered, verified end-to-end, audit-only.
+
+`silent-zero-probe` edge function (verify_jwt=true; no-auth POST → 401 confirmed). Names aligned: cron jobname = heartbeat job_name = registry job_name = **silent-zero-probe-daily** (`47 5 * * *`, active, interval 1440). Detector = RPC `public.silent_zero_variant_a()` (SECURITY DEFINER, reads cron.job_run_details). Findings via `record_platform_finding` (category `coverage_health`) → neural page + daily email.
+
+**End-to-end test (invoked via the same net.http_post path cron uses):**
+- 2 regression findings, severity **low** (AUDIT), distinct fingerprints: `monitor-csis` (bs=5, rr=28), `monitor-instagram` (bs=19, rr=84).
+- 1 census finding, severity **info**: `Mode: AUDIT ... Prior runs: 0. States: healthy:3 [...], insufficient_history:9 [...], precision_feed_exempt:1, regression:2, unevaluable:1` — every non-healthy state visible, none omitted or passed as healthy.
+- Manual test heartbeat deleted afterward so the audit gate counts only SCHEDULED runs (audit = prior_completed_runs < 2 → scheduled runs 1 & 2 write findings at `low`/no-notify; run 3 promotes to `high`).
+
+**Requirements met:** one finding per regressing producer (distinct p_affected_job) ✓; unevaluable + insufficient_history reported as their own states in the census ✓; findings via record_platform_finding ✓; audit-only first two scheduled runs then auto-promote ✓. Not closed until two scheduled successes (Two-Successes-Before-Close), next two mornings.
+
+**Follow-up (noted):** platform_findings has no auto-resolve — a regression finding stays until a resolver clears it when the monitor produces again. Variant A only records; resolution is a separate concern.
+
+## LOG (2026-08-14) — canadian-sources "healthy" on rs=1 is thin (operator: do not band yet).
+`monitor-canadian-sources` classified healthy on a single signal in 7 days. Not banding the "healthy" floor now — 1/week may be that feed's real rate; want a month of data before picking a floor. Logged for revisit; do not act.
+
+## REPORT (2026-08-14) — RSS bulk-path attribution (P2 gap): the data already exists; fix is probe-side, no write change/backlog.
+
+The `unevaluable` state (monitor-rss-sources, 54–57% of intake) is NOT a missing-data problem. Evidence: of the 1,211 `(unset)`-origin signals in the last 30 days, **1,211 (100%) already carry a non-null `source_id`**, spanning **39 distinct `sources` rows, all resolving** to `sources`. The RSS path (`process-intelligence-document:1064`) writes `source_id` on every signal — it just doesn't set `raw_json.signal_origin`, which is the field the probe reads.
+
+**What making the dominant channel observable would take:**
+- **Preferred — probe-side (no write change, no backfill):** teach the silent-zero detector to attribute RSS/url_feed yield via `signals.source_id → sources.name` (or source type) instead of only `raw_json.signal_origin`. Makes `monitor-rss-sources` evaluable AND yields **per-source** granularity for all 39 feeds for free — which is exactly WO-COVERAGE's per-source track. Cost: a query change in the RPC; no migration, no backfill, no write-path edit.
+- **Redundant — write-side (stamp origin):** add `signal_origin: 'monitor-rss-sources'` to raw_json at process-intelligence-document:1094. One-line, but it only recovers channel-level attribution the `source_id` already provides, and would need a backfill for historical rows. Not recommended given source_id is 100% populated.
+
+Recommendation: close the P2 gap probe-side using the already-present `source_id`. Report only — no build.
+
+## VARIANT B + per-source RSS (item D) — added to silent-zero-probe (2026-08-14).
+
+RPC replaced: `silent_zero_variant_a()` → **`silent_zero_scan()`** (plpgsql, SECURITY DEFINER) — now covers Variant A (regression) AND Variant B (never_produced=0 lifetime signals despite ≥3 runs), across discrete MONITORS (origin) and per-SOURCE rss/url_feed (attributed via `signals.source_id → sources`, item D — the 100%-populated source_id closes the P2 gap with no write change).
+
+**Live run (audit mode, verified E2E via net.http_post; test heartbeat removed after):**
+- MONITORS(15): healthy 3 · regression 2 (csis, instagram) · never_produced 2 (court-registry, social) · insufficient_history 7 · exempt 1 (darkweb).
+- SOURCES(92 active rss/url_feed): healthy 21 · regression 20 · never_produced 49 · insufficient 2.
+- **individual_findings = 4** (monitor regression ×2 + monitor never_produced ×2), all severity `low` (audit). Census `info`. **Zero per-source individual findings** — 69 would-be source findings rolled into the single census (flood control), per operator requirement.
+
+**Findings emitted (platform_findings, category coverage_health):**
+- `low` Silent-zero regression: monitor-csis / monitor-instagram
+- `low` Silent-zero never-produced: monitor-court-registry / monitor-social
+- `info` Silent-zero probe coverage census — MONITOR + SOURCE counts, with source regression/never_produced samples (single entry).
+
+**Audit gate:** same as Variant A (prior scheduled runs <2 → `low`/no-notify; run 3 → `high`). Both variants share the gate; both start fresh (test heartbeat deleted). Two scheduled successes before close.
+
+**Discrepancy surfaced (operator predicted mostly insufficient_history):** actual per-source split is 49 never_produced + 20 regression + 21 healthy, NOT mostly insufficient. Reason: these RSS sources are OLD (created >30d), so a no-baseline old source is `never_produced`, not `insufficient`. **This 20-regressed / 49-dead active-RSS-feed split is itself a real hygiene finding** (dead feeds to deactivate; 20 recent regressions may corroborate the intake-decline investigation) — surfaced in the census, flagged here for operator action.
+
+## INVESTIGATION (2026-08-14) — the 49 never-produced + 20 regressed RSS sources. Evidence only.
+
+### The ~49–50 never-produced (active rss/url_feed, 0 lifetime signals)
+1. **What kind:** NOT dead URLs. **46/50 have been fetched, 43/50 fetched in the last 7 days.** Only **4 never fetched** (dead). **13 carry a fetch error** (404/auth/moved — some intermittent, overlap with recently-fetched). The dominant kind: **feeds that fetch 200 and parse fine but whose items fail client-match.** Of the 10 sources with funnel instrumentation (`ingest_decisions`, forward-only since 08-02): **261 items parsed → 259 dropped at `client_match` as `no_client_match`** (99%). 1 false_positive, 1 below_threshold, 1 not_inserted.
+2. **Ever fetched successfully:** YES — overwhelmingly. This is a "returns 200, content filtered" population, not a "404" population (4 exceptions).
+3. **When added / by what:** NOT one bulk import — spread across Mar→Jul. **16 of the 50 were added at 03:00–03:01 on weekly cadence = `autonomous-source-discovery`** (the weekly 03:00 job). So a recurring generator has been adding feeds that never produce (~16); the rest were added at assorted manual/import times. It is a recurring-generator pattern + assorted singletons, not a single event.
+
+### The 20 regressed (produced in 7–90d baseline, 0 in last 7d)
+4. **Stop dates do NOT cluster at 08-09.** Last-signal days spread 2026-07-28 → 08-06 (peak 07-29 = 4 sources, 08-06 = 3). **Caveat:** these are each feed's last signal *before* the 7-day-silent window (silent since 08-07); for low-base-rate feeds, last-signal dates naturally fall in the ~2 weeks before the window. So this is **consistent with thin feeds crossing the silence threshold at staggered times — NOT evidence of a single 08-09 event.**
+5. **Fetch status:** **all 20 are still fetched (200, recent); only 2 carry an error.** The regression is downstream (client_match/relevance), NOT fetch failure — same mechanism as the 49.
+
+### Does the corpus-exhaustion conclusion hold? — PARTIALLY; the mechanism was mis-located.
+The earlier read ("thin source surface, exhausted") was measured against producing sources and is **incomplete**. Fuller evidence:
+- The configured surface is **NOT dead or exhausted at the source level** — it fetches abundant content (261 parsed items from just 10 instrumented never-producers; 43/50 fetched this week; all 20 regressed still fetched).
+- The scarcity is **client-relevance, not source availability.** With **2 clients (BC Place, PECL)**, ~99% of a general-news firehose correctly drops at `client_match` as `no_client_match`. Sampled dropped titles confirm genuine irrelevance (Calgary housing, US crime, tech, sports, celebrity), with only marginal geo-adjacent misses ("PRRD … FSJ aquatics facility", "Metro Vancouver storm") — low security-relevance even if geo-matched.
+- **Conclusion:** it is not source exhaustion — it is **client-match starvation of an abundant, healthy source surface.** The bottleneck is the 2-client match surface, not the number of feeds. Adding more general feeds would not help (they would also drop at `client_match`). This is a **material correction of the exhaustion read**: the fix direction is the client/keyword match surface (or more clients), not more sources.
+- **Genuine source-health items (separate, small):** ~4 dead + ~13 errored feeds = ~17 to clean; ~16 discovery-added non-producers suggest `autonomous-source-discovery` is adding low-value feeds (generator-governance). These are hygiene, not the intake driver.
+
+Evidence only — no fixes.
+
+## SETTLED (2026-08-14) — intake decline diagnosis. (Relevance-correctness of drops left to operator review.)
+
+Operator ruled these settled after reviewing a 100-row raw sample of last-7-day `no_client_match` drops:
+
+1. **Intake decline is client-match starvation of a HEALTHY source surface — not source exhaustion.** The configured feeds fetch abundant content (43/50 never-producers fetched this week; all 20 regressed still fetch 200; 261 parsed items from 10 instrumented sources); intake dies at the `client_match` stage. **Adding more feeds does not help** — new feeds hit the same client_match gate. The bottleneck is the client-match surface (2 clients: BC Place, PECL), not the number of sources. This holds regardless of whether individual drops are correctly or incorrectly filtered.
+2. **~17 feeds are genuine source hygiene:** 4 dead (never fetched) + 13 errored (fetch 404/auth/moved). Cleanup, not the intake driver.
+3. **`autonomous-source-discovery` has added ~16 feeds that never produce** (weekly 03:00 job). Generator governance — a separate item (a discovery generator whose additions never yield is producing attention-cost without intake benefit).
+
+**LEFT OPEN (not settled):** whether the `no_client_match` drops are *correctly* irrelevant vs client-relevant-but-missed. The earlier "genuinely irrelevant" judgement was made by the same matcher under question; operator is reading the 100-row raw sample directly. **Observation surfaced for that review:** a substantial slice of the sample is B.C. wildfire / state-of-emergency / B.C. weather-alert coverage — inside Fortress's own product scope (wildfire + emergency monitoring) though outside these two clients' keywords. Correct-filter vs missed-match is the operator's call; not asserted here.
+
+No fixes.
+
+## MECHANISM (2026-08-14) — the client_match gate is geography-blind and is the only live door in the RSS path. Confirmed. Evidence only.
+
+Operator verdict on the 100-sample: ~85% correct drops; one wrong cluster (BC wildfire/state-of-emergency ×11 + Cowichan/Aboriginal-title mapping PECL regional_activism + Energeticcity FSJ). Mechanism trace:
+
+### Q1 — client_match runs BEFORE any geo/hazard evaluation. A dropped wildfire is never seen by score_signal_hazard_pathway.
+- RSS funnel order (process-intelligence-document): **parse → client_match → relevance_score → insert.** `no_client_match` is a HARD drop at **process-intelligence-document:488-490**, *before* any signal row exists.
+- `score_signal_hazard_pathway` call sites (entire repo): **`ingest-signal:2007`** (post-insert, a DIFFERENT ingest path) and **`_shared/incident-creation-gate.ts:110,381`** (on already-existing signals). It is **not called anywhere in the RSS path.** It operates only on rows in `signals`.
+- Therefore: a BC wildfire item that drops at client_match **never becomes a signal → `score_signal_hazard_pathway` never sees it.** The geo/PostGIS/D6 pathway model runs **exclusively on signals that already passed the keyword gate.**
+
+### Q2 — keyword substring match is the ONLY live admission door in the RSS path.
+- `matchClientKeywords` (`_shared/keyword-matcher.ts` / `deterministic-matcher.ts`) is pure substring: `lowerText.includes(client.name / keyword / competitor / high_value_asset / location)`. **No geometry, no ST_Distance, no coordinates.** It matches a location only if the **literal name string** appears in the text — it cannot compute proximity. "Bald Range wildfire" contains no PECL keyword/location string → dropped.
+- A geo-aware matcher (asset-geo anchor + `shadow_geo_suppressed`) runs at the same stage but **in SHADOW only** (WO-GATE-PHASE3 slice 4a): it writes `ingest_shadow` and never alters `clientMatches`. The live drop (line 488) is decided by keyword `clientMatches` alone.
+
+### The confirmed implication — and it is compounded
+The operator's hypothesis holds: **every geo asset, every PostGIS calc, and the D6 pathway model operate on a set already filtered by a keyword gate that cannot see geography. The wildfire work runs downstream of a filter that drops wildfires.** Quantified (7d): **3,253 items keyword-dropped; 371 of them wildfire-class** (+71 weather, +20 other-hazard). None were geo-evaluated.
+
+**Second gate revealed by the shadow:** even if the geo door were opened, it would currently admit only **34 of 3,253** keyword-dropped items — `distinct_assets_would_hit = 1`. The geo path is **starved of asset geometry** (BC Place = 1 `client_geo_assets` row; PECL's NE-BC asset polygons = the geo-authoring deferred earlier). `shadow_geo_suppressed` flagged 122.
+
+**Three relevance axes, one live door:**
+1. **Keyword** (name/asset/location as literal string) — the ONLY live admission door.
+2. **Geographic proximity** (hazard near an asset) — SHADOW-only, and geometry-starved (would admit 34).
+3. **Risk-category / thematic** (PECL `regional_activism` / `activism_naming_pecl`; the Cowichan item) — **no live door in the RSS path at all** (the LLM relevance rule 14a for threat-patterns runs AFTER the keyword gate, so it never sees keyword-dropped items).
+
+The operator's 11 wildfire + Cowichan + FSJ items span all three axes; only axis 1 has a door. **Caveat:** the specific flagged fires (Bald Range/Summerland/Vernon = Okanagan, southern BC) are far from PECL's NE-BC assets — proximity-geo alone would not admit them; "province-wide state of emergency" is a broad-relevance signal none of the three axes captures. Fire DETECTION (CWFIS hotspots) IS covered — via `ingest-signal`/the dedicated wildfire pipeline, not the RSS news path; the gap is RSS hazard NEWS context.
+
+No fixes.
+
+## FRAME (2026-08-14) — four relevance axes; only one has a live door. Plus jurisdiction volume measurement.
+
+The RSS admission gate resolves relevance on FOUR distinct axes; only axis 1 has a live door:
+1. **Keyword** — name/keyword/competitor/asset/location as a literal `.includes()` substring. **LIVE — the only door.**
+2. **Geographic proximity** — hazard near a client asset polygon. **SHADOW only, and geometry-starved** (would admit 34/3,253; `distinct_assets_would_hit=1`; BC Place has 1 geo asset, PECL NE-BC polygons deferred).
+3. **Thematic / risk-category** — PECL `regional_activism` / `activism_naming_pecl` (e.g. Cowichan title ruling). **No RSS door** (LLM rule 14a runs after the keyword gate).
+4. **Jurisdictional / regional** — coarser than a named asset: a BC-wide state of emergency, a BC Supreme Court title ruling, a provincial regulatory change, a BCWS-wide posture shift is relevant to a BC client irrespective of distance to any polygon. **Does not exist as a concept anywhere in the pipeline.**
+
+Operator correction accepted: the flagged Bald Range/Summerland fires are Okanagan and would NOT be admitted by proximity either — they are axis-4 (BC-jurisdiction), which is the real gap.
+
+### Measurement — how much would a jurisdiction match admit, and what it does to volume (evidence only)
+**Heuristic (stated):** title-text proxy on the 7-day `no_client_match` drops (3,248). BC reference = title matches `british columbia` OR `B.C.` OR `\yBC\y`. Two gradations:
+- **Broad (any BC mention): 436 / 3,248 = 13.4%.** (Over-counts true jurisdiction relevance — includes "B.C. man charged in Ontario", "best B.C. cities to rent".)
+- **Scoped (BC + a jurisdiction-level term** — province/provincial/state-of-emergency/supreme-court/regulator/legislature/minister/BCWS/wildfire/evacuation/drought/flood): **191 / 3,248 = 5.9%.** (Closest to the operator's examples.)
+- For contrast, clearly NON-BC drops: Alberta/Calgary/Edmonton 316, US 134, other-provinces 174 — a jurisdiction match correctly excludes these.
+
+**(a) Answer:** a BC-jurisdiction match would admit **~191 (scoped) to ~436 (broad) of 3,248** — **6–13%.** NOT ~800. **It is an axis, not a filter-removal** by the operator's own test.
+
+**(b) Volume impact — but heavy relative to current intake.** Current signal creation (all origins, all clients, 7d): 29/61/26/14/5/11/3/5 = **~154/7d (~22/day, ~6/day the last four days).** Jurisdiction admit of 191–436/7d = **27–62/day**, i.e. **+1.2× (scoped) to +2.8× (broad) of total platform intake**, and an order of magnitude on the RSS-news portion specifically. Both current BC clients (BC Place, PECL) would receive the same BC-jurisdiction items, so per-client counts roughly double again.
+
+**Caveats:** title-only heuristic (undercounts BC items that don't name BC in the title; over-counts BC-named-but-not-jurisdictional in the broad tier). The operative subset (state of emergency / supreme court / regulatory) is inside the 191, smaller still. No design proposed.
+
+## MEASUREMENT (2026-08-14) — axis-4 jurisdiction, wildfire/evacuation removed. The count + titles.
+
+Operator refinement: strip wildfire/evacuation (those are axis-2 proximity once geometry exists); keep only jurisdiction-LEVEL events (province-wide declaration, court ruling with provincial effect, regulatory/legislative change, provincial-agency posture, minister/ministry action with operational consequence).
+
+Heuristic: 7-day `no_client_match` drops + BC reference + jurisdiction-event term (state-of-emergency/declares/supreme-court/court-case/tribunal/aboriginal-title/regulat/legislat/legislature/minister/ministry/premier/cabinet/provincial-government/BCWS) MINUS wildfire/evacuation/fire/smoke/flood.
+
+**Result: 25 raw decisions → ~14 distinct events in 7 days** (heavy multi-source duplication: deficit ×4, Bailey-cancer ×5, PST ×3-4, vehicle-seizure ×3). **Short list — confirms the operator's "should be short" hypothesis.**
+
+Reading them against the operator's "operational consequence" definition:
+- **~7–8 genuinely jurisdictional-operational:** court ruling on involuntary care + premier response; PST-expansion legislative repeal (two stories); provincial deficit/tobacco-settlement fiscal; land-transfers-to-First-Nations rejection; Cowichan Aboriginal-title court case (maps PECL `regional_activism`). These are unreachable by axes 1–3.
+- **~6 keyword-noise tail:** finance minister's *cancer diagnosis* (matched "minister", ×5), two opinion columns, housing-minister quote, fireworks-cancellation (SoE = context not event).
+
+**Finding:** even the tightened axis-4 filter carries a keyword-noise tail — "minister/court/premier as a substring" is still a keyword proxy, not an event classifier; it cannot distinguish "minister acts" from "minister mentioned." The wrong-axis problem recurs one level down. Genuine axis-4 volume is ~1/day (7–8/week) — real but thin, currently unreachable by any live door. No design proposed.
+
+## RULING (2026-08-14) — Axis 4 (jurisdictional): REAL, THIN, DEFERRED. Axis 2 (geo) is the next move.
+
+Operator ruling after reading the 14 titles:
+- **Axis 4 is real** — ~7–8 genuinely unreachable provincial events/week (involuntary-care court ruling, PST-repeal recommendation, Cowichan Aboriginal-title case are all things a BC client should see). But **not built yet.**
+- **The noise tail is a KIND problem, not a wording problem.** "Minister" matching a minister's cancer diagnosis ×5 is not fixable by sharpening the string — **every axis proposed so far is a string test, and no string test separates "minister acts" from "minister is named."** The target is an **event class**, not a token. Axis 4 needs an **event classifier** ("does this describe an action by an authority with operational consequence") running on keyword-dropped items — a different kind of gate than any of the four axes.
+- **HOLD reasons (do not build axis 4 now):**
+  1. **An LLM classifier at the admission gate is the same shape as the client-blind RSS extractor** — same non-determinism (identical items scored differently on different days). We spent two days diagnosing that; do not reintroduce it at a new gate. Any axis-4 classifier must be **deterministic**.
+  2. **Axis 2 is cheaper, larger, and already built.** Geo proximity is shadow-only + geometry-starved (34/3,253, 1 distinct asset). The engine exists; the missing input is **asset geometry = authoring work, not a build.**
+- **Status:** axis 4 = measured, real, thin, **deferred pending a deterministic event-classifier design** (not to be proposed now).
+
+**Next: geo-authoring picture for axis 2** (what PECL + BC Place need to take shadow-admit from 34 toward meaningful). Report only.
+
+## GEO-AUTHORING PICTURE (2026-08-14) — CORRECTS the premise: asset geometry is DONE; the gap is a build, not authoring.
+
+Two corrections to earlier ledger lines (mine), on fresh evidence:
+
+### Correction A — the "34" is NOT a proximity number.
+`_shared/shadow-matcher.ts` is a **keyword token-boundary matcher with common-noun-asset geo-*disambiguation*** (a whole-token common noun like "cabin"/"home" requires a geo anchor to match; no anchor → fail-closed `geo_pending`). The earlier `geo_shadow_would_admit=34` is the shadow keyword matcher's **recall delta vs the live `.includes()` gate**; `shadow_geo_suppressed=122` is common-noun-asset matches held for lack of corroboration. **Neither is "hazard near asset by distance."** The proximity engine (`score_signal_hazard_pathway`) is a SEPARATE system not represented in the shadow at all. "Take shadow-admit from 34 toward meaningful" conflated the keyword shadow with the proximity engine.
+
+### Correction B — PECL's NE-BC geometry was NOT deferred. It is comprehensively authored.
+`client_geo_assets` today:
+- **Petronas Canada = 14 assets** (25–50km buffers): 9 gas plants (Aitken Creek, Caribou, Fort Nelson, Jedney, Lily, McMahon, Sunrise, Taylor, Younger), **LNG Canada terminal (Kitimat)**, **Coastal GasLink corridor (LineString)**, **Montney/Fort St. John upstream** (50km), **Horn River/Fort Nelson upstream** (50km), Calgary HQ. Blankets NE-BC.
+- **BC Place = 1 asset**: BC Place Stadium (venue, Point, 2km) — adequate for a single-venue client.
+- (Kilbacks 3 points; client_assets has PECL ×3 points + 2 invariant-test.)
+
+### What exists (the engine + inputs)
+- **Proximity engine `score_signal_hazard_pathway(signal_id)`**: resolves item location **coordinate-first** (`raw_json.centroid.lat/lng` or `lat/lng/lon`) → **gazetteer text-geocode fallback** (a `geo_place_gazetteer.name` appearing in `location||title||normalized_text`) → distance vs each asset's `buffer_km` (×2.5 for regional categories). Works. **Runs POST-admission, on `signals` only.**
+- **`geo_place_gazetteer` = 46 places** — covers the key ones: Fort St. John, Fort Nelson, Kitimat, Taylor, Chetwynd, Dawson Creek, Tumbler Ridge, Prince George, Terrace, Vancouver, BC Place.
+- **564 of the 3,248 keyword-dropped items (7d) already contain a gazetteer place in their title** → already geo-resolvable with what exists (the within-buffer subset would admit; Okanagan/other-province mentions correctly would not).
+
+### What is missing — and it is a BUILD, not authoring
+The engine **never runs on keyword-DROPPED items** — they are dropped before any signal exists, and `score_signal_hazard_pathway` only takes a `signal_id`. To make axis 2 an admission door, the existing location+proximity logic must run **at the client_match gate**, on dropped items, before the `no_client_match` drop. Asset geometry is done (PECL) / adequate (BC Place); the gazetteer covers the core places; the engine exists. **The missing piece is wiring the engine pre-insert — a build.**
+
+**Cost model inverted from the premise:** the expectation was "asset-geometry authoring, not a build." Evidence: authoring is essentially complete; the gap is the build (run proximity at admission). Optional small authoring (not the blocker): expand the 46-place gazetteer; add a few BC Place adjacent points. Caveat: 564 is the geo-resolvable ceiling; the actual within-buffer admit count needs the proximity run (which is the build) to measure. No build. Report only.
+
+## MEASUREMENT (2026-08-14) — offline geo-proximity admit count on 7d keyword-dropped items. Read-only, no gate change.
+
+Replicated the engine's resolution (gazetteer text-geocode) + proximity (ST_Distance vs client_geo_assets, buffer_km) against the 3,247 last-7d `no_client_match` items. No signals created.
+
+- **Resolve to a point:** 564 / 3,247 (17%).
+- **Fall inside a buffer (admit):** **342.** Split: PECL 161, BC Place 183.
+- **Distance distribution is BIMODAL** (the finding): BC Place 183 @≤2km / 0 in 2–30km / 376 @>50km; PECL 160 @≤2km / 1 @10–30km / 403 @>50km. Admits sit ON the asset (≤2km), not near it → **not a buffer-width problem; narrowing the buffer changes nothing.**
+- **Cause (from 30 pasted samples):** two urban-centroid assets — **Calgary HQ** (admits every "Calgary" item) and **BC Place Stadium** (admits every "Vancouver" item) — because the gazetteer resolves a city to one downtown point co-located with the asset. Plus substring bugs (Vancouver Island→Vancouver, Taylor-town→Taylor-surname). ~90% noise (cat videos, Stampede 50/50, pop-up restaurants).
+- **Twist — exclude the 2 urban-centroid assets (NE-BC remote industrial only):** admit count drops **342 → 16** (all PECL: CGL corridor, Fort Nelson/Taylor/Jedney/McMahon/Younger plants, Montney/FSJ, Horn River; BC Place → 0). The remote-industrial proximity case is **~16/week — clean, feature-sized.**
+
+**Verdict (operator's test):** naive geo door = 342/week = DO NOT OPEN, but the cause is **geocoding precision, not buffer width.** Blockers before the door opens: (1) urban-centroid assets need a different axis (a downtown venue's relevance ≠ within-2km-of-stadium); (2) substring/disambiguation (Vancouver Island≠Vancouver, Taylor town≠surname); (3) the remote-industrial subset (~16/wk) already clears the bar. Read-only measurement; no build, no gate change.
+
+## RULINGS — CLOSE (2026-08-14). Four relevance axes measured; none open; each closure now evidenced.
+
+1. **Geo door: DO NOT OPEN.** 342/week fails the bar; narrowing buffers does nothing (admits are ≤2km — centroid collision, not proximity). Evidenced by the bimodal distribution (void between 2–30km).
+2. **Remote-industrial slice (16/week): VIABLE, PARKED.** Real, clean, clears the bar — but serves **PECL only, returns 0 for BC Place**. Not the priority while CRT is the commercial thread. Revisit if/when a remote/sparse-geography client is the focus.
+3. **The geo LIMIT (log explicitly):** geo proximity is an axis **for remote or sparse-geography clients only. It is NOT an axis for urban single-site clients.** A downtown venue (BC Place) is not a proximity problem — distance-to-asset carries no information when everything relevant AND everything irrelevant sits inside 2km. This is a **limit of the geo model, not a defect in it.** **BC Place needs a different relevance model; no amount of geometry authoring changes that** → belongs in the **archetype work**, not the geo work.
+4. **Geocoding defects (log separately — real independent of any axis):** city-centroid resolution (a city → one downtown point that swallows every incidental mention), "Vancouver Island" substring-matching "Vancouver", "Taylor Farms" substring-matching Taylor BC. Backlog: `WO-GEOCODER-PRECISION-01`.
+
+### The four-axis position (evidenced, not assumed)
+| Axis | State | Evidence |
+|---|---|---|
+| 1 Keyword | LIVE — only door | `matchClientKeywords` = pure `.includes()`; the entire admission gate |
+| 2 Geo proximity | CLOSED — engine exists, not opened | 342/wk naive = centroid noise; 16/wk remote-industrial (PECL-only) viable-parked; not an axis for urban clients |
+| 3 Thematic / risk-category | CLOSED — no RSS door | LLM rule 14a runs after keyword gate; never sees dropped items |
+| 4 Jurisdictional / regional | CLOSED — deferred | ~7–8 real events/wk, unreachable; needs a DETERMINISTIC event-classifier, not a string test |
+
+**Position:** four axes measured, none open, each closure evidenced rather than assumed. Nothing shipped on the relevance front — but the intake-decline diagnosis went from "corpus exhaustion" (wrong) to "client-match starvation of a healthy surface, with three unbuilt relevance axes and a fourth that is a model limit" (evidenced). Better fighting position than this morning. STOP.
+
+## PECL RE-ATTRIBUTION 1a+1b (2026-08-14) — 3 keywords deactivated (reversible); dry run projected. WRITE HELD.
+
+### 1a ruling executed — 3 keywords DEACTIVATED (reversible, recorded)
+`clients.monitoring_keywords` for Petronas Canada: 42 → **39**. Removed (operator ruling):
+- **Wet'suwet'en** (bare token — region/theme-proxy; 5 CGL-specific Wet'suwet'en phrases retain the real case).
+- **Kitimat LNG** (affirmatively wrong — Chevron/Woodside project, not PECL).
+- **BC LNG** (region+industry; PECL one of several).
+Kept: Montney gas (contested) + all 17 long generics (to see which fire).
+**REVERSAL (if needed):** `update clients set monitoring_keywords = monitoring_keywords || array['Wet''suwet''en','Kitimat LNG','BC LNG'] where name='Petronas Canada';`
+
+### 1b dry run — token-boundary matcher (deterministic-matcher.ts approximated in SQL) over PECL's 1,741 active signals. READ-ONLY, nothing written.
+**Projected attribution split:** direct **276 (16%)** · competitor **0** · sector-only **12 (0.7%)** · **none 1,453 (83%)**.
+- The 83% none = signals with NO distinctive-keyword nexus (old tier-2-fuzzy / broad-geo residue). Under honest re-attribution these become `none` superseding corrections (same as the Option C 635).
+
+**Per-keyword fire counts — 11 of 39 fire, 28 are DEAD (0):**
+| fires | keyword (type) |
+|---|---|
+| 153 | LNG Canada (direct) |
+| 51 | Coastal GasLink (direct) |
+| 50 | Petronas Canada (direct) |
+| 17 | **BC Energy Regulator (sector)** — the ONLY live region-proxy |
+| 16 | Prince Rupert Gas Transmission (direct) |
+| 8 | Progress Energy Canada (direct) |
+| 7 | Unist'ot'en (direct) |
+| 5 | Gidimt'en (direct) · Stand.earth (direct) |
+| 4 | CGL pipeline (direct) |
+| 2 | Montney gas (direct) |
+| **0** | **all 16 remaining long generics** (Northeast BC wildfire ×3, LNG environmental/operational/supply-chain ×5, pipeline protest/injunction BC, Peace Region/Northeast BC energy, Skeena/Kitimat, Danielle Smith, Canada Energy Regulator LNG, landslide) + 11 distinctive that never appear verbatim (Keyera, SimpleHelp, PAN-OS ×2, Dogwood, Frack Free, Metlakatla, CGL-blockade ×2, Wet'suwet'en-blockade ×3) |
+
+**Confirms operator's "dead weight not risk" prediction:** the long generics fire 0 under token-boundary matching — prunable as data, not risk. The one live proxy is BC Energy Regulator (17 fires → 12 sector-only signals; covers ALL BC energy, not just PECL).
+
+**Montney gas (contested keep) — both matches clean:** (1) 2026-05-23 "Resource Works CEO … called the Montney gas reserves…"; (2) 2026-07-05 "Canada's Montney Natural Gas is a Crown Jewel" — context "…of the **Coastal GasLink pipeline from the Montney gas**-…" (explicitly CGL-linked). No false positive. Keep validated.
+
+**CAVEAT (scope of the projection):** this is monitoring_keywords-ONLY. The BC Place writer also anchored on **client locations / assets / entities** (DIAG anchor set: fort st. john, kitimat, montney, tumbler ridge, dawson creek, …). Adding those would move some of the 1,453 `none` into `direct` (the genuinely location-anchored PECL signals). Real `direct` ≥ 276, real `none` ≤ 1,453. Can measure the location-anchor contribution before the write if wanted.
+
+**WRITE HELD** per "I rule before anything writes." Nothing inserted into signal_client_attributions. Awaiting ruling.
+
+## PECL 1b — COMPLETE SPLIT (keyword vs keyword+location/asset anchors). Location anchors re-import centroid-collision. WRITE STILL HELD.
+
+Measured the missing input (operator directive: 1,453 keyword-only `none` was unrulable with location/asset/entity anchors unmeasured).
+
+### Per-anchor fire counts (18 locations + 7 assets, over 1,741 active PECL signals)
+| fires | anchor | note |
+|---|---|---|
+| **313** | British Columbia (loc) | **broad-region proxy — any BC mention** |
+| **162** | Peace River (loc) | **a WEATHER FORECAST REGION — mostly NAAD weather warnings** |
+| **146** | Alberta (loc) | **broad-region proxy — a different province** |
+| 90 | Fort St. John (loc) | town-name — fires on graduations, real estate, car crashes |
+| 61 | Kitimat (loc) | town-name |
+| 26 | Coastal GasLink pipeline (asset) | overlaps "Coastal GasLink" keyword |
+| 21 | Skeena · 18 Prince Rupert · 15 Dawson Creek | town/region |
+| 11 | Northeast BC (loc) | broad |
+| 6 | Prince Rupert Gas Transmission pipeline (asset) | |
+| 0 | **5 of 7 assets** + 9 locations | dead long-phrases (never verbatim) |
+
+### Complete projected split (1,741 active)
+| class | count | % | quality |
+|---|---|---|---|
+| direct — distinctive **keyword** | 276 | 16% | **CLEAN** (Coastal GasLink, LNG Canada, Unist'ot'en…) |
+| direct — specific location/asset **anchor** | 279 | 16% | **CONTAMINATED — town-name centroid-collision** |
+| proxy — broad-region / BCER only | 322 | 18.5% | region-proxy (British Columbia/Alberta) |
+| none | 864 | 50% | |
+(keyword-only was 276 direct / 1,453 none; adding locations moves 589 out of none — but 279 are town-noise + 322 are broad-region-proxy.)
+
+### FINDING — location anchors do NOT cleanly rescue the `none`
+Town/region anchors carry the **same centroid-collision as the geo work** (WO-GEOCODER-PRECISION), one form over: a town name anchors on ANY mention of the town. Samples of location-anchor-only signals: Environment Canada weather warnings (Peace River forecast region), a UBC graduation, real-estate listings, a Highway 97 crash, a rail-maintainer job ad, a school calendar, Site C dam renaming. **The only clean `direct` set is the 276 keyword matches.** Broad-region locations (British Columbia 313, Alberta 146) are the region-proxy the operator removed from keywords, re-appearing in `locations`.
+
+### Montney double-count — NONE
+Location "Montney Formation" fires 0; keyword "Montney gas" fires 2; asset "…(Montney)" fires 0. No overlap.
+
+### Entities — 4,745 linked, NOT expanded
+Too large + high over-match risk (person/org names, many common words) to anchor safely; given locations already centroid-collide, entity anchoring is likely noisier still. Aggregate entity contribution not measured (its own pass if wanted).
+
+**WRITE STILL HELD.** The ruling now has the complete input: clean direct = 276 (keyword); location/asset anchors add 279 but contaminated; broad-region = 322 proxy; none = 864.
+
+## FINDING (log separately, operator directive) — the keyword list was never the 93% mechanism.
+- **28 of 39 PECL keywords fire ZERO** over the full active set. PECL attribution rests on **11 keywords; 5 carry most** (LNG Canada 153, Coastal GasLink 51, Petronas Canada 50, PRGT 16, Progress Energy 8 — plus Unist'ot'en 7, Gidimt'en 5, Stand.earth 5, BC Energy Regulator 17 [sector], CGL pipeline 4, Montney gas 2).
+- **The long region-proxy phrases (Northeast BC wildfire ×3, LNG environmental/operational/supply-chain ×5, pipeline protest/injunction BC, …) fire ZERO** under token-boundary matching. The 93% over-attribution came from the **tier-2 fuzzy rule** (INDUSTRY_TIER_KEYWORDS × REGIONAL_ANCHORS), NOT from these phrases. **The keyword list was never the mechanism** — deactivating keywords (even the 3 removed) does not touch the tier-2 fuzzy path that produced the 665/93%. That path is the real lever.
+
+## PECL RE-ATTRIBUTION — WRITE EXECUTED (2026-08-14). 0 positive → 288. Brief unblocked.
+
+Operator ruling: keyword-only. direct=276 (clean); sector=12 (BC Energy Regulator only); everything else none. Location/asset anchors EXCLUDED (centroid-collision — the 279 "specific anchors" matched town-general news: Peace River weather warnings, a UBC graduation, real-estate listings, a Highway 97 crash). Broad-region locations (British Columbia 313, Alberta 146) = region-as-proxy in a different column. Entities (4,745) not expanded.
+
+**Written to `signal_client_attributions` (append-only, BC Place record standard):**
+- **276 direct** — basis `{keyword_fired, matched_field, match_offset, matched_text, all_matched_keywords, matcher_version:'deterministic-matcher.ts (WO-GATE-PHASE3, parity-proven 2026-08-12); SQL re-attribution 2026-08-14', matcher_deterministic:true}`; supersedes prior Option-C `none` where present.
+- **12 sector** — BC Energy Regulator match, no direct nexus.
+- **none** — for uncovered no-nexus signals (not duplicating the 271 existing Option-C `none`).
+
+**OUTPUT ASSERTION (latest non-superseded per active signal, 1,741 total):** direct **276** · sector **12** · none **1,453**. Was **0 positive** this morning.
+
+**BRIEF REGENERATED (generate-executive-report, PECL, 2026-08-07→08-15):**
+- BEFORE (13:30): `insufficient_data:true`, counts `{attributed:0, signals_in_period:91, excluded_superseded_none:39, loose_matched_unverified:52}`.
+- AFTER (17:57): **full brief** (insufficient_data gone). categories [operational, environmental]; 2 HIGH action items, both on **Prince Rupert Gas Transmission** (PECL asset) — e.g. "[EXTERNAL-MONITOR] Monitor the operational development … Prince Rupert Gas Transmission pipeline". Deductions correctly says "Insufficient signal data for strategic deductions this period" — thin but real, does NOT fabricate on 3 signals. Window went 0 attributed → 3 direct + 1 sector.
+
+PECL re-attribution complete. Same writer/standard as BC Place (167 direct). Keyword deactivation (42→39) reversible; write append-only + superseding.
+
+## BRIEF DEFECTS (2026-08-14, PECL brief) — evidence, no fixes. Two sections reading different inputs.
+
+### Defect 1 — Confidence does NOT scale with what was assessed. TWO paths, neither tied to main-tier volume.
+- **Quiet-period path** (deterministic, generate-executive-report:984): `confidence: mainCount === 0 ? 'Not assessed (no main-tier signals)' : 'High'`. **Binary** — 1 main-tier or 100, both render 'High'. The quiet-period fix only handled the *zero* case; any nonzero → 'High'. This is the path the operator identified.
+- **Non-quiet (LLM) path** (schema :930 `"confidence":"High|Medium|Low"`): when there IS a flash-eligible critical/high signal, the LLM freely picks the confidence label — self-certainty, untethered to signal count or quality ("confidence is not correctness").
+- **Which path PECL's brief took: the LLM path.** Its 4 attributed signals include **3 severity=high** (Ksi Lisims pipeline rel 0.80; black-smoke emissions 0.70; Forest tool 0.50) → `flashHigh>0` → `isQuietPeriod=false` → LLM generated the flash AND chose `confidence:'High'`. So the "High" over 2 main-tier signals is the **model's self-assessment**, not the binary branch. (Corrects the premise — but the defect holds either way: NOTHING computes a tie between confidence and the number/quality of main-tier signals actually assessed.)
+
+### Defect 2 — Risk table and Deductions read DIFFERENT input sets.
+- **Risk table** (`overallRiskLevel`, :778-825): deterministic. `getRiskLevel(max(surveillanceRisk, protestRisk, sabotageThreat, criticalThreatCount))` where each is a count of **main-tier freshSignals whose `category` contains** surveillance/reconnaissance · protest/activism · sabotage/vandalism, plus `criticalThreatCount = flashCritical` (severity=**critical** only). getRiskLevel: ≥5 HIGH / ≥3 ELEVATED / ≥1 MODERATE / 0 LOW.
+  - PECL's 2 main-tier signals are `category='operational'` and `category='environmental'` → **map to ZERO of the factor buckets**; both severity=**high** not critical → criticalThreatCount 0 → max=0 → **LOW**. The table is a **physical-security taxonomy (surveillance/protest/sabotage/critical) with no bucket for environmental/regulatory/operational**, and it **ignores `high` severity entirely** (only `critical` counts). So 3 high-severity signals → Risk LOW.
+- **Deductions** (LLM, :1309-1384): "Apply the specialist knowledge and agent assessments… State trajectory for each threat thread: ESCALATING/STABLE/DE-ESCALATING." It **free-reads the signals' content** (title/normalized_text) + specialist agent assessments, unconstrained by the 4 factor categories. It read the `environmental` "black smoke emissions" signal → **ESCALATING, regulatory + community-activism implications.**
+- **Root of the contradiction:** the risk table maps signals into a fixed 4-category physical-security taxonomy (and only counts `critical`); the deductions read raw content freely. A **high-severity environmental/regulatory signal is invisible to the table (→LOW) but escalation-worthy to the LLM (→ESCALATING).** Same signals, two classifiers, one document.
+
+Evidence only. No fixes.
+
+## BRIEF DEFECTS — evidence for the rulings (2026-08-14). No design.
+
+### Defect 1 — Confidence: what could compute it, and whether it can be calibrated.
+**Available to compute from (exists, real data):**
+- **main-tier count** — `freshSignals` (rel ≥ 0.60), already computed per brief.
+- **attribution basis** — `signal_client_attributions` (1,908 rows; direct/sector/none per signal). A per-signal grounding signal (e.g. count/fraction of main-tier signals that are `direct`).
+- **citation coverage** — `report_evidence_sources` (5,219 rows across 224 reports); 132/150 recent signals carry a `source_url`. Whether a claim has a resolved source is computable.
+
+**NOT available:**
+- **source reliability** — **0 sources** carry a reliability/credibility score (`sources.config` has none). No per-source credibility to weight by.
+- **calibration ground-truth** — **`agent_world_predictions` = 0 rows** (the calibration table exists but its input is empty). There is **no outcome data to calibrate a High/Medium/Low against**.
+
+**Evidence conclusion:** a *calibrated* confidence (probability of correctness) **cannot be computed honestly** — zero ground-truth. A *coverage/assessment* label (derived deterministically from main-tier count + `direct`-attribution fraction + citation coverage) **can**. Per the reliability-footer rule: either render an honestly-labelled **assessment-coverage** figure from those three, or **stop rendering "Confidence: X"** — do not keep a calibrated-sounding label with nothing calibrating it. (Both current paths — the binary quiet branch and the free LLM pick — are neither.)
+
+### Defect 2 — Risk table: hardcoded 4-factor physical taxonomy; client_risk_categories ignored; same for every client.
+- **Where the 4 factors come from:** **HARDCODED** in `generate-executive-report:789–822` — literal `category.includes('surveillance'/'reconnaissance' | 'protest'/'activism' | 'sabotage'/'vandalism')` filters + `criticalThreatCount = flashCritical` (severity=critical only). Referenced **nowhere else in the codebase**. **Not configurable per client or per archetype** — every client renders the same four.
+- **client_risk_categories is NEVER read** by the report (grep: 0 references). **PECL has 6** — `activism_naming_pecl (0.80)`, `wildfire_near_asset (0.95)`, `credential_exposure_pecl (0.95)`, `corridor_proximity (0.55)`, `regional_activism (0.40)`, `flaring_exclusion (0.25)` — **none feed the table.** PECL's real, weighted risk model is invisible to its own risk table.
+- **Every other client's table:** identical four factors. **BC Place has 0 client_risk_categories** AND would render the **same pipeline-oriented taxonomy** (surveillance/protest/sabotage/critical). **A venue assessed on a pipeline's risk taxonomy** — structurally blind to venue exposure (crowd/event/transit/weather). This is the CRT-relevant finding.
+- **Sub-findings:** (a) the codebase already has a broader category set — `HIGH_VALUE_CATEGORIES` (`generate-executive-report:665`) includes `regulatory` + `operational` — used for signal filtering but NOT wired into the risk table; (b) the table ignores `high` severity entirely (only `critical` counts), so three high-severity signals read LOW.
+
+Evidence only. No design proposed.
+
+## DEFECT 1 — proposed rendering (report before build, one line).
+Ruling: stop rendering "Confidence: X"; replace with a deterministic ASSESSMENT-COVERAGE figure from the three inputs that exist (main-tier count · direct-attribution · citation coverage). No probability wording.
+
+PECL window computes: main-tier **2**, both **direct**-attributed, both **sourced** (usable 4, period 95).
+
+**Proposed line (replaces the `Confidence:` chip):**
+> `Assessment coverage: 2 main-tier signals · both directly attributed · both sourced (4 attributed of 95 collected)`
+
+- Labelled "Assessment coverage," not confidence. Counts, no percentages (nothing a reader can read as a probability of correctness). All three inputs shown; zero-main-tier degrades to "0 main-tier signals — not assessed." Awaiting operator wording ruling before building.
+
+## ARCHITECTURAL FINDING (2026-08-14) — populated per-client models sit unread; the client-facing assessment layer runs on hardcoded taxonomies + flat fields + LLM. ONE finding, not four defects.
+
+Operator directive: map every per-client assessment consumer against what it reads. Result — the pattern is systemic.
+
+**The three populated per-client models and who reads them:**
+| model | populated | readers |
+|---|---|---|
+| **client_risk_categories** | PECL **6** (wildfire_near_asset 0.95, credential_exposure_pecl 0.95, activism_naming_pecl 0.80, corridor_proximity, regional_activism, flaring_exclusion) | **ZERO — backend AND frontend.** Only consumer `compute-client-relevance` (g3) is DISABLED. Fully dead. |
+| **client_geo_assets** | PECL 14, BC Place 1 | infra/gating only: `score_signal_hazard_pathway`, `incident-creation-gate`, `client-mandate`, `monitor-geo-wildfire`. **No client-facing rendered assessment reads it.** |
+| **archetype** (`_shared/archetypes.ts`) | exists | `incident-creation-gate`, `monitor-social-unified`, `system-watchdog`, frontend `ClientSelector`. **No brief/scorer reads it.** |
+
+**What the client-facing ASSESSMENT consumers actually read:**
+| consumer (renders a per-client assessment/score) | reads risk_cat / geo / archetype? | reads instead |
+|---|---|---|
+| generate-executive-report — **risk table** | none | **hardcoded 4-factor taxonomy** (surveillance/protest/sabotage/critical) + flat fields (monitoring_keywords, high_value_assets, industry) |
+| ingest-signal / process-intelligence-document — **relevance / client_match** | none | flat fields (name/industry/locations/high_value_assets) + monitoring_keywords (keyword substring) |
+| assess-entity, detect-threat-patterns, predictive-incident-scorer, analyze-threat-escalation, model-geopolitical-risk, generate-poi-report | none | LLM-over-signals |
+| frontend RiskSnapshot / ClientRiskSnapshot / ThreatGlobe / EscalationProbabilityCard | none | signals / incidents / predictive_incident_scores (runtime) |
+
+**THE FINDING (one, architectural):** the client-facing assessment layer is **structurally decoupled** from the structured per-client models that exist and are populated. Assessments run on **hardcoded taxonomies** (risk table's 4 physical factors; HIGH_VALUE_CATEGORIES; frontend category lists), **flat client fields** (keywords/assets/industry), and **free LLM synthesis** — while `client_risk_categories` (0 readers), `client_geo_assets` (infra-only), and `archetype` (infra-only) sit unread. This is the SAME pattern already hit twice: the geo-admission gate ignores `client_geo_assets` (keyword-only), and the brief's risk table ignores `client_risk_categories`. **client_risk_categories is the starkest — a designed, weighted, per-client risk model with ZERO consumers in the entire codebase.**
+
+Consequence for CRT: BC Place (venue) is assessed by the same hardcoded pipeline taxonomy as PECL, with its own `client_risk_categories` empty and unread regardless. Rule the pattern, not the instance. Evidence only — no design.
+
+## DEFECT 1 BUILT + VERIFIED (2026-08-14). Confidence chip → assessment-coverage line.
+generate-executive-report: `Confidence: ${executiveFlash.confidence}` chip REPLACED with a deterministic coverage line computed from main-tier count · direct-attributed · sourced (+ usable/collected). Deployed. Verified on both clients (freshly generated):
+- **PECL:** `Assessment coverage: 2 main-tier signals · 2 directly attributed · 2 sourced (4 attributed of 95 collected)`
+- **BC Place:** `Assessment coverage: 0 main-tier signals — not assessed`
+No `Confidence: High/Medium/Low` chip renders. Zero-main-tier degradation exact. (Insufficient-data page, a separate 0-attributed branch, already states "Insufficient data" honestly.)
+
+## ARCHETYPE TAXONOMY — SCOPING (2026-08-14). Evidence + shape only. Answers: authorable-per-client vs archetype-templated + overrides.
+
+**Format reference — PECL's 6 (client_risk_categories), full structure:** `{category_key, label, criticality, weight, polarity(include|exclude), persistence(event|campaign), match_spec}`. `match_spec` = `any_of/all_of` of matchers `{type: keyword | named_place | geo_proximity, any:[…], assessable:bool}` + `require_signal_category:[…]` + optional `override_if/on_override/exclude_floor`. **Critically, PECL's `wildfire_near_asset` already marks its `geo_proximity` matchers (travel_route/supply_route/staff_home_region) `assessable:false`** — the model already declares which evidence sources are not yet wired (the geo work is that binding).
+
+**Decomposition of PECL's 6 → the STRUCTURE is energy-archetype-level; the ANCHOR VALUES are client-specific:**
+- Archetype-level (repeats for any energy client): the category *keys, weights, criticality, polarity, persistence, match_spec shape, require_signal_category*.
+- Client-specific (override): the `any:[…]` anchor lists — "Petronas/CGL/Kitimat/Montney/Fort St. John…" — PECL's names, regions, domains.
+
+### Three archetype category-set SHAPES (weights = default; anchor = per-client override; evidence = binding)
+**ENERGY** (PECL = the live reference):
+| category_key | wt | evidence source (require_signal_category × matcher) | client anchor |
+|---|---|---|---|
+| credential_exposure | 0.95 | cyber (data_exfil/phishing/intrusion) × keyword | client systems/domains |
+| asset_proximity_hazard | 0.95 | wildfire/natural_disaster × named_place OR geo_proximity→client_geo_assets | asset names + geometry |
+| named_activism | 0.80 | protest/activism × keyword | client + project names |
+| corridor_proximity | 0.55 | hazard/threat × named_place (region) OR corridor geometry | region names + corridor line |
+| regional_activism | 0.40 | protest/regulatory/environmental × industry keyword | (mostly archetype-generic) |
+| routine_ops_exclusion (polarity=exclude, override-if-escalate) | 0.25 | operational/industrial_flaring × keyword | archetype-generic + client override triggers |
+
+**VENUE_SECURITY** (BC Place — NOT decided; proposed SHAPE for review, not a design):
+| category_key | wt | evidence | anchor |
+|---|---|---|---|
+| event_crowd_threat | ~0.90 | active_threat/physical_threat × venue name + event-day calendar | venue + event schedule |
+| named_event_or_performer_threat | ~0.80 | threat × event/performer entity | event/performer entities |
+| protest_at_venue | ~0.75 | protest/activism × venue name/location | venue name |
+| transit_ingress_disruption | ~0.55 | civil_emergency/operational × transit-hub named_place (tight) | venue transit hubs |
+| severe_weather_event_impact | ~0.50 | weather/CAP × venue geo (tight buffer) | venue location |
+| credential_exposure_venue | 0.95 | cyber × venue domains | venue domains |
+| routine_event_ops_exclusion (exclude) | 0.20 | operational × ticketing/concourse | archetype-generic |
+Spine is EVENT-CENTRIC + TIGHT-GEO (the 2km centroid finding) — corridor/regional categories do NOT apply.
+
+**PRINCIPAL_PROTECTION** (CRT core — proposed SHAPE):
+| category_key | wt | evidence | anchor |
+|---|---|---|---|
+| named_principal_threat | ~0.95 | threat/harassment × protected-person entity | principal identities (entity graph) |
+| doxxing_exposure | ~0.95 | paste/breach × principal PII | principal emails/identifiers |
+| residence_route_proximity | ~0.80 | physical_threat/surveillance × principal geo | residence/route geometry |
+| court_proceeding_exposure | ~0.55 | court-list × principal name | principal names (→ court-registry work) |
+| travel_destination_risk | ~0.55 | geo-risk × travel itinerary | travel plans |
+| associate_network_threat | ~0.50 | threat × entity_relationships | associate entities |
+Spine is PERSON-CENTRIC (entity graph + relationships) — ties to entity-anchoring + court-registry threads.
+
+### The read on the operator's question
+Each archetype has a **distinct spine** (energy=corridor/hazard/activism · venue=event/crowd/transit/weather · principal=person/doxx/residence/court) — a single flat taxonomy cannot serve all three (this IS the risk-table defect). Within an archetype, clients share the spine and differ only in anchor values + weight tuning. **Evidence says: archetype-templated (per-archetype category set + default weights + match_spec shape + require_signal_category) WITH per-client override of the anchor lists and weights — NOT authorable-per-client (the one-off-script trap that doesn't scale), NOT purely templated (anchors are inherently client-specific).** The `assessable:false` matchers show the format already anticipates evidence-source bindings that the geo/court/entity work supplies. Evidence + shape only — no design, no build.
+
+## VENUE SPINE authored as template (2026-08-14) — docs/platform-operations/archetypes/venue-security-spine.md
+Full match_spec detail for BC Place to author anchors against. **Wired now:** protest_at_venue, credential_exposure, routine_ops_exclusion + keyword/named_place legs. **assessable:false (waiting on bindings):** event_calendar (NO source — the venue's #1 axis), transit_feed (NO source), geo_proximity (geo work; weak for downtown venue), entity (not wired). Finding: venue threat-detection is wired; its DEFINING relevance axes (event-day + transit) have no evidence source.
+
+## PRINCIPAL-PROTECTION spine is GATED, not merely unbuilt (record explicitly — do NOT scope as buildable).
+- **court_proceeding_exposure** — depends on **counsel Q1** (CSO ToU / court-list automated access). Blocked until Q1 answered.
+- **residence_route_proximity** — person-entity geo; **counsel Q2** (PIPEDA person-matching) attached.
+- **associate_network_threat** — `entity_relationships` over person entities; **Q2** attached.
+- **named_principal_threat + doxxing_exposure** — matching named individuals from the entity graph; **Q2** attached (the deferred person-matching capability).
+Net: the entire principal-protection spine is **person-entity-centric → Q2-gated**, and court_proceeding_exposure is additionally **Q1-gated**. It is NOT a buildable archetype today — it is counsel-gated. Only the energy spine (live) and the venue spine (partially wired) are buildable now.
+
+## COUNSEL DRAFT — now gates THREE workstreams (2026-08-14, priority marker). Operator is sending it.
+The pending counsel questions (`docs/platform-operations/counsel/DRAFT-cso-tou-pipeda-court-lists.md`) are the single blocker on three separate workstreams — raising the priority of the answer:
+1. **Court-registry monitor build** — gated on **Q1** (CSO Usage Agreement / automated + commercial access to Daily Court Lists).
+2. **Principal-protection archetype spine (entire)** — gated on **Q2** (PIPEDA / matching named individuals from the entity graph). named_principal_threat, doxxing_exposure, residence_route_proximity, associate_network all carry Q2; court_proceeding_exposure additionally carries Q1.
+3. **Founder-reputation direction** — depends on the principal-protection person-entity capability, therefore inherits **Q2**.
+One answer unblocks (or re-scopes) all three. Until it returns, all three are counsel-held, not backlog. Q3 (can a technical control substitute for authorization) bounds whether any of them have an engineering path around the answer.
+
+## EVENT CALENDAR = forward-looking STATE, not a signal (2026-08-14). Shape only — item 5, the conceptual one.
+
+Operator's framing (correct): an event calendar is a property of a DATE ("on 29 Aug, 54,000 people at 777 Pacific Blvd"), not an occurrence. Routed through ingest-signal it becomes a scored "event" and gets relevance-dropped like everything else. It must enter as STATE the scorer READS, not as a signal the scorer SCORES.
+
+### Q1 — Does a forward-looking client-state table exist? NO.
+- `client_geo_assets` is **spatial** state ("where the client is"), read by `score_signal_hazard_pathway` via a **spatial join** (signal point × asset geometry). It is the model's only per-client STATE surface of this kind.
+- **There is no temporal equivalent.** Every client-scoped temporal column in the schema is backward-looking (occurrence/lifecycle timestamps) or an expiry (`entity_watch_list.expiry_date`, `api_keys.expires_at`). `agent_world_predictions` has `time_horizon_hours` but it is (a) empty and (b) *predictions* (probabilistic guesses), not *scheduled certainties* (a booked event is deterministic state, not a forecast). **Nothing holds "at future window W, client C is in condition X."**
+- **Shape of what's missing:** a per-client SCHEDULED-CONDITIONS surface — `{client_id, window (start/end or tstzrange), condition_type, attributes (expected_attendance, event_type, gates_open, performer/team), source}`. It is state (not signals): NOT written by ingest-signal, NOT relevance-scored — a lookup surface, exactly like `client_geo_assets` one axis over (space → time).
+
+### Q2 — What the event_calendar matcher leg expects to query.
+`event_crowd_threat`'s `{type:event_calendar, to:event_day_window, assessable:false}` leg expects a **temporal join**: given a signal's date + the client, is there a scheduled-condition window covering that date, and what are its attributes? It is the **temporal mirror of the `geo_proximity` matcher** (signal point × `client_geo_assets`.geom → distance) — here it is (signal date × client_schedule.window → attendance/event_type). The matcher does not score the schedule; it looks up whether the signal falls inside an elevated window and pulls the context.
+
+### Q3 — "protest on match day > same protest dark Tuesday" — mechanically.
+Common core across every shape: **a date/window join to a per-client schedule table + a factor applied to an existing signal's score.** Not a new signal, not a relevance-gate change to admit the schedule — a CONTEXT lookup that MODIFIES a signal's score by temporal state. Three shapes it could take (not a design choice, just the forms):
+- (a) **join + multiplier in the scorer** — the relevance/risk pass joins signal.date to the schedule window; on a hit, multiply by an attendance-tier factor. Simplest; one join.
+- (b) **separate temporal-context pass** mirroring `score_signal_hazard_pathway` — a `score_signal_temporal_context(signal_id)` that reads the schedule and writes a context factor alongside (like `hazard_pathway_scores`). Composable; keeps the relevance gate untouched.
+- (c) **via the archetype spine** — the `event_calendar` matcher's hit contributes to `event_crowd_threat`'s weighted `client_risk_categories` score (the "right" home per the archetype ruling, once that model is wired).
+
+### The architectural framing
+The platform models per-client state **spatially** (`client_geo_assets` + a spatial-join scorer) but **not temporally**. The event calendar exposes that gap — it is the **temporal twin of the geo model**, and BOTH the state table AND the temporal-join scorer are absent. Same "per-client state read by a scoring pass" pattern as the geo work, on the time axis. Shape only — not designed.
+
+### Ledger note (operator directive): the event calendar is the ONLY unblocked source found.
+Across all four relevance axes, the collection inventory, court registry, and the counsel-gated principal spine — **the venue event calendar is the single source with no ToU wall and no counsel gate.** It is BC Place's OWN data (the client's schedule); the lowest-friction path is the client providing it directly. Every other net-new source is either not-built, ToU-restricted (CSO, Ticketmaster commercial), or counsel-gated (Q1/Q2). This one is a small, client-authorized feed — and it is the difference between a venue product and a keyword filter.
+
+## PLATFORM CONCEPT — client_scheduled_conditions (temporal twin of client_geo_assets). 2026-08-14. Not a venue feature.
+Per-client forward-looking STATE: `{client_id, window (start/end or tstzrange), condition_type, attributes, source}`. Read by a scoring pass; NOT written by ingest; NOT relevance-scored. The temporal twin of `client_geo_assets` (spatial state). **Do NOT build it as an event calendar** — a venue event is one instance of a general shape. Instances (same shape, different condition_type):
+- principal travel window · facility turnaround/shutdown · AGM / earnings / court date · fire season / freshet / storm season · scheduled protest or anniversary date · contract-award / regulatory-decision date · (venue) event day.
+Each is "at future window W, client C is in condition X" — a date-scoped modifier of exposure, not an occurrence.
+
+## SCOPING — score_signal_temporal_context pass (form (b)), mirror of the hazard pathway. Report only.
+Operator chose (b) — a SEPARATE pass writing a factor alongside, NOT inside the relevance/risk scorer. Rationale (operator): "two things computing one number is how we got here" — keep temporal context its own composable layer, like attribution vs relevance.
+
+**What it writes + where:** `score_signal_temporal_context(signal_id)` → a `signal_temporal_context_scores` row per (signal, client): `{signal_id, client_id, matched_condition_id, condition_type, factor (multiplier/tier), attributes_snapshot (attendance_tier, event_type, window), computed_at}`. Exact mirror of `hazard_pathway_scores` written by `score_signal_hazard_pathway`. Append/upsert; the raw signal is never rewritten.
+
+**Which consumers read the factor:** the same seam that reads `hazard_pathway_scores` today —
+- `generate-executive-report` (brief): weight `event_crowd_threat` / severity ranking on an elevated window (reads it like it reads hazard_pathway_scores at ~:481).
+- `incident-creation-gate`: escalation decision (mirrors its hazard_pathway read).
+- the `client_risk_categories` scorer, once wired: the `event_calendar` matcher's hit contributes via this factor.
+- report tiering: a match-day signal ranks above a dark-Tuesday one.
+Consumers COMBINE layers at read time (relevance × attribution × hazard-pathway × temporal-context) — no layer bakes another's number in.
+
+**Pre or post admission — THE TRAP (operator's flag, confirmed):** `score_signal_temporal_context(signal_id)` takes a `signal_id`, so by construction it runs **POST-admission**, on rows already in `signals` — exactly like the hazard pathway. Therefore it **inherits the hazard-pathway limitation: it only scores what already got in.** A protest signal on match day benefits from the ×attendance factor **only if it was admitted** at the keyword `client_match` gate in the first place. A match-day protest that fails client_match (doesn't name the venue/client) is dropped before any signal exists → never scored → the temporal context can never reach it. **(b) is a PRIORITIZATION/ESCALATION lever over admitted signals, NOT an ADMISSION lever.**
+
+**The resolution shape (not designed):** to make temporal state affect *admission* — admit an event-day-relevant signal that doesn't name the client — the schedule must be consulted **at/before the client_match gate** (a pre-admission temporal leg, the mirror of the unbuilt geo-admission leg). That is a DIFFERENT integration point than (b). So temporal context is genuinely **two hooks**: (1) pre-gate admission (unbuilt, same shape as the geo-admission gap) and (2) post-admission factor (b, this pass). (b) alone is worth building — it makes the brief rank/escalate correctly on event days — but it does not rescue a dropped signal. Naming that boundary is the point: (b) is honest post-admission prioritization; the admission half is a separate, harder hook that shares the geo gate's problem. Report only — no design, no build.
+
+## ARCHITECTURE FINDING (2026-08-14) — admission is keyword-only; ALL relevance machinery is downstream of it. One architecture, not four gaps.
+Third instance today of one pattern:
+- **geo pathway** (`score_signal_hazard_pathway`) — works, post-admission, cannot rescue drops.
+- **temporal context** (`score_signal_temporal_context`, scoped) — same shape, same position, same limit.
+- **client_risk_categories scorer** (g3, if wired) — same seam.
+The platform has sophisticated relevance machinery that **can only re-rank what a substring `client_match` already admitted.** The single live admission door is keyword substring; every other layer (geo, temporal, risk-category, attribution) is a post-admission re-rank. **Admission is keyword-only and everything else is downstream of it.** Building more downstream layers = better ranking of an already-thin admitted set (the "tune relevance on 4 signals/week" mistake).
+
+## SCOPING — the admission hook (one pre-gate consultation, not a matcher per axis). Report only.
+Idea (operator): at `client_match`, on items about to be dropped, ask ONCE — does any per-client state (geo / temporal / risk-category) bear on this item? One consultation point.
+
+**Where it sits:** `process-intelligence-document`, at the `no_client_match` branch (~L488), BEFORE `recordDecision(...'no_client_match')` + the drop. A single `consultClientState(item, clients)` — for each client, evaluate its `client_risk_categories` match_spec (which already unifies keyword + named_place + geo_proximity legs, and would carry a temporal leg); on a hit, admit + attribute via the risk-category instead of dropping. This IS the g3 `compute-client-relevance` logic, relocated from post-admission to the gate.
+
+**What it needs that does not exist:**
+1. `client_risk_categories` **populated for all clients** — only PECL (6); BC Place 0; population path missing (the standing prerequisite).
+2. **The item's category AT the gate** — `require_signal_category` (the precision filter) needs the item classified, but classification happens at `relevance_score`/extraction, AFTER `client_match`. So at the gate you have title/raw_text only. Either reorder (pre-classify before client_match) or run anchor-legs-only (looser). **This ordering gap is decisive** (see measurement).
+3. **Item geolocation** for the geo_proximity legs (the geo work, `assessable:false`).
+4. `client_scheduled_conditions` for temporal legs (does not exist).
+5. **The consultation engine** — g3 `compute-client-relevance` is LOST/disabled; would be rebuilt.
+
+**What it would have admitted from last week's 3,270 drops (offline, PECL match_specs):**
+- **41** drops mention ANY PECL risk-category anchor (raw, no category filter).
+- **15** with `require_signal_category` applied (approx from title) — all via `wildfire_near_asset`.
+- **BUT the 15 are Okanagan wildfires** (Summerland/Peachland/Merritt/Vernon) matched on the **loose `evacuation order`/`evacuation alert` keyword leg — NOT the tight `named_place` (Kitimat/Montney) leg.** None are near a PECL asset. The tight named_place legs → **~0 this week** (no NE-BC fire event).
+- **Verdict: the combined consultation UNION is NOT different from the parts.** ~15 (loose) or ~0 (tight) — same magnitude as every axis-by-axis measure. **No hidden trove.** And the client's own match_spec has a loose leg (bare "evacuation order") that recreates the broad-geo breadth problem one level up — the consultation is only as precise as its legs.
+
+**Cost/value read (not a decision):** the admission hook is the correct architectural fix (one consultation, right position — pre-gate), and its prerequisites are real (population path, category-at-gate ordering, geolocation, schedule table, rebuilt engine). But the deciding number says it recovers a **small** set that is precise only with disciplined match_spec legs, and confirms — a fourth time — that the **client-relevant surface is genuinely thin** (the client-match-starvation finding). Value is CORRECTNESS (catch the real near-asset wildfire the week it happens) not VOLUME. Measuring the union was the right test: it shows the union ≈ the best single axis, because the underlying relevant content is thin, not because the machinery is missing. Report only — no build.
+
+## WEEK'S CONCLUSION (2026-08-14) — COLLECTION is the product constraint. Relevance thread CLOSED.
+Four independent measurements converge on the same result:
+1. **Corpus analysis** — the RSS surface fetches abundant content; ~99% correctly drops at client_match (2-client roster).
+2. **Per-axis admission** — keyword (only live door) / geo (too wide raw, thin clean) / thematic (no door) / jurisdictional (~7-8 real events/wk).
+3. **Geo-admit distribution** — 342/wk naive = urban-centroid noise; ~16/wk clean remote-industrial.
+4. **Combined risk-category consultation** — union ≈ best single axis (~15/wk, all broad-region wildfire via a loose leg; tight legs ~0).
+**All four land on a handful of client-relevant items per week, for two clients, against a Canadian news RSS pipeline. Relevance engineering does not change this — the surface is thin, not the machinery missing.**
+
+- **Admission hook: correct fix, low volume, worth building for CORRECTNESS. PARKED, not cancelled.**
+- **Everything that would change OUTPUT is COLLECTION:**
+  1. Q2 counsel answer → person-entity monitoring → founder reputation.
+  2. Social + forum collection — dead since ~May.
+  3. BC Place event calendar — the only unblocked source found.
+- **Relevance thread STOPPED.** No further work on scoring / axes / admission until collection moves.
+
+## SOCIAL + FORUM COLLECTION — post-mortem (2026-08-14, last report today). Per-platform: existed / died / why / restore / block-type.
+Overarching: social/forum collection was built on **Google CSE + deprecated Meta Graph endpoints** — a foundation that structurally cannot work at scale. CSE cannot index the social platforms (they deindex/block it); Meta's public-search endpoints are deprecated/permission-gated; X requires a paid API; LinkedIn has no accessible content API; Pastebin blocks archive scraping. The CSE bet was wrong (same lesson as the twitter-CSE retirement).
+
+| platform | existed / ran | last produced | why it died | block type | restore cost |
+|---|---|---|---|---|---|
+| **twitter / X** | API v2 rewrite (correct), ran 1228× Apr24–Jul10 | 08-10 (23 total) | **X API v2 is paid ($100–5000/mo); budget-paused (Phase X-1, 05-19), retired PROD-M** | **API-COST** | **LOW — TWITTER_BEARER_TOKEN present + code correct; fund budget + re-schedule cron. The only clean restore.** |
+| **facebook** | never ran standalone (CSE stub); real FB via social-unified Meta Graph | 06-11 (89) | Meta Graph `pages/search` deprecated + token/permission (`FACEBOOK_ACCESS_TOKEN` present but app-token scope limited); standalone is CSE-only (FB deindexed) | **ToU / API** (Meta app-review + permissions) | MED — Meta app review + Page-scoped token; standalone monitor is dead-end (CSE) |
+| **instagram** | CSE-only, still runs 1126× (last 08-14) | 05-23 (35) | **CSE cannot see Instagram; no Graph path in the standalone monitor** — runs, yields 0 | **TECHNICAL** (CSE blind to IG) | MED — IG Graph Business API (business account + app review) |
+| **social-unified** | aggregator, ran 6071× Mar12–Aug05 | 06-01 (multi_platform 42; +reddit/tiktok/threads to ~05-23) | CSE structural-zero for social + Meta Graph endpoint deprecation; cron stopped Aug 5 | **TECHNICAL + ToU** | HIGH — re-anchor off CSE onto per-platform paid APIs or a licensed aggregator |
+| **pastebin** | scrapes `pastebin.com/archive`, ran 89× Apr11–May03 (81% FAILED) | never (0 signals) | **Pastebin blocks archive scraping (non-200s); real scraping API requires PRO ($)** | **ToU / API-COST** (+ never-produced) | MED — Pastebin PRO API or alternate paste sources |
+| **linkedin** | never ran (0 cron), 0 signals, no viable method wired | never | **LinkedIn has NO public content API + prohibits scraping (ToU + legal)** | **NEVER-WORKED / ToU** | HIGH — licensed source only; no clean path |
+
+**Restore priority (by cost-to-first-signal):** (1) **X** — cheapest and cleanest: fund the API, code+token are ready. (2) **Meta FB/IG** — app review + proper tokens (one review covers both). (3) **Pastebin** — PRO API or swap to alt paste/forum sources. (4) **LinkedIn** — no clean path; needs a licensed aggregator. The structural lesson: free/CSE/scraping social collection is dead; every live path is a paid API or a licensed feed. Report only — no build.
+
+## X + REDDIT — spend-decision sizing (2026-08-14, report-only). Both cost more than the premise.
+
+### X API — "$100 Basic" no longer exists; real number at current cadence ≈ $400/mo.
+- **Tier reality (Feb–Jun 2026):** X closed Basic/Pro to new signups and **retired legacy Basic ($200/mo, not $100) — force-migrated to pay-per-use after June 1 2026.** Free tier discontinued. Default now = **pay-per-use: $0.005 per post READ, hard cap 2M reads/mo** (Enterprise ~$42k+ above that). Recent search (7-day window) is on pay-per-use; **full-archive (pre-7-day) is Pro/Enterprise only.**
+- **What monitor-twitter does:** `/2/tweets/search/recent` (7-day window — fits pay-per-use), ~2–4 packed queries/run × `max_results=25`, **every 30 min** (48 runs/day). ≈ **50–100 reads/run → ~72k–108k reads/month.**
+- **Cost fit:** at $0.005/read that is **~$360–540/month at the current 30-min cadence** — NOT $100. **$100 buys ~20,000 reads/month**, which the monitor hits in ~3–4 days. To live inside $100 the cadence must drop ~4–5× (every ~2–3h, or fewer results/query). 
+- **Verdict: $100 is the entry price, not the real number.** Real number at current config ≈ **$400/mo**; $100/mo is achievable only by re-scoping the monitor to ~20k reads/mo. The v2 code + `TWITTER_BEARER_TOKEN` are ready; the decision is cadence-vs-budget, and there is no $100 Basic tier to buy.
+
+### Reddit — nothing was ever built; free API is NON-COMMERCIAL; commercial floor is ~$12k/mo.
+- **What exists:** **no `monitor-reddit` function, no Reddit API integration ever.** The 8 `reddit` signals came only from **CSE incidentally indexing reddit.com** (via monitor-social / social-unified allowlist). Net-new to build; nothing to revive.
+- **API terms (2026, post Responsible Builder Policy June 5 2026):**
+  - **Free tier = NON-COMMERCIAL ONLY** (personal / bot / mod / academic), 100 QPM per OAuth client. **A commercial founder-reputation product cannot compliantly use the free tier.** OAuth required (no-auth blocked).
+  - **Commercial = Reddit approval (2–4wk manual review, not guaranteed) + paid agreement at $0.24/1,000 calls, floor ~$12,000/month for 50M calls. No smaller paid plan.**
+  - Continuous monitoring blows the free ceiling quickly (N subreddits every few min > 100 QPM).
+- **Verdict: the operator's instinct on VALUE is right** (Reddit is where "has anyone dealt with this person" threads live — high-value for founder reputation) **but "free API, workable terms" is not the 2026 reality for commercial use.** It is the highest-value AND highest-walled source: free is non-commercial (non-compliant for the product), commercial is a $12k/mo floor + approval. Realistic paths: a licensed data reseller, or the $12k tier — not the free API.
+
+**Cross-cut:** both confirm the structural lesson — every live social path is paid or licensed, and the *entry* prices advertised ($100 X, free Reddit) are not the *commercial* prices ($400/mo X at current cadence; $12k/mo Reddit). X is still the cheapest real path (~$400/mo or ~$100 re-scoped); Reddit is high-value but $12k-floored. Report only — no build, no spend.
+
+## X SIGNALS-PER-DOLLAR — historical yield measurement (2026-08-16, read-only). Token verified (402 credits-depleted, not 401).
+Before funding X pay-per-use credits, measured what X-origin monitoring actually yielded Apr–Jul (origin monitor-twitter/twitter).
+1. **Total X-origin signals:** 23 over 2026-04-03 → 08-10 (~4 months); 18 active days; **~1.28/active day.**
+2. **Quality-active** (is_test=false, not deleted, quality active): **8 of 23** (15 were test/deleted/quarantined).
+3. **Attribute positively under the current deterministic matcher:** **1** (PECL) + 0 (BC Place) = **1.**
+4. **Reach main-tier (rel ≥ 0.60):** **1** — the same one.
+5. **Split:** Petronas 6 active → 1 attributed/main-tier; BC Place 2 active → 0.
+
+**The one signal:** *"Stand.earth activists protest at RBC CEO's home over Coastal [GasLink]"* (rel 0.80) — a genuinely relevant CGL-activism item. So X *can* surface the right kind of signal; it did so **once in four months.**
+
+**Signals-per-dollar verdict:** ~4 months of X monitoring, for the current 2-client keyword config, produced **ONE attributed main-tier signal.** At the sizing report's cost that is **~$1,600 per main-tier signal** (~$400/mo × 4mo at current cadence), or ~$400/signal even re-scoped to ~$100/mo. The operator's "two vs twenty" test lands at **~one.** Poor signals-per-dollar for the current config.
+
+**Caveat (honest):** this measures X against the CURRENT client-KEYWORD config (PECL/BC Place). The **founder-reputation** direction would query X for PERSON names (Q2-gated) — a DIFFERENT query pattern this historical yield does NOT test. X-for-founder-reputation could differ; X-for-current-2-client-keywords is ~1/4mo. Token confirmed valid (402 credits-depleted, authenticates); funding is the only remaining step, but the historical yield argues against it for the current config. Read-only — no writes, no credits funded.
+
+## DECISION — X credits NOT funded (2026-08-16). X = DEFERRED, not rejected.
+1 attributed main-tier signal in 4 months against the current config is not worth $400/mo or $100/mo. **Recorded caveat AS the finding:** this measured X against **corporate asset-keyword queries — the WEAKEST use of the source.** The founder-reputation query pattern (**person names, not asset names**) is untested and **Q2-gated**. X stays a **deferred spend decision that reopens if/when Q2 clears** — not a rejected source. Token verified valid (402 credits-depleted, authenticates).
+
+## METRIC (generalisable) — cost per attributed main-tier signal, per source. The number that should decide collection strategy.
+Computable per source via the five steps: total → quality-active → attributed-positive (deterministic matcher) → main-tier (rel≥0.60) → split by client. X = ~$1,600/main-tier-signal (paid). Free/near-free sources = the yield IS the value (cost≈0). Running retrospectively across all live sources (below).
+
+## RETROSPECTIVE — attributed-main-tier yield per source (2026-08-16, last 150d, read-only). + the metric's bias.
+Five steps per source (quality-active → positively-attributed via deterministic keyword matcher → main-tier rel≥0.60):
+| source | quality-active | attributed+ | **attributed main-tier** | cost | ~cost / main-tier signal |
+|---|---|---|---|---|---|
+| **rss-sources** | 1,276 | 240 | **80** | free (RSS) | **~$0 — best value** |
+| **news-google** | 194 | 109 | **29** | Google CSE (paid/query, modest) | low |
+| other/unclassified | 704 | 30 | 8 | mixed | — |
+| canadian-sources | 19 | 3 | 1 | free | ~$0 |
+| **naad** | 167 | **0** | **0** | free | n/a (see bias) |
+| **wildfire (geo/cwfis)** | 32 | **0** | **0** | free | n/a (see bias) |
+| **cisa-kev** | 27 | **0** | **0** | free | n/a (see bias) |
+| X/twitter | 8 | 1 | 1 | ~$400/mo | **~$1,600** |
+
+**THE BIAS (this is the finding):** the metric attributes via the **keyword matcher only** — so it gives **ZERO credit to sources whose value is on the non-keyword axes.** naad (0) = jurisdictional/geo emergency alerts that don't name the client; wildfire/cwfis (0) = geo-proximity hazards that don't name the client; cisa-kev (0) = CVEs matched by **tech_stack**, not keywords. All three produce genuinely relevant signals via their OWN attribution basis (geo / jurisdiction / tech_stack) that the keyword re-attribution cannot see — the same architecture finding (keyword is the only attribution lens). **Their 0 is a measurement blind spot, not worthlessness.**
+
+**Reading:** for **keyword-attributable NEWS sources**, the metric is valid and decisive — **rss-sources (80, free) is the best value on the platform; news-google (29, low-cost) second; X ($1,600/signal) worst.** For **geo/tech/jurisdiction sources (naad/wildfire/cisa-kev)**, the metric under-reads to 0 and must be paired with an axis-appropriate measure (proximity hits, tech_stack matches, jurisdictional events) — the very axes with no admission door. **Cost-per-keyword-attributed-main-tier decides NEWS collection; it cannot decide geo/tech/jurisdiction collection until those axes are measurable.**
+
+## COLLECTION THREAD — CLOSE (2026-08-16). Two conclusions recorded.
+
+### Metric-bias finding (ratified)
+**Cost-per-keyword-attributed-main-tier decides NEWS collection and is structurally BLIND to geo, tech, and jurisdictional sources.** naad / wildfire(cwfis) / cisa-kev show 0 not because they are worthless but because their attribution basis (geo-proximity / jurisdiction / tech_stack) is invisible to the keyword matcher. **Their zeros are a measurement gap, not a value judgement.** This is the same architecture finding — keyword is the only lens — now surfacing in the MEASUREMENT layer, one level up from admission.
+**Do NOT build an axis-appropriate metric yet.** Those axes have no admission door; measuring yield on a door that does not exist is premature. The metric is valid for news collection and honestly silent on the rest.
+
+### 1. rss-sources carries the product.
+**80 main-tier attributed signals in 150 days, free.** Every other source is marginal (news-google 29, canadian 1), unmeasurable-by-this-metric (naad/wildfire/cisa-kev = geo/tech/jurisdiction), or worst-value (X, ~$1,600/signal). **rss-sources is the one channel carrying the product.** Consequence for hygiene priority: **the 49 never-produced + 20 regressed RSS feeds (WO-GEOCODER-PRECISION/source-health backlog) are INSIDE the one channel that works** — that is where hygiene effort has leverage, not on the marginal sources.
+
+### 2. X funding — DECLINED, with the Fitzgerald caveat.
+Two things true at once: (a) as an **asset-keyword** instrument on the current 2-client config, X is the worst value on the platform (1 signal/150d, ~$1,600). (b) The metric measures **corporate keyword yield** and is the **WRONG instrument for principal-threat detection, which is a rare-event problem** — a rare-event source is not judged by average yield. The single X-attributed signal in 150 days — **"Stand.earth activists at an executive's residence"** — was **person-centric, the exact class the metric undervalues.** **X reopens if/when Q2 clears AND a principal-protection client exists. Not before.** Deferred, not rejected.
+
+**COLLECTION THREAD CLOSED.** Levers that move output remain: Q2 counsel → person-entity/founder-reputation; BC Place event calendar (only unblocked source); rss-sources hygiene (the channel that works). No further collection scoping until one of those moves.
+
+## WATCHDOG ITEM 1 (2026-08-16) — BC Place "coverage gap ×5" is a FALSE POSITIVE. Not cap, not config, not monitors. Watchdog Rule T3 conflates 0-yield with not-processed.
+Watchdog fired: BC Place coverage gap ×5/7d, Kilbacks ×4/3d ("no monitor processed it"). Re-checked; the finding is wrong.
+
+**Which clients each monitor processed (24h / 7d) — ALL THREE, uniformly:**
+| client | evaluated @client_match 24h | 7d | client_matched 7d | signals 24h | signals 7d |
+|---|---|---|---|---|---|
+| BC Place | **243** | **3,403** | 16 | 0 | **12** |
+| Kilbacks | 243 | 3,403 | 4 | 0 | 14 |
+| Petronas | 243 | 3,403 | 15 | 1 | 23 |
+Every ingested item is evaluated at `client_match` against ALL active clients — **BC Place was evaluated 243×/24h, 3,403×/7d and matched 16 items/7d, producing 12 signals in 7d (0 in the last 24h).** It is demonstrably PROCESSED.
+
+**Answers to the four diagnostics:**
+1. **Ordering changed?** No. `pickActiveClients()` = `status='active'` + drop `_`-prefixed fixtures; NO ordering, NO slice. The `slice(0,4)` exists only in **monitor-social-unified:175 (DEAD since Aug 5)**, and it includes BC Place (position 2 of 4) anyway. **monitor-news-google REMOVED its `.slice(0,3)` cap 2026-05-07.** The cap is not live.
+2. **Config populated for BC Place?** YES — `monitoring_keywords`=37, `monitoring_config.archetype='sports_venue'`, `crt_pilot=true`, venue activism keywords (BC Place/PavCo/FIFA/Whitecaps/protest/breach/evacuation). (active_monitoring_enabled is a per-ENTITY flag, n/a at client level.)
+3. **Monitors running?** YES — 243 client_match evaluations/24h prove rss-sources→process-intelligence-document is running and evaluating BC Place.
+4. **Cap / config / not-running?** **NONE of them.** It is the WATCHDOG. **Rule T3 (system-watchdog per-client coverage SLO) defines "processed" = appears in `rejection_samples.source_name` OR has a signal with client_id in 24h.** `rejection_samples` is written ONLY by monitor-social-unified (dead) → the rule degrades to **"produced a signal in 24h."** BC Place produces intermittently (12/7d, 0 on ~5 of 7 days) → fires 5 false coverage-gap findings. **Same shape-of-zero conflation** we've hit repeatedly: 0-yield ≠ not-covered.
+
+**The earlier "no starvation" (slice cap) conclusion HOLDS** — the cap does not exclude BC Place. This is a distinct false positive from Rule T3's definition.
+
+**The real signal underneath (the demo concern is valid, cause differs):** BC Place's thin YIELD — 12 signals/7d, 0 on most days — is the collection thin-surface finding (a venue against a Canadian-news RSS pipeline), NOT a coverage failure. Fix directions (not built): (a) Rule T3 should use `ingest_decisions.clients_evaluated` (processed) vs signals-produced (yield) — coverage ≠ yield; (b) the demo sparsity is the collection problem (event-calendar / archetype), unfixable by the watchdog. Read-only.
+
+## WATCHDOG Rule T3 — FIXED + PROVEN (2026-08-16). Coverage now = clients_evaluated (processing), not signals (yield).
+system-watchdog Rule T3 gained Source 3: `ingest_decisions.clients_evaluated` in the window. A client evaluated at client_match is COVERED regardless of yield.
+**Proof (before → after):**
+- BEFORE: `Client coverage gap: BC Place …` (medium, occ 5, since 08-09) + `… Kilbacks …` (occ 4, since 08-13) — both firing daily.
+- Deploy fix → re-run watchdog (19:49, http 200) → **neither re-emitted** (last_seen stayed 19:48:12, occ held 6/5). Then **resolved both** (resolved_at 19:50).
+- (First deploy attempt was truncated/incomplete — an intervening run on OLD code bumped occ 5→6 / 4→5; the confirmed second deploy is what the 19:49 clean run validates.)
+Two false findings that had been on the board a week are cleared. Same class as the instagram double-listing (yield≠coverage). Rule T3 will now only fire on GENUINE non-coverage (client not evaluated at all).
+
+## THE NUMBER THAT MATTERS (2026-08-16) — BC Place week is essentially empty. Collection, not coverage.
+**BC Place: 3,403 items evaluated at client_match in 7 days, 16 matched, 12 signals — a 0.47% match rate.** The demo client's week is essentially empty. This is the **collection thin-surface finding** (a venue against a Canadian-news RSS pipeline), NOT a coverage failure — BC Place is processed on every item; there is almost nothing about it to find. **This is what Vince would see if he logged in today.** The levers that change it are the recorded ones: BC Place event calendar (the only unblocked source), the venue archetype spine, and person-entity monitoring (Q2). The watchdog fix removes the false alarm; it does not change the 0.47%.
+
+## TIER-2 REVIEW GAP (2026-08-16) — real gap, correct denominator, bounded consequence. Evidence only.
+Watchdog "tier-2 review ×31/103d, 20% reviewed" — investigated. Unlike the BC Place item (a denominator artefact), **this is a real coverage gap.** But the layer it gaps is barely wired to operator output, so consequence is bounded. Four sub-questions:
+
+**1. What review-signal-agent produces / what a reviewed signal carries.**
+`review-signal-agent` (551L) fires for the 0.45–0.75 composite band and writes to `signals.raw_json.agent_review`: `{verdict: enrich|flag|dismiss|promote, reasoning (prose), confidence_delta: -0.15..+0.15}`. It also (a) re-writes `composite_confidence` to the adjusted score, and (b) for the 0.60–0.64 sub-band a `promote` verdict CREATES an incident; 0.65–0.75 enrich/flag/dismiss an existing one. A reviewed signal therefore carries: a reasoning trail, a corrected confidence, and — in the promote sub-band only — a possible incident. An unreviewed signal carries none.
+
+**2. Does it fire at all / what distinguishes the 20% from the 80%.**
+It fires. It is NOT severity-gated and NOT RSS-gated — the gate is composite-band only (`ai-decision-engine` L791 `isReviewableBand_pre = compositeScore >= 0.45 && < 0.75`), and `has_tier1_analysis` shows ai-decision-engine ran on ~92/87 band signals, i.e. the review call was *fired* for nearly all. Split by severity (30d, band, is_test=false): medium 27/64, high 6/14, critical 2/2, low 0/7 — coverage is flat ~40% across severities, so severity is NOT the distinguisher. **The distinguisher is delivery failure of an unretried fire-and-forget call.** `ai-decision-engine` L803/L1205 does `await fetch(.../review-signal-agent, {signal: AbortSignal.timeout(20000)})` with no retry, no queue, no reconciliation. A prior incident (code comment 2026-05-08) already drove this to **0%** via silent 401s — the legacy `SUPABASE_URL` JWT had no `sub` claim and every fetch 401'd; "fixed" by resolving the key from vault. The residual ~60% is the steady-state tail of that same unretried pattern (LLM-review latency >20s → abort, transient 5xx, ai-decision-engine dying mid-batch). Proof it is permanent, not lag: **all 52 unreviewed band signals are >24h old; 0 in the last 24h.** Nothing backfills a missed review.
+
+**3. Where the 80% end up.**
+They reach briefs exactly as they would if reviewed — because **the briefs do not consume `agent_review` at all.** Only `_shared/fortress-operational-prompt.ts` reads it (AEGIS chat + the Signal Detail UI "Reasoning Trail" drill-down). `generate-executive-report` reads `agent_review` 0 times and `composite_confidence` 0 times; `generate-daily-briefing` likewise. So the reasoning layer and the re-score are invisible to the operator brief. The ONE brief-reaching consequence is the promote verdict (incident creation) in the 0.60–0.64 sub-band — and that sub-band is the **worst-covered**: 22 unreviewed vs 10 reviewed = 69% of promote-eligible signals never reviewed. Incidents that a review would have created were not created; that is the only place the gap changes what Vince sees.
+
+**4. PECL / BC Place recent main-tier signals in the band, unreviewed.**
+PECL: **3 main-tier (relevance≥0.60) band signals, all 3 unreviewed.** These are the direct-attributed signals that reach PECL's brief — none carry a reasoning trail (though, per Q3, the brief wouldn't render it anyway). BC Place: 0 in-band (nothing to review — consistent with the 0.47% thin surface).
+
+**VERDICT.** Real gap (denominator correct), caused by an unretried fire-and-forget async review with no reconciliation, permanent (not queue lag). But the reasoning layer it drops is **not wired into any operator brief** — so the operator-visible consequence reduces to (i) missing incidents in the 0.60–0.64 promote sub-band (69% uncovered) and (ii) empty Reasoning-Trail panels on Signal-Detail drill-down. It is simultaneously the highest-*count* finding on the board and one of the lowest-*consequence*, because the layer is barely consumed. Two independent defects sit here: the delivery gap (fire-and-forget) AND the consumption gap (briefs ignore the output). Fixing delivery without wiring consumption changes nothing Vince sees except incident counts. **Evidence only — nothing built.**
+
+## TIER-2 REVIEW GAP — DOWNGRADED + split into two defects (2026-08-16, operator ruling)
+**Severity high→low, reason recorded in code (system-watchdog ~L2974).** It sat HIGH for 103 days as one of the lowest-consequence items on the board; that miscalibration is what made the watchdog hard to read. Ruling: **real defect, no client-facing consumer → low.** Not fixed — two independent defects in a layer briefs do not read is not worth build time while collection is the constraint. Deployed (verify_jwt=false).
+
+The gap is two independent defects. **Ordering is consumption-before-delivery** — wiring the reasoning layer into briefs is what would make the delivery gap matter, and there is no point retrying delivery of something nothing reads:
+
+**DEFECT A — CONSUMPTION GAP (must come first).** Briefs ignore `agent_review` and the review's composite re-score entirely. `generate-executive-report` reads `agent_review` 0 times and `composite_confidence` 0 times; `generate-daily-briefing` likewise. Only `_shared/fortress-operational-prompt.ts` consumes it (AEGIS chat + Signal-Detail "Reasoning Trail" panel). So the reasoning layer is invisible in every operator brief. **Until this is wired, fixing delivery changes nothing a client sees.** This is the gating half.
+
+**DEFECT B — DELIVERY GAP (the fixable half, but second).** `ai-decision-engine` (L803/L1205) fires review-signal-agent via `await fetch(... AbortSignal.timeout(20000))` — no retry, no queue, no reconciliation — so ~60% of reviews are lost permanently (all 52 unreviewed band signals >24h old; 0 in last 24h → permanent, not lag). Straightforward to fix (retry/queue/backfill), but pointless in isolation: retrying delivery of something nothing reads yields nothing client-visible. Only defensible AFTER Defect A.
+
+**Net.** Both parked while collection is the constraint. If/when the reasoning layer is wired into a brief (Defect A), Defect B becomes worth the retry work. Not before.
+
+## client_scheduled_conditions — TABLE + BC Place seed (2026-08-16)
+Built the temporal twin of `client_geo_assets`: per-client forward-looking state, read by a (future) scoring pass, **never written by ingest, never relevance-scored**. Table + seed only — NO scorer, join, or consumer built. State surface exists before anything reads it.
+- **Table:** `public.client_scheduled_conditions` (id, client_id FK→clients ON DELETE CASCADE, window_start/window_end date, condition_type, label, attributes jsonb, source, created_by, created_at). CHECK `window_end >= window_start` (single-day: ws=we; multi-day valid). **RLS enabled at creation, deny-by-default (0 policies)** — service-role write only. Indexes: (client_id, window_start, window_end), (condition_type). Git parity: `supabase/migrations/20260816150000_create_client_scheduled_conditions.sql`. Applied single-file via apply_migration (not db push).
+- **Seed:** 22 rows, condition_type='venue_event', source='bcplace.com/events-tickets manual 2026-08-16'. Verified: 22 rows, 1 multi-day (Canada Super 60, six-day window as ONE row), RLS on / 0 policies.
+- **Five load bands (ordered by crowd load at this venue):** concert=full_bowl (8) · cfl=strong (5) · mls=partial (7) · cricket=sustained (1) · community=minor (1). WWF Climb For Nature correctly community/minor (stair-climb, not a 50k bowl event), NOT weighted as a full house.
+- **Two data-quality notes carried IN the seed (not fixed):** WWF slug reuse (`source_slug='noahkahan-2'`, do-not-key-on-slug flagged); Seattle Sounders `rivalry:true` (Cascadia crowd profile — event_class alone does not capture it).
+
+## bcplace.com events widget — JSON ENDPOINT FOUND (2026-08-16) — feed is viable
+Browser discovery: **`https://www.bcplace.com/wp-json/wp/v2/event`** — open, unauthenticated, no nonce, paginated (`?per_page=100` → 80 events). WordPress core REST API over a custom post type `event` (rest_base `event`); NO The-Events-Calendar/Tribe/MEC plugin (checked `/wp-json/` index). Clean `title.rendered` + `link` per object. **One real limitation:** event DATES are unstructured prose inside `excerpt.rendered`/`content.rendered` (e.g. "Saturday, August 29 … 7:30 p.m. PT"); the only custom `meta` key is `event_subtitle` (empty) — there is NO machine-readable start/end date field. So an ingester would get clean titles/links for free but must parse dates out of prose. This converts the manual seed into a FEED candidate. Endpoint recorded; NO ingester built.
+
+## score_signal_temporal_context — form (b) scoring pass: TABLE built, FUNCTION staged, read-only proof (2026-08-16)
+Form (b) as scoped: a temporal twin of the hazard pathway. Given a signal + client, if the signal's date falls inside a `client_scheduled_conditions` window, write a shadow row (matched condition, load_band, factor). **Contract: does NOT touch relevance_score, does NOT touch the admission gate.** Mirror of hazard_pathway_scores MINUS the relevance coupling (hazard caps relevance_score; this one never does).
+- **Table BUILT + applied:** `public.signal_temporal_context_scores` (signal_id/client_id/matched_condition_id FKs, condition_type, matched_label, in_window, event_class, load_band, factor, window_start/end, reasoning). RLS enabled deny-by-default (0 policies). Git parity `supabase/migrations/20260816160000_create_signal_temporal_context_scores.sql`. Row written ONLY on a window match — no window ⇒ no row (never a factor of 1).
+- **Function STAGED, NOT applied:** `docs/platform-operations/backlog/WO-TEMPORAL-CONTEXT-SCORER-fn-STAGED.sql`. Held out of migrations/ because the factor NUMBERS await ruling. On ruling → dated migration + apply + controlled populate.
+- **PROPOSED FACTORS (multiplicative uplift, monotonic with venue crowd load):** full_bowl/concert 1.50 · strong/cfl 1.35 · partial/mls 1.20 · sustained/cricket 1.15 · minor/community 1.05 · no window → no row. PROPOSED rivalry modifier +0.10 (Sounders 1.20→1.30) — flagged separately (event_class alone doesn't capture Cascadia profile). Awaiting operator ruling before anything writes.
+
+### Read-only pass over BC Place's 377 existing signals — result
+- **By the defined mechanic (signal created-date ∈ window): 0 of 377 land.** Not sparsity — TEMPORAL MISALIGNMENT: the corpus is 2026-05-18…08-14; the first seeded window is 08-19 (5-day gap). The 22 windows are entirely forward of the entire signal history, so a backfill test is structurally guaranteed 0. First testable day = 2026-08-19 (Whitecaps v Houston Dynamo).
+- **But the content is heavily event-related: 139 of 377 (37%) mention an event term** (Whitecaps/Lions/concert/etc.). BC Place's stream is mostly sports/venue content — the concept is right, the data is aligned in TOPIC but not in TIME.
+- **Mechanic distinction surfaced for ruling:** the 139 are mostly event-REPORTING (recaps/announcements: "BC Lions Win", "Whitecaps exit Leagues Cup", "Concert Announcement Tease") dated off the event day. The date-in-window mechanic elevates signals that COINCIDE with an event (a protest ON match day — the stated intent), NOT signals ABOUT an event. So even with aligned dates those recaps would not all land, and that is correct behaviour.
+- Corpus relevance of the event-term signals sits 0.3–0.5 (below/at main-tier); a future COINCIDENT operational signal is what the factor would uplift. Nothing was written to signal_temporal_context_scores — the pass was run as a pure SELECT.
+
+**NET:** concept validated (surface exists, join works, mechanic is correct), but it cannot demonstrate a live hit until signals arrive on/after 08-19 coincident with a window. "Concept right, data too thin to show it" — confirmed on the TIME axis; the TOPIC axis shows the stream is event-dense, which is the encouraging half.
+
+## score_signal_temporal_context — FACTORS APPROVED + APPLIED; saturation answered; base rate reconstructed (2026-08-16)
+Factors ruled: **1.50/1.35/1.20/1.15/1.05 + rivalry +0.10 + no-row-for-no-window** — APPROVED. Function applied as dated migration `supabase/migrations/20260816170000_score_signal_temporal_context_fn.sql` (fn_exists=1). **No consumer wired; shadow store empty (function uninvoked).** Contract holds: never touches relevance_score, never touches admission.
+
+### Saturation question — answered (concern does not hold)
+No consumer exists, so clamping is a CONSUMER decision, not a factor property. Against BC Place's actual relevance distribution (n=377, mean 0.475, median 0.500, p90 0.632):
+- Only **32/377 (8.5%)** sit ≥0.667 (the 1.5x clamp zone) — and those are ALREADY ≥main-tier, so pinning them to 1.0 loses nothing that matters for surfacing.
+- **230/377 (61%)** sit in [0.40,0.60) — the band where 1.5x does discriminating, NON-saturating work (lifts to [0.60,0.90), crossing main-tier). A 0.45 protest on a concert night → 0.675 is the designed lift.
+- Verdict: the factor is NOT mostly saturating; its real work is sub-threshold promotion in the meaty middle. If zero clamping is ever wanted, a headroom form `rel + (1-rel)*(factor-1)` avoids it — noted, not built.
+
+### Coincide-not-about base rate — reconstructed over last 90 days (THE sharper finding)
+Reconstructed historical BC Place event days via web (Whitecaps/Lions home + concerts). **The 90-day window was atypical: FIFA World Cup 2026 occupied BC Place Jun 13–Jul 7 (7 matches), displacing normal Whitecaps/Lions schedules to Kelowna/away.** 13 confirmed event days total (7 FIFA-WC, 2 cfl, 3 mls, 1 concert AC/DC).
+- **8 non-event-topic signals coincided with an event day.** But they decompose to near-zero genuine signal:
+  - **5 are synthetic `[PATTERN]` meta-signals** (frequency spike / entity escalation / geographic cluster) — these coincide BECAUSE event days spike signal volume; they are echoes of event traffic, not independent coincidences. Circular.
+  - **2 are mis-attributed noise** — a Cisco SSRF CVE and an LNG-Canada flaring story (relevance 0), both matched to BC Place only via the short-substring fabrication surface. Not about the venue at all.
+  - **1 is genuinely coincident: "Fans Marching to BC Place" (06-24, WC match day, rel 0.5)** — crowd movement, security-relevant — and even that is event-adjacent.
+- **Base rate of genuine independent coincidence ≈ 1 in 90 days, and that 90 days included a once-in-a-generation World Cup.** In the normal Whitecaps/Lions cadence the count is effectively zero.
+
+**VERDICT (operator's own frame): closer to "correct and useless" than "once a month."** The mechanic is correct, but on this client's real signal stream it would fire on a genuine coincide-not-about signal about once per quarter at best — and the one historical window that exercised it (World Cup) is non-recurring. This is a **real but rare lever**, worth knowing BEFORE a consumer is built. It argues the consumer is low-priority relative to collection — the surface exists and is correct, but the event-day-coincident non-event signal it's designed to elevate barely occurs in the data. Recorded; no consumer wired.
+
+## TEMPORAL-CONTEXT: correct machinery, insufficient stream (2026-08-16, closed)
+Recorded per operator: score_signal_temporal_context is **correct machinery with insufficient stream to exercise it** — genuine coincide-not-about signals occur ~once/quarter on BC Place's stream, and the one 90-day window that exercised it (FIFA World Cup) is non-recurring. Consumer stays UNWIRED. Function live, shadow store empty, awaiting forward signal flow.
+
+## RELEVANCE-SCORE DISTRIBUTION = DEFAULT-DOMINATED, PLATFORM-WIDE (2026-08-16) — the bigger finding. Evidence only.
+The saturation analysis surfaced this and the operator asked to separate it. **The [0.40,0.60) clustering is NOT BC Place-specific and NOT a judgement distribution — it is a schema default masquerading as a score.**
+
+**1. Platform-wide, not client-specific.** In-band [0.40,0.60): BC Place 61.0% (230/377) · PECL 57.0% (1045/1834) · platform 60.6% (2314/3818). **Median 0.500 on every client.** Temporal context was just the first uplift pointed at a bulk band that every client shares.
+
+**2. The band is one spike.** Exact-value histogram, platform-wide (n=3818): **0.50 = 1,821 signals = 47.7% of ALL signals.** Then 0.30=15.3%, 0.40=7.2%, 0.70=5.2%, 1.00=4.7%. Genuinely-scored spread values (0.53, 0.54, 0.59…) are ≤1.7% each. Round buckets dominate; continuous judgement is the exception.
+
+**3. Root cause of the 0.50 spike = a DB COLUMN DEFAULT.** `signals.relevance_score` has `column_default = 0.5`. Any insert that does not explicitly set relevance_score lands at exactly 0.50. Corroboration:
+   - **74%** of the 0.50 signals (1,354/1,821) have NO origin metadata at all (raw_json has no signal_origin/monitor_name/source) — inserted bare.
+   - **95.1%** of the 0.50 signals have NO AI scoring trace (ai_confidence/confidence/relevance_reasoning/agent_review/ai_analysis absent) vs 91.0% for other values — 0.50 signals are ~2× barer than the rest.
+
+**4. The other spikes are their own defaults/buckets, not judgement either.**
+   - **0.70 (5.2%)** = the RSS path's null-default — `process-intelligence-document:1070` writes `relevance_score: signal.relevance_score || 0.7`.
+   - **0.30 (15.3%)** = an AI-PROMPT-instructed floor: the extraction prompt says "give 0.3 or lower to tangential / unverifiable / historical content" (process-intelligence-document lines 627/640/643) — a coarse instructed bucket, not a computed score.
+   - **0.40 (7.2%)** = includes the unresolved-geography hazard cap (`least(rel,0.40)` in score_signal_hazard_pathway) documented earlier, plus model hedging.
+
+**CONCLUSION (operator's hypothesis, confirmed): most signals were never really scored.** ~48% carry the schema default 0.50; a further ~28% carry coarse instructed/path buckets (0.30/0.70/0.40). The threshold question is **moot for the bulk band** — main-tier at 0.60, the composite gate, AND any uplift (temporal context or otherwise) are all operating on top of a default value for roughly half the corpus, not a per-signal judgement. An uplift mechanism pointed at [0.40,0.60) is promoting the same never-scored bulk regardless of which mechanism it is. This is upstream of, and larger than, temporal context. Evidence only — nothing built, no scorer changed.
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LARGEST FINDING OF THE WEEK (2026-08-16) — RELEVANCE SCORE IS NOT A JUDGEMENT
+# Upstream of everything measured this week (temporal context, tiering, attribution,
+# the collection thread). ~3 in 4 signals carry no per-signal relevance judgement:
+# 48% at the schema column default 0.5, ~28% at coarse instructed/path buckets
+# (0.30 / 0.70 / 0.40). Evidence only — nothing proposed, nothing built.
+# ══════════════════════════════════════════════════════════════════════════════
+
+## Q1 — Which insert paths write signals WITHOUT setting relevance_score (→ take DB default 0.5)
+Two canonical setters DO set it: `ingest-signal` (13 refs; note L1773 explicitly writes `relevance_score: null` on one branch) and `process-intelligence-document` (18 refs, RSS path; L1070 `|| 0.7`). **Neither wrote the 48%.** The 0.50 spike comes from DIRECT-insert paths that OMIT the column (a column-default applies only when the column is omitted):
+- `detect-threat-patterns` (the `[PATTERN]` synthetic signals) — 0 relevance_score refs
+- `monitor-weather` · `monitor-macro-indicators` · `monitor-wildfire-comprehensive` · `parse-travel-security-report` · `parse-document` — all 0 refs
+- `visibility-gap-scanner` — 1 ref (partial)
+Six of seven direct writers set nothing → every row they insert lands at exactly 0.50 via `signals.relevance_score DEFAULT 0.5`.
+
+## Q2 — How much of the CLIENT-FACING attributed base sits on default relevance
+- **BC Place: 167 authoritative `direct` attributions — 54 (32.3%) sit on the 0.50 default; 71 (42.5%) in [0.40,0.60); avg relevance 0.447.** A third of BC Place's client-visible attributed signals carry the schema default, not a judgement → main-tier and awareness tiering for BC Place is substantially arbitrary. Confirmed.
+- **PECL — SIDE-FINDING (separate defect):** its 276 `direct` + 12 `sector` attributions are **`is_authoritative=false`**. PECL's AUTHORITATIVE attribution is 271 `none`. So PECL's positive re-attribution is present in the ledger but NOT the current authoritative state — PECL effectively has no authoritative positive attribution. (Of the 271 auth `none`: 21.4% on 0.50; of the 276 non-auth `direct`: 15.6% on 0.50.) This authoritative-state gap needs its own look — flagged, not chased here.
+
+## Q3 — Predates the scoring paths, or actively inserting bare rows TODAY?
+**Actively inserting today.** Last 30 days (2026-07-17…08-16): 1,238 signals, **403 (32.6%) at exactly 0.50, 346 of them bare-origin.** By category: active_threat 139 (112 `[PATTERN]` from detect-threat-patterns), operational 101, civil_emergency 39 (**latest 2026-08-16 = today**), regulatory 32, social_sentiment 24, environmental 5. Multiple live producers, dominated by detect-threat-patterns. Not a legacy artefact — the platform mints bare 0.50 rows continuously.
+
+## Q4 — What breaks if the default is removed and the column made nullable
+**Making it nullable does NOT achieve loud-fail today — the consumers coalesce null away, so null silently becomes 0.5 (or 0) at the reader.** The default is not only in the schema; it is re-injected downstream:
+- `ai-decision-engine` L259/L659/L987 (the COMPOSITE GATE — the exact tiering/incident consumer the operator wants to fail loud): `signal.relevance_score || 0.5` → null → 0.5 silently.
+- SQL composite computation: `COALESCE(relevance_score, 0.50)` (backfill migration L34, explicitly documented "relevance_score NULL → 0.50 (neutral)") — the composite_confidence column RE-DEFAULTS null to 0.5 regardless of the signals column.
+- `process-intelligence-document` L914/L927 `|| 0` (null→0, would DROP); `review-signal-agent`, `structured-debate` (`|| 0.5`); `send-daily-briefing`, `source-credibility-context` (`?? 0`); frontend `SignalHistory` L126 `?? 1` (null→treated as HIGH).
+So removing the column default ALONE changes nothing (composite re-defaults). To get the empty-set-guard loud-fail behaviour, EVERY coalescer (~8 sites) must be removed AND the composite computation must treat null as skip/error first — otherwise nullable just relocates the silent 0.5 from the schema into the readers, harder to see, not easier.
+- **Precedent already in-repo:** `ingest_decisions.relevance_score` is documented "NULL = never scored. 0 = scored zero. Never coalesce" (and `ingest_shadow_substrate` the same). The null≠0 / fail-loud discipline is already the STANDARD in the newer instrumentation tables; `signals.relevance_score` + its ~8 consumers predate and violate it. A fix has a pattern to mirror.
+
+## NET (changes what the relevance work IS)
+The relevance score is not a per-signal judgement for most of the corpus — it is a schema default with a coalesce-based safety net that guarantees 0.5 even if the schema default is removed. Every downstream mechanism that reads relevance — main-tier at 0.60, the composite/incident gate, awareness tiering, AND any uplift (temporal context, geo, future) — operates on top of that default for ~48% of signals and coarse buckets for another ~28%. Fixing tiering/uplift/thresholds is moot until signals are actually scored on the write side (6 bare-insert paths) OR the read side is made to fail loud (remove ~8 coalescers + composite null-handling). This is upstream of the entire week's measurement. Evidence only.
+
+## ITEM 1 — PECL attribution: write AND read both wrong, cancelled out (2026-08-16). Evidence only.
+Operator's hypothesis CONFIRMED: the brief rendered PRGT action items + "2 main-tier / 4 attributed" on NON-authoritative rows because the write failed to set authoritative AND the read fails to check it — the two errors cancel.
+
+**What sets is_authoritative / why yesterday's write did not.** Nothing automatic sets it. Column `is_authoritative` DEFAULT=false; the only trigger `trg_sca_append_only` (BEFORE UPDATE/DELETE) just blocks mutation of the append-only ledger — it does NOT promote a row. So is_authoritative is 100% writer-controlled. Timeline: **2026-08-12 16:04** wrote 271 `none` with is_authoritative=**true** (that writer set it). **2026-08-14 17:54** (yesterday's re-attribution) wrote 276 `direct` + 12 `sector` + 1182 `none`, ALL is_authoritative=**false** — the writer omitted the flag, default applied. Yesterday's positives never became authoritative.
+
+**Which rows the guard/report actually read** (`generate-executive-report`):
+- Exclusion read (L299-300): `attribution_type='none' AND is_authoritative=true` → the 271 authoritative `none` (08-12). Filters on auth.
+- Positive read (L307-308): `attribution_type IN ('direct','competitor','sector')` → **NO is_authoritative filter** → reads the 288 non-authoritative positives (08-14). `_directSet` (L310) built from this.
+- **Asymmetric:** the report checks is_authoritative on EXCLUSION but not on INCLUSION.
+
+**Was yesterday's brief built on the new positives?** YES — the 288 non-authoritative direct+sector. Proof (side-effect-free reconstruction of the read, no brief invocation): positives-as-report-reads = **288**; positives-if-auth-required = **0**; overlap of positives with authoritative-`none` = **0** (none-exclusion drops nothing). If the positive read required is_authoritative (symmetric with the exclusion), the usable set is 0 → the brief hits its own insufficient-data guard (L314-342). It rendered ONLY because the read ignores the flag the write failed to set. (122 of 288 are all-time main-tier rel≥0.60; the brief's "2 main-tier / 4 attributed" is that set narrowed to the 08-07…08-14 window after stale/cancel/dedup/citability tiering.)
+
+**Re-run now: same output or insufficient_data?** SAME output. Rows are append-only+unchanged; read logic unchanged → reads the same 288 → same PRGT brief. It does NOT return insufficient_data. It WOULD return insufficient_data the moment the positive read is corrected to require is_authoritative.
+
+**The landmine:** the write-fix (promote the 288 to authoritative) is safe — the read finds them either way. The read-fix (require auth on positives, the obviously-"correct" symmetry) done ALONE flips PECL's brief to insufficient_data instantly. Both are currently wrong; they must be fixed together, write-first. The ledger's authoritative truth for PECL currently says "271 signals = none, 0 positive"; the brief says "288 positive" — they disagree, and the brief wins by not reading the authoritative flag. Nothing fixed — evidence only.
+
+## ITEM 2 — 0.5 default: full shape recorded (do NOT fix yet). Three independent substitutions.
+The missing-judgement default is substituted THREE independent times, any one of which reintroduces 0.5:
+1. **Schema:** `signals.relevance_score DEFAULT 0.5` — bare inserts land here.
+2. **Read (×3):** `ai-decision-engine` L259/L659/L987 `signal.relevance_score || 0.5` — the composite/incident gate re-defaults null→0.5.
+3. **SQL composite:** `COALESCE(relevance_score, 0.50)` (backfill migration L34), documented "relevance_score NULL → 0.50 (neutral)" — composite_confidence re-defaults independently.
+Three plausible-value-for-missing-judgement substitutions. Removing any one leaves the other two.
+
+**Target state is already in-repo, not a new invention:** `ingest_decisions.relevance_score` enforces "NULL = never scored. 0 = scored zero. Never coalesce" (migration 20260802193600 L16; `ingest_shadow_substrate` L55 same discipline). The newer instrumentation already does null≠0 / fail-loud; `signals.relevance_score` + its ~8 consumers predate and violate it. The fix is to bring the old path up to the standard the repo already sets.
+
+**Six bare-insert paths (omit relevance_score → take DEFAULT 0.5):** `detect-threat-patterns` (LARGEST — and it inserts synthetic `[PATTERN]` meta-signals: frequency-spike / entity-escalation / geo-cluster, which arguably should carry NO relevance score at all, not a defaulted one — a meta-signal about signal volume has no per-signal relevance to default), `monitor-weather`, `monitor-macro-indicators`, `monitor-wildfire-comprehensive`, `parse-travel-security-report`, `parse-document` (+`visibility-gap-scanner` partial). Do NOT fix yet — recorded for the ruling on what relevance work becomes.
+
+## ITEM 1 FIX — PECL attribution corrected, write-first (2026-08-16). APPLIED.
+Operator ruled: fix write-first. Gating check first (as instructed): **the append-only trigger `trg_sca_append_only` blocks UPDATE/DELETE unconditionally** (`raise exception ... using errcode='check_violation'`). So a literal UPDATE to flip is_authoritative is impossible. This is NOT an uncorrectable ledger — the trigger's own message says "insert a superseding row instead," the `supersedes` column exists for it, and there is no partial-unique index forcing one authoritative row per signal. So the documented supersede path IS the correction mechanism (not an exception/workaround). Proceeded via supersede-insert.
+
+**Step 1 (write) — DONE.** Inserted 288 authoritative rows (276 direct + 12 sector), each `is_authoritative=true, supersedes=<08-14 non-auth original id>`, copying signal_id/basis/disclosure_status, note recording the correction. INSERT is not trigger-guarded. Post-state: PECL positive-authoritative 0 → **288**; distinct positive signals under auth-required read **288**; 271 `none` authoritative untouched; 288 supersede links. Ledger truth now matches what the brief renders.
+
+**Step 2 (read) — DONE + DEPLOYED.** `generate-executive-report` L308 diff: added `.eq('is_authoritative', true)` to the positive read, mirroring the none-exclusion (L300). Now symmetric. Deployed (verify_jwt=false). Non-breaking BECAUSE step 1 landed first — doing the read-fix before the write would have flipped PECL to insufficient_data.
+
+**Step 3 (regenerate) — proven by reconstruction; headless invoke declined by rule.** Headless regen of generate-executive-report requires a service-role/super_admin JWT at `getCallerIdentity` — prohibited by "no prod JWTs in chat" (and the known getCallerIdentity key-drift block; sanctioned path = Reports UI). Did NOT paste a JWT to force it. Instead proved the outcome via side-effect-free SQL:
+- **Corrected read = identical signal set:** symmetric difference between old read (any-auth) and new read (auth-required) = **0 / 0**. Same signal_ids (the supersede copied signal_id), so the usable set is byte-identical.
+- **Coverage reconstructs to `2 main-tier · 4 attributed`** for the 08-07…08-14 window — MATCHES yesterday. (collected reconstructs 94 vs the brief's 95 = 1-row received_at boundary artifact, not the fix.)
+- Usable = 4 (>0) → the empty-set guard cannot fire → **NOT insufficient_data. Step 1 took.**
+- **Coverage line the regenerated brief will render: "2 main-tier signals · 4 attributed of 95 collected"** — unchanged from yesterday. Live artifact must be produced via Reports UI (headless blocked).
+
+**BC Place — CLEAN, no identical mismatch.** BC Place's 167 `direct` are `is_authoritative=true`, written **2026-08-12 19:54** (NOT 08-14). Correction to the premise: the 167 were NOT written by the 08-14 writer — the 08-12 writes (BC Place 167 direct, PECL 271 none) ALL correctly set is_authoritative=true; only the **08-14 PECL re-attribution** omitted it. The defect was one write, not a general writer bug.
+
+**Deploy safety (platform-wide):** only two clients have ANY positive attributions — PECL (288 authoritative post-fix) and BC Place (167 authoritative). No other client exists to flip. The L308 change breaks no client.
+
+**Recorded follow-up (not fixed):** `is_authoritative` is writer-set with NO promoting trigger and default=false — a writer that omits it silently mints non-authoritative rows (the exact 08-14 failure). The write path should default-or-assert authoritative on the current attribution, or a promote-on-supersede mechanism should exist. Latent; logged for a ruling, not touched here.
+
+## WO-ATTRIBUTION-AUTHORITY-DEFAULT-01 — logged (2026-08-16, options only, DO NOT BUILD)
+Promoted from a flagged note to a work order per operator: `is_authoritative` is writer-set, default false, nothing promotes it → an omitting writer mints rows the ledger doesn't consider true while a consumer reads them anyway. **Same shape as the 0.5 relevance default: absence rendering as a usable value.** Target discipline = ingest_decisions "NULL = never scored, never coalesce." Full WO: `docs/platform-operations/backlog/WO-ATTRIBUTION-AUTHORITY-DEFAULT-01.md`. Options:
+1. DEFAULT true + explicit demote — GUESSES true on omission (over-authoritative, arguably worse). REJECT.
+2. **NOT NULL, no default — FAILS LOUD** (omitting writer errors at INSERT). Recommended; prereq = inventory+fix writers first. Direct analog of the never-coalesce discipline.
+3. promote-on-supersede trigger — handles the supersede lifecycle + single-authoritative invariant but does NOT force declaration at insert. Complementary to (2), best paired with a partial-unique index `(signal_id,client_id) WHERE is_authoritative`.
+Recommendation for ruling: Option 2 primary (fail loud), optionally + the partial-unique index from Option 3. Not built. Operator also to close ITEM 1 on OUTPUT by regenerating PECL through the Reports UI (SQL-reconstructed coverage "2 main-tier / 4 attributed" pending live confirmation).
+
+## WO-ATTRIBUTION-AUTHORITY-DEFAULT-01 — RULED + writer inventory reported (2026-08-16)
+**Ruling:** Option 2 (NOT NULL, no default) primary + partial-unique `(signal_id,client_id) WHERE is_authoritative` from Option 3. Option 1 REJECTED (default true = an omitting writer mints rows that read as VERIFIED TRUTH, worse than current failure mode — reasoning recorded in WO). Sequence gated: writers first → verify → constraint in a SEPARATE pass. No schema change this pass.
+
+**Writer inventory (step 1):** ZERO code writers — no edge fn / RPC / script / frontend inserts into signal_client_attributions (repo grep + pg_proc; only `tg_sca_append_only` and the report READS reference it). Every row = ad-hoc/manual SQL: 08-12 (271 none + BC Place 167 direct, flag SET), 08-14 (PECL 276d+12s+1182n, flag OMITTED = the bug), 08-16 (288 supersede, flag SET). So "writers first" = correct the documented re-attribution SQL template to always set the flag; there's no code to edit. The NOT NULL flip's value is entirely FUTURE writers (manual runs now fail-at-insert on omission; planned code writers WO-HONEST-ATTRIBUTION 3/4 + WO-CLIENT-THREAT-RELEVANCE forced to declare) — it cannot break a live writer because none exists.
+
+**Pre-flip data checks (clean today, re-run at flip):** null is_authoritative = 0 (NOT NULL safe); (signal,client) pairs with >1 authoritative = 0 (index builds, invariant already holds). 2196 rows / 726 authoritative. Constraint pass (ALTER SET NOT NULL drop default + CREATE UNIQUE INDEX … WHERE is_authoritative) NOT done — awaiting go.
+
+## ZERO CODE WRITERS = the finding. Attribution is a decaying manual snapshot (2026-08-17)
+Escalated from footnote to priority. The attribution ledger has NO code path — nothing on ingest, nothing scheduled. Four manual SQL runs total, one (08-14) with a template bug. **Both clients' attribution is a frozen snapshot: BC Place 2026-08-12, PECL 2026-08-14.** Everything since is unattributed → unusable in a brief until someone runs SQL by hand.
+
+**DECAY NUMBER (how fast briefs decay without a writer):**
+- Platform-wide last 7d: **47 signals arrived, all with client_id, 38 (81%) have no authoritative attribution → unusable.** 4 clients touched; only PECL + BC Place have any ledger at all (other 2 = zero verified attribution ever).
+- Per client since snapshot: **BC Place 4 unusable (0 in last 3 days; last signal 08-14), PECL 4 unusable.** Rates ~0.8/day and ~1.4/day.
+- Slow in absolute terms ONLY because inflow is a trickle (collection constraint, 47/wk). As a RATE, 81% of arrivals strand immediately. A brief today reflects intel 3–5 days stale and drifts daily. Snapshot presented as current — temporal twin of the authority-default + relevance-default findings.
+- **Priority WO: `docs/platform-operations/backlog/WO-ATTRIBUTION-WRITER-MISSING-01.md`** — attribution must run on ingest or on a schedule. DO NOT DESIGN YET (operator wants decay number first — captured). Ranked ABOVE the constraint pass.
+
+## WO-ATTRIBUTION-AUTHORITY-DEFAULT-01 — CONSTRAINT PASS APPLIED (2026-08-17)
+Writers-first sequence complete: (1) corrected re-attribution template committed `scripts/sql/reattribute-client-template.sql` (always sets is_authoritative; documents the append-only supersede + unique-index discipline). (2) Re-verified pre-flip: 0 null, 0 multi-authoritative pairs. (3) SEPARATE pass applied — migration `20260817120000_sca_authority_fail_loud.sql`: `is_authoritative` DROP DEFAULT + SET NOT NULL + partial-unique `uq_sca_one_authoritative_per_signal_client (signal_id,client_id) WHERE is_authoritative`. Verified: is_nullable=NO, default=null, index present, 2196 rows intact. An omitted authority judgement now ERRORS at insert (fail-loud, the ingest_decisions discipline); one-authoritative-per-pair invariant enforced. Cannot break a live writer (none exists); catches all future writers.
+
+## WO-ATTRIBUTION-WRITER-MISSING-01 — SCOPED (2026-08-17, evidence only, do not build)
+Q1 — matcher runs at `process-intelligence-document:393` (RSS path), `matchClientKeywords` returns `{clientId, clientName, matchedKeywords}`, used ONLY to set client_id + shadow instrumentation — **never written to signal_client_attributions. Compute match → set client_id → discard basis. The ledger write is the one missing step.** (Matcher runs in the RSS path only; monitors pass client_id pre-resolved to ingest-signal → ≥2 write paths for an ingest-time hook.) Matcher emits `direct`-class; competitor/sector separate.
+Q2 — ingest vs sweep TRADEOFF (not chosen): ingest = zero latency but couples to the collection critical path + must hook every write path + swallow-on-failure; sweep = decoupled, one place, re-runnable, latency=interval, and IS the backfill. Reported, operator rules.
+Q3 — backlog a going-forward writer does NOT fix: ~3,281 real-client signals with no authoritative positive (PECL 1548, **Kilbacks 1523 — a real client, ZERO attribution EVER, brief entirely insufficient_data**, BC Place 210); sweep-addressable (no authoritative row at all) ≈3,010. Skip-with-care: 271 PECL authoritative `none` (deliberate corrections, must not auto-override). A scheduled sweep = one mechanism for backlog+ongoing; ingest-time needs a SEPARATE backfill sweep.
+Q4 — CRUX: NOT-NULL + partial-unique + append-only together mean first-attribution INSERTs freely (is_authoritative=true explicit; covers all new signals + the 3,010 backlog) but reprocessing needs `ON CONFLICT (signal_id,client_id) WHERE is_authoritative DO NOTHING` (bare INSERT errors — the flagged case), and **genuine supersession of an existing authoritative row is currently IMPOSSIBLE** (can't UPDATE-demote: append-only; can't 2nd-authoritative-INSERT: unique index). Correction is a HARD dependency on the deferred promote-on-supersede trigger — the constraint pass made it a prerequisite, not a nicety. The writer as scoped only ADDS first-time attributions. Full scope in the WO.
+
+## RULING: sweep (not ingest-time) + supersede trigger FIRST (2026-08-17)
+Writer = SWEEP: one mechanism for backlog+ongoing, off the collection critical path, re-runnable, one write path. At 47 signals/week the ingest-time latency argument buys nothing. But the sweep is HELD behind the supersede trigger.
+
+## WO-ATTRIBUTION-SUPERSEDE-TRIGGER-01 — DESIGNED, sequenced FIRST (2026-08-17, do not build until ruled)
+The blocker we created: constraint pass (strict) + append-only (immutable) = correcting a wrong authoritative attribution is impossible; a sweep with no correction path makes the first run's judgements permanent. Design (full: `docs/platform-operations/backlog/WO-ATTRIBUTION-SUPERSEDE-TRIGGER-01.md`):
+- **(a) on supersede insert:** new `tg_sca_promote_on_supersede()` BEFORE INSERT FOR EACH ROW; when NEW.is_authoritative AND NEW.supersedes NOT NULL → validate S exists, same (signal_id,client_id), S.is_authoritative=true (else RAISE) → demote S → insert NEW as sole authoritative.
+- **(b) demote without violating append-only:** txn-local GUC handshake — promote-trigger `set_config('sca.demoting', S.id, true)` around the demote UPDATE; append-only trigger exempts an UPDATE ONLY when `current_setting('sca.demoting')=OLD.id` AND it's a pure demotion. DELETE always raises. Superseded row STAYS (demoted, not deleted) — the single sanctioned mutation.
+- **(c) flip, not a different mechanism:** is_authoritative true→false, trigger-performed, exemption checks OLD.is_authoritative=true, NEW=false, all other columns IS NOT DISTINCT. Alternative (derive authority from supersede chain) REJECTED — can't be a partial index, forces dropping the unique index + re-teaching every reader.
+- **(d) unique index during transition:** BEFORE INSERT runs fully (demote + its index maintenance) before NEW is indexed → never two authoritative at once → no DEFERRABLE needed (a UNIQUE INDEX can't defer anyway). AFTER INSERT would be wrong. Concurrency: row lock on S serializes; stale supersede RAISEs → retry. Atomic (one statement).
+- Proof harness (7 cases incl. out-of-band spoofed-GUC UPDATE, wrong-pair supersede, concurrent double-supersede) must pass BEFORE the sweep is built. Getting this wrong makes the ledger permanently wrong.
+
+## WO-CLIENT-ONBOARDING-KILBACKS-01 — logged to ARCHETYPE/CONFIG lane (not the writer)
+Kilbacks: 1,523 signals, ZERO attribution ever; brief has never been anything but insufficient_data. NOT a writer defect — a client nobody onboarded. Short-keyword fabrication signature (cabin→"cabin crew", home→"homeless") means the 1,523 are largely junk; attributing them would render noise as verified truth. Onboard first (archetype + real anchored keywords + geo/config), THEN sweep the clean forward stream. **The first attribution sweep must EXCLUDE Kilbacks' backlog.** Full: `docs/platform-operations/backlog/WO-CLIENT-ONBOARDING-KILBACKS-01.md`. Belongs with venue-spine/archetype-taxonomy work.
+
+## WO-ATTRIBUTION-SUPERSEDE-TRIGGER-01 — BUILT + PROVEN + APPLIED (2026-08-17)
+Case 4b (operator addition) answered plainly: a txn-local GUC CANNOT distinguish trigger from session context (GUC-only = convention, "anyone who knows the name may demote"). **Blockable via `pg_trigger_depth()`:** session UPDATE hits append-only at depth 1; promote-trigger demotion at depth 2. Exemption = `pg_trigger_depth()>=2 AND GUC=old.id AND pure is_authoritative true->false diff`. Honest residual: depth ≠ identity; a DDL-capable actor could add a colluding trigger (far higher bar, detectable) — against any SESSION it is a real constraint.
+Proof harness 8/8 PASS on identical-body temp replica incl. **Case 6 (session spoof + correct-shaped diff, depth 1) → RAISES on the depth gate.** 1 first-attribution, 2 valid-supersede (old demoted+retained, index holds), 3 bare-UPDATE blocked, 4 DELETE blocked, 5 wrong-diff blocked, 6 session-spoof blocked, 7 non-authoritative-target blocked, 8 double-supersede blocked.
+Applied prod: migration `20260817140000_sca_promote_on_supersede.sql` — `tg_sca_append_only` amended (depth+GUC+pure-diff exemption; DELETE always blocked), `tg_sca_promote_on_supersede` BEFORE INSERT (validate target exists/same-pair/currently-authoritative → demote → promote). Verified: live append-only carries depth gate + GUC check, promote trigger BEFORE INSERT, proof functions dropped. Byte-identical to proven bodies. **Correction path now exists → WO-ATTRIBUTION-WRITER-MISSING-01 (sweep) is UNBLOCKED.**
+
+## VIP DEEP SCAN — intake works, scan is a disabled+untracked P0 kill-switch (2026-08-17, evidence only)
+Not a bug to debug — the scan behind the intake was BUILT then deliberately DISABLED and never re-enabled.
+1. **Approve & Proceed** → `VIPDeepScanWizard.tsx:587 supabase.functions.invoke("vip-deep-scan")`. Deployed fn is ACTIVE v92 updated 2026-06-27 = a 21-line deny-all stub returning **503 SERVICE_UNAVAILABLE** before any DB/downstream. supabase-js throws → catch (L602) → generic toast "Failed to initiate deep scan. Please try again." (L606). UI masks the real 503 message; "try again" can never succeed (deliberate disable, not transient).
+2. **BUILT then DISABLED, not unbuilt.** Pre-containment (git 8b210f85, 405 lines): wrote entities + entity_relationships, travelers + itineraries, an investigations record, invoked monitor-darkweb + osint-entity-scan + monitor-travel-risks, wrote a signal. Disabled 2026-06-27 (commit 0112d6b7) as **P0 containment** — authenticated cross-tenant write + integrity exposure (body client_id trusted w/o membership validation; stale-schema writes; swallowed persistence failures). **NO tracked remediation** — absent from containment-registry, no WO, no incident, commit has no body. ~7 weeks disabled with the full intake live in front of it. The intake is a finished front door to a bricked-and-forgotten pipeline.
+3. **Output targets EXIST, producer is disabled.** Original produced an investigations record (+ entity graph, signals, downstream monitor results) — investigations/entities/signals tables + the 3 monitors are all live; generate-poi-report can render from an investigation. No separate report-doc artifact.
+Recorded: `docs/platform-operations/backlog/WO-VIP-DEEP-SCAN-REMEDIATION-01.md`. Remediation = security build (tenant-membership validation on client_id per getAccessibleClientIds, schema-current writes, fail-loud persistence, provenance) — same doctrine as the attribution/ingest_decisions work. NOT a fix; not built.
+
+## VIP DEEP SCAN — Report 1 (Stripe) + actions 2/3 + end-to-end + schema-drift finding (2026-08-17)
+**Report 1 — payment exposure:** $10k "Vulnerability Snapshot" Stripe link `buy.stripe.com/5kQ6oH1so0kx8KI8lI7Zu03` is LIVE on silent-shield-protection-page.html (protection.silentshieldsecurity.com) + marketing index. GET resolves to a live Stripe Checkout shell (not deactivated). Fulfillment = the VIP Deep Scan (disabled 503) — unlike The Fortified 16 (automated delivery-worker PDF), the Snapshot has NO automated fulfillment → a $10k purchase today could not be delivered. **Whether any purchase was made: UNDETERMINABLE from here** — records live in Stripe (no access) + marketing project `pwnzwxfzjkjsbfwtfyip`.orders (MCP permission DENIED). Fortress prod + CRM have no orders table. Operator must check Stripe Dashboard→Payment Links→…7Zu03, or grant access to pwnzwxfzjkjsbfwtfyip.
+**Action 2 DONE:** VIPDeepScanWizard catch now surfaces the real state (parses fn response: 503→"unavailable pending security remediation, intake NOT submitted, do not retry"; 403→not authorized) instead of "try again". Frontend code committed; needs frontend Worker deploy via operator lane.
+**Action 3 DONE:** registered `vip-deep-scan` in `public.containment_registry` (contained_503, WO-VIP-DEEP-SCAN-REMEDIATION-01, since 2026-06-27). Watchdog will now treat it as contained-by-design. Closes the 7-week tracking gap.
+
+**END-TO-END what the original (git 8b210f85, 405L) produced — answers "document or records":** DATABASE RECORDS ONLY, NO deliverable document. Steps: (1) entities row (VIP, all PII in attributes), (2) family entities + entity_relationships, (3) travelers + itineraries per trip, (4) an investigations row (title/scan_phases metadata), (5) fire-and-forget monitor-darkweb/osint-entity-scan/monitor-travel-risks, (6) a signals row. No synthesis step, no report generator — the investigation is created with 5 'pending' phases that nothing completes. A client received: an investigation shell + entity graph + triggered monitors. No document.
+**CRITICAL SCHEMA-DRIFT FINDING (reshapes the rebuild):** the writes are not just insecure, they are ALL STALE vs current schema — the function would fail on nearly every write today (errors were swallowed, hiding it):
+- investigations: now file_number!/synopsis/information/recommendations/file_status/correlated_entity_ids — the original's title/description/status/priority/type/linked_entity_ids/metadata.scan_phases ALL GONE. Different table model.
+- entity_relationships: entity_a_id/entity_b_id/strength/first_observed!/last_observed! (original source_/target_entity_id/confidence_score/source all renamed/gone).
+- itineraries: requires trip_type!/departure_date!/return_date!/origin_city!/origin_country!/destination_city!/destination_country! — intake has only a single destination string + no origin. Genuine data gap.
+- travelers: no entity_id, no risk_level; map_color! required.
+- signals: must go via ingest-signal (requires signal_number!/quality_status!/temporal_grounding!/signal_origin!) — raw insert is wrong.
+- entities: closest; needs visibility_class!/legal_hold! now.
+**So the rebuild = near-total rewrite, and the drifted record models (investigations model, itinerary origin gap, signal-via-ingest) shape "what a client receives" — flagged for operator's decision before writing them. Security spine (getCallerIdentity + getAccessibleClientIds membership validation on client_id, fail-loud per-insert, provenance/created_by, no swallowed errors) is unambiguous and ready to build.**
+
+## vip-deep-scan REBUILT + DEPLOYED (2026-08-17) — security spine live, awaiting operator proof
+Secure rebuild deployed (verify_jwt=true, deployed without --no-verify-jwt). Unauth probe → 401 UNAUTHORIZED_NO_AUTH_HEADER (stub 503 gone; anonymous callers cannot reach it). Security remediation implemented:
+- **Tenant-membership validation on client_id** — getCallerIdentity → userCanAccessClient(caller,clientId) + super_admin fallback; service_role trusted; else 403 CLIENT_NOT_AUTHORIZED. Body client_id NEVER trusted.
+- **Server-side consent enforcement** — consentDataCollection mandatory (400 if absent); darkweb/social gated on their consents.
+- **Schema-current writes** — entities (visibility_class='curated', legal_hold, created_by); entity_relationships (entity_a_id/entity_b_id/strength/first_observed/last_observed); investigations (file_number continues INV-2026 seq, synopsis/information/file_status='open'/prepared_by/correlated_entity_ids/cross_references); signal via ingest-signal. NO travelers/itineraries (skipped per decision #3), NO scan_phases (dropped per #2), VIP marked via cross_references.origin not file_number (per #1).
+- **Fail-loud** — every core insert checked + aborts with an error naming what already exists; monitor + signal outcomes surfaced in the response, never swallowed.
+- **Provenance** — created_by/prepared_by = acting user; origin markers on entity + investigation; actor echoed in response.
+Operator decisions honored: file_number INV-2026-00XX (next 0077) continuing shared sequence; scan phases dropped; itineraries skipped + gap reported (no fabricated origin).
+Registry: kept contained_503 row, reason updated to "remediation deployed, awaiting proof — delete on green". Action 2 (intake truthful message) committed; operator deploys frontend. **PROOF PENDING: operator runs authorized scan via UI → I query + paste every table/row, then delete the containment row.**
+
+## vip-deep-scan — on-green plan + fast-follow recorded (2026-08-17, operator rulings)
+Operator running the authorized scan via UI now. Two rulings recorded:
+1. **RPC-transaction fast-follow (AFTER proof, not before):** wrap the core creates (VIP entity + family entities + relationships + investigation) in a SINGLE RPC transaction so a mid-sequence failure rolls back cleanly — partial state on a PAID engagement (orphan entities + no investigation file) is a worse failure mode than a clean abort. Queued as the immediate post-proof task. Fail-loud v1 stands until then.
+2. **Registry: do NOT delete on green — set state='remediated' + remediated_at, keep history.** Prepared: migration `20260817160000_containment_registry_remediated_state.sql` adds 'remediated' to the state CHECK + a `remediated_at` column. 'remediated' is OUTSIDE the watchdog suppression set (L4484) → normal reporting resumes while `since`(2026-06-27 disable) + `remediated_at`(re-enable) preserve the full history. containment-registry.md Maintenance rule updated: restore = remediated (not delete); rationale = the 7-untracked-weeks lesson.
+**On green (next turn, after operator's run):** query + paste every table/row (entities/entity_relationships/investigations by cross_references.origin='vip_deep_scan' + client, the ingest-signal row, the response JSON) → verify end-to-end → set vip-deep-scan row state='remediated', remediated_at=now(), keeping since=2026-06-27 → then the RPC-transaction fast-follow.
+
+## vip-deep-scan proof run #1 FAILED (500) → root-caused + fixed (2026-08-17)
+Operator ran authorized scan → hit v93 (new function, NOT stub — confirmed via get_edge_function) → POST 500 in 386ms, **0 rows created** (fail-loud worked: no partial state, aborted on first insert). Root cause: `entities.entity_status` CHECK allows only ('suggested','confirmed','rejected','auto_extracted'); the rebuild wrote `entity_status='active'` — a STALE value inherited from the original (exactly the stale-write class I flagged, but my schema verification checked column existence + known NOT NULL/enums and MISSED the entity_status CHECK values — honest miss; fail-loud caught it cleanly). Fix: entity_status 'active'→'confirmed' (VIP + family inserts, both). Verified all other writes against constraints: entity_relationships (strength 0-1 ✓, a≠b ✓), investigations (file_status IN open/under_review/closed → 'open' ✓, client_id NOT NULL ✓) — no other stale values. Redeployed. Awaiting proof run #2.
+
+## vip-deep-scan — ALL constrained values verified against actual constraints (2026-08-17, pre proof run #2)
+Every value written, checked against its real CHECK/enum/FK (not column existence):
+- entities.type='person' → entity_type enum (person,organization,…) ✓ · entity_status='confirmed' → CHECK(suggested/confirmed/rejected/auto_extracted) ✓ (was 'active', fixed) · visibility_class='curated' → CHECK(curated/reviewed/extracted) ✓ · created_by → FK profiles(id): profiles.id is 1:1 FK to auth.users; ak (d7edb69f) HAS a profiles row → valid for the proof ✓ (FRAGILITY: a user without a profiles row would fail — guard queued for the RPC fast-follow).
+- entity_relationships: a≠b ✓ · strength=1.0 → CHECK(0..1) ✓ · relationship_type no CHECK ✓.
+- investigations: file_status='open' → CHECK(open/under_review/closed) ✓ · client_id NOT NULL (chk_investigations_provenance) ✓ · prepared_by → FK auth.users(id): ak is a valid auth user ✓ · file_number unique (23505 retry handled).
+- SIGNAL via ingest-signal: found F-034.1 rejects null source_url unless skip_relevance_gate. Payload had neither → would've been rejected AND (rejections are HTTP 200 {status:'rejected'}) misreported as ok. FIXED: added skip_relevance_gate:true (correct — internal consent-vetted intake) + source_url→investigation + result now inspects sigData.status. Signal call authenticates as service_role (service client key). Redeployed.
+Net: entity_status + signal fixed; created_by verified valid for ak; all other constrained values valid. Ready for proof run #2.
+
+## vip-deep-scan PROOF RUN #2 = GREEN (2026-08-18) — remediated
+Run by akilback@hotmail.com (5f48f826), subject Aaron Kilback, Kilbacks client (d3b200b5). vip-deep-scan POST **200** (67.6s — awaited 3 monitors serially). Created:
+- **entities**: 32750258-6874-44d3-9dbb-721469e1fc4f — "Aaron Kilback", type=person, entity_status=confirmed, visibility_class=curated, client_id=d3b200b5, tenant_id auto-derived (feff5c44), created_by=5f48f826 (profiles FK held), attributes.origin=vip_deep_scan_intake.
+- **investigations**: 394dc6d6-98fc-4b1e-aa87-9817d7fbc154 — **file_number INV-2026-0077** (sequence continued from 76 ✓), file_status=open, prepared_by=5f48f826, created_by_name=akilback@hotmail.com, correlated_entity_ids=[32750258], cross_references.origin=vip_deep_scan, legal_hold=false.
+- **entity_relationships**: 0 (no family members in intake — expected).
+- **enrichment monitors**: monitor-darkweb 200 (43s), osint-entity-scan 200 (15s), monitor-travel-risks 200 (7.6s) — all fired.
+- **tracking signal: NOT created** — ingest-signal 401 (15:32:34). Root cause: ingest-signal verify_jwt=false gates on its own getCallerIdentity (exact service-key match); functions.invoke sent a token that passed the monitors' gateway (verify_jwt=true) but not ingest-signal's exact service-key check. FIX: pass explicit `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` on the invoke. Redeployed. Non-fatal (surfaced, not swallowed) — this run's signal stays absent (re-run would duplicate core records); fixed for future scans.
+**Security remediation GREEN**: auth gate, membership validation, schema-current core writes, fail-loud, provenance all proven. containment_registry → state='remediated', remediated_at=2026-08-18, since=2026-06-27 (history retained per ruling).
+**Follow-ups queued:** (1) RPC-transaction fast-follow (atomic core creates); (2) created_by→profiles guard for users without a profiles row; (3) verify the signal fix on the next real scan.
+
+## VIP DEEP SCAN — the capability gap: it never searches for reputational exposure (2026-08-18, evidence only)
+Operator: "The scan produced no findings because it never searches." Confirmed. Evidence:
+
+**Q1 — osint-entity-scan (the function the VIP scan actually calls):** DOES search the open web (Google Custom Search, customsearch/v1) for the person's NAME — not signals-only. BUT it is built for THREAT detection, not reputational discovery: queries are `"name" threat OR harassment OR doxxing OR protest` (L104); capped at 3 queries/entity (`.slice(0,3)` L139), num=5 results each (top-5 only); and a STRICT AI homonym-rejection (gpt-4o-mini, L183) requires identity anchors (institution/role/specialty) to confirm "this specific person" — which a VIP intake does not provide, so ambiguous results are rejected. **Empirically for Aaron Kilback: ran 200/15s, produced 0 entity_content + 0 signals.**
+
+**Q2 — the four web-search functions + the blogspot test:**
+- osint-entity-scan (412L): threat-oriented CSE, 3q×5, homonym-strict. Called by vip-deep-scan (mine) + agent-chat + EntityDetailDialog.
+- perform-external-web-search (329L): reads signals/docs to ENHANCE a query then CSE; returns to caller (agent-chat/voice/dashboard) — not a standalone name sweep, findings not persisted.
+- osint-web-search (249L): CSE num=5 + writes entity_content + ingest-signal. Called by EntityDetailDialog "Investigate".
+- vip-osint-discovery (535L): THE purpose-built VIP OSINT — many query sources (identity/contact/physical/digital/operational/email/location) + CSE num=5 each + HIBP + OpenAI; STREAMS discoveries via SSE (does not persist to an investigation/report). Called by dashboard-ai-assistant / voice / frontend useOSINTDiscovery hook — **NOT by the vip-deep-scan wizard.**
+- **STRUCTURAL FINDING: the VIP scan calls the threat-oriented osint-entity-scan, NOT the purpose-built vip-osint-discovery. The best-fit function exists but is not wired to the product.**
+- **BLOGSPOT TEST — would any, given "Aaron Kilback", return the 2011 post? NO, not reliably.** All four are Google CSE num=5 (top-5 only), ranking-dependent; none paginates deeply, does date-range/historical/archival queries, or targets blog/social/archive platforms for reputational content. A 2011 post won't rank top-5 for a bare name. The one the scan uses returned 0; the broadest (vip-osint-discovery) only streams, un-persisted. Whether the blog appears at all is a coin-flip on CSE ranking, not a designed capability. Confirmed the blog IS a name-specific, severe reputational hit (Olynyk v. Kilback, BCSC 2011: judge called CO Aaron Kilback "unskilled, uninformed, incompetent and careless"). **This is the capability gap and it is the whole product.**
+
+**Q3 — dropped intake field:** phone WAS captured — entity attributes.primary_phone="17782204544" — but written to a NON-CANONICAL key. Canonical contact per CLAUDE.md is attributes.contact_info.phone (+ legacy attributes.phones); display reads the merged contact_info/legacy pattern, both null here → shows N/A. My vip-deep-scan wrote primary_phone/primary_email (the original's shape), not contact_info.{phone,email}. Field is misfiled, not lost — same class as the canonical-contact-location rule.
+
+**Q4 — remediation guidance: NET-NEW.** Nothing generates reputational-exposure remediation. The "remediation/suppression" hits are unrelated: system-watchdog remediation ACTIONS (reset circuit breakers), process-feedback SIGNAL suppression (false-positive learning), generate-report quarantine suppression. investigations.recommendations is a free-text field nothing populates with structured options; generate-poi-report produces a threat assessment, not a remediation plan. The entire finding→(what/where · why it matters · options: removal/de-index/suppression/correction/accept-and-prepare · effort+likelihood · priority) layer is net-new.
+
+## VIP scan contact-fix DONE + retrieval-depth evidence (2026-08-18, evidence only, no design)
+**Part 1 DONE:** vip-deep-scan now writes canonical attributes.contact_info.{email,phone} + legacy {emails,phones} arrays (deployed). Backfilled entity 32750258 (INV-2026-0077): contact_info.phone=[17782204544,12504975544], email=[akilback@hotmail.com,lylasolutions@gmail.com] — recovered secondary values too. N/A resolved.
+
+**Part 2 — what deeper retrieval would take (evidence, no design):**
+CSE creds: `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_ENGINE_ID` — both SET/live. All four search functions use CSE at `num=5`, single query, NO pagination.
+Empirical findability (WebSearch proxy):
+- **Bare `"Aaron Kilback"` → top results = CURRENT identity + homonyms**: ZoomInfo (PETRONAS Security Coordinator), Medium article, Instagram "Aaron Kulbacki", Wikipedia homonyms. **The 2011 Olynyk v. Kilback judgment is NOT in the top results.** This is exactly why a num=5 bare-name scan found nothing reputational.
+- **Targeted `"Aaron Kilback" conservation officer Olynyk malicious prosecution` → wiselaw.blogspot.com is #1**, + corroborating christopherdiarmani.com #2. The content IS Google-indexed and CSE-reachable. Gap = query strategy + depth, NOT reachability or the key.
+What it would take (achievable with the CSE key we have):
+1. **Query variation (biggest lever)** — bare name buries old reputational content under current-identity + homonyms; need name + legal/reputational context terms (lawsuit/court/judgment/prosecution/charged/allegation) + known-role terms (conservation officer, BC gov). Achievable now — smarter/more queries.
+2. **Pagination** — CSE `start` (1,11,…91) → up to 100 results/query (10 request units); currently unused. Achievable now (cost: 100 free/day then $5/1000, 10k/day cap).
+3. **Site-restricted / targeted-platform** (site:blogspot.com, archive.org, legal/court/review sites) — achievable via q site: / siteSearch IF the engine is whole-web.
+4. **Date-range for OLD content** — LIMITED: CSE dateRestrict is recency-relative (d/w/m/y from now), poor for targeting 2011; do it via query terms instead. Soft limit.
+5. **HARD DEPENDENCY to verify first:** the CSE engine (cx=GOOGLE_SEARCH_ENGINE_ID) must be "search the ENTIRE WEB," not a restricted site list. Functions do site:facebook/linkedin (suggests whole-web) but MUST be verified in the Programmable Search Engine panel. If restricted → needs a whole-web PSE or a SERP API (SerpAPI/Bing/Brave) = different tool.
+What needs a different tool: only IF the engine is site-restricted, OR for non-web sources (court registries, paste/breach). For THIS target (indexed, #1 on a targeted query), current CSE key + query variation + pagination suffices.
+
+**vip-osint-discovery persist:** it ONLY streams (send({type:'discovery'})) — no .insert / entity_content / investigations write. Making it persist = add a write step (feasible). BUT persist alone does NOT close the gap: it's still num=5, no pagination, name-centric queries → same bare-name ranking problem. The missing piece is retrieval DEPTH/VARIATION, in whichever function.
+
+**ACCEPTANCE TEST (recorded):** given "Aaron Kilback", the scan MUST surface wiselaw.blogspot.com's Olynyk v. Kilback post (ideally + christopherdiarmani.com corroboration). Achievable with the current CSE key IF engine is whole-web AND retrieval uses query variation and/or pagination. **Nothing ships until the scan surfaces it.**
+
+## SUBJECT-RETRIEVAL — shared two-phase capability DESIGNED (2026-08-18, design only, do not build)
+Whole-web verified empirically (entity_content = 567 distinct domains incl. courtlistener/justice.gov — not a restricted engine; operator confirms in PSE panel). Full design: `docs/platform-operations/specs/vip-reputational-retrieval-design.md`.
+**Operator scope correction: SHARED PLATFORM CAPABILITY, not a VIP-scan feature** — one extracted module (like deterministic-matcher.ts), called by vip-deep-scan / AEGIS chat / entity-Investigate / CRT / anything asking "what is findable about X". Avoids the trapped-capability mistake (vip-osint-discovery behind absent caller; hazard-pathway post-admission; matchClientKeywords inline).
+**MODULE BOUNDARY:**
+- SHARED Module #1 `_shared/subject-retrieval.ts`, one entry `retrieveSubject(subject, scope, opts)`: battery construction · CSE retrieval (pagination/rate-limit/budget) · homonym verification · Phase-2 pivot · clustering into exposure items · owner-scoped persistence (RLS-at-creation, provenance) · provenance.
+- SHARED Module #2 `remediation-advisor` (SEPARATE, consumes #1's exposure items): **moved remediation-guidance to SHARED, disagreeing with the proposed line** — the options/effort/likelihood/priority reasoning is subject- and caller-agnostic; trapping it in one caller repeats the mistake. Distinct module (retrieval finds, advisor plans), still shared.
+- CALLER-SPECIFIC: what TRIGGERS a scan; SCOPE + AUTHORIZATION (caller validates subject↔owner, passes owner + scope; module doesn't decide who may scan whom); REPORT FORMAT/rendering (VIP doc / chat prose / entity card / CRT file).
+- Net: find→pivot→cluster→persist→plan = shared (2 modules); when/for-whom/how-to-present = caller.
+- Un-trapping: the 4 current CSE functions collapse into Module #1 + thin callers (vip-osint-discovery folds into the battery; osint-entity-scan/osint-web-search/perform-external-web-search become wrappers or retire); single-source CI guard prevents inline reimplementation.
+**PHASE 1 battery:** 7 categories (legal/financial/professional/media/social/corporate/property) × query patterns, ~20-24 queries × ~2.3 pages ≈ 55 CSE requests. Disambiguation tension: anchoring cuts homonyms BUT cuts historical recall (PETRONAS anchor would miss the 2011 pre-PETRONAS case) → recall in the query, precision in the verifier.
+**PHASE 2 pivot:** per source event, extract case-name/citation/parties/verbatim-quote (the quote is the near-unique fingerprint — how christopherdiarmani surfaced) → propagation queries across platforms. ~5 events × ~8 queries ≈ 48 requests.
+**CLUSTERING:** fingerprint (case_name|parties|quote_hash|event) + LLM merge → ONE exposure item with N locations ("2011 judgment, findable in 7 places"), not N findings. The location list IS the remediation surface.
+**COGS:** ~100-130 CSE requests/scan × $5/1000 ≈ $0.65-0.90 + LLM ~$0.05-0.20 = **~$1-2/scan; <0.02% of a $10k product.** Real ceiling = CSE 10k/day cap (~75 scans/day), not cost. If engine not whole-web → whole-web PSE or SERP API (~$2/scan, still negligible).
+**ACCEPTANCE TEST:** given "Aaron Kilback", surface wiselaw.blogspot.com Olynyk v. Kilback + cluster the christopherdiarmani echo into one item. Nothing ships until it does.
+
+## subject-retrieval acceptance test #1 FAILED — query-layer fixes proposed (2026-08-19, report before implement)
+Mechanism works; queries do not. Result: 6+ exposure items, all current/self-authored (LinkedIn, Instagram, 2016 startup spotlight). No wiselaw/Olynyk/judgment. Three root causes, all query-layer. Fixes GROUNDED by WebSearch (not another blind guess):
+
+**RC1 — bare legal OR-words match common English + the subject's OWN posts** ("judgment" → "human judgment still matters"; "ruling"/"charged" likewise). The verifier CAN'T fix this — those posts ARE about the subject (self-authored). Proposed:
+- Replace single-word OR-blocks with QUOTED MULTI-WORD PROCEDURAL phrases absent from marketing prose: `"reasons for judgment"`, `"Supreme Court"`, `"Court of Appeal"`, `"the plaintiff"`, `"the defendant"`, `"pleaded guilty"`, `"found liable"`, `"statement of claim"`. Prefer PROCEDURAL phrases over tort NAMES (a tort name like "malicious prosecution" doubles as law-firm marketing → noise, though verifier-filterable). Evidence: `"Aaron Kilback" "malicious prosecution"` → christopherdiarmani #1 (real) + law-firm noise (verifier-rejected).
+- ADD site-restricted legal-domain queries: `site:canlii.org`, `site:courtlistener.com`, `site:bccourts.ca`, `site:scc-csc.ca`. Guaranteed-clean legal results.
+
+**RC2 — pivot fired on a marketing tagline** (extracted "I help leaders identify where they are exposed…" as fingerprint). Proposed:
+- Pivot EVENT-WORTHINESS GATE: pivot ONLY on findings with an event signature — case name / style of cause (`X v. Y`), a legal citation (`YYYY BCSC ####`), a date + consequence verb, or quoted THIRD-PARTY institutional language (judge/regulator/journalist). Marketing bios/taglines/repeated self-authored strings are NOT pivot-worthy.
+- distinctive_quote must be THIRD-PARTY-attributable; reject first-person promotional language.
+
+**RC3 — self-authored content dominates top-5** (his own LinkedIn/IG rank first for his name; num=5 returns him talking about himself). Proposed:
+- PAGINATION: use the spec's up-to-100 (`start`=1,11,…); the court case is buried below self-authored top results. Depth 3-5 pages on name-baseline + legal queries (currently ~2-3).
+- SELF-AUTHORED CLASSIFICATION: classify each finding self-authored (subject's own account/handle/domain, first-person) vs THIRD-PARTY (someone else about him). Self-authored → separate "digital footprint" bucket (context, not exposure); ONLY third-party findings become exposure items. This is what stops "6 items, all my own posts."
+
+**Net on the acceptance test:** procedural-phrase + pagination surfaces a third-party Olynyk-case page (christopherdiarmani or wiselaw); event-worthy pivot extracts "Olynyk v. Kilback" + the judge quote + "conservation officer"; propagation finds the other; self-authored classification keeps marketing out; clustering merges into ONE item. Two-phase design unchanged — purely the query layer. Target unchanged.
+
+## Three additions (2026-08-19, kept separate)
+**1. INTAKE — security posture (fields proposed):** extend intake + entity attributes to capture alarm system (+ monitoring service), cameras (brand/count/actively-monitored), locks/access-control, gates, safe room, exterior lighting, security signage. The AI risk factor "lack of information about security measures in place" describes OUR intake hole, not a finding — replace it once captured. Frontend (VIPDeepScanWizard) + entity attributes write. Implement after retrieval works / on operator go.
+**2. INTAKE + SCAN — IoT (feasibility + ToU reported before design):** Intake capture = feasible now (connected devices: cameras/doorbells/thermostats/assistants/TVs/network gear + active state; a Ring installed-unused = unwatched default-config camera). SCAN feasibility: (a) Shodan indexes publicly-reachable devices BY IP/hostname — but the subject's residential IP is NOT captured and hard to obtain → per-subject IoT discovery largely INFEASIBLE without the subject supplying their public IP; (b) default-cred / reachability testing = ACTIVE probing = materially different, higher-risk capability, unauthorized-access ToU/legal exposure → OUT of scope for open-web retrieval, separate gated capability even with client authorization; (c) public streaming = same IP-attribution problem. ToU: passive Shodan on an AUTHORIZED subject's OWN known IP is defensible; active probing needs explicit per-target authorization (compliance gate). Recommendation: IoT INTAKE now (documents the attack surface); IoT SCAN = separate, passive-only v1, gated, only with subject-supplied IP; active probing deferred. Do NOT design the IoT scan yet.
+**3. REPORT — blocked on retrieval.** Unchanged priority; unblocks once the acceptance test passes (then Module #2 per-finding: what/where · why · remediation options).
+**Scope (images):** OUT — no reverse image search / family-photo matching. IN — account public/private, geotagged posts, location/school inferable from PUBLISHED content (text/metadata), not image ML. Shapes the SOCIAL category assessment, not an image pipeline.
+
+## subject-retrieval query-layer fixes IMPLEMENTED + deployed (2026-08-19) — acceptance retest pending
+All three RCs fixed in `_shared/subject-retrieval.ts` (redeployed):
+- RC1: legal battery now QUOTED PROCEDURAL phrases (`"reasons for judgment"`,`"the plaintiff"`,`"pleaded guilty"`,`"Supreme Court"`,`"malicious prosecution"`,`"v."`,`"abuse of process"`…) + site-restricted legal domains (canlii/courtlistener/bccourts) — no more bare common words matching self-authored "human judgment" posts. media tightened ("charged with"/"found guilty" quoted).
+- RC2: pivot EVENT-WORTHINESS gate — pivotTerms returns is_event; pivot skipped unless is_event AND (case_name OR a >12-char THIRD-PARTY distinctive_quote). distinctive_quote prompt forbids first-person promotional language. Only third_party findings are pivot candidates.
+- RC3: bare-name baseline paginated deep (P+2, min 5 pages) to page past self-authored top-5; + `classifySourceClass` tags each finding self_published vs third_party.
+- Self-published = KEPT as a labeled bucket (operator ruling): response splits `thirdPartyExposure` (core product) vs `selfPublishedExposure` (subject's own footprint, ranked separately); item.source_class = third_party if ANY location third-party. Migration `20260819120000` added subject_exposure_items.source_class.
+Two-phase mechanism unchanged. Acceptance target unchanged: wiselaw Olynyk post + christopherdiarmani echo clustered into ONE third_party item.
+INTAKE fields (security posture + IoT) = next, green-lit, independent of retrieval. IoT scan deferred (passive-only, subject IP, gated). Report layer + Module #2 still blocked on retrieval passing.
+
+## PRODUCT STANDARD recorded (2026-08-19): "a finding the subject already knew is not a finding"
+Added to the spec ABOVE the acceptance test. The report's value is what the client did NOT know; a report where they recognise everything is a $10k mirror. Acceptance test = mechanical proof; this = product bar.
+- **PS1 — subject_awareness is the metric.** Every finding carries subject_awareness ∈ {known,unknown,disputed}, captured at DELIVERY (not the scan). 12 items where 11 are known = FAILED, however clean the pipeline. Substrate: subject_exposure_items.subject_awareness (null until delivery, CHECK constraint), migration 20260819130000.
+- **PS2 — obscurity is a value signal; changes ranking.** Ranking = likely-unknown-to-subject, NOT relevance: (1) self_published ranks below third_party (usually known); (2) obscurity — a page-four result never seen outranks a page-one seen weekly, captured as subject_exposure_locations.found_at_rank (deeper=higher value; item obscurity = shallowest rank anywhere); (3) subject_awareness post-delivery (unknown>disputed>known). Module #1 now captures found_at_rank (CSE position) + sorts output third_party-first then by obscurity. Delivery sets awareness; report ranks by all three.
+Deployed. Acceptance test unchanged (mechanical proof stands).
+
+## subject-retrieval acceptance #2 FAILED — root cause = CSE ENGINE CONFIG, not battery (2026-08-19)
+Ran the 6 raw CSE queries against the PLATFORM's own engine (temp cse-probe fn, read-only, deleted after). Results:
+- `"Aaron Kilback" site:canlii.org` → **0** · `site:bccourts.ca` → **0** · procedural-phrase query → **0**
+- tort/`malicious prosecution` OR query → **5 results, ALL social junk NOT containing "Aaron Kilback"** (LinkedIn "AI Accelerates Work", Instagram Yellowstonememes, Facebook micromanager) — engine ignored the exact-phrase name and matched loose terms on social sites.
+- **CONTROL `"Olynyk v. Kilback"` → 0** · **CONTROL `Kilback "malicious prosecution" wiselaw` → 0.**
+**Decision rule (operator's): even the DIRECT control queries miss → the problem is the CSE ENGINE CONFIGURATION, not battery construction.** The engine (cx=GOOGLE_SEARCH_ENGINE_ID) is a RESTRICTED Programmable Search Engine — it does NOT search the open web (no canlii/bccourts/blogspot/christopherdiarmani), is biased to social/professional domains, and does not enforce the exact-phrase name. The earlier "567 domains" whole-web evidence was MISLEADING (historical/prior-config content, not the current engine).
+**Raw-vs-verifier:** the engine returned ~5 raw total (4 of 5 battery queries = 0; the 5th = 5 junk). NOT verifier-discard — the engine returns little/junk. Verifier is not the bottleneck.
+**FIX (operator decides — this is the hard dependency I flagged):** (a) PSE control panel → toggle "Search the entire web" on the existing cx, OR (b) create a new whole-web PSE + update GOOGLE_SEARCH_ENGINE_ID, OR (c) switch to a SERP API (SerpAPI/Bing/Brave) returning the real whole-web index. Battery/verifier/pivot/cluster are correct and unchanged; nothing in the pipeline can surface content the engine cannot see. Nothing ships until the engine returns the target on a direct query.
+
+## RETRACTION + real cause: Google CSE API INDEX is too thin, NOT a restricted engine (2026-08-19)
+**RETRACTED: the "restricted engine" diagnosis was WRONG.** Ground truth (cse-diag, deleted after): secret GOOGLE_SEARCH_ENGINE_ID = `947993a80e5094d6b` (MATCHES the operator's panel engine — whole-web, sites empty). API key valid (`AIza…T5tA`, len 39). `"Olynyk v. Kilback"` → clean **HTTP 200, no error object, totalResults "0"** — a GENUINE empty result, not a swallowed error, not wrong cx, not bad key. (My earlier collapsed probe reported the right data — 200/0/no-error — but I mis-interpreted 0-results as "restricted" WITHOUT the site:-probe evidence. The error wasn't swallowed; my interpretation jumped. Owned.)
+**site: probes pinpoint the REAL cause — the CSE API's INDEX lacks the target pages:**
+- `site:wiselaw.blogspot.com` → 17 results (CSE HAS the blog domain indexed) BUT `site:wiselaw.blogspot.com Kilback` → **0** (the specific 2011 Kilback page is NOT in CSE's index of that blog).
+- `site:christopherdiarmani.com Kilback` → **0** (echo page not indexed).
+- `"Aaron Kilback"` → 652 results (API works, returns current identity) · `Olynyk Kilback` (loose) → 50 results, none the target · `site:blogspot.com conservation officer cougar` → 278 (blogspot broadly reachable).
+**Conclusion: the Google Custom Search JSON API uses a SEPARATE, THINNER index than google.com and does not contain the specific target pages** — even though the engine is whole-web, the domain is indexed, and the content exists in real Google (WebSearch finds wiselaw + christopherdiarmani instantly). CSE ≠ Google Search index. No battery/engine/query tuning fixes an index that lacks the page. **This is the "needs a different tool" branch flagged in the original design, now empirically confirmed.**
+**FIX (operator decides): switch the retrieval tool from Google CSE to a SERP API that returns the real Google/Bing SERP** — Serper.dev (~$1/1000, cheap), SerpAPI (~$15/1000), Bing Web Search, or Brave Search API. Battery/verify/pivot/cluster are tool-agnostic; only `cseSearch()` swaps. Verify the chosen API returns "Olynyk v. Kilback" before committing. Cost per scan (~130 req): Serper ~$0.13, SerpAPI ~$2 — negligible vs $10k. ToU: SERP APIs are commercial products that permit programmatic access (cleaner than scraping). Nothing ships until the tool returns the target on a direct query.
+
+## SERPER.dev PROOF (2026-08-19) — breaks the CSE wall; wiselaw target rank 1; christopherdiarmani NOT in Serper
+Operator set SERPER_API_KEY secret; ran the target queries via temp serper-diag (deleted after). Raw Serper (google.serper.dev/search) results:
+- **`"Olynyk v. Kilback"` → organic #1 = http://wiselaw.blogspot.com/2011/03/** ("B.C. Supreme Court decision Olynyk v. Kilback…") — THE TARGET, where CSE returned 0.
+- **`Kilback "malicious prosecution" wiselaw` → #1 wiselaw.**
+- `"Aaron Kilback"` → 10 real organic (LinkedIn, ZoomInfo/PETRONAS, SoundCloud, IG, FB, KelownaNow, X, RocketReach, + a gov.bc.ca FOI PDF at #10).
+- **`"Aaron Kilback" "malicious prosecution"` → #1 pressreader/Vancouver Sun (2010-12-04 NEWS article on the case) + #2 wiselaw** — a THIRD third-party source.
+- `Kilback "poorly trained, careless, reckless"` (the quote) → #1 Vancouver Sun.
+- **`site:christopherdiarmani.com Kilback` → 0 on Serper too; the quote surfaces Vancouver Sun, not christopherdiarmani.**
+**Verdict:** Serper DECISIVELY breaks the CSE wall — the wiselaw target ranks #1 (CSE=0), plus a real Vancouver Sun news echo. Request errors surface distinctly from empty (http/request_ok vs organic_count) — no swallowed-error ambiguity. BUT the specific christopherdiarmani echo is NOT in Serper's organic results (0 for site:, quote→Vancouver Sun). Serper's propagation network = wiselaw + Vancouver Sun (arguably a STRONGER echo than a personal blog), NOT christopherdiarmani. My earlier WebSearch (different backend, likely Bing) ranked christopherdiarmani; Serper/Google-organic does not.
+**Operator's conditional: "wiselaw + christopherdiarmani → wire; else test Brave/Bing."** Strictly: wiselaw ✓, christopherdiarmani ✗ (Vancouver Sun ✓ instead). AWAITING OPERATOR RULING: (a) accept wiselaw+Vancouver Sun as meeting intent (spread proven) → wire Serper; or (b) require christopherdiarmani specifically → test Bing/Brave first. Did NOT wire — honoring the precise conditional. Temp diag deleted; SERPER_API_KEY secret remains set.
+
+## Serper WIRED behind searchProvider() (2026-08-19) — acceptance retest pending
+Operator ruled (a): wire Serper. Criterion satisfied in substance (wiselaw + Vancouver Sun; christopherdiarmani was a stand-in for "propagation found", and Vancouver Sun is a stronger echo — higher reach, harder to remove, more encountered).
+- Acceptance test AMENDED in spec: (1) wiselaw judgment surfaced AND (2) ≥1 independent propagation location clustered into the SAME item. Serper passes: wiselaw #1 + Vancouver Sun.
+- `_shared/subject-retrieval.ts`: cseSearch() → provider-agnostic `searchProvider()` (env SEARCH_PROVIDER, default 'serper'; 'cse' fallback retained). Serper via google.serper.dev/search (page pagination). **Error/empty contract: SearchResult{ok,error,results} — a failed request (ok=false+error) is DISTINCT from empty (ok=true+results=[]); callers surface searchErrors, never collapse to "no results".** Return now includes provider + searchErrors[]. Redeployed (loads: 401).
+- **WO-LONGTAIL-COVERAGE-01 logged** (`docs/platform-operations/backlog/`): Serper=Google organic under-surfaces long-tail personal-blogs/forums (christopherdiarmani reachable but not surfaced); tension with PS2 obscurity ranking; test Brave/Bing later, multi-provider union candidate; not a blocker, not resolved.
+Acceptance retest: operator re-runs the same curl (now Serper-backed) → expect thirdPartyExposure with one item clustering wiselaw + a propagation location. Nothing ships until it passes.
+
+## subject-retrieval RAW SET (scan 17660b34) + VARIANCE finding (2026-08-19)
+Full pre-cluster set = 15 findings (14 phase1 + 1 phase2). clustered 8 / dropped 7. **wiselaw = 0 rows (NOT retrieved this run).**
+- **Q1 — wiselaw NOT in raw set → lost at the PIVOT stage.** This run's pivot extracted a QUOTE (phase2 query = `"The justice was being more than kind when he…"` → Vancouver Sun) but did NOT generate the case-name query `"Olynyk v. Kilback"` that returns wiselaw rank 1. Only 1 phase2 result total (vs 39 last run). Non-deterministic pivot → different propagation queries → wiselaw retrieved-or-not by luck. Not a clustering drop this run; a retrieval-never-happened.
+- **Q2 — 7 of 15 dropped at clustering (47%).** Dropped: 4 self-published (his own posts/FB) + 3 third-party (DFO fisheries report, hunting-assoc FB, board-meeting site). Lossy clusterer confirmed (drops ~half) but SECONDARY to the variance (15 vs 66 total).
+- **Q3 — FOUR LLM (non-deterministic) stages:** verifier · source-class classifier · pivot · clusterer. Only battery (fixed templates) + search provider are deterministic. Verifier also imprecise (kept junk: "Alaska Permanent Fund", "Top Gunz Hunting Association", DFO report — homonyms it should reject).
+- **VARIANCE logged as its own finding: WO-RETRIEVAL-NONDETERMINISM-01.** Same query minutes apart = 66 vs 15 verified, 39 vs 1 phase2. A $10k deliverable can't return different findings each run. Same non-determinism class as the relevance-scorer finding this week; worse (compounds across 4 LLM stages). Mitigations recorded (temp=0; replace LLM w/ deterministic logic per platform doctrine; lossless clusterer; determinism as an acceptance criterion). NOT built — recorded first per operator.
+
+## Deterministic LOSSLESS clusterer BUILT + PROVEN (2026-08-19, WO-RETRIEVAL-NONDETERMINISM-01 #1)
+Replaced the LLM clusterFindings with a deterministic, lossless one (no model call). Cluster key priority: case name (X v. Y, order-insensitive sorted surnames) → citation (2010 BCSC ####) → canonical URL; url-singletons with identical normalized titles merge (same story, diff URL); an unclustered finding = its own single-location item, NEVER dropped. Lossless by construction (every finding → exactly one group → one item; pass 2 only MOVES url-singletons).
+**PROVEN on the exact 15 findings of scan 17660b34 (the run that dropped 7) via temp cluster-proof fn (deleted after):** input_findings 15, distinct_input_urls 15, output_items 14, distinct_output_urls 15, **lossless TRUE, dropped_urls []**. The 47% silent deletion is GONE. Case coverage (2 pressreader Vancouver Sun findings) merged into ONE item; self-published posts became singletons (kept, not discarded). When wiselaw is retrieved (pending pivot fix #3), its snippet "Olynyk v. Kilback" → caseNameKey "kilback|olynyk" clusters it WITH the Vancouver Sun into one item — the acceptance-test behavior, now deterministic. Deployed.
+Remaining per operator order (report-after-clusterer gate now met): #2 source-class rules (no LLM), #3 pivot regex (case-name query ALWAYS fires + LLM quote), #4 verifier deterministic name-gate first, + repeatability harness (3 runs, variance report; target in all 3), temperature=0 on residual LLM calls.
+
+## subject-retrieval #2+#3 BUILT + acceptance test run (scan a9045363, 2026-08-19) — PAUSE per operator
+Built deterministic source-class (#2, rules no-LLM) + deterministic pivot (#3, regex case-name/citation/party-pair ALWAYS fires + LLM temp0 quote only). Ran acceptance test (temp scan-proof fn, deleted): 34 phase1 + 31 phase2, 0 search errors, 64 items.
+**WINS:** #2 classifier correct — his own `aaronkilback`/`aaron_kilbackdisrupted`/`AaronKilback` handles → self_published; OTHER Kilbacks (kkilback, in/amparo-kilback) → third_party (LLM used to mis-mark these). #3 pivot WORKS — **wiselaw.blogspot.com IS now in the raw set** (Q1: YES), retrieved phase1 rank4 + the fired case query.
+**Q2: wiselaw did NOT cluster with pressreader — NO.** Both are separate singleton items (wiselaw = url-wiselaw-blogspot-com-2011-03; pressreader Vancouver Sun = its own 2-location item). ROOT CAUSE: the deterministic clusterer keys on the query-HIGHLIGHTED snippet, and none of the 3 case findings' snippets share a literal "X v. Y" or citation — wiselaw's snippet even highlighted a DIFFERENT case ("Worcester v.") because /2011/03/ is a month-archive page; pressreader snippets say "sued"/"the defendant" not "Olynyk v. Kilback". The case QUERY retrieved them but the clusterer can't LINK them without a shared case signal in the thin snippet.
+**Q3: 64 items, only 1 multi-location.** Swung from OVER-collapse (66→1) to UNDER-merge (65→64, near-all singletons). Lossless (nothing dropped) but nothing merged. Also HOMONYMS survived the (still-LLM) verifier: Ash/Ellen/Amparo/Kyle/Barry Kilback = different people (item #4's domain — name-gate alone won't catch them; needs first-name/identity disambiguation). Category mis-set 'legal' for all (single-category test-scope artifact).
+**Two things for the operator to rule (paused):** (A) clustering-KEY fix — cluster by the case-name QUERY provenance (a URL returned by `"Olynyk v. Kilback"` is about that case regardless of snippet); track queries-per-URL, key by the case query → links wiselaw+pressreader into one item. (B) items #4 (verifier homonym), #5 (repeatability), #6 (temp0). Acceptance still fails on the cluster-link despite retrieval now working.
+
+## subject-retrieval (A) query-provenance clustering + (#4) verifier name-gate — BUILT + acceptance PASSES (non-det caveat), 2026-08-19
+Per operator ruling: (A) first, then #4.
+**(A) Query-provenance clustering key (additive, precedence: case-QUERY provenance > snippet case name > citation > canonical URL > title-sim).** Track queries-per-URL across BOTH phases (before dedup drops dup occurrences); a URL returned by `"Olynyk v. Kilback"` (or party-pair `"Olynyk" "Kilback"`) keys to the case regardless of which fragment Google highlighted. Losslessness unchanged.
+**(#4) Verifier deterministic name-gate.** Reject when subject SURNAME is preceded (fwd) or followed (reversed "Kilback, Barry") by a DIFFERENT first name (title-stoplist guards "Officer/Justice/…"); full name anywhere → pass; bare surname → LLM residual (temp 0). Reject BEATS provenance-keep (a clear homonym is dropped even if a case query returned it).
+**Two pivot bugs found + fixed en route:** (1) `otherSurnames` extracted ANY capitalized word → garbage `"Technology"/"Most"/"Arms" v. Kilback` queries; replaced with `litigants()` (names bound to sued/v./prosecuted/charged or a real "X v. Y" only). (2) Those garbage party-pairs POISONED provenance-keep → whitelisted homonyms; the litigants fix + reject-beats-provenance both close it. (3) Pivot candidates now ORDERED by legal score before the cap so the real case finding pivots (was arbitrary order + slice(6) → case seed fell outside the cap).
+**RESULT — acceptance PASSES when the seed is present:** run 16783f6f — wiselaw + pressreader in ONE item `case-kilback-olynyk` "Legal case: Kilback v. Olynyk" (4 locs: wiselaw r1, pressreader r1, facebook, wshja); homonyms all gone; phase2 noise 103→5.
+**CAVEAT — still non-deterministic across runs:** 3 runs: a9045363 (wiselaw phase-1 r4), 16783f6f (wiselaw phase-2 case query, PASS), d78b9c43 (ZERO Olynyk coverage in phase-1 → phase2=0 → no wiselaw). Non-determinism now ISOLATED to one thing: the deterministic case query only fires if phase-1 rediscovers the seed ("Olynyk sued … Kilback"); phase-1 Serper/verifier drift can drop it. **Fix = STANDING case query (persist litigants/case-names per subject_entity, seed the battery) — the learned/historical battery (Phase 3) + #5 repeatability harness.** Detail in WO-RETRIEVAL-NONDETERMINISM-01. HELD for operator ruling alongside #5/#6.
+
+## subject-retrieval LEARNED BATTERY + #5 repeatability + #6 temp0 — BUILT + PROVEN, 2026-08-19
+Per operator ruling: learned battery → #5 → #6.
+**LEARNED BATTERY (determinism fix).** New table `subject_learned_terms` (migration 20260819150000, RLS-at-Creation deny-by-default, service-role only). Persists discovered litigants/case_names/citations per subject_entity WITH PROVENANCE (discovered_scan_id, discovered_finding_url, discovered_at) + status active/retracted for audit+retraction. Two design constraints honored: (1) ADDITIVE — `learnedBatteryQueries()` appends scope-respecting seed queries; never replaces/narrows the standing sweep (C1). (2) PROVENANCE on every fact — a bad litigants() extraction can be audited + retracted, never silently poisons future scans; retracted terms are never seeded. Deterministic types wired (litigant/case_name/citation — what the pipeline discovers + what makes the case reproducible); schema supports former_role/prior_employer for when an extractor exists (NONE today — did not fake them).
+**PROVEN.** Bootstrap scan a52ca631 discovered + learned `litigant "Olynyk"` (from pressreader Vancouver Sun) + `case_name "Olynyk v. Kilback"` (from wiselaw), both with full provenance. Then #5 harness — 3 consecutive runs (160f4197/76c418dc/0a02d9f0): seeded 2, CASE item + wiselaw present in ALL THREE (phase2=0 — the case query now fires in the STANDING battery, not conditional pivot). Run 2 hit phase1=18 — exactly the low-yield case that failed as d78b9c43 — and STILL returned the case item. The seed makes it reproducible.
+**#5 repeatability harness = durable artifact:** `scripts/test-subject-retrieval-repeatability.mjs` — asserts a known exposure item present in ALL N runs (acceptance = N/N, not 1). On-demand (env JWT, spends Serper budget), NOT a blocking CI gate. Exactly what catches a d78b9c43 regression.
+**#6 temp=0 DONE:** only 2 LLM calls remain (verifier residual + third-party-quote extractor), both `extraBody:{temperature:0}`. classifySourceClass deterministic; pivotTerms removed. Non-determinism sources reduced to Serper ranking drift + the residual LLM (temp 0) — and the headline case finding no longer depends on either.
+Sequence #2/#3/A/#4/learned-battery/#5/#6 COMPLETE. Residual quality items (case-item consolidation of the separate "Prosecution policy" Vancouver Sun item; verifier false-positives like Kevin-Lucia/Alaska-fund noise; instagram reel permalink without handle → mis-classed third_party) logged for a later precision pass.
+
+## subject-retrieval WIRED into vip-deep-scan (fire-and-persist) + parallelized + litigant cluster signal — 2026-08-19
+Operator ruling: scope = all 7 categories at deep (P=4); execution = fire-and-persist with 3 requirements.
+**PARALLELIZED.** `mapLimit` (concurrency 6) on phase-1 battery, phase-2 pivot-set computation, and phase-2 query union. **7-category DEEP scan runs in 37s** (149 phase-1 verified, 15 battery queries) — was ~150-200s sequential; now comfortable under the 150s ceiling. searchErrors 0.
+**FIRE-AND-PERSIST (3 requirements met).** (a) TRACKING: new `subject_scan_runs` (migration 20260819160000, RLS-at-Creation) — row 'started' BEFORE work, 'completed'/'failed' after; a SIGKILL leaves it 'started' = visibly died-mid-run (not absent). Validated: sync run f9f6a4e0 → completed/7-cat/deep/37s; async run 49b272c9 → started→completed/10s. (b) RESPONSE: subject-retrieval async path returns 202 {scanId,status,results_table,tracking_table,message} in ~1s (non-blocking); vip-deep-scan response carries `reputational_scan` stating scanId + where results land + the not-yet-visible caveat. Never silent success. (c) DURABILITY: was ONE write at end (149s death = total loss); now PHASE-1 CHECKPOINT persists clustered phase-1 items BEFORE phase-2 — and the learned case query runs in phase-1, so the headline case survives a phase-2 timeout. Parallelization (37s) makes timeout unlikely anyway.
+**vip-deep-scan wired:** replaced the `osint-entity-scan` invoke (wrote entity_content) with an async fire of `subject-retrieval` (persist, owner=client+entity, service-role Authorization passed explicitly). Gated on consentSocialMediaAnalysis.
+**LITIGANT-SURNAME CLUSTER SIGNAL (precision fix, same pass).** clusterFindings Pass 3 (ranked BELOW query/snippet/citation provenance): a url-group whose combined text contains ALL litigant surnames (≥4 chars, word-boundary) of a known case joins that case. Proven: 7-cat deep scan f9f6a4e0 — case item now 7 locations (wiselaw + 5 pressreader/VanSun + facebook); `vansun_still_separate_item=false`. The "Prosecution policy comes back to bite Liberals" echo no longer reads as a separate finding.
+**CONSUMER GAP (stated plainly to operator):** NOTHING reads subject_exposure_items yet (grep: only the writer). Step 1 persists correct data that is client-INVISIBLE until step 2 (entity Investigate reader). vip-deep-scan response says so explicitly.
+Remaining precision items for the later pass: bare-surname LLM verifier false-positives (Kevin-Lucia/Alaska-fund noise); Instagram reel permalink w/o handle → mis-classed third_party. NEXT (operator order): 2. entity Investigate button (READER — makes it client-visible), 3. AEGIS chat, 4. CRT.
+
+## STEP 2 — entity Investigate READER (subject_exposure_items now client-visible) — BUILT, 2026-08-19
+Answer to operator's scan-vs-read Q: the existing Investigate button (EntityDetailDialog:679 handleInvestigate) RUNS investigate-poi on every click — trigger, no reader. Built BOTH per ruling: read-what-exists + explicit fresh-scan action.
+**Backend:** `subject-exposure` edge function (authorized reader; tables are RLS deny-by-default so frontend can't read directly — service-role read + userCanAccessClient authorization + explicit entity filter, per tenant-isolation checklist not RLS-only). 3 actions: read (items+locations, obscurity-sorted, +lastScan from subject_scan_runs), set_awareness (known|unknown|disputed), rescan (fires subject-retrieval async 7-cat deep — explicit, never on view).
+**Frontend:** `ReputationalExposurePanel.tsx` + new "Exposure" tab in EntityDetailDialog. Renders all 5 requirements: (1) third-party first / self-published second, visually separated; (2) one item N locations (collapsible sources beneath one finding); (3) each location URL + found_by_query provenance + date_captured; (4) obscurity rank visible + buried-first ordering; (5) subject_awareness select per item (unknown=red, the valuable ones). "Run fresh scan" is an explicit button; reading never scans.
+**PROVEN:** read endpoint returns case item "Legal case: Kilback v. Olynyk" with 14 locations, sample loc = pressreader URL + found_by_query `"Olynyk" "Kilback"` + date_captured + rank 1. Auth OK (service-role). Build gate (undefined identifiers) clean.
+**NOT deployed to the Fortress Worker frontend** — code committed; prod frontend deploy is outward-facing, held for operator go (wrangler --name discipline).
+**Two precision items surfaced (for the precision pass):** (i) obscurity ordering — locations with NULL found_at_rank get 999 and float to TOP (unknown-rank ≠ most-buried); should sort NULL as least-valuable. (ii) Re-scan NEVER retires items no longer found — items only upsert-accumulate (Kilback test entity now 166 tp items across ~6 test scans, incl. stale homonyms from pre-reject code). Decay-not-purge doctrine applies: a re-scan should mark items absent-from-latest-scan as stale. Real product gap, logged.
+
+## STEP 2 reader DEPLOYED to prod Worker — 2026-08-19
+Operator go given. Manual lane (WO-PROD-FRONTEND-DEPLOY-LANE: no CI, local OAuth). Rollback anchor (prior live): cfa49e38-d404-477c-ac2f-f9daf4821a0c. Built w/ prod .env (kpuqukppbmwebiptqmog), bundle-verified (subject-exposure + reader UI present in dist), deployed `wrangler deploy --name silent-shield-signal` (INC-WRANGLER-MISFIRE --name discipline). New live version: 90fb5cfc-a3a7-4d90-bef2-35481e534f38. Route fortress.silentshieldsecurity.com/*. Exposure tab now client-visible. Rollback: `wrangler rollback --name silent-shield-signal --version-id cfa49e38-...`.
+
+## GAP 3 — per-subject breach check BUILT + LIVE (HIBP key already present) — 2026-08-19
+`subject-breach-check` edge fn: HIBP account API (/breachedaccount) against the subject's PERSONAL emails (intake emails ∪ entity contact_info.email canonical merge); writes one subject_exposure_items per breach (category='data_breach', source_class='third_party', severity from DataClasses: critical=SSN/CC/bank/passport, high=Passwords/sensitive, else medium) + a location (HIBP breach page, provenance found_by_query, capture date). Honest 503 if HIBP_API_KEY unset — never a fake clean result. Wired into vip-deep-scan (consentDarkWebScan path, fired w/ intake personal emails).
+**COST: none to gate on — HIBP_API_KEY is ALREADY set in prod secrets and works.** Test run for the Kilback subject (akilback@hotmail.com + entity emails): 2 emails, **25 real breaches found, 25 items written** — 14 high (Adobe, LinkedIn, Canadian Tire, Collection #1, MyFitnessPal, Nitro, Zomato, ALIEN TXTBASE stealer logs, Cit0day, Exploit.In, …) + 11 medium. Now renders in the Exposure reader under third-party. (For reference, HIBP paid key tiers ~US$3.95/mo Pwned-1 (10 rpm) suffices for per-subject volume — but MOOT, key present.)
+**monitor-darkweb future (recommendation, operator rules):** SALVAGEABLE as a corporate-domain monitor ONLY for clients with real `monitored_domains` (PECL/BCCH). Root bug = fallback to `contact_email` domain when monitored_domains is null → derives free-mail provider domains ("hotmail.com"). Fix: REQUIRE monitored_domains; SKIP + log clients with no real corporate domain instead of querying a provider domain. The per-subject breach check REPLACES the personal-email breach need monitor-darkweb never served. Complementary, not redundant (org-wide domain breaches vs a specific subject's personal accounts). Not changed pending operator ruling.
+
+## GAP 1 — per-family-member scan loop + per-adult consent — BUILT, 2026-08-19
+Operator ruling: per-ADULT consent (member's own name + date), NO principal-consents-for-household; minors <18 HARD-BLOCKED from dateOfBirth regardless of checkbox; guardian legal basis for a minor = counsel question, out of scope.
+**Frontend (VIPDeepScanWizard):** FamilyMember + consentToScan/consentDate; per-member consent checkbox labeled with the member's OWN name ("I confirm {name} has personally consented…"); consent date stamped on check. Minor (age<18 from DOB) → checkbox replaced with "Under 18 — will NOT be scanned" amber notice. Unknown DOB → note that a DOB is required (fail-closed). Build gate clean.
+**Backend (vip-deep-scan):** minorStatus(dob) — age<18=blocked, unknown/invalid DOB=null=fail-closed (cannot confirm ≥18). Family entities store scan_consent{granted,consent_date,consent_name} + is_minor in attributes. New §4b loop: for each family member — minor→skip(minor_hard_blocked); DOB-unknown→skip(dob_unknown_cannot_confirm_adult); no consent→skip(no_per_member_consent); consented adult→fire subject-retrieval async (7-cat deep, owner=client+member entity). Response carries family_scans[] stating who was scanned + who skipped + why (not silent). Deployed.
+**Frontend NOT redeployed** — the live Worker (v90fb5cfc) has the reader but was built BEFORE this wizard change; the family consent checkbox needs a fresh deploy to go live. Backend defaults consent=false so it fails safe (skips all family) until the frontend ships. Held for operator go (outward-facing; prior deploy authorization was scoped to the reader).
+
+## GAP 2 — social account assessment — LOGGED not built (operator ruling). WO-SOCIAL-ACCOUNT-ASSESSMENT.md.
+
+## monitor-darkweb salvage DEPLOYED + family frontend DEPLOYED + breach differentiation logged — 2026-08-19
+**monitor-darkweb salvage (operator ruling):** FREE_MAIL_DOMAINS denylist + removed contact_email/org-name fallback. Clients with no real corporate domain SKIPPED + logged (heartbeat.skipped_clients, response.clients_skipped_no_domain). Deployed. **Post-fix client report:** MONITORED (real corporate domains) = Petronas Canada (active), BC Place (active), _benchmark_petronas (inactive fixture). SKIPPED = Kilbacks (active, personal — correctly, per-subject breach check handles it now), __platform_security__ (active internal), Cascade Energy + Trent Reznor (inactive) + QA/benchmark fixtures. So NOT only PECL — BC Place also has real domains; the two real corporate monitored clients are PECL + BC Place.
+**Family intake frontend DEPLOYED:** Worker silent-shield-signal v2204a8fe-2d11-41a8-952c-583754639ef0 (rollback anchor 90fb5cfc). Consent checkbox + minor block now live.
+**Breach differentiation (operator Qs a+b) — REPORTED + logged WO-MODULE2-BREACH-DIFFERENTIATION, NOT built:** (a) severity is credential-type+sensitivity derived, NOT recency-aware — Adobe 2013 and a 2024 stealer log both land 'high' if both expose Passwords; breach DATE is captured/visible (first_seen_date/published_date/summary) but does not drive the band. (b) Stealer-log findings = device-compromise class (password change does NOT fix; needs device remediation + full credential rotation) — currently all 25 are one class; HIBP IsStealerLog flag / name pattern can branch it. Both deferred to Module #2 per ruling.
+
+## REPORT LAYER — BUILT (generator + tokenized delivery + view), issuable deny-by-default — 2026-08-19
+All 4 design decisions + the negative-space addition, built as designed. NO server-side PDF (styled print-HTML + pdf skill at authoring time, per ruling).
+**Migration 20260819170000:** reports.subject_entity_id + report_delivery_tokens (expiring, RLS deny-by-default).
+**generate-subject-exposure-report:** builds LIGHT-THEME print-HTML (own stylesheet, not app dark CSS) + persists reports row (type='reputational_exposure', issuable=FALSE deny-by-default). 5 sections: (1) Scope & method — DENOMINATOR (queries/categories/verified) + WHAT WAS NOT SEARCHED (categories out of scope + sources-not-covered honest list + family-not-scanned w/ per-person reason); (2) third-party ordered by obscurity (buried-first), one-item-N-locations, provenance+capture-date per source; (3) self-published separately framed; (4) breach w/ recency caveat stated plainly in-report until Module #2; (5) remediation OPERATOR-AUTHORED only ("authored by analyst"), placeholder if absent — NEVER fabricated. HTML stored in private generated-reports bucket. PROVEN: report 13948d77 for Kilback subject — 190KB, all sections + not-searched + caveat + placeholder present.
+**view-subject-exposure-report (public, token-gated, --no-verify-jwt):** the "secure portal" v1 — tokenized EXPIRING URL serves ONE report's HTML, no account needed. FAILS CLOSED: bad token→404, expired→410, issuable-revoked→404. PROVEN: valid token+issuable→200/195KB; bad token→404; issuable revoked→404.
+**deliver-subject-exposure-report:** ISSUABLE GATE deny-by-default (refuses 409 REPORT_NOT_ISSUABLE unless issuable=true — PROVEN, no email sent) + expiring token (14d default) + Resend email (send-client-authorization pattern) + WRITES reports.delivered_at/delivery_channel/recipient (empty across 278 reports — first populator). First real client email is the operator's to trigger (outward-facing; not auto-sent).
+**Notes:** the emailed link is a supabase.co function URL (secure+expiring but unbranded) — a branded fortress.silentshieldsecurity.com/r/:token frontend wrapper is a v1.1 polish. Test report has 166 tp items (accumulated across test scans — re-scan-staleness precision item still logged; a clean deliverable = one fresh scan). Issuance is the operator flipping reports.issuable=true.
+
+## SECTION 6 · Family & Child Safety — Phase 1 BUILT (steps 1-6), paused at review gate — 2026-08-19
+Minor-scan block absolute (unaffected). Phase 1 complete: child_safety_guidance table + staleness RPC (migration 20260819180000); 19 DRAFT rows seeded (20260819181000); edit-child-safety-guidance (super_admin, version+reviewer stamped); agent-sentinel Probe 2h (staleness/draft, HIGH if escalation-contact stale); childPlatforms intake (wizard + entities.attributes.child_platforms); report Section 6 rendering. Operator additions ALL built: (1) visible DRAFT tag per block + report-level banner; (2) probe fires on DRAFT regardless of age; (3) escalation 3-month interval. Delivery HARD BLOCK added (CONTAINS_DRAFT_CHILD_SAFETY 409). PROVEN: report 468d6098 — Section 6, DRAFT banner + 18 tags, selected-platforms-only, sextortion emergency, Cybertip #, framing-as-wrong-model.
+**NAMED REVIEW DEPENDENCY (WO-CHILD-SAFETY-SECTION6):** blocked on a NAMED child-safety professional (not yet engaged) + the Q1/Q2 counsel thread. Operator explicitly NOT the final 6C reviewer. Action owner: operator to name+engage. All 19 rows DRAFT until signed → banner + hard block hold → nothing reaches a family.
+**Phase 2 (6A detection) HELD** until Phase-1 content reviewed. Redact-in-storage-and-render confirmed. Image/face tier NOT assumed. childPlatforms frontend built but Worker NOT redeployed (held at gate; fails safe empty).
+
+## Section 6 — 5 DRAFT corrections applied (still DRAFT, pre-review) — 2026-08-19
+Operator corrections to the child-safety draft (not a review; all stay DRAFT). Applied via execute_sql (data, versions bumped); captured in the review export docs/platform-operations/child-safety-guidance-review-2026-08-19.md.
+1. ERROR fixed — rcmp_ncecc: the public CANNOT report to NCECC (police-to-police; RCMP: "only our policing partners may request these services"). Rewritten — not a parent contact; a parent reports to LOCAL police + Cybertip, and if local police cite a foreign jurisdiction, asks THEM to refer to NCECC. Escalate through police, not around them.
+2. immediate_danger (NEW, escalation, display_order 380=first, is_emergency): if a child is in immediate danger or a meeting is imminent/underway → 911, not a tipline. Rows now 20.
+3. framing citations — source + needs_source=true on both facts (NCMEC for 100%-went-willingly, CEOP for under-a-week); flagged for the reviewer to confirm the PRIMARY citation rather than stating as fact. Renders "primary citation to be confirmed by reviewer".
+4. sextortion — added STOP RESPONDING (cease contact, do not negotiate; block only after evidence preserved).
+5. warning_signs — added age-risk framing (highest risk roughly ages 12–15).
+Generator render updated (framing source line + escalation emergency styling for 911); deployed + verified all 5 render. Still DRAFT → banner + delivery hard block hold. Review dependency unchanged (named child-safety professional not yet engaged).
+
+## Report generator — confirmed built + remediation wording aligned; DENOMINATOR DEFECT found; retrieval-surface audit — 2026-08-20
+generate-subject-exposure-report already built/deployed this session (5 sections + Section 6). Aligned empty remediation → "Pending analyst review." per operator. Proof generated (report 6b64ab66) — all 6 sections render (scope+not-searched, obscurity-ordered 3rd-party w/ provenance+capture-date, self-published, breach+recency-caveat, remediation placeholder, Section 6 w/ DRAFT banner + tags).
+**DEFECT (flagship section):** Section 1 denominator is computed from the LATEST completed scan_run, but items rendered = ALL accumulated for the entity. Kilback: latest scan = legal-only (8 queries, 1 category) → denominator says "1 category searched, 6 out of scope" WHILE items span all 7 categories across 14 distinct scans (241 items). Report contradicts itself. Root = re-scan accumulation (items upsert-cumulative; no retire) colliding with a single-scan denominator. Fix needs a scoping ruling: (a) one-scan-per-report (render items WHERE scan_id=reporting scan + that denominator — but breaches/household are separate scans → would drop them), or (b) cumulative items + denominator that AGGREGATES the contributing scans (latest-of-each-producer). Recommend (b) + the re-scan-retire/decay work. HELD for operator ruling. Clean interim proof = one fresh 7-cat deep scan immediately before generate.
+**AUDIT (retrieval surfaces) — 9 surfaces:** USES-MODULE 4 (subject-retrieval entry, subject-exposure rescan, vip-deep-scan ×2 invokes — reputational + family). OWN-RETRIEVAL 4 (osint-entity-scan, osint-web-search, perform-external-web-search, vip-osint-discovery — all raw Google CSE). DEAD/DISABLED 3 (entity-deep-scan, investigate-poi, generate-poi-report — all 503 INC-AITOOLS-XTENANT-2026-07-30). Entity Investigate button → invokes investigate-poi (DISABLED) → button is dead. AEGIS chat → own tools (run_entity_deep_scan→disabled, perform_external_web_search→own CSE), NOT the module. So of the LIVE investigation surfaces, 4 use the module and 4 still reimplement retrieval; the primary entity Investigate button is wired to a disabled function.
+
+## Denominator(b)+retire + Investigate fix DEPLOYED + retrieval-surface caller audit — 2026-08-20
+Denominator (b): aggregated latest-of-each-producer, age-honest (per-category sweep date + separate breach-check date). Retire/decay: subject_exposure_items.superseded_at (migration 20260819...supersede); retrieveSubject supersedes swept-category items not re-found. Proven: fresh 7-cat scan 8900a217 aged out 108 items (241→148 current); report f13815d9 coherent — all 7 swept 08-20 (deep), breach 08-19, no self-contradiction.
+Investigate button → module (subject-exposure rescan), replacing disabled investigate-poi/generate-poi-report. Frontend DEPLOYED to Worker v21b08ebe-3560-4672-b716-bc5a0ea5d09f (rollback anchor 2204a8fe).
+**Caller audit (retire vs needed):** vip-osint-discovery — ONLY e2eTests caller → effectively DEAD, retire now. osint-entity-scan — agent-chat(AEGIS) + EntityDetailDialog "Deep Scan" button + tests → needs those 2 migrated to module first. osint-web-search — EntityDetailDialog + tests. perform-external-web-search — agent-chat(AEGIS) only. entity-deep-scan (disabled) — agent-chat + EntityDetailDialog + tests (all already broken by 503). Disabled trio (entity-deep-scan/investigate-poi/generate-poi-report): jobs now done by module + generate-subject-exposure-report → REDUNDANT, retire not revive. AEGIS tool-contract change reported (async scanId vs inline results) — HELD for operator ruling before building.
+
+## AEGIS (c) + Deep Scan button + retirements — 2026-08-20
+AEGIS (dashboard-ai-assistant): run_entity_deep_scan REPLACED by get_subject_exposure (read; states denominator w/ dates; distinguishes no_scan vs scanned_empty per operator) + run_subject_scan (fire async, no inline results). investigate_poi→redirect; generate_poi_report→generate-subject-exposure-report. Deployed. In-chat verification recommended.
+Deep Scan button (handleDeepScan, was disabled entity-deep-scan) → subject-exposure rescan (module). Worker v8a659c76 (rollback 21b08ebe). Both Investigate + Deep Scan buttons now on the module.
+RETIRED (kept as inventory): vip-osint-discovery (no prod caller); disabled trio entity-deep-scan/investigate-poi/generate-poi-report (all live refs I control repointed).
+BLOCKED (agent-chat, a caller the audit undercounted): osint-entity-scan + perform-external-web-search still called by agent-chat (separate assistant) → retiring breaks it. osint-web-search's EntityDetailDialog caller is a DIFFERENT feature (relationship scan) — module doesn't build relationships. perform_external_web_search is GENERAL search, not subject-centric → open question (retire vs searchProvider shim). All in WO-RETRIEVAL-SURFACE-RETIREMENT.
+
+## perform_external_web_search SHIMMED + agent-chat reported + osint-web-search elevated — 2026-08-20
+SHIM: exported webSearch() from the module (Serper backend); perform-external-web-search now uses it instead of raw CSE. One provider, two capabilities (general search ≠ subject retrieval). Deployed + smoke-tested (Serper results, no CSE error). Both callers (dashboard-ai-assistant tool + agent-chat) upgraded for free.
+agent-chat REPORT: live, distinct assistant (per-agent/multi-agent conversation layer; world-model/episodic/trajectory/agent-mesh context). Callers: AgentInteraction/NodeAgentChat/AcademyTraining + fortress-qa-agent/activate-dormant-specialists/fortress-chaos-monkey/speculative-dispatch. Its 2 external calls: osint-entity-scan (relationship/entity-graph feed, leave alone) + perform-external-web-search (general, now Serper via shim). NO migration needed, do not retire — live + distinct; both its needs handled.
+osint-web-search + osint-entity-scan ELEVATED: entity-RELATIONSHIP feed (entity-graph / CRT link analysis) the module does NOT produce. Leave alone until the relationship side has a new home. Not dead retrieval.
+
+## AEGIS defect (1) entity resolution — disambiguate-not-guess — BUILT + proven, 2026-08-20
+Root: 4 duplicate "Aaron Kilback" entities, only 32750258 has data (148 items/3 scans); 32f71aab/e5d5d1a0 empty Kilbacks dups; 3c9cfe5d empty on PETRONAS (cross-client dup of a personal entity). get_subject_exposure/run_subject_scan resolved name via ilike+limit(1) NO order → arbitrary → likely wrong empty ID → "nothing found" (indistinguishable from routing failure). Operator's hypothesis confirmed as the real (co-)defect.
+FIX (operator ruling: disambiguate, do NOT pick "most data"): both tools now resolve name → all matches; exactly 1 → silent; >1 → return status=ambiguous with each match's client+date+current_items and instruct AEGIS to ASK the user which one (call again with entity_id). entity_id path unchanged. Deployed. PROVEN: resolver returns the 4-way disambiguation for "Aaron Kilback" (148/0/0/0), surfacing the dups incl. the Petronas cross-client one.
+Chat-level proof ("ask AEGIS") is gated on defect (2) ROUTING — the model must actually CALL the tool; until (2), it can still answer from the entity row. (2) next.
+
+## AEGIS defect (2) routing — system-prompt rule + root-cause found — BUILT, 2026-08-20
+ROOT CAUSE (concrete): aegis-persona.ts TOOL_USAGE_GUIDANCE "DEFAULT BEHAVIOR" was ACTIVELY misrouting — "exposure/breach check → check_dark_web_exposure" and "Entity name mentioned → search_entities". Person-exposure questions were routed AWAY from get_subject_exposure by the prompt itself.
+FIX: added a CRITICAL "SUBJECT EXPOSURE — PERSON FINDINGS" block (overrides those defaults) with BOTH halves per operator: (a) "what do we have on / what's out there about X / X's exposure/breaches/findings" → get_subject_exposure; NEVER answer from the entity row. (b) NEGATIVE CASE: status=no_scan → say "nothing on file, no scan has been run" + offer to run; status=scanned_empty → "scanned <date>, nothing found"; a tool returning nothing MUST NOT trigger a hunt for another answer — "we have nothing" is acceptable (same discipline as no confident all-clear over an empty set). Plus ambiguous→ask-which-one, and always state the denominator w/ dates. Fixed the 2 conflicting default lines to defer. Strengthened get_subject_exposure tool description with trigger phrases. Deployed.
+CHAT PROOF: cannot be driven from here — get_subject_exposure is TENANT_SCOPED (needs a real user session for tenant context; service-role fails the gate) + a live LLM turn. Operator runs the one-line test in-chat: "what do we have on Aaron Kilback" → expect the 4-way disambiguation (148/0/0/0) since the entity is duplicated. Both (1)+(2) now in.
+
+## AEGIS defect (2b) truncated-id selection — entity_index + prefix-tolerant — BUILT + proven, 2026-08-20
+Root: disambiguation message showed 8-char id prefix (slice(0,8)); model echoed "32750258"; get_subject_exposure .eq("id","32750258") on uuid column → "invalid input syntax for type uuid" → "not found" (tool contradicted its own disambiguation). Proven: full uuid → 148 items; "32750258" → uuid syntax error.
+FIX: shared resolveSubjectEntity in dashboard-ai-assistant. (1) entity_index selection key (1-based) against a DETERMINISTIC created_at-DESC order (orderSubjectMatches — code-commented DO-NOT-optimise, since index stability across turns depends on fixed order). (2) entity_id prefix-tolerant (8-char echo resolves; prefix matching >1 → disambiguate again, NO arbitrary prefix pick). (3) bad_index → re-disambiguate. Added entity_index to both tool defs. Prompt rule: on ambiguous, call again with entity_index mapped from the user's words ("the 148-items one"→that option#); NEVER ask the user to type/echo a uuid. Deployed.
+PROVEN (rez2 replica): ambiguous=4 numbered opts (created_at desc: #1 32f71aab/Aug19/0, #2 32750258/Aug18/148, #3, #4); index_1→32f71aab; index_2→32750258(148); prefix "32750258"→32750258(148); full uuid→resolved; index 9→bad_index. Deterministic, no arbitrary picks.
+NOTE for operator: created_at-DESC (your ruling) puts the newest (Aug19, EMPTY) at #1 and the 148-item (Aug18) at #2 — so "the first one" is the empty dup; the per-option item-count labels are what the model maps ("the one with 148 items"→#2). Order is stable; selection is by label→index.
+Chat re-test (operator): "what do we have on Aaron Kilback" → 4-way; then "the one with 148 items" / "the Aug 18 record" / "option 2" → get_subject_exposure(entity_index=2) → 148 items + denominator. No uuid typed.
+
+## Precision: severity/ranking/is_finding + case-name legal-gate + learned-litigant retraction — 2026-08-20
+Operator: junk at High in top-four undoes credibility. Fixed severity(from content not query-provenance) + is_finding + consequence ranking (compareExposureItems, BOTH surfaces). Then fixed fabricated cases: matchCaseName matched non-legal "v" (pub races/directories) amplified by poisoned learned litigants (Craggs/Jeffries/Gavin/Harcros from junk). FIX: (a) case is real only with legal context nearby (LEGAL_CONTEXT_CLASSIFY) — else keeps page title + is_finding=false; (b) persistLearnedTerms learns litigants ONLY from legal-context blobs; (c) retracted the 6 false learned terms (kept Olynyk) w/ provenance. Re-scan 200bb434: battery 29→15 (false litigants gone), learned_seeded 2. 
+PROVEN: report a9e9f7e0 top item = "Legal case: Kilback v. Olynyk" (legal/high/31 locs) #1 on both surfaces (same comparator). third_party high_sev 1 (only the real case), legal 1, no fabricated cases. Original High-junk problem RESOLVED + case leads.
+REMAINING (report, step 3 owner): 14 third_party "findings" incl. MEDIUM false-positives — "Posts starting with A - Page 12" (financial/med), "Imran Chughtai's Post" (different person), "Most insider threats" (his own content) — loose financial/professional signal regexes tagging bare mentions the VERIFIER should have rejected (non-subject / own-content / homonym). Not High, but not client-clean. Definitive fix = step 3 verifier tightening (reject non-subject/own-content) + tighten financial/professional/media signals like legal was. Recommended next.
+Spec updated: PS2 obscurity = TIEBREAKER among real findings (was stated too broadly).
+
+## Step 3 verifier + signal tightening — 3 rejection/classification classes — 2026-08-20
+Operator split the classes. (1) NOT-THE-SUBJECT (correctness): verifyFindings rejects a result whose surname never appears (no full-name, no provenance-keep) — Nate Lange's insider-threats post etc. (2) OWN-CONTENT MISBUCKETED (classification not rejection): REPORTED root — isSelfPublished matched the handle in the URL PATH only; Instagram permalinks (/p/,/reel/) carry no handle, and a comment sits under another user's URL — the authorship signal is in the CONTENT. Fix: isSelfPublished now also checks the snippet for an AUTHORSHIP marker (subject handle "@handle" or "View profile for {name}" byline), NOT mere name-presence. Moved own content to self_published (31→52). Where no authorship signal exists (a bare reel), it honestly stays a mention, not a guess. (3) DIRECTORY/INDEX artifact: deterministic — URL contains "/directory/" → rejected. Also tightened financial/professional/media signals to distress PHRASES not bare topic words ("Silent bankruptcy" metaphor no longer financial).
+PROVEN (scan 868a87d1): third_party_top4 #1 = Legal case Kilback v. Olynyk (high/35 locs, only finding + only high); #2-4 honest is_finding=false mentions. tp_findings=1, tp_high=1. Directory + Nate-Lange gone; Imran/strict-laws → self_published. Both surfaces use compareExposureItems → identical order.
+
+## Precision pass close: underscore-handle fix + mentions-collapsed — 2026-08-20
+(1) isSelfPublished content-authorship check now strips separators (_/./-) so "@aaron_kilbackdisrupted" matches normalized handle — his own reel reclassified third_party→self_published (a client's own IG post in the "what others say about you" section was the credibility risk). (2) Report Section 2 splits findings vs mentions: findings rendered prominently; is_finding=false items collapsed under "Also found — N mentions of your name with no finding attached" (<details>, honest about the denominator — 1 finding + 76 mentions, not 77 problems). PROVEN: report third_party findings=[Legal case: Kilback v. Olynyk], mentions_collapsed=76, reel→self_published. Precision pass COMPLETE — case leads, only real findings shown as findings, mentions counted+collapsed, own content in self-published.
+
+## Report: print appendix for mentions (deliverable never silently omits) — 2026-08-20
+Operator: a collapsed <details> renders only the count line in the PDF the client KEEPS — silently omits the items. Fix uses mutually-exclusive media types: WEB (@media screen) = finding + collapsed <details> of mentions, appendix hidden; PRINT/PDF (@media print) = finding + a pointer line "listed in full at Appendix A" + Appendix A listing every mention with URL + capture date. If a renderer applies NEITHER media, everything shows — nothing hidden. PROVEN: report HTML has screen-collapse + print-ptr + "Appendix A — Mentions (76)" with 76 rows each carrying capture dates. Same denominator honesty as everywhere: 1 finding + 76 mentions, all on the record.
+Precision pass fully CLOSED.
+
+## Delivery-link gaps — expiry banner + access log(90d retention) + per-token revocation — BUILT + proven, 2026-08-20
+Scoping approved (token→one report_id→one stored HTML; nothing else reachable). Format: (a) web-view only (PDF stays operator-rendered/reviewed at authoring time). Migration 20260820120000: report_delivery_tokens.revoked_{at,by,reason}; report_access_log (report_id,token_id,opened_at,ip,user_agent, RLS deny-by-default); purge_report_access_log() SECURITY DEFINER + pg_cron purge-report-access-log-90d (17 3 * * *, heartbeat) + cron_job_registry — enforced 90-day IP retention (scan-intake pattern).
+view fn: injects live expiry banner (prominent/red ≤3 days, "expires in N days / tomorrow" + real GMT date); checks revoked_at→410 with the analyst reason surfaced ("This link was revoked: {reason}. Contact your analyst for an updated report"); logs one report_access_log row per SUCCESSFUL open (revoked/expired return before logging). deliver fn: action=revoke (operator-authz on report's client) sets revoked_{at,by,reason} on all live tokens for a report, returns tokens_revoked; recipient now only required for the deliver path.
+PROVEN: view token → 200 + banner "expires in 2 days — on Sat, 22 Aug 2026 18:51:43 GMT"; access_log 1 row (ip 66.51.19.30, ProofBot/1.0); revoke endpoint → tokens_revoked=1; view after revoke → 410 "This link was revoked: A corrected version of this report is available…"; purge cron scheduled+registered. (Reqs 1 delivered_at/channel/recipient + 2 issuable+CONTAINS_DRAFT_CHILD_SAFETY were already built.) PRODUCT CHAIN COMPLETE end-to-end.
+
+## WO-ENTITY-DEDUP — duplicate-entity writers fixed + Aaron merge proven; cross-client class surfaced, 2026-08-20
+Operator: writer-first ("fix both writers, prove no new dups, THEN merge; do not touch a row until proven"); merge = consolidate to entity-with-data + reparent every ref + merged_into pointer (never delete); prove on the 4 Aarons first; soft-delete Petronas founder stray; report other cross-client artifacts. Item 2: 3 flight-recorder additions + drop phantom trace tables.
+
+WRITER #1 vip-deep-scan (commit 60174a95, deployed verify_jwt=true): bare-INSERTed a fresh entity every intake — principal AND each family member — so re-runs stacked dups (Aaron x3, Janis x2, fresh family+6 edges on 08-19). Now find-or-create by (name+client, non-merged, non-deleted): reuse+UPDATE in place (keeps id+refs); relationship edges find-or-create too. PROVEN no-new-dups: all 4 Kilbacks intake names resolve to an existing row -> UPDATE branch (empirical prod query).
+WRITER #2 osint-entity-scan (commit af94022b, deployed verify_jwt=false): Part-2 asked gpt-4o-mini to GUESS up to 5 related entities then INSERTed the guesses as real entities+relationships (John Smith / San Francisco / akilback@gmail.com "discovered via OSINT scan of Aaron Kilback"; 371 rows in Aug) — ungrounded fabrication, no client_id in code so a DB default mis-stamped them onto Petronas. Operator ruling: STOP creating entities. Part-2 wrapped RELATIONSHIP_INFERENCE_ENABLED=false; Part-1 (grounded content) retained. No-new-dups = structural (insert unreachable). [process-intelligence-document old direct-insert extraction path was ALREADY retired to entity_suggestions queue — Petronas POI dups Lorraine/Tzeporah/Nick are stale from it.]
+
+SUBSTRATE (migration 20260820140000, applied prod single-file + committed): entities.merged_into/merged_at/merge_reason + deleted_at/deleted_reason (+idx). DROPPED phantom aegis_tool_calls/aegis_invocations (never-written, mimicked real flight-recorder tables — Item 2 phantom cleanup done).
+
+AARON MERGE (executed + PROVEN on the case operator can verify): survivor 32750258 (data: 268 exposure_items/269 findings/8 runs/10 reports); losers e5d5d1a0 (empty Jun-11 shell, 0 refs) + 32f71aab (Aug-19 re-run: 6 entity_relationships.entity_a_id + 1 investigations.correlated[]). Reparented 6 edges->survivor; investigations array de-duped; 3 family parent-pointers (Janis/jakob/Avary)->32750258; aliases merged; losers tombstoned merged_into=32750258, is_active=false (NEVER deleted). PROOF: 6 edges now on survivor (HONEST: 3 real family + 3 osint fabrications John Smith/SF/akilback@gmail.com carried over — garbage edges the disabled writer made), family pointers all=32750258, survivor active w/268 items, both losers merged_into set. OTHER GROUPS (family dups, Petronas POIs) HELD until operator verifies this proof.
+
+BLOCKED — Petronas soft-delete: 3c9cfe5d "Aaron Kilback (Founder, Silent Shield)" (extraction-mis-filed onto PECL, 0 refs, already deleted_at=2026-04-07) is FROZEN under INC-AITOOLS-XTENANT-2026-07-30 legal hold (block_legal_hold_writes trigger). Operator's OWN Amendment-11 ruling = Option 1 WAIT for lift, no exceptions/workarounds. Write correctly blocked, no harm. HELD for operator ruling (conflicts with their standing hold-discipline).
+
+CROSS-CLIENT ARTIFACTS (reported, not touched): 580 osint-entity-scan "discovered" entities ALL stamped client_id=Petronas via DB default regardless of scanned subject's real client (2025-11-17..2026-08-19) — attribution unreliable; source now stopped (writer #2 off). Cleanup needs own ruling + must navigate legal hold (many likely in frozen 788).
+
+REMAINING: Item 2 flight-recorder additions (offered-tools list, redacted result summary, confirm final-response retained) — not started. Other-group merges + Petronas soft-delete + 580-row cleanup — all await operator ruling.
+
+## WO-ENTITY-DEDUP (cont.) — rulings actioned: family merges done, Petronas declined-under-hold, ROOT found, 580 boundary, 2026-08-20
+Operator rulings this pass: (1) Petronas stray STAYS under hold — raised+declined, "granting an exception for tidiness is how holds die"; recorded INC-AITOOLS-XTENANT Amendment 12 + Open item; deferred to hold-lift pass. (2) Aaron merge VERIFIED -> proceed other groups. (3) fabricated edges fold into cross-client cleanup, count in same number (not cleaned separately). (4) 580 -> REPORT boundary before any cleanup. ROOT (client_id default) outranks 580.
+
+FAMILY MERGES (executed + PROVEN): Kilbacks family dups consolidated to Jun-11 canonical survivors — Avary dfd3395e<-a951a3f4, Jakob 2ad7af42<-e2dfada7, Janis 62b0415b<-9b354732. Reparented the Aaron->family edge (entity_b_id loser->survivor, self/dup-guarded), backfilled survivor parent_vip_entity_id=32750258, merged loser name variants ("jakob kilback"/"Avary Kilback " casing/space) into aliases, tombstoned losers merged_into (never deleted). PROOF: Aaron survivor 32750258's 3 family edges now -> Jun-11 survivors (is_survivor, active, parent_ptr=32750258). Kilback set fully consolidated (Aaron + 3 family). Petronas POI groups NOT merged — inside the frozen 788.
+
+ROOT (reported, fix awaits ruling) — docs/platform-operations/backlog/WO-CLIENT-ID-AUTOASSIGN-TRIGGER.md: BEFORE-INSERT trigger trg_auto_assign_entity_client_id -> auto_assign_entity_client_id() (SECURITY DEFINER, ENABLED) assigns the OLDEST active client (=Petronas today) to any client_id-less entity insert; entities_derive_tenant_id then matches tenant. NOT in any committed migration (out-of-band prod object; ledger divergence). Contradicts the #256 doctrine its sibling migration 20260524040000 enforces ("explicit ownership or skip; never an arbitrary first-row pick"). Provenance-Doctrine violation (fails OPEN, not closed). Blast radius: only osint (disabled) omitted client_id in live code, but it's a DB footgun for ALL future writers/manual SQL. Recommend: drop trigger+function via committed migration, fail-closed on null client_id (raise unless asset_class system/global_shared). Fold into WO-LEDGER-RECONCILE.
+
+580 BOUNDARY (reported, no cleanup): 54 INSIDE frozen 788 (persons, 0-ref, untouchable until hold lifts) / 526 outside (1 person, 525 nonperson; 521 zero-ref junk, 5 fabricated-edge incl. 3 on Aaron survivor, 9 already soft-deleted). Operator thinking about it.
+
+NEXT: Item 2 flight-recorder additions (offered-tools list, redacted result summary, confirm final-response retained).
+
+## Item 2 — flight-recorder additions BUILT + deployed, 2026-08-20
+Operator approved 3 additions + phantom-table drop. Phantom drop done earlier (aegis_tool_calls/aegis_invocations dropped, migration 20260820140000). Additions (migration 20260820150000, applied prod + committed):
+- aegis_request_trace.offered_tools (jsonb): full tool menu offered to the model this request (names) — set in the startTrace header from tools.map. Forensics see what Aegis COULD call, not just what it did.
+- aegis_request_trace.final_response_text (+ final_response_sha256): the REDACTED final assistant text actually streamed to the user + sha256 of the full text. Previously only final_response_path (a status label) was kept — "what did Aegis say?" was unanswerable. Accumulated via recFinalText at the first-stream content point (no-tool answers) AND inside pipeResponseBody (post-tool answers); passed to rec.finish. Best-effort parse, never affects the stream.
+- aegis_tool_trace.result_summary (jsonb): redacted summary of WHAT each tool returned (top-level keys + success + bounded 2000-char preview) beside returned_object_count. Added to both rec.tool sites (success + error).
+flight-recorder.ts: TraceHeader.offeredTools + setOfferedTools(); ToolTrace.resultSummary; finish() finalResponseText -> redactDeep + sha256. All redaction enforced in the recorder (secrets/embeddings stripped, truncated). Deployed dashboard-ai-assistant (verify_jwt=false matched). VERIFY: columns populate on the next real chat — query aegis_request_trace (offered_tools, final_response_text) + aegis_tool_trace (result_summary) by debug_trace_id.
+
+## GOVERNANCE FINDING + RESOLUTION — client_id auto-assign trigger dropped, fail-closed, 580 cleaned, 2026-08-20
+GOVERNANCE DEFECT (logged as a finding in its own right, per operator): an OUT-OF-BAND prod trigger did the OPPOSITE of what a committed migration was written to enforce. trg_auto_assign_entity_client_id -> auto_assign_entity_client_id() (SECURITY DEFINER, in NO committed migration) stamped any client_id-less entity insert with the OLDEST ACTIVE client — NON-DETERMINISTIC ownership (target drifts as the client roster changes; PECL today, whoever is oldest tomorrow). The committed #256 Phase-4 migration 20260524040000 exists specifically to KILL this exact anti-pattern ("explicit ownership or skip; never an arbitrary first-row pick") for wraith; the blanket trigger re-encoded it at the DB layer for every entity insert. Class: governance (out-of-band object contradicting ratified doctrine) + provenance (fails OPEN). This is the kind of drift WO-LEDGER-RECONCILE exists for — an out-of-band DB object with no migration and no review.
+
+RESOLUTION (operator ruling: "ownership must never be inferred; fail closed"): migration 20260820160000 (applied prod single-file + committed) DROPPED the trigger+function; fail-closed on null client_id via trg_entities_require_client_id (descriptive error) + client_id SET NOT NULL (non-bypassable backstop). NEGATIVE-TESTED: client_id-less insert rejected (probe raised + rolled back). Blast radius confirmed pre-drop: 0 null-client entities, only osint (disabled) omitted client_id in live code, only approve_entity_suggestion_batch DB-inserts (sets it). Nothing else fails.
+
+580 CLEANUP (operator-approved): 517 outside-hold osint-fabricated entities SOFT-DELETED (deleted_at+reason, NEVER hard-deleted per standing rule) + 5 fabricated relationship edges DELETED (incl. the 3 on the Aaron survivor). Verified: Aaron survivor 32750258 now has only its 3 real family edges; 0 osint junk active outside the hold. The 54 osint entities INSIDE the INC-AITOOLS-XTENANT hold are untouched — deferred to the hold-lift pass (same pass as 3c9cfe5d + the rest of the 788).
+
+WO-CLIENT-ID-AUTOASSIGN-TRIGGER.md marked RESOLVED.
+
+## Flight-recorder count fix + signal-clustering FINDING, 2026-08-20
+COUNT FIX (deployed): rec.tool returnedObjectCount now counts a BARE-array result (result.length) in addition to a {data:[...]} wrapper. Trigger: verification trace 3c1cd518 showed get_recent_signals with result_summary populated (3 signals) but returned_object_count NULL — the count heuristic only measured .data arrays; get_recent_signals returns a bare array. A null count beside a populated summary makes a trace reader distrust both. dashboard-ai-assistant redeployed (verify_jwt=false).
+
+FINDING (logged, NOT built — operator ruling) — docs/platform-operations/backlog/FINDING-SIGNAL-CLUSTERING-SEVERITY.md: the recorder-test output surfaced the SAME real event returned as two signals with divergent severities — Kitimat Eco Depot: c0157ef9 (Northern View, Medium) + fce7fef7 (Terrace Standard, High). Signals are one-row-per-source with per-row severity; NO event clustering + NO cross-source severity reconciliation. This is the SAME defect family the exposure-item pipeline already solved (subject-retrieval clusterer + compareExposureItems consequence ranking) — absent on the signal side. Client-visible as two findings for one event disagreeing on severity. Logged as a known pipeline-parity gap; do NOT build without a ruling.
+
+FLIGHT-RECORDER VERIFICATION (trace 3c1cd518, live): offered_tools=array[115]; result_summary populated (get_recent_signals, success=true, 2000-char preview = the real 3 signals); final_response_text=1434 chars verbatim + sha256 64-hex. All 3 additions confirmed landed against a real chat.
+
+## Brief dedup fix + daily-briefing phantom owner + internal-activity finding + deduper run-state, 2026-08-20
+
+BRIEF DEDUP FIX (generate-executive-report, deployed): replaced exact-normalized-title key with FUZZY cross-outlet merge. Added a pg_trgm-EQUIVALENT trigram similarity in TS (per-word "  w " padding + set Jaccard) so the DB-calibrated threshold transfers. Threshold 0.50 (calibrated: >=0.60 clean dups; 0.50-0.60 predominantly dups incl. Kitimat 0.563; <0.50 distinct events appear — reported the bands rather than guessing). CAP-identifier/event+area exact keys unchanged; non-CAP signals cluster by same received-day + trigramSim>=0.50. On merge: keep HIGHER severity + severity_score, collect BOTH sources (_sources[]), render "Sources: A; B" in the prompt signal list (1577) AND the detail card (2270) — one event, N outlets, mirroring exposure one-item-N-locations. PROVEN on cf6299db window (08-13..08-20): the 2 Kitimat rows (medium/thenorthernview.com + high/terracestandard.com, sim 0.563) -> ONE event, severity=high, Sources: terracestandard.com; thenorthernview.com. (Full LLM regenerate needs caller creds/UI — deterministic dedup-stage replay on real window data used as proof, no JWT.) Threshold is render-time only (in-memory, reversible).
+
+DAILY-BRIEFING PHANTOM OWNER (send-daily-briefing, deployed): the prompt (lines 297/308) INSTRUCTED the LLM to attach a role owner ("e.g. Security Operations, Intelligence Analyst") -> "Owner: Intelligence Analyst" x2 + "Security Operations" in today's client briefing. Same finding-#4 defect generate-executive-report already fixed (resolveFlashOwner or Unassigned). Fixed the prompt: owner MUST be a real named individual or literal "Unassigned", NEVER a role/team title (explicit ban list). Free-text prose path, so fixed at the prompt (no structured owner to post-resolve).
+
+INTERNAL-ACTIVITY SIGNAL FINDING (report-only, NOT fixed) -> docs/platform-operations/backlog/FINDING-INTERNAL-ACTIVITY-SIGNALS.md: the "VIP Deep Scan initiated" priority signal is Fortress reporting on itself. Created by vip-deep-scan §5 tracking-signal (line 383, skip_relevance_gate=true bypasses relevance filter), category=other severity=low. Reaches briefs because active + unmarked as audit-vs-finding; on a ~2-signal day it becomes the headline + LLM invents a threat reading. Class scan: 19 active briefable (18 social-monitoring "found nothing" status + 1 vip-scan); no report-gen/watchdog signals. Fix options a/b/c reported; awaiting ruling.
+
+DEDUPER RUN-STATE (operator asked, report): consolidate-signals RUNS ("consolidate-signals-quarantined" heartbeat, 182 runs, last today 21:46) but NOT in cron_job_registry and its title strategy is EXACT-normalized-title match (index.ts line 333 "Exact title match") -> SAME blind spot as the old brief dedup, which is why it never caught Kitimat. It also HARD-DELETES dups (line 492 .delete()) — doctrine divergence (soft-delete) noted separately. detect-near-duplicate-signals: NO heartbeat/cron/registry -> on-demand only, Levenshtein threshold 0.90 (would miss 0.563), effectively dormant. So NOT a "stopped deduper" — a running one that never had fuzzy title matching.
+
+## consolidate-signals INVESTIGATION (report-only, held) + self-signal class STOPPED, 2026-08-20
+
+FIRST — consolidate-signals (docs/platform-operations/backlog/FINDING-CONSOLIDATE-SIGNALS-DELETER.md, NOT modified per operator):
+- INVOKER: auto-orchestrator (index.ts:471) enqueues {action:'consolidate'} -> signal-processor job-worker (maps 'consolidate'->consolidate-signals). Indirect job -> that's why no cron_job_registry entry / no direct cron.
+- ALREADY FAIL-SAFED: deployed v92 has a kill-switch (WO-DEL 2026-07-04): deleter no-ops unless DEDUP_DELETER_ENABLED='true' (default off). Explains deletions stopping 2026-07-04 while heartbeats (consolidate-signals-quarantined, the no-op path) continue. REPO IS BEHIND & DANGEROUS: git still has the always-delete version (no env gate) — a deploy-from-repo would OVERWRITE the prod kill-switch and RE-ARM the deleter. WO-LEDGER-RECONCILE hazard, worst form (git = unsafe version of a data-destroying object).
+- DELETED: 6,113 rows (2026-05-07..07-04), RECOVERABLE from signal_updates where metadata.consolidated=true (content + original_{id,created_at,category,severity}) — audit/reconstruct, not perfect row-restore. Severity: critical 2238 / high 3675 / medium 83 / low 117 (97% crit/high).
+- CORRECTNESS: MIXED. Exact-title (Strategy C) + same-content = genuine dups, correct. But 97% crit/high are SYNTHETIC [PATTERN] Entity-escalation / Geographic-cluster signals over-merged ACROSS distinct entities/locations by Strategy A (location-only) + D (same-source keyword overlap >=0.5) — samples: "escalation for 'home'/'West'/'LNG'" -> primary "BC Lions"/"FIFA"; "cluster near kuujjuaq" merged at sim 0.31. A/D over-merge. Limited real-observation loss (mostly synthetic), all recoverable.
+- RULING NEEDED: (1) keep deleter OFF; (2) reconcile git->prod so repo isn't the dangerous version; (3) retire the no-op consolidate job OR replace A/D with the safe fuzzy title key (the held THIRD item, after this).
+
+SECOND — self-signal class STOPPED (operator ruling, done): removed vip-deep-scan §5 tracking-signal emit (the investigation record IS the audit record; signals are world-observations). Deployed (verify_jwt=true). Soft-deleted the 19 existing internal-activity signals (deleted_at + deletion_reason + quality_status='quarantined' + quarantine_reason='internal_activity_not_observation'): 1 vip-scan (1765b1f8) + 18 social-monitoring "found nothing" status messages. (Operator noted the negatives belong in monitor_run_ledger; not migrated here — just removed from the intelligence feed.)
+
+THIRD — consolidate-signals fuzzy key: HELD pending FIRST ruling (not improving a function that may be retired).
+
+## consolidate-signals rulings 1/2/3 IMPLEMENTED + #4 reported, 2026-08-21
+
+#4 RECONSTRUCTION (docs/platform-operations/backlog/FINDING-CONSOLIDATE-SIGNALS-DELETER.md): 6,113 deleted = 3,692 synthetic [PATTERN] + 2,421 REAL (40%, 17 categories). Real: mostly correct near-exact dups (Kilbacks 2,078 @ sim0.98) BUT ~59 distinct real-customer observations over-merged by A/D at sim 0.10-0.29 (Cascade 39: homicide trial + Boston Bar wildfire -> unrelated primaries @0.10; distinct evac orders -> generic "Wildfire Activity"; Petronas 8; BC Place 12). Reconstruction = PARTIAL (content/source/category/severity/date + orig id preserved; LOST signal_number/severity_score/raw_json evidence payload; client via primary). DOWNSTREAM REFERENCES: NONE (0 incidents, 0 reports/briefs meta_json [validated: 107 mentions match existing signals, 0 deleted], 0 alerts, 0 broken chains) — chain of custody INTACT. Restore candidates = the ~59 real-customer over-merges only; not an emergency.
+
+RULINGS 1/2/3 IMPLEMENTED (consolidate-signals rewritten + deployed):
+1. HARD-DELETE PATH REMOVED. No signals.delete(); no DEDUP_DELETER_ENABLED flag (a flippable flag is not "off"). Duplicates are SOFT-DELETED (deleted_at + quality_status='quarantined' + quarantine_reason='consolidated_duplicate' + deletion_reason) — reversible, leaves analyst/brief surfaces. Preservation to signal_updates + rejected_content_hashes retained; primary keeps higher severity.
+2. Strategies A (location+event/location-only) and D (keyword-overlap) REMOVED; B (same-source+actor) removed as same class (same actor != same event). All non-title extraction/union-find deleted.
+3. Only remaining strategy = FUZZY TITLE MERGE: same client_id + same day + pg_trgm-equivalent trigram similarity >= 0.50 (exact-title = the sim=1.0 case; catches Kitimat-class 0.563). Cross-client never merges (bucket key includes client_id). Fetches quality_status='active' only -> never re-touches the 6,113 already soft/hard-gone.
+SAFETY by construction: the location/keyword paths that produced sim-0.10 cross-event merges are gone; only title-similarity>=0.50 remains and those cross-event pairs scored ~0.10 (rejected). Replay confirms direction (Cascade 53/57, Petronas 11/11 spared) though its metric understates (signal_updates stored dup CONTENT not TITLE). Runs on next auto-orchestrator 'consolidate' job (soft-delete, safe). git==prod (new version).
+
+OPEN for operator: (a) restore decision on the ~59 real-customer over-merges (partial reconstruction available); (b) whether Strategy-B removal is approved (removed as same-class, reversible).
+
+## Restore of 59 over-merged signals + consolidate-signals observability, 2026-08-21 (operator rulings)
+RESTORED THE 59 (operator ruling 1): re-created the real-customer over-merges A/D destroyed — Cascade 39, BC Place 12, Petronas 8 = 59 — from signal_updates preservation. SOFT/partial + honestly marked: quality_status='active' (corpus reflects what was collected) with original created_at; severity_score + relevance_score explicit NULL (NOT the schema defaults 50/0.5 — a partial must not present as complete); signal_type='restored_partial'; raw_json marker {restored_from_consolidation, original_deletion_date=signal_updates.created_at, merge_strategy='unsafe_location_or_keyword A/D', reconstruction=PARTIAL, missing_fields=[severity_score,relevance_score,raw_json_payload,signal_number,original_title], note}. LOST (unrecoverable): raw_json evidence payload, original severity_score, signal_number, original title. NOT restored: 3,692 synthetic [PATTERN] + genuine C dups (operator ruling). Artifact: a BEFORE-INSERT trigger normalized signal_origin -> 'unknown-legacy'; restoration provenance authoritative in signal_type + raw_json.
+STRATEGY B removal CONFIRMED by operator (same class as A/D; returns only with evidence).
+OBSERVABILITY FIX: my rewrite had dropped ALL heartbeats (the old 'consolidate-signals-quarantined' was only the no-op path). Added recordHeartbeat(job_name='consolidate-signals', completed, {scanned, duplicates_soft_deleted, clusters, threshold}) on every real run — the job-worker path is now tracked by a stable name (Registry-is-a-Promise; invisibility is how the old deleter hid). Redeployed.
+OPEN: formal cron_job_registry entry for the consolidate job (operator to rule — see overall-status report).
+
+## Three client-page defects fixed ON THE SURFACE (Kilbacks d3b200b5), 2026-08-21 — "rows correct, page unchanged" pattern
+Operator: fixes were proven against the DB, never on the surface where the defect appeared. Fix all three + prove on the page.
+
+(a) SOFT-DELETED SIGNAL STILL RENDERING: the VIP-scan signal WAS soft-deleted (deleted_at 2026-08-20, quarantined) — confirmed. The page read path had NO deleted_at/quality_status filter. Root: ClientDetail.tsx:136 signals query missing both filters. Added .is('deleted_at',null).eq('quality_status','active'). SYSTEMIC SWEEP (operator's "other soft-deleted rows may be visible" — Explore found 5 MORE client/entity-facing surfaces with the same gap, SignalHistory was the only correct one): fixed RiskSnapshot, LiveEventFeed, EntityUnifiedProfile, EntityDetailDialog (embedded signals!inner via signals.deleted_at/quality_status filters), ActivityFeedPanel. Quarantine Doctrine violation across 6 surfaces.
+(b) PHONE N/A: page renders client.contact_phone (ClientDetail.tsx:253); the contact fix went to entities.attributes.contact_info.phone (had the numbers) but clients.contact_phone was never populated — fix scoped to wrong record. Populated clients.contact_phone='+1 778-220-4544' (Aaron entity primary). Data-only: page reads it live, shows on next load.
+(c) RISK 65% = LLM onboarding guess as computed score. Same class as 97/100 posture (removed) + BC Place 75 (nulled). Kilbacks never was. TWO parts (data-null alone shows 50 via the || 50 fallback): (1) nulled clients.risk_assessment (BC Place parity); (2) fixed ClientDetail.tsx render — riskScore now null when unstored, shows "Not assessed"/"—" instead of || 50 fabrication (systemic render fix, all clients).
+
+PROOF DISCIPLINE: (b) data-path live (page reads client row). (a)/(c)-render require the frontend Worker deploy (else (c) gets WORSE: nulled data + old ||50 = "50"). Frontend built clean (vite 7.95s, undefined-id gate pass). Deploying prod Worker silent-shield-signal (--name discipline, INC-WRANGLER-MISFIRE). Proof: exact read-path queries + deployed worker version.
+
+Also answered operator Q2 (job-worker invisibility): job-worker (function_jobs) dispatches ~16 actions; only 2-3 write heartbeats (consolidate-signals [added today], wraith-vuln-scan, agent-self-learning-proactive) — 14 INVISIBLE like consolidate was. Full list in report.
+
+## REPORTS (before fixing), 2026-08-21 — daily briefing + soft-delete leak class + storage_url + heartbeat cost
+
+SOFT-DELETE/RETIRE LEAK CLASS (operator Q1 — is it elsewhere): YES, systemic across tables, not just signals.
+- incidents: deleted_at filter MISSING on ~6 client-facing surfaces (ClientDetail:151, TripwireAlerts, ThreatGlobe, SLAMetrics, FortifiedPosture x2, proactive-intelligence-push); CORRECT on Incidents.tsx:83 + ThreatStatusBar.
+- entities: deleted_at AND merged_into MISSING on ~7 (Entities.tsx:64, ThreatGlobe:323, EntitySuggestionsPanel x2, InvestigationDetail x2, monitor-entity-proximity); NONE filter merged_into -> merged-away entities can render.
+- reports: deleted_at MISSING on deliver/view-subject-exposure-report + dashboard-ai-assistant report list.
+- subject_exposure_items: superseded_at MISSING on subject-exposure/index.ts:72 (client endpoint leaks retired items); CORRECT in generate-subject-exposure-report + dashboard-ai-assistant. Root: filter discipline discovered mid-project, never back-ported. Needs a systemic sweep + ideally a shared excludeSoftDeleted helper per table.
+
+HEARTBEAT COST (operator Q2 — cost for all 14 invisible job-worker actions): CHEAP if done at the DISPATCHER not per-function. job-worker dispatches ~16 actions, 14 invisible. Option A: edit 14 functions (import+recordHeartbeat each) + 14 redeploys (~1-2h, 14 deploy risk surfaces). Option B (recommended): ONE edit in job-worker/index.ts — on each action completion write recordHeartbeat('jobworker-<action>', ...). 1 function + 1 deploy covers all 14 uniformly + any future action. Low risk (heartbeat best-effort).
+
+DAILY BRIEFING (4 defects, report-only — it IS sending: 4 heartbeats, last 2026-08-21 13:05):
+1. FORMAT: markdown NOT converted. formatBriefingLines() (L464-475) only maps ALLCAPS->h3 and "- "->"<p>› ", wraps rest in <p> verbatim. No **bold**/markdown->HTML. Literal ** and › render. Fix = convert markdown OR prompt plain-structured-text the template styles.
+2. PRIORITY SIGNALS forced-fill: prompt L306 "top 3-5 actionable signals" is mandatory; the "No significant activity" rule (L298) is overridden. Quiet-day skip exists (L204-217) but ONLY when signals_24h=0 AND incidents=0 AND actions=0 — NOT a "nothing actionable" path. So low-value items get promoted.
+3. TRAJECTORY: computed from raw crit+high count delta (L234: <0.8x=DE-ESCALATING); coverage caveat (twitter dark / failed monitors) appended to FOOTER text (L240-264) but direction NOT set to UNKNOWN. Asserts a trend it says it can't measure.
+4. DEDUP: send-daily-briefing has ZERO dedup; the fuzzy trigram dedup was added to generate-executive-report only. Kitimat Eco Depot shows twice.
+
+NULL storage_url CRITICAL: 275 of 312 reports (88%) have NULL storage_url (18 in last 7d, newest 2026-08-20 21:49 = the latest PECL exec brief cf6299db). Report rows exist but rendered HTML never persisted -> view/deliver return "Report not available". Reports generated-but-unviewable.
+
+STRATEGIC (operator): at ~6 signals/day the briefing manufactures content (forced 3-5, fabricated trajectory, dups). Recommend: send-only-when-something-to-say (extend quiet-day to "nothing actionable"), honest empty priority section, UNKNOWN trajectory under degraded coverage, dedup + markdown render. Aligns attention doctrine (silence acceptable, noise not).
+
+## #1 STORAGE_URL report (before fixing), 2026-08-21
+CONFINED TO EXEC BRIEF — product is SAFE. By report type: reputational_exposure 10/10 HAVE storage_url (delivery link works for the deliverable); executive_intelligence 239/266 NULL (90%); 72h-snapshot 33/33 null; security_briefing 1/1 null. Yesterday's PECL brief cf6299db is exec-brief (null). The $10k exposure product persists; the exec brief does not.
+MECHANISM = SILENT FAILURE (not never-attempted). generate-executive-report inserts the reports row FIRST (L2311, null storage_url), then a SEPARATE best-effort upload to bucket 'osint-media' (L2380) + update storage_url (L2385). On upload error it only console.error's (L2383, comment: "watchdog will flag null storage_url") and leaves null. Of the 239 null: 235 main-path (persist never completed — rendered_persisted_at NULL for all), only 4 the insufficient_data never-upload branch. Bucket config is fine (osint-media 50MB limit, any mime) so it's the upload call erroring (swallowed) or the function SIGKILLed during the heavy tail (manifest/evidence/action-items/quality-log at L2390-2480, AFTER the persist) before commit. Structural flaw: row created before body persisted + persist is best-effort + persist sits ahead of non-critical tail work.
+CONTRAST (working path) generate-subject-exposure-report: uploads FIRST (L151) then inserts row WITH storage_url in the same insert (L153-157) -> born-persisted.
+FIX DIRECTION (await go): mirror exposure — persist body before/atomically with the row (or move persist immediately after render, before the tail), make failure NON-silent (surface + retry), and consider backfilling/regenerating the 235 (or accept they're stale internal briefs; the deliverable product is unaffected).
+
+## #1 STORAGE_URL FIXED (mirror-exposure, non-silent) + 235 marked + watchdog clears, 2026-08-21
+FIX (generate-executive-report, deployed WO-REPORT-PERSIST-02): body BEFORE row. crypto.randomUUID() -> upload HTML to osint-media (retry x3) -> on failure return 502 REPORT_PERSIST_FAILED (SURFACED, no body-less row created) -> insert row WITH id+storage_url+rendered_persisted_at atomically. Removed the old best-effort console.error("watchdog will notice") block (the comment was the defect). Persist now precedes the tail (manifest/evidence/action-items/quality-log) so a SIGKILL in the tail loses only the regenerable manifest, never the body. Mirrors generate-subject-exposure-report.
+235 EXISTING: marked meta_json.body_not_persisted=true + reason (NOT re-rendered — a re-render from today's data would be a fabricated artifact wearing an old date; honest absence over reconstructed presence). The 4 insufficient_data stubs left as-is.
+WATCHDOG (system-watchdog probe d, deployed): excludes body_not_persisted (acknowledged historical gaps) AND insufficient_data (legitimately body-less stubs) — flags only reports that HAD a body and failed to persist. CONFIRMED: probe fires 0 now (cf6299db was an insufficient_data stub false-positive, now excluded); clears on next run + stays quiet; a real regression (no marker) still fires.
+PRODUCT UNAFFECTED throughout: reputational_exposure 10/10 persisted.
+
+## Daily briefing reworked (5 rulings) + false-positive lesson logged, 2026-08-21 (deployed)
+send-daily-briefing, all operator rulings:
+1. TRAJECTORY -> UNKNOWN when coverage degraded. Coverage-integrity gate computed FIRST (failed monitors OR twitter dark in the comparison window) -> direction='UNKNOWN' (arrow '?'), not a direction with a footnote. Only computes ESCALATING/DE-ESCALATING/STABLE from the delta when coverage held. Prompt allows UNKNOWN; "do not contradict the provided overall trajectory".
+2. PRIORITY HONESTY. Dropped the "top 3-5" mandate -> "0 to 5, NEVER padded; if none rise to priority write exactly 'No priority signals this period.' — do NOT manufacture items."
+3. QUIET-DAY -> "nothing actionable" (no priority-worthy signal AND no open incident), and SEND a proof-of-life note (not skip). Note states the exposure-report-style denominator: "Quiet period. N signals collected across M categories, K monitors ran, no priority items. Coverage note: X monitor(s) failed (...)". buildQuietNote() helper; logs quiet_day + denominator + heartbeat.
+4. FORMAT -> prompt for PLAIN TEXT the template styles (no markdown **/__/#/backtick/›); NO converter added (operator ruling). formatBriefingLines got a strip-only safety net (removes stray markers, does not translate) + accepts "› " bullets.
+5. DEDUP -> ported the pg_trgm-equivalent fuzzy merge (same client + same day + title sim >= 0.50) after the severity sort; Kitimat "Eco Depot" collapses to one.
+Deployed verify_jwt=false (also corrects the flag from the earlier phantom-owner deploy).
+
+FALSE-POSITIVE LESSON (operator, for the record): today's storage_url critical fired on an insufficient-data stub that correctly has no body = false positive. Chasing WHY found the real 88% persistence gap nobody had flagged. Logged as memory feedback_investigate_false_positives: investigate false positives, don't suppress them — a false alarm is a lead; fix probe precision AND run down the class it points near.
+
+## #3 LEAK-SWEEP COUNT (before fixing), 2026-08-21 — soft-delete/retire filter across 4 tables
+Combined frontend (src/) + edge-fn read-site census. A "read" = .from(table).select (excludes writes/realtime).
+| table | total reads | client-facing | internal | client-facing CORRECT | client-facing MISSING |
+| signals | 304 | 75 | 229 | 2 | 73 |
+| incidents | 135 | 53 | 82 | 5 | 48 |
+| entities | 141 | 57 | 84 | 0 | 57 |
+| subject_exposure_items | 5 | 5 | 0 | 3 | 2 |
+| TOTAL | 585 | 190 | 395 | 10 | 180 |
+=> 180 CLIENT-FACING read sites need the helper (only 10 already correct). Entities = 100% miss (57/57) — merged-away entities from this week's dedup CAN render. dashboard-ai-assistant is the biggest single concentration (~24 missing across signals/incidents/entities). Internal reads (395) intentionally unfiltered (monitors/ingest/scoring/correlation/watchdog) — leave, but the CI gate must not flag them.
+PLAN (operator): per-table NAMED helpers (excludeDeletedSignals [deleted_at+quarantine], excludeDeletedIncidents [deleted_at], excludeMergedEntities [deleted_at+merged_into], excludeSupersededExposure [superseded_at]) in BOTH src/lib + _shared; meaning-in-the-name (no generic helper hiding different predicates). CI gate: a client-facing read of these tables NOT calling its helper fails detection (like the proper-noun/undefined-identifier gate); internal reads exempt (tag or path-based). Sequence proposed: CI gate (audit-only first) -> highest-traffic (dashboard-ai-assistant, send-daily-briefing, report generators, ClientDetail) -> long tail; promote gate to blocking after the tail clears.
+
+## #3 LEAK SWEEP — helpers + audit-only gate BUILT + baseline, 2026-08-21
+Helpers (src/lib/soft-delete-filters.ts + supabase/functions/_shared/soft-delete-filters.ts): PER-TABLE named, no generic — excludeDeletedSignals (deleted_at+quality_status=active), excludeDeletedIncidents (deleted_at), excludeMergedEntities (deleted_at+merged_into), excludeSupersededExposure (superseded_at).
+GATE scripts/check-soft-delete-filters.mjs (AUDIT-ONLY, exit 0): flags any .from(table).select read that neither calls its named helper NOR carries an explicit `// @soft-delete-exempt: <reason>` marker. Exemption is the per-call MARKER ONLY (no path auto-exemption — a client surface in a monitor dir is still flagged); paths used only as a REPORTING lens to label client-facing vs other.
+BASELINE: 636 reads without helper/marker -> CLIENT-FACING 191 (signals 79, incidents 53, entities 54, exposure 5), OTHER 445. Track the 191 down per batch; promote gate to blocking at 0.
+INTERNAL-FEEDS-CLIENT (operator Q): YES, bounded. 5 merged entities (this week) are is_active=false + active_monitoring=false (monitors + is_active-readers skip them) BUT all 5 still visibility_class reviewed/curated -> a correlation/attribution reader filtering visibility_class (not is_active) e.g. process-intelligence-document CAN match a merged-away entity and attribute a client-visible signal to a dead record. Fix = excludeMergedEntities on those internal readers too (output is client-facing one step removed; NOT an exempt case). Entity merge/dup TOOLING (DuplicateDetectionPanel, EntityMergeDialog) legitimately needs merged rows -> @soft-delete-exempt.
+ORDER: entities first (the merged_into gap I created), then dashboard-ai-assistant, generators, tail, promote at 0.
+
+## #3 LEAK SWEEP — entities render batches done; count 191->159, 2026-08-21
+Batch 1 (manual): Entities.tsx x2 + EntityDetailDialog -> 191->188. Batch 2 (agent-executed, verified): 18 client-facing entity render reads wrapped in excludeMergedEntities (CreateRelationshipDialog, EntitySuggestionsPanel x2, ThreatGlobe, COPCanvas x2, EntityPersonLookup x2, useConstellationData, useGodsEyeData, InvestigationDetail x4, + edge: generate-subject-exposure-report x2, subject-exposure, briefing-query) + 9 exempt markers (DuplicateDetectionPanel x5, EntityMergeDialog x3, DatabaseSettings) -> entities client-facing 51->24, total 188->159. npm build clean; count went DOWN (guardrail #2 ok).
+AUTH CATCH (self-caught): a convoluted inline verify_jwt-flag detection deployed generate-subject-exposure-report + subject-exposure with verify_jwt=TRUE (no-flag default), flipping their getCallerIdentity self-auth pattern (sibling generate-executive-report=false). Verified via list_edge_functions, redeployed --no-verify-jwt -> both back to False (v13/v3). LESSON: deploy the verify_jwt flag EXPLICITLY per function; never derive it inline; verify after.
+DEFERRED (guardrail #1 — judgment surfaced, not decided): the 24 remaining entity reads are in dashboard-ai-assistant (19) + agent-chat (5) = AEGIS/assistant paths needing per-read judgment -> handled in the dashboard-ai-assistant batch. SecurityBulletinGenerator (1) flagged to operator: client-delivered bulletin (filter) vs operator draft? Awaiting ruling; will treat client-facing unless told otherwise.
+NEXT: dashboard-ai-assistant batch (its entity + signals + incidents reads, per-read judgment), then generators, then tail, then promote gate to blocking at 0.
+
+## DEPLOY DISCIPLINE — verify_jwt flag is EXPLICIT PER FUNCTION (ratified 2026-08-21, 2nd occurrence)
+Every `supabase functions deploy <fn>` MUST pass the verify_jwt flag EXPLICITLY, matching that function's config.toml (or the getCallerIdentity/token pattern): `--no-verify-jwt` for verify_jwt=false functions, omit for true. NEVER derive the flag inline/programmatically (a convoluted grep flipped generate-subject-exposure-report + subject-exposure to true today). NEVER blanket-apply one flag across a loop of functions. After deploy, VERIFY the flag (list_edge_functions verify_jwt, or response body per feedback_verify_jwt_deploy_flag_per_function). Getting it wrong flips auth on a client endpoint. This is the 2nd occurrence today — the flag is authoritative, config.toml is ignored by deploy.
+
+## #3 LEAK SWEEP — SecurityBulletinGenerator filtered (operator ruling), 2026-08-21
+Operator: a draft an operator reviews is client-facing by intent; a filter that only works when a human catches the bad row is not a filter. SecurityBulletinGenerator 3 reads wrapped: excludeMergedEntities (entities), excludeDeletedIncidents (incidents), excludeDeletedSignals (signals). Count -3.
+
+## OPENAI-OUTAGE AUDIT + WO-FAILCLOSED-DEFAULTS opened — 2026-08-22
+Trigger: operator added OpenAI credits, asked to confirm key + audit 429-fallback behavior.
+- KEY CONFIRMED: direct api.openai.com call (throwaway openai-ping, verify_jwt=false, DELETED after — CLI `functions delete`, verified absent from 364 fns) → 200, gpt-4o-mini-2024-07-18, "OK".
+- OUTAGE WINDOW: 2026-08-21 16:55 → 08-22 ~13:57 UTC (~21h), quota-429s (intermittent). `_shared/ai-gateway.ts` OpenAI-429→Gemini fallback absorbed it: 848 fallbacks OK, 1 failed (ingest-signal, Gemini 503 @18:34:09). Every gateway caller protected; raw-fetch-to-openai callers bypass fallback (embeddings/TTS/STT mostly + detect-duplicates class-C fail-open).
+- SILENT-NEUTRAL (class B): ingest-signal relevance gate (`?? 0.7` admit, :1671) + multi-model-consensus (both-null→consensus 1.0). BOTH gateway-protected → materially fired ≤1× this window; 0 bad admits (only 6 signals created in window, none at fingerprint — see Proof 1 caveat).
+- PROOF 1 (retraction): earlier "0 signals carry the 0.7 fingerprint" WITHDRAWN. Gate default is never persisted on an admitted signal (relevance_score = deterministic scorer, not the gate). NOT retro-distinguishable at the signals table.
+- PROOF 2 (no sign-off): aggregate admit-rate outage/Gemini 60% (6/10) vs baseline/OpenAI 10.5% (4/38) — material divergence → fallback needs own threshold + 6-signal window re-scan. Provider not joined to admit/reject outcome in persisted data (window proxy only).
+- WO-FAILCLOSED-DEFAULTS opened (multi-model-consensus FIRST, ingest-signal SECOND, + backfill query for agent_debate_records consensus_score=1.0 both-null). Fix NOT folded into this session (operator ruling).
+
+## #3 LEAK SWEEP — CLOSED to blocking (client-facing = 0) — 2026-08-22
+- Edge display reads across 16 generator/agent-chat fns wrapped in the 4 named helpers (43→2 client-facing).
+- 2 write-gates closed with refuse-with-reason (never silent-redirect): subject-exposure set_awareness (excludeSupersededExposure + 409 "superseded by a newer scan" to authorized; 404 indistinguishable else); agent-chat trigger_multi_agent_debate (excludeDeletedIncidents on operator-supplied incident_id; deleted-in-scope → refuse via toolResults, fall-through guarded).
+- check-soft-delete-filters.mjs PROMOTED to BLOCKING on client-facing (exit 1); 0 violations. ~445 OTHER internal reads stay audit-only (deferred backlog).
+- Deploy of swept edge fns PENDING operator go (verify_jwt per fn: agent-chat=false, subject-exposure=--no-verify-jwt).
+
+## LEAK-SWEEP DEPLOY (18 fns + watchdog) + WO amendments — 2026-08-22
+- #1 agent-chat front: NOT behind CF Access (public *.supabase.co, verify_jwt=false) but self-auths via getCallerIdentity — unauthorized rejected BEFORE any tool runs (idx.ts:424); deleted-incident refusal fires only when goneInc.client_id === SCOPE_OR_EMPTY (all-zeros sentinel when unscoped; user scope validated vs getAccessibleClientIds). Indistinguishable-from-not-found for unauthorized. SAFE — proceeded.
+- #3 INCIDENT CHECK (no INC): none of the 6 outage-window admits (incl. 3 BC Place sports items) reached a client. 0 incidents spawned; 0 in generated_reports/reports/audio_briefings/sms_alert_log/entity_notifications/webhook_deliveries/autonomous_actions_log; 0 alerts to BC Place; daily briefing recipient = ak@ ONLY; BC Place has 0 profiles bound + 0 consortium sharing. Operator-facing only -> stays WO item.
+- #2 DEPLOYED 18 swept fns + system-watchdog, explicit per-fn verify_jwt, no bulk. Post-deploy list_edge_functions verified ALL 19 flags correct (12 false incl watchdog, 6 true), versions bumped, openai-ping absent. verify_jwt=false: agent-chat dashboard-ai-assistant generate-daily-briefing generate-embeddings generate-executive-report generate-learning-context generate-playbook generate-report generate-subject-exposure-report generate-wildfire-daily-report send-daily-briefing subject-exposure system-watchdog. verify_jwt=true: briefing-chat-response briefing-query generate-incident-briefing generate-monitoring-proposals generate-security-briefing generate-sra-report.
+- WATCHDOG UPDATE LINE (KB): "SOFT-DELETE / RETIRE LEAK INVARIANTS (WO-LEAK-SWEEP, 2026-08-22) — telemetry.softDeleteLeak: softDedletedSignalsInOpenIncidents + mergedEntitiesStillMonitored, BOTH EXPECTED 0" (+ probe added, Rule-7 compliant).
+- #4 WO-FAILCLOSED-DEFAULTS amended: new Item 0 (persist gate provenance joined to outcome) ahead of both fail-closed items; Item 3 reordered to lead with the 3 prompt-rule violations, 60% vs 10.5% demoted to flagged context (n=10 vs n=38).
+- #5 WO-SOFTDELETE-INTERNAL-READS opened for the 445 audit-only internal reads (triage write-path/generator reads FIRST — internal is not automatically safe). Not worked now.

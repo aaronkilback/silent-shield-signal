@@ -1,0 +1,45 @@
+name: security-gate
+
+# WO-CI-SECURITY-GATE-01 — required check on every PR to main.
+# Fail-closed AST gate: service-role + request-derived scope without a caller-membership
+# check, role escalation from request input, unallowlisted verify_jwt=false, and
+# tables created without RLS. See scripts/security-gate/README.md.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Least-privilege: read-only GITHUB_TOKEN, explicit grants only if ever needed.
+permissions:
+  contents: read
+
+jobs:
+  security-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # need base ref for changed-file detection
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      # The gate on the gate: known-bad fixtures MUST still fail their checks.
+      - name: negative test (gate on the gate)
+        run: node scripts/security-gate/negative-test.mjs
+      # The gate itself: fail on any NEW violation, or any violation in a changed file.
+      - name: security gate
+        env:
+          SECURITY_GATE_BASE: origin/${{ github.base_ref || 'main' }}
+        run: node scripts/security-gate/run.mjs
+      # Deploy-path drift: deployed functions must be a subset of the repo. Needs the Management API
+      # token as a repo secret; skips (non-fatal) when unset so forks/no-secret runs still pass.
+      - name: deploy-path drift
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: kpuqukppbmwebiptqmog
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then node scripts/security-gate/drift.mjs; \
+          else echo "::warning::drift check skipped — SUPABASE_ACCESS_TOKEN secret not configured"; fi

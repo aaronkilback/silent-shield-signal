@@ -45,14 +45,29 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
+    // ── INC-AITOOLS-XTENANT: CALLER must be a member of this client's tenant ──
+    // (previously any authenticated user could OSINT-scan any client's staff). Resolve the caller
+    // from the JWT, verify tenant_users membership; super_admin bypasses. Fail closed.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    if (!authHeader.toLowerCase().startsWith("bearer ")) return errorResponse("Unauthorized", 401);
+    const { data: userData } = await supabase.auth.getUser(authHeader.replace(/^[Bb]earer\s+/, ""));
+    const callerId = userData?.user?.id;
+    if (!callerId) return errorResponse("Unauthorized", 401);
+
     // ── Verify client exists ─────────────────────────────────────────────
     const { data: client } = await supabase
       .from("clients")
-      .select("id, name")
+      .select("id, name, tenant_id")
       .eq("id", client_id)
       .maybeSingle();
 
     if (!client) return errorResponse("Client not found", 404);
+
+    const { data: membership } = await supabase.from("tenant_users")
+      .select("user_id").eq("user_id", callerId).eq("tenant_id", client.tenant_id).maybeSingle();
+    const { data: superRole } = await supabase.from("user_roles")
+      .select("role").eq("user_id", callerId).eq("role", "super_admin").maybeSingle();
+    if (!membership && !superRole) return errorResponse("Forbidden: not a member of this client's tenant", 403);
 
     // ── Fetch person entities for this client ────────────────────────────
     let entityQuery = supabase

@@ -762,7 +762,8 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.create-operator-invite]
-verify_jwt = false
+# INC-AITOOLS-XTENANT: was verify_jwt=false (self-checked getUser). Now platform-gated too.
+verify_jwt = true
 
 [functions.detect-threat-patterns]
 verify_jwt = false

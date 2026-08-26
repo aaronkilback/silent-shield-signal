@@ -212,6 +212,27 @@ Content appearing in entity cards and investigation reports does NOT automatical
 
 **As of April 23, 2026:** `investigate-poi` now calls `ingest-signal` for up to 10 threat/activist findings detected during a scan (keyword match on `activist|protest|threat|harass|dox|lawsuit|wpath|campaign|targeted|puberty.blocker|gender.clinic|trans.youth|anti.gender`). This closes the gap where investigation reports mentioned activism but no signals existed.
 
+### RSS/url_feed ingest funnel — `ingest_decisions` instrumentation (WO-GATE Phase 2, live 2026-08-02)
+
+The RSS path does **not** use `ingest-signal`. `monitor-rss-sources` → `ingested_documents` → enqueue `process-intelligence-document`, which runs a **four-stage funnel**. Every item's drop/pass at each stage is now recorded in **`public.ingest_decisions`** (forward-only; no backfill). Before this, RSS drops were console-only and unmeasurable.
+
+The four stages (in `process-intelligence-document`, recorded via the `record_ingest_decision` RPC):
+
+| Stage | Passed when | Dropped when (reason) |
+|---|---|---|
+| `parse` | document has content (raw_text/title) | empty (`empty_document`) |
+| `client_match` | ≥1 client matched (exact-substring keyword or tier-2 fuzzy) | no client (`no_client_match`) or FP filter (`false_positive_content`). **Pre-scorer: `relevance_score` is NULL here — the NULL is the finding.** |
+| `relevance_score` | ≥1 signal scored ≥0.3 | scored but all <0.3 (`below_threshold`) or extraction yielded 0 signals (`extraction_no_signals`). `scorer_reached=true` only if the scorer ran. |
+| `insert` | ≥1 `signals` row written | none written (`not_inserted`) |
+
+Key invariants: **`relevance_score` NULL = never scored, 0 = scored zero — NEVER coalesce them** (a pre-score `client_match` drop must stay NULL). `content_hash = sha256(title || source_url)`; UPSERT on `(source_id, content_hash, stage)` increments `seen_count`/`last_seen_at` only (re-offers are not new decisions). Every write is swallow-on-failure — **instrumentation can never fail the ingest path** (`recordDecision` never throws). 180-day retention via `purge-ingest-decisions-nightly` cron. Liveness: `agent-sentinel` **Probe 2e** fires a `high` finding if `monitor-rss` ran in the last 6h but `ingest_decisions` got zero writes (and the table has ever been written). RLS-enabled, service-role/SECURITY-DEFINER writes only.
+
+> **Deviation from the original spec (documented):** the unique index is `(source_id, content_hash, STAGE)`, not `(source_id, content_hash)` — the funnel analytics query counts rows *per stage*, so one-row-per-item would return zeros. One row per item **per stage**.
+
+**Auto-quarantine (forward-only):** `process-intelligence-document` born-quarantines any signal whose client attribution matched ONLY on a ≤5-char keyword (`quality_status='quarantined'`, `quarantine_reason='fabricated_client_match_auto'`) — the fabrication signature (e.g. Kilbacks `cabin`→"cabin crew", `home`→"homeless"). `agent-sentinel` Probe 2d scans **active rows only** and fires if such a match reaches a client-facing row despite the gate.
+
+> **Lockstep duplication (tech debt):** the short-keyword strip/length detection (`k.toLowerCase().replace(/^(asset|keyword|kw|tier2|tier-2):/,'')`, then `max(len) <= 5`) is duplicated in `process-intelligence-document` (born-quarantine) and `agent-sentinel` Probe 2d. **They MUST stay identical** or the probe and the write-path disagree. Extract to `_shared/` when convenient (same pattern as `_shared/safe-fetch.ts`). Known false positive: legitimate short acronyms (PECL `LNG`) — see WO-CLIENT-THRESHOLD-BYPASS-01.
+
 ---
 
 ### monitor-news-google — entity name queries
@@ -475,6 +496,13 @@ If one exists, do NOT create a duplicate — update or fix the existing one.
 - **Name alignment is part of the promise.** The registry `job_name`, the `cron.job` jobname, and the function's `cron_heartbeat` `job_name` must all be identical (the `resolve-agent-predictions` phantom was a `-nightly` registry entry against a `-daily` heartbeat — it "never ran" only because the names never matched).
 - **Enforcement:** RPC `public.registry_phantom_check()` returns each registry entry's `has_cron` + `ever_succeeded`; the system-watchdog "REGISTRY-IS-A-PROMISE" probe aggregates all phantoms into ONE critical finding per run (never one-per-phantom — attention doctrine).
 - **Provenance:** health-monitor triage 2026-07-29 found 4 phantoms (community-outreach, threat-intel, twitter-6h, resolve-agent-predictions); the probe then surfaced a broader ~30-entry registry-hygiene backlog. Promises get verified.
+
+### Two-Successes-Before-Close Standing Rule (2026-08-04 — RATIFIED)
+
+**A job that claims a cadence is not proven by its first run. Any WO/job asserting a recurring schedule requires TWO consecutive *scheduled* successes visible in `cron_heartbeat` (under the registered `job_name`) before the WO may close.** A single manual test-fire is NOT acceptance — it proves the code path once, not the cadence. "Registered + heartbeat wired" claimed in a ledger is worth nothing if `cron_heartbeat` has zero rows.
+
+- **Enforcement probe:** a registered **critical** `cron_job_registry` entry with **zero `cron_heartbeat` rows after 48h** of registration fires a **HIGH** finding (registered-critical-but-never-once-ran gets its own loud finding, not a muted "last: never" footer).
+- **Provenance:** WO-DR (`dr-storage-backup-daily`) was closed 2026-07-06 on "test-fired successfully / registry+heartbeat wired" while `cron_heartbeat` held **0 rows for 34 days** — a real backup gap believed closed for a month. Diagnostic: `docs/platform-operations/incidents/DIAG-2026-08-04-dr-backup-and-quarantine.md`; rebuild scope: `docs/platform-operations/backlog/WO-DR-CADENCE-REBUILD.md`. Cadence twin of Registry-is-a-Promise: a promise of recurring work is only kept once observed twice.
 
 ### Parked-PR Re-Triage Standing Rule (2026-07-29 — RATIFIED) — Registry-is-a-Promise, applied to branches
 

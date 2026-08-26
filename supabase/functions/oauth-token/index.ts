@@ -1,3 +1,4 @@
+// @security-exempt(check2): OAuth2 client_credentials token endpoint; client_id here is an OAuth CLIENT credential validated against client_secret hash (oauth_clients), not a tenant scope. — 2026-07-31
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
