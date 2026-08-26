@@ -41,6 +41,15 @@ Source-side containment for the production frontend release path. This lane cont
 5. Run a read-only Cloudflare Evidence Operation to prove deployment/version metadata and rollback-to-version behavior.
 6. Implement a separate governed manual release workflow only after the provider and GitHub settings evidence exists.
 7. Perform one controlled release verification before treating the lane as certified.
+8. **Every deploy stamps its source (incl. manual `wrangler deploy`).** The deploy MUST write
+   `dist/version.json` carrying the exact source commit SHA (and build time), and that SHA must be
+   captured in the deployment so "what code is in prod" is always answerable from the served artifact.
+   **Motivation:** the 2026-08-20 hand-upload (deployment source: "Upload") recorded no SHA, wrote no
+   `version.json` (the served path is the SPA catch-all), and embedded no commit marker — the production
+   frontend is currently running an **unidentifiable** commit. No deploy may leave prod unidentifiable
+   again; a plausible-but-unverifiable "what's running" is the frontend twin of a plausible-fake contact
+   field. Cheapest form: a wrapper script that runs `frontend-release-control.mjs write-version` before
+   `wrangler deploy`, so even the manual path can't skip it.
 
 ## Stale-proof triggers
 
