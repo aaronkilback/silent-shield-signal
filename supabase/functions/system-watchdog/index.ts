@@ -18,7 +18,7 @@
  */
 
 import { Resend } from "npm:resend@2.0.0";
-import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity } from "../_shared/supabase-client.ts";
 import { startHeartbeat, completeHeartbeat, failHeartbeat } from "../_shared/heartbeat.ts";
 
 const ALERT_EMAIL = 'ak@silentshieldsecurity.com';
@@ -458,6 +458,12 @@ INCIDENT-QA INVARIANTS (WO-INCIDENT-QA Step 5, 2026-07-28) — telemetry.inciden
 - creationSpike (bool) — creationLast24h > max(5, 3× prior-7d daily avg). true = an incident-creation spike; investigate whether the creation gate regressed or a real event cluster occurred. creationLast24h/creationPrior7dDailyAvg give context.
 - All three counts EXPECTED 0; creationSpike EXPECTED false. Any violation = an incident-QA defect.
 
+SOFT-DELETE / RETIRE LEAK INVARIANTS (WO-LEAK-SWEEP, 2026-08-22) — telemetry.softDeleteLeak:
+- The leak sweep filters client-facing reads of signals/incidents/entities/subject_exposure_items through 4 named helpers (excludeDeletedSignals/excludeDeletedIncidents/excludeMergedEntities/excludeSupersededExposure); a BLOCKING CI gate (scripts/check-soft-delete-filters.mjs) fails any client-facing read that neither calls its helper nor carries an explicit @soft-delete-exempt marker. This telemetry is the RUNTIME backstop to that build-time gate.
+- softDeletedSignalsInOpenIncidents — open, non-test incidents whose signal_id points to a signal that is soft-deleted (deleted_at NOT NULL) or quarantined (quality_status='quarantined'). EXPECTED 0. Nonzero = a retired signal is surfacing via an open (client-facing) incident.
+- mergedEntitiesStillMonitored — entities with merged_into NOT NULL that still have active_monitoring_enabled=true. EXPECTED 0. Nonzero = a merged-away (tombstone) entity is still in monitoring queues; the merge writer or a monitoring path bypassed the merge.
+- BOTH EXPECTED 0. Any nonzero = a soft-deleted/merged row is reaching a client surface — run the CI gate + audit the offending row; it is the leak class the sweep closed.
+
 ### Communications Infrastructure (HIGH)
 - Two-way SMS via Twilio: send-sms (outbound), ingest-communication (inbound webhook)
 - list-communications provides thread queries per case/contact/investigator
@@ -680,6 +686,7 @@ interface TelemetryData {
   dailyBriefing: { sentToday: boolean; suppressionLikely: boolean; recipientCount: number };
   dataIntegrity: { orphanedSignals: number; orphanedEntities: number; orphanedFeedback: number; staleSources: number; newOrphanArchivalDocs: number; unflaggedTestBeliefs: number; unflaggedTestEntities: number };
   incidentQA: { unknownClassificationOver24h: number; zeroLinkedSignals: number; openHazardEventEnded: number; creationLast24h: number; creationPrior7dDailyAvg: number; creationSpike: boolean };
+  softDeleteLeak: { softDeletedSignalsInOpenIncidents: number; mergedEntitiesStillMonitored: number };
   bugReports: { totalOpen: number; staleCount: number; recentSpike: number; oldestOpenDays: number; recurringPatterns: string[] };
   database: { connected: boolean; responseTimeMs: number };
   autonomousOps: { recentActions: number; lastActionAge: string };
@@ -1319,6 +1326,30 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     incidentQA.creationSpike = (c24 || 0) > Math.max(5, incidentQA.creationPrior7dDailyAvg * 3);
   } catch (_e) { /* best-effort probe; watchdog self-validation covers hard failures */ }
 
+  // ── WO-LEAK-SWEEP self-validation probe (2026-08-22) ── runtime backstop to the blocking
+  // soft-delete CI gate + the 4 named helpers. Soft-deleted / merged rows must not surface on a
+  // client-facing surface. Both EXPECTED 0; nonzero = a retired row reached a client surface.
+  const softDeleteLeak = { softDeletedSignalsInOpenIncidents: 0, mergedEntitiesStillMonitored: 0 };
+  try {
+    const { data: openIncSig } = await supabase.from('incidents')
+      .select('signal_id')
+      .eq('status', 'open').is('deleted_at', null).neq('is_test', true)
+      .not('signal_id', 'is', null);
+    const sigIds = [...new Set((openIncSig || []).map((r: any) => r.signal_id))];
+    if (sigIds.length > 0) {
+      const { count: badSigs } = await supabase.from('signals')
+        .select('id', { count: 'exact', head: true })
+        .in('id', sigIds)
+        .or('deleted_at.not.is.null,quality_status.eq.quarantined');
+      softDeleteLeak.softDeletedSignalsInOpenIncidents = badSigs || 0;
+    }
+    const { count: mergedMon } = await supabase.from('entities')
+      .select('id', { count: 'exact', head: true })
+      .not('merged_into', 'is', null)
+      .eq('active_monitoring_enabled', true);
+    softDeleteLeak.mergedEntitiesStillMonitored = mergedMon || 0;
+  } catch (_e) { /* best-effort probe; watchdog self-validation covers hard failures */ }
+
   return {
     timestamp: now.toISOString(),
     edgeFunctions,
@@ -1331,6 +1362,7 @@ async function collectTelemetry(supabase: any, supabaseUrl: string, anonKey: str
     dailyBriefing: { sentToday: (todayBriefingsResult.data?.length || 0) > 0, suppressionLikely: (recentNewSignalsResult.count || 0) === 0, recipientCount: briefingConfigResult.data?.length || 0 },
     dataIntegrity: { orphanedSignals: orphanedSignalsResult.data?.length || 0, orphanedEntities: orphanedEntitiesResult.data?.length || 0, orphanedFeedback: orphanedFeedbackCount, staleSources: staleSourceCountResult.count || 0, newOrphanArchivalDocs: newOrphanArchivalDocsCount || 0, unflaggedTestBeliefs, unflaggedTestEntities },
     incidentQA,
+    softDeleteLeak,
     bugReports: { totalOpen: openBugsResult.count || 0, staleCount: staleBugsResult.count || 0, recentSpike: recentBugsResult.count || 0, oldestOpenDays, recurringPatterns: [...new Set(recurringPatterns)] },
     database: { connected: dbConnected, responseTimeMs: dbResponseTimeMs },
     autonomousOps: { recentActions: autonomousActionsResult.count || 0, lastActionAge },
@@ -2714,6 +2746,17 @@ Deno.serve(async (req) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 
+  // WO-item4 remediation (INC-AITOOLS-XTENANT class): system-watchdog is an operator/health surface that
+  // reads across ALL tenants and has action handlers that take request-supplied ids. It was verify_jwt=false
+  // with NO caller gate — an unauthenticated caller could pull cross-tenant health intelligence or invoke
+  // remediation actions. It is invoked ONLY by pg_cron with a service-role Bearer (no UI path), so gate to
+  // service_role and reject anon + user callers.
+  // @security-exempt(check2): operator/health surface — cross-tenant BY DESIGN (audits every tenant), so there is no single tenant to bind to; the correct control is service_role-only, now enforced below (matches the cron Bearer). — 2026-08-26
+  const caller = await getCallerIdentity(req);
+  if (caller.kind !== 'service_role') {
+    return errorResponse('system-watchdog is internal-only (service-role)', caller.kind === 'unauthorized' ? 401 : 403);
+  }
+
   const supabase = createServiceClient();
   // Heartbeat for the Phase 4 "Auditor Pulse" diagnostic — without
   // this, the constellation's watchdog-self-pulse panel always shows
@@ -2733,11 +2776,17 @@ Deno.serve(async (req) => {
 
     const runId = crypto.randomUUID();
 
-    // Parse optional request body for force flag
+    // Parse optional request body for force flag + scheduled marker.
+    // `scheduled:true` is sent ONLY by the daily cron (job 128). A scheduled run ALWAYS
+    // emails (state in the subject) so silence means exactly one thing: it did not run.
+    // A manual/boot POST has no marker → keeps the alert-only + dedup behavior, and cannot
+    // suppress the scheduled floor. (Notification-layer fix for the false-broken shape.)
     let forceEmail = false;
+    let scheduledRun = false;
     try {
       const body = await req.json().catch(() => ({}));
       forceEmail = body?.force === true;
+      scheduledRun = body?.scheduled === true;
     } catch { /* no body */ }
 
     // Phase 0: Load learning history
@@ -2897,16 +2946,16 @@ Deno.serve(async (req) => {
           ? 'Agent belief writes frozen (INC-LEARN-CONTAM containment)'
           : 'Agent learning pipeline has stalled',
         analysis: frozen
-          ? `No new agent belief written in ${Math.round(beliefAge)} hours. Cause is the INC-LEARN-CONTAM write-freeze (intentional containment) — the learning agents run and complete, but writes to agent_beliefs/expert_knowledge/global_learning_insights are rejected by trg_inc_learn_contam_freeze_*. This is contained-and-known, NOT a broken cron. Real unfreeze is gated on the anonymization work (WO-LEARN-UNFREEZE).`
+          ? `No new agent belief written in ${Math.round(beliefAge)} hours. Cause is the INC-LEARN-CONTAM write-freeze (intentional containment) — the learning agents run and complete, but writes to agent_beliefs/expert_knowledge/global_learning_insights are rejected by trg_inc_learn_contam_freeze_*. This is contained-and-known, NOT a broken cron. Real unfreeze is gated on the anonymization work (WO-BELIEF-PROVENANCE-01).`
           : `No new agent belief written in ${Math.round(beliefAge)} hours. Agents are operating on stale knowledge.`,
         recommendation: frozen
-          ? 'No cron action. Belief writes stay frozen until the INC-LEARN-CONTAM anonymization gate ships. Track WO-LEARN-UNFREEZE.'
+          ? 'No cron action. Belief writes stay frozen until the INC-LEARN-CONTAM anonymization gate ships. Track WO-BELIEF-PROVENANCE-01.'
           : 'Check thread-weaver, self-improvement, and knowledge-seeker cron jobs. Review for model errors.',
         plainEnglish: frozen
           ? `The system deliberately stopped writing new agent beliefs ${Math.round(beliefAge)} hours ago to contain a data-contamination issue. This is working as intended; it stays this way until the safe-to-resume work is done.`
           : `Agent beliefs have not been updated in ${Math.round(beliefAge)} hours. Agents may be working from stale knowledge.`,
         action: frozen
-          ? 'None — contained by ruling. Revisit when WO-LEARN-UNFREEZE (anonymization gate) is scheduled.'
+          ? 'None — contained by ruling. Revisit when WO-BELIEF-PROVENANCE-01 (anonymization gate) is scheduled.'
           : 'Check that thread-weaver, self-improvement, and knowledge-seeker cron jobs ran last night.',
         canAutoRemediate: false,
         remediationAction: 'none',
@@ -2966,13 +3015,26 @@ Deno.serve(async (req) => {
         const withAgentReview = tier2Eligible.filter(s => s.raw_json?.agent_review);
         const coveragePct = Math.round((withAgentReview.length / tier2Eligible.length) * 100);
         if (coveragePct < 70) {
+          // Severity DOWNGRADED high→low 2026-08-16 (operator ruling). This
+          // finding sat HIGH for 103 days while being one of the lowest-
+          // consequence items on the board — a miscalibration that made the
+          // watchdog hard to read. It IS a real defect (unretried fire-and-
+          // forget in ai-decision-engine loses ~60% of reviews permanently),
+          // but agent_review has NO client-facing consumer: generate-executive-
+          // report / generate-daily-briefing read neither agent_review nor the
+          // review's composite re-score. Only AEGIS chat + the Signal-Detail
+          // "Reasoning Trail" panel consume it. So the reasoning layer being
+          // absent is invisible in every operator brief. Consequence bounds to
+          // missed incidents in the 0.60-0.64 promote sub-band. Real defect, no
+          // client-facing consumer → low. See ops/ledger/WORK-ORDERS.md
+          // (DELIVERY GAP / CONSUMPTION GAP — consumption before delivery).
           behavioralFindings.push({
             category: 'behavioral_health',
-            severity: 'high',
-            title: `Tier-2 review gap: only ${coveragePct}% of eligible signals reviewed`,
-            analysis: `${withAgentReview.length} of ${tier2Eligible.length} signals in the tier-2 band (composite 0.60-0.75) from last 48h have agent_review. Expected ≥70%.`,
-            plainEnglish: `Signals in the tier-2 review band are landing without the deeper AI context that explains why they matter. Operators see borderline-relevance threats without reasoning.`,
-            action: `Check ai-decision-engine logs — review-signal-agent may not be firing for tier-2-eligible signals (composite_confidence in [0.60, 0.75)).`,
+            severity: 'low',
+            title: `Tier-2 review gap: ${coveragePct}% of eligible signals reviewed (real defect, no client-facing consumer)`,
+            analysis: `${withAgentReview.length} of ${tier2Eligible.length} signals in the tier-2 band (composite 0.60-0.75) from last 48h have agent_review. Real delivery defect (unretried fire-and-forget review loses the tail permanently), but no brief consumes agent_review, so operator-visible consequence bounds to missed incidents in the 0.60-0.64 promote sub-band. Fixing delivery alone changes nothing a client sees — consumption must be wired first.`,
+            plainEnglish: `The deeper-reasoning layer is missing on borderline signals, but no client report reads that layer anyway, so nothing a client sees changes. Recorded as a real defect held below the notify line until the reasoning layer is wired into briefs.`,
+            action: `Do not fix delivery in isolation. Sequence is consumption-before-delivery: wire agent_review into briefs first (that is what would make the gap matter), then fix the fire-and-forget retry. See ledger.`,
           });
         }
       }
@@ -2986,7 +3048,7 @@ Deno.serve(async (req) => {
       const { data: socialHeartbeats } = await supabase
         .from('cron_heartbeat')
         .select('job_name, result_summary, completed_at')
-        .in('job_name', ['monitor-social-unified', 'monitor-social-hourly', 'monitor-social', 'monitor-instagram-2h', 'monitor-instagram'])
+        .in('job_name', ['monitor-social-hourly', 'monitor-social', 'monitor-instagram-2h', 'monitor-instagram'])
         .gte('completed_at', new Date(Date.now() - 24 * 3600000).toISOString())
         .order('completed_at', { ascending: false })
         .limit(20);
@@ -2999,8 +3061,8 @@ Deno.serve(async (req) => {
 
       // Known STRUCTURAL DEFERRALS — 0-signal BY RULING, not a regression. Reframe as a
       // known limitation (low), never a recurring behavioral defect.
+      // monitor-social-unified RETIRED 2026-08-05 (0 signals/30d, cron+registry removed — DIAG-2026-08-05-google-300-bill.md).
       const KNOWN_DEFERRED_SOCIAL: Record<string, string> = {
-        'monitor-social-unified': 'keyword-CSE structural deferral (docs .../social-enrich-deferred.md, 2026-07-15) — Facebook/Instagram CSE returns nothing by design; the keyword-CSE approach was validation-failed and deferred by ruling. Successor: actor-list collection.',
         'monitor-social-hourly': 'legacy social monitor, superseded by the deferred social-enrich track.',
         'monitor-social': 'legacy social monitor, superseded by the deferred social-enrich track.',
         'monitor-instagram-2h': 'Instagram keyword-CSE deferral (social audit 2026-07-15) — same class as social-unified; returns nothing by design. Successor: actor-list collection.',
@@ -3054,13 +3116,43 @@ Deno.serve(async (req) => {
           if ((count || 0) > 0) deliverableStuck++;
         }
         if (deliverableStuck > 0) {
-          behavioralFindings.push({
-            category: 'behavioral_health', severity: 'critical',
-            title: `Alert delivery stalled: ${deliverableStuck} pageable alert(s) pending >2h WITH a verified recipient`,
-            analysis: `${deliverableStuck} notification/interruption email alert(s) have an active+verified client recipient but are still pending after 2h — alert-delivery-v2-email is not draining them (INC-ALERT-DELIVERY probe). EXPECTED 0.`,
-            plainEnglish: `Alerts that SHOULD have reached a client are stuck undelivered — the alert-delivery pipeline may be down again (this was silent for 10 months before the heartbeat was added).`,
-            action: 'Check alert-delivery-v2-email heartbeat + logs; confirm claim_pending_email_alerts is matching (client_id set on the alert, recipient verified).',
-          });
+          // DELIBERATE PAUSE vs BROKEN PIPELINE. A runtime failure leaves the cron active=true (it just
+          // errors); only an explicit cron.alter_job(active:=false) disables it. So active=false = a
+          // deliberate pause and the held alerts are EXPECTED — not a stalled pipeline. Ground-truthing
+          // on cron.job.active (not a note) means re-enabling the cron AUTOMATICALLY restores the CRITICAL
+          // alarm; a stale note can never silence a real outage. active=null (no such cron) is NOT a
+          // pause — treat as the real failure. See migration 20260826120000.
+          let deliveryActive: boolean | null = null;
+          try {
+            const { data } = await supabase.rpc('is_cron_job_active', { p_jobname: 'alert-delivery-v2-email' });
+            deliveryActive = (data === true || data === false) ? data : null;
+          } catch (_e) { deliveryActive = null; /* unknown → fall through to the louder finding */ }
+
+          if (deliveryActive === false) {
+            let reason: string | null = null;
+            try {
+              const { data: note } = await supabase.from('cron_pause_notes')
+                .select('reason').eq('job_name', 'alert-delivery-v2-email').maybeSingle();
+              reason = note?.reason ?? null;
+            } catch (_e) { /* note is optional */ }
+            behavioralFindings.push({
+              category: 'behavioral_health', severity: 'low',
+              title: `Alert delivery PAUSED (deliberate) — ${deliverableStuck} pageable alert(s) held, will drain on re-enable`,
+              analysis: `alert-delivery-v2-email cron is disabled (active=false) — a deliberate pause, not a pipeline failure (a runtime failure leaves the cron active). ${deliverableStuck} notification/interruption alert(s) with a verified recipient are held and will drain when the cron is re-enabled.${reason ? ` Reason on record: ${reason}` : ' No reason recorded in cron_pause_notes — confirm the pause is intended.'}`,
+              plainEnglish: `Alert delivery is intentionally paused, so held alerts are expected — this is not a broken pipeline. They send when it is re-enabled.`,
+              action: reason
+                ? 'No action while the pause is intended. Re-enable with cron.alter_job(active:=true) to drain the held alerts.'
+                : 'Confirm the pause is intended; if so record a reason in cron_pause_notes, otherwise re-enable the cron.',
+            });
+          } else {
+            behavioralFindings.push({
+              category: 'behavioral_health', severity: 'critical',
+              title: `Alert delivery stalled: ${deliverableStuck} pageable alert(s) pending >2h WITH a verified recipient`,
+              analysis: `${deliverableStuck} notification/interruption email alert(s) have an active+verified client recipient but are still pending after 2h — alert-delivery-v2-email is ${deliveryActive === null ? 'not present as a cron' : 'active but'} not draining them (INC-ALERT-DELIVERY probe). EXPECTED 0.`,
+              plainEnglish: `Alerts that SHOULD have reached a client are stuck undelivered — the alert-delivery pipeline may be down again (this was silent for 10 months before the heartbeat was added).`,
+              action: 'Check alert-delivery-v2-email heartbeat + logs; confirm claim_pending_email_alerts is matching (client_id set on the alert, recipient verified).',
+            });
+          }
         }
       } catch (_e) { /* best-effort probe */ }
 
@@ -3121,7 +3213,7 @@ Deno.serve(async (req) => {
         // = laundering. meta_json.review_queue holds the ids; report_evidence_sources.source_id
         // holds cited signal ids. Any overlap in the last 24h is a breach.
         const { data: recentReports } = await supabase.from('reports')
-          .select('id, meta_json, storage_url, rendered_persisted_at').eq('type', 'executive_intelligence')
+          .select('id, meta_json, storage_url, rendered_persisted_at, created_at').eq('type', 'executive_intelligence')
           .gte('created_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString());
         let launderedCites = 0;
         for (const r of (recentReports ?? [])) {
@@ -3167,7 +3259,22 @@ Deno.serve(async (req) => {
         }
         // (d) WO-REPORT-PERSIST-01 item 4 — any generated report with NULL storage_url is a Pillar-1
         // violation: its rendered body was not persisted and becomes unauditable (the 6027f0ac gap).
-        const unpersisted = (recentReports ?? []).filter((r: any) => !r.storage_url);
+        // SINCE-FIX CUTOFF (2026-07-31): the storage-upload capability went live in generate-executive-report
+        // at ~2026-07-30T18:00Z (first two reports persisted at 18:07/18:22). Reports generated BEFORE that
+        // predate the capability and must NOT be flagged — they are historical deploy-gap rows (271 pre-fix
+        // nulls incl. the 4 07-30 13:25–17:17 reports), not a live persistence failure. Only post-cutoff
+        // null-storage reports indicate the fix regressed or is unwired on some path.
+        const PERSIST_FIX_LIVE = '2026-07-30T18:00:00Z';
+        // Exclude rows explicitly marked body_not_persisted (2026-08-21): those are ACKNOWLEDGED historical
+        // gaps (silent-upload-failure era, pre WO-REPORT-PERSIST-02), deliberately NOT re-rendered (honest
+        // absence over a fabricated old-dated artifact). The probe flags only UNEXPLAINED live failures —
+        // if WO-REPORT-PERSIST-02 regresses, a new null-storage brief has no such marker and still fires.
+        // Also exclude insufficient_data stubs: those never rendered a body (no data to report), so a null
+        // storage_url is correct, not a persistence failure. The probe flags only reports that HAD a body
+        // and failed to persist it.
+        const unpersisted = (recentReports ?? []).filter((r: any) =>
+          !r.storage_url && String(r.created_at ?? '') >= PERSIST_FIX_LIVE
+          && r.meta_json?.body_not_persisted !== true && r.meta_json?.insufficient_data !== true);
         if (unpersisted.length > 0) {
           behavioralFindings.push({ category: 'behavioral_health', severity: 'critical',
             title: `Report persistence: ${unpersisted.length} report(s) generated in 24h with NULL storage_url`,
@@ -3282,9 +3389,15 @@ Deno.serve(async (req) => {
         // that point replace this blanket entry with an active-journey-count-aware probe.
         'monitor-journey-checkins-5min',
         'monitor-journey-checkins',
+        // 2026-08-11: monitor-wildfires RETIRED — cron paused (jobid 178, active=false) +
+        // de-registered in the WILDFIRE-GENERALIZE cutover; monitor-geo-wildfire-30min is the
+        // proximity successor and sole PECL wildfire authority. The old emitter tagged its
+        // signals bcws_active_fire (not its job_name), so the never-produced probe read 0 and
+        // fired a false "NEVER produced — structurally broken" HIGH. Allowlisted as retired,
+        // same treatment as monitor-social-unified / monitor-twitter. If ever un-paused, remove.
+        'monitor-wildfires',
       ]);
       const SOCIAL_ALREADY_CHECKED = new Set([
-        'monitor-social-unified',
         'monitor-social-hourly', 'monitor-social',
       ]);
 
@@ -3322,7 +3435,15 @@ Deno.serve(async (req) => {
         'monitor-cisa-kev-hourly': ['CISA KEV'],
         'monitor-naad-alerts-15min': ['naad_emergency_alerts'],
         'monitor-rss-sources': ['canadian_news_rss', 'rss_feed', 'rss'],
-        'monitor-wildfires': ['bcws_active_fire'],
+        // monitor-wildfires REMOVED 2026-08-11 (WO-WILDFIRE-GENERALIZE cutover): cron 178
+        // paused, PECL wildfire coverage now off monitor-geo-wildfire-30min (proximity, not
+        // OPS_BBOX region). Old entry was dormant once paused (loop gates on >=3 recent runs).
+        // 2026-08-11: added after a false "NEVER produced HIGH" fired on this working
+        // fire-season monitor. Tags verified against actual DB rows (raw_json.source):
+        // BCWS_active_fire / BCWS_evacuation / CWFIS_hotspots. Note the CASING differs from
+        // monitor-wildfires' lowercase 'bcws_active_fire' — a monitor's source tags must be
+        // verified against what it actually writes, not assumed. WO-OUTPUT-ASSERTION-MONITORING.
+        'monitor-geo-wildfire-30min': ['BCWS_active_fire', 'BCWS_evacuation', 'CWFIS_hotspots'],
       };
 
       for (const [jobName, runs] of monitorByJob) {
@@ -3400,6 +3521,16 @@ Deno.serve(async (req) => {
       // year-suffixes services like BCWS_ActiveFires_PublicView_2026,
       // breaking our fixed URL). Catch that explicitly so the operator
       // doesn't notice it weeks later via an empty report.
+      //
+      // ⚠ DORMANT since 2026-08-11 (WO-WILDFIRE-GENERALIZE cutover): monitor-wildfires
+      // (cron 178) is PAUSED, so this block reads <3 heartbeats and is skipped — no false
+      // finding, BUT BCWS reachability is no longer monitored. The successor
+      // monitor-geo-wildfire-30min does NOT yet emit bcws_fires_fetch_ok/bcws_evacs_fetch_ok
+      // (findBCWSActiveFiresNear/findBCWSEvacuationsNear in _shared/bcws.ts swallow fetch
+      // errors → []). RE-INSTRUMENTATION GAP tracked in WO-WILDFIRE-GENERALIZE follow-ons:
+      // expose fetch-ok from _shared/bcws.ts, write the booleans in monitor-geo-wildfire, and
+      // re-key the query below to 'monitor-geo-wildfire-30min'. Kept keyed on monitor-wildfires
+      // so it reactivates cleanly if the old cron is ever un-paused.
       const { data: wildfireHeartbeats } = await supabase
         .from('cron_heartbeat')
         .select('result_summary, completed_at')
@@ -3843,16 +3974,35 @@ Deno.serve(async (req) => {
             (signalClients || []).map((s: any) => s.client_id).filter((id: any) => !!id)
           );
 
-          const gaps = eligible.filter((c: any) => !seenNames.has(c.name) && !seenIds.has(c.id));
+          // Source 3 (2026-08-16): clients EVALUATED at the client_match stage in the window
+          // = coverage (its keywords were checked against ingested items), NOT yield. Rule T3
+          // previously equated coverage with a produced signal (Source 2) + rejection_samples
+          // (Source 1, written ONLY by monitor-social-unified — dead since Aug 5). So a client
+          // processed 243×/24h but producing 0 signals (thin surface) was falsely flagged
+          // "not processed". clients_evaluated distinguishes processed-with-no-yield from truly-uncovered.
+          const { data: evalRows } = await supabase
+            .from('ingest_decisions')
+            .select('clients_evaluated')
+            .eq('stage', 'client_match')
+            .gte('last_seen_at', coverageWindowStartIso);
+          const seenEvaluated = new Set<string>();
+          for (const r of evalRows || []) {
+            if (Array.isArray(r.clients_evaluated)) {
+              for (const id of r.clients_evaluated) if (id) seenEvaluated.add(id);
+            }
+          }
+
+          const gaps = eligible.filter((c: any) =>
+            !seenNames.has(c.name) && !seenIds.has(c.id) && !seenEvaluated.has(c.id));
 
           for (const c of gaps) {
             behavioralFindings.push({
               category: 'mission_effectiveness',
               severity: 'medium',
               title: `Client coverage gap: ${c.name} not processed by any monitor in ${COVERAGE_WINDOW_HOURS}h`,
-              analysis: `Client "${c.name}" (id=${c.id}) is active and non-fixture, but no monitor's rejection_samples or signal output references them in the last ${COVERAGE_WINDOW_HOURS}h. Likely causes: (a) client missing monitoring_keywords/entities/archetype, (b) clients.slice(0,N) cap excluding them, (c) all queries for this client produced empty payloads and never landed in samples.`,
-              plainEnglish: `This client may be invisible to monitors right now. Operator-configured intent may not be reaching runtime, or the client is being deprioritized by iteration caps.`,
-              action: `Check (1) client.monitoring_keywords + monitoring_config.archetype populated, (2) entities under this client have active_monitoring_enabled=true, (3) the client appears in clients ordering before the slice(0,4) cap. Tracked: PROD-N architectural review gate (client prioritization).`,
+              analysis: `Client "${c.name}" (id=${c.id}) is active and non-fixture, but NO monitor evaluated them at the client_match stage, produced a signal for them, or referenced them in rejection_samples in the last ${COVERAGE_WINDOW_HOURS}h. This is genuine non-coverage (not merely zero yield — clients_evaluated is now checked). Likely causes: (a) client missing monitoring_keywords/entities/archetype, (b) a clients.slice(0,N) cap excluding them, (c) the ingest funnel not running.`,
+              plainEnglish: `This client is invisible to monitors right now — its keywords are not even being checked against incoming intelligence. Operator-configured intent is not reaching runtime.`,
+              action: `Check (1) client.monitoring_keywords + monitoring_config.archetype populated, (2) the ingest funnel (monitor-rss-sources → process-intelligence-document) is running, (3) the client is not excluded by a slice(0,N) cap. NOTE: zero-yield-but-processed is NOT a coverage gap — that is a thin-surface/collection issue, and clients_evaluated now excludes it.`,
             });
           }
         } catch (covErr) {
@@ -4103,32 +4253,42 @@ Deno.serve(async (req) => {
 
       // ──── P1.4 — Undispatched alerts ────────────────────────────────
       try {
-        const { data: undispatched } = await supabase
+        // FIX 2026-08-01: (a) COUNT query, not a row select — the old .select() with no .limit() returned at
+        // most 1000 rows, so the finding reported the PostgREST cap, not a real count. (b) status IN
+        // ('pending','sending') only — terminal ('superseded'/'failed'/'sent') is not a backlog. (c) exclude
+        // benchmark/test recipients + delivery_test_mode. Severity re-banded for the real (uncapped) number.
+        const graceIso = new Date(Date.now() - 30 * 60000).toISOString();
+        const liveUndispatched = () => supabase
           .from('alerts')
-          .select('id, created_at')
+          .in('status', ['pending', 'sending'])
           .is('sent_at', null)
-          .lt('created_at', new Date(Date.now() - 30 * 60000).toISOString())
-          .order('created_at', { ascending: true });
-
-        const count = (undispatched ?? []).length;
+          .lt('created_at', graceIso)
+          .or('delivery_test_mode.is.null,delivery_test_mode.is.false')
+          .not('recipient', 'ilike', '%benchmark%')
+          .not('recipient', 'ilike', '%.invalid');
+        const { count: undispCount } = await liveUndispatched().select('id', { count: 'exact', head: true });
+        const count = undispCount ?? 0;
         if (count > 0) {
-          const oldestMin = Math.floor(
-            (Date.now() - new Date(undispatched![0].created_at).getTime()) / 60000,
-          );
+          const { data: oldestRow } = await liveUndispatched()
+            .select('created_at').order('created_at', { ascending: true }).limit(1);
+          const oldestMin = oldestRow?.[0]?.created_at
+            ? Math.floor((Date.now() - new Date(oldestRow[0].created_at).getTime()) / 60000) : 0;
 
+          // Re-banded for the real (non-terminal, non-test) count. The tier-specific PAGEABLE probe below
+          // handles delivery-tier urgency at tight thresholds, so this general probe stays lenient.
           let sev: 'warning' | 'high' | 'critical' = 'warning';
-          if (count >= 10 || oldestMin >= 120) sev = 'critical';
-          else if (count >= 3) sev = 'high';
+          if (count >= 500 || oldestMin >= 1440) sev = 'critical';
+          else if (count >= 100) sev = 'high';
 
           missionFindings.push({
             category: 'mission_health',
             severity: sev,
-            title: `alert-delivery: ${count} undispatched alert(s) older than 30 min (oldest ${oldestMin} min)`,
-            analysis: `${count} rows in 'alerts' have sent_at IS NULL and were created over 30 minutes ago. ` +
-                      `alert-delivery cron runs every 15 min; allowing 2x interval as grace. ` +
-                      `Oldest undispatched alert is ${oldestMin} minutes old.`,
-            plainEnglish: `${count} alert(s) were generated but never delivered. The notification pipeline is failing silently.`,
-            action: 'Investigate alert-delivery function logs. Check whether channel credentials (Slack, email) are valid. Consider re-running alert-delivery manually.',
+            title: `alert-delivery: ${count} live undispatched alert(s) (pending/sending) older than 30 min (oldest ${oldestMin} min)`,
+            analysis: `${count} rows in 'alerts' with status IN ('pending','sending') have sent_at IS NULL and are >30 min old ` +
+                      `(terminal 'superseded'/'failed' and benchmark/test excluded). alert-delivery cron runs every 15 min. ` +
+                      `Oldest is ${oldestMin} min old. NOTE: log-tier alerts are never dispatched by design — confirm tier before treating as a delivery failure.`,
+            plainEnglish: `${count} alert(s) are queued but not yet delivered.`,
+            action: 'Check alert-delivery function logs + client_alert_recipients. Confirm tier (log-tier is queryable-not-dispatched by design).',
           });
         }
       } catch (p14Err) {
@@ -4161,6 +4321,8 @@ Deno.serve(async (req) => {
           .is('sent_at', null)
           .lt('created_at', intrCutoff)
           .not('recipient', 'like', 'unrouted:%')
+          .in('status', ['pending', 'sending'])   // FIX 2026-08-01: terminal (superseded/failed) is not undispatched
+          .not('client_id', 'is', null)           // FIX 2026-08-01: null-client broadcast = ratified boundary, not a delivery failure
           .order('created_at', { ascending: true });
 
         // Q2 — tier=notification stuck past 60 min window (real routing).
@@ -4171,6 +4333,8 @@ Deno.serve(async (req) => {
           .is('sent_at', null)
           .lt('created_at', notifCutoff)
           .not('recipient', 'like', 'unrouted:%')
+          .in('status', ['pending', 'sending'])   // FIX 2026-08-01: terminal (superseded/failed) is not undispatched
+          .not('client_id', 'is', null)           // FIX 2026-08-01: null-client broadcast = ratified boundary, not a delivery failure
           .order('created_at', { ascending: true });
 
         // Q3 — pageable-tier alerts whose recipient is a routing-failure
@@ -4183,6 +4347,11 @@ Deno.serve(async (req) => {
           .in('tier', ['interruption', 'notification'])
           .is('sent_at', null)
           .like('recipient', 'unrouted:%')
+          // FIX 2026-08-01: exclude terminal status (a superseded unrouted row is not a live routing failure)
+          // and null-client broadcasts (province-wide public-safety alerts — ratified as NOT Fortress's
+          // boundary 2026-07-31, INC-ALERT-DELIVERY). Count only LIVE unrouted pageable alerts for a REAL client.
+          .in('status', ['pending', 'sending'])
+          .not('client_id', 'is', null)
           .order('created_at', { ascending: true });
 
         const intrCount = (intrStuck ?? []).length;
@@ -4371,8 +4540,10 @@ Deno.serve(async (req) => {
         // No cron → watchdog will never generate a finding naming
         // those jobs, so the mapping had nothing to dispatch.
         const CRON_TO_AGENT: Record<string, string> = {
-          'monitor-wildfires':              'WILDFIRE',
-          'monitor-social-unified':         'RYAN-INTEL',
+          // monitor-wildfires (cron 178) paused 2026-08-11 (WO-WILDFIRE-GENERALIZE cutover);
+          // WILDFIRE now owns the proximity successor. Same pattern as the PROD-M twitter removal
+          // above — a cron-less job never yields a finding, so this redirect is for the live job.
+          'monitor-geo-wildfire-30min':     'WILDFIRE',
           'monitor-social-hourly':          'RYAN-INTEL',
           'snapshot-bcws-ratings-daily':    'WILDFIRE',
           'monitor-cisa-kev-12h':           'NEO',
@@ -4382,6 +4553,29 @@ Deno.serve(async (req) => {
         };
         const agent = job && CRON_TO_AGENT[job] ? CRON_TO_AGENT[job] : null;
         return { job, agent };
+      };
+
+      // CONTAINMENT REGISTRY (standing rule 2026-07-31): subjects deliberately contained (503),
+      // deleted/deprovisioned, or frozen are contained-BY-DESIGN, not failures. Load the active set once
+      // and reclassify any finding that names one — downgrade high/critical → info and annotate with the
+      // WO reference, so intentional states stop surfacing as CRITICAL/chronic. Registry absence = no-op.
+      let containmentRegistry: Array<{ subject: string; state: string; wo_reference: string; aliases: string[] }> = [];
+      try {
+        const { data: cr } = await supabase.from('containment_registry')
+          .select('subject, state, wo_reference, aliases')
+          .in('state', ['contained_503', 'deleted', 'deprovisioned', 'frozen']);
+        containmentRegistry = cr ?? [];
+      } catch (_e) { /* registry optional — if missing, reclassification is simply skipped */ }
+      // Match by the subject string OR any registered alias — so a finding describing the SYMPTOM
+      // (e.g. "learning_profiles not updating") is recognized as contained, not only one that names
+      // the frozen store. Substring-on-text is still the mechanism; aliases widen what counts as naming it.
+      const matchContainment = (title: string, analysis: string, job: string | null) => {
+        if (!containmentRegistry.length) return null;
+        const hay = `${title}\n${analysis}\n${job ?? ''}`.toLowerCase();
+        return containmentRegistry.find((c) => {
+          if (c.subject && hay.includes(c.subject.toLowerCase())) return true;
+          return Array.isArray(c.aliases) && c.aliases.some((a) => a && hay.includes(String(a).toLowerCase()));
+        }) ?? null;
       };
 
       const fingerprintsThisRun: string[] = [];
@@ -4395,13 +4589,21 @@ Deno.serve(async (req) => {
         const fp = await sha256Sync(`${f.category || 'unknown'}|${normTitle}|${job ?? ''}`);
         fingerprintsThisRun.push(fp);
 
+        // Reclassify contained-by-design subjects: downgrade high/critical → info + annotate WO ref.
+        const contained = matchContainment(String(f.title || ''), String(f.analysis || ''), job);
+        const effSeverity = contained && (f.severity === 'critical' || f.severity === 'warning' || f.severity === 'high')
+          ? 'info' : (f.severity || 'info');
+        const effAnalysis = contained
+          ? `[CONTAINED-BY-DESIGN — ${contained.state}, ${contained.wo_reference}] ${f.analysis ?? ''}`.trim()
+          : (f.analysis ?? null);
+
         // Atomic insert-or-increment: occurrence_count now actually counts; last_seen_at
         // moves; a recurring finding is re-opened (resolved_at cleared).
         await supabase.rpc('record_platform_finding', {
           p_category: f.category || 'unknown',
-          p_severity: f.severity || 'info',
+          p_severity: effSeverity,
           p_title: f.title,
-          p_analysis: f.analysis ?? null,
+          p_analysis: effAnalysis,
           p_plain_english: f.plainEnglish ?? null,
           p_action: f.action ?? null,
           p_affected_agent: agent,
@@ -4623,7 +4825,10 @@ Deno.serve(async (req) => {
       .limit(1);
 
     const alreadyEmailedRecently = recentWatchdogEmails && recentWatchdogEmails.length > 0;
-    const shouldEmail = forceEmail || isCritical || ((analysis.shouldAlert || remediationResults.length > 0) && !alreadyEmailedRecently);
+    // A SCHEDULED run always emails (the daily floor — silence must mean "did not run"), and
+    // BYPASSES the dedup so a manual/off-schedule run can never suppress it. Manual runs keep
+    // the alert-only + dedup behavior.
+    const shouldEmail = scheduledRun || forceEmail || isCritical || ((analysis.shouldAlert || remediationResults.length > 0) && !alreadyEmailedRecently);
 
     if (shouldEmail) {
       const resend = new Resend(RESEND_API_KEY);
@@ -4632,7 +4837,13 @@ Deno.serve(async (req) => {
       const chronicCount = analysis.findings.filter(f => f.remediationStatus === 'chronic').length;
 
       let subject: string;
-      if (fixedCount > 0 && unresolvedCount === 0 && chronicCount === 0) {
+      if (analysis.findings.length === 0 && fixedCount === 0) {
+        // Clean/no-actionable-findings scheduled run — the daily floor. State in the subject so
+        // its ARRIVAL confirms the watchdog ran; only true silence (no email) means "did not run".
+        subject = (analysis.severity === 'critical' || analysis.severity === 'degraded' || analysis.severity === 'warning')
+          ? `⚠️ Fortress Watchdog — ${analysis.severity}, no actionable findings`
+          : `✓ Fortress Watchdog — all clear`;
+      } else if (fixedCount > 0 && unresolvedCount === 0 && chronicCount === 0) {
         subject = `✓ Fortress Watchdog: ${fixedCount} issue${fixedCount !== 1 ? 's' : ''} auto-resolved — all systems nominal`;
       } else if (chronicCount > 0) {
         subject = `🔁 Fortress: ${chronicCount} chronic issue${chronicCount !== 1 ? 's' : ''} ${fixedCount > 0 ? `+ ${fixedCount} fixed` : '— needs strategic intervention'}`;
