@@ -128,11 +128,15 @@ export function buildSendParams(fromEmail: string, alert: { recipient: string; d
   const subject = typeof rj.subject === "string" ? rj.subject : "Security Alert";
   const body = typeof rj.body === "string" ? rj.body : "Security alert";
   const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+  // Display name on the sender (bare address stays the fixed server config; we only prefix the name).
+  const from = fromEmail.includes("<") ? fromEmail : `Silent Shield Security <${fromEmail}>`;
   return {
-    from: fromEmail,                 // fixed server config only
+    from,                            // fixed server-config address, "Silent Shield Security" display name
     to: [alert.recipient],           // single allowlist-gated recipient
     subject,                         // alert content
-    html: `<!DOCTYPE html><html><body style="font-family:sans-serif"><h2>${esc(subject)}</h2><p>${esc(body)}</p></body></html>`,
+    // white-space:pre-wrap preserves the body's line breaks. The old single <p> collapsed every newline, which
+    // jammed section headers/separators into one run of literal characters ("horizontal rules bleeding into text").
+    html: `<!DOCTYPE html><html><body style="font-family:sans-serif"><h2>${esc(subject)}</h2><div style="white-space:pre-wrap">${esc(body)}</div></body></html>`,
     headers: { "Idempotency-Key": alert.delivery_key }, // server-controlled only
   };
 }
