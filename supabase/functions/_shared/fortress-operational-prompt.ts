@@ -75,9 +75,7 @@ KEY FEATURES & IMPLEMENTATION:
 DATABASE SCHEMA:
 ~80 PostgreSQL tables with RLS policies. Core tables: signals, incidents, entities, clients, investigations, signal_agent_analyses (reasoning trail), agent_world_predictions, agent_conversation_memory + agent_chat_beliefs (chat memory), personal_trips/flights/alerts (mobile travel), travelers/itineraries (operational travel), sources, monitoring_history, cron_heartbeat, circuit_breaker_state, autonomous_actions_log, bug_reports.
 
-ACTIVE CLIENTS (current state):
-- Petronas Canada (PECL) — energy/LNG, NE BC + Coastal GasLink + Wet'suwet'en exposure
-- BC Children's Hospital Gender Clinic (BCCH) — pediatric medical, Vancouver-area`;
+ACTIVE CLIENTS: injected per-session for THIS tenant's clients only (see the "THIS TENANT'S CLIENTS" block below, built from the client rows at request time). This shared prompt intentionally names NO client — a static client roster here is a cross-tenant disclosure (INC-CTX-CONTAM Class C, 2026-05-27).`;
 
 /**
  * AEGIS capabilities as implemented in the dashboard context.

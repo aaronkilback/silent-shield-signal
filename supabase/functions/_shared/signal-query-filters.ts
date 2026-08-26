@@ -44,6 +44,27 @@ export function applySignalFilterForRole<
 }
 
 /**
+ * ALWAYS-FILTER for TEST + SOFT-DELETED rows. Chains `.neq('is_test', true)` and
+ * `.is('deleted_at', null)`. Works on any table carrying both columns — `signals`
+ * AND `incidents`. Use on any read that reaches a CLIENT-FACING answer, so test-
+ * fixture data and operator-dismissed (soft-deleted) rows never surface as real intel.
+ *
+ * IMPORTANT: `quality_status = 'active'` is NOT a substitute. A test signal can be
+ * `quality_status='active'` (verified: the Cascade Energy fixture has 501 active test
+ * signals). Guard test data with THIS filter, explicitly — never assume an `active`
+ * predicate excludes it.
+ *
+ * Scope (2026-08-13 ruling): applied to the 7 Rank-1 client-facing reads only. Operator
+ * diagnostics / dedup tools intentionally OMIT it (they may need test/deleted rows);
+ * `analyze_cross_client_threats` is cross-client by design.
+ */
+export function excludeTestAndDeleted<
+  T extends { neq: (c: string, v: unknown) => T; is: (c: string, v: unknown) => T },
+>(query: T): T {
+  return query.neq('is_test', true).is('deleted_at', null);
+}
+
+/**
  * POST-FETCH / REALTIME GUARD. Returns true when the row must be suppressed
  * for the given role. Caller MUST short-circuit on true before any side
  * effect (response body inclusion, log, telemetry, downstream invoke).

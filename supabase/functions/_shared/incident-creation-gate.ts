@@ -19,6 +19,8 @@
 // rolling week (see project ledger: null on ~84% of signals as of 2026-07-28), drop the
 // corroboration fallback and enforce confidence >= 0.65 primarily.
 
+import { tokenBoundaryMatch } from "./shadow-matcher.ts";
+
 export const HAZARD_CLASSES = new Set<string>([
   'civil_emergency', 'wildfire', 'weather', 'natural_disaster', 'health_concern', 'amber_alert',
 ]);
@@ -33,12 +35,16 @@ export interface GateResult {
   admit: boolean;
   branch:
     | 'pattern_excluded'
+    | 'non_event'
     | 'hazard_no_pathway'
+    | 'no_pathway'
+    | 'recency_awareness'
     | 'relevance_below'
     | 'confidence_below'
     | 'confidence_null_uncorroborated'
     | 'admit_confidence'
-    | 'admit_corroboration_fallback';
+    | 'admit_corroboration_fallback'
+    | 'admit_personal_safety_geo';
   reason: string;
   priority: GatePriority | null;
   values: {
@@ -59,6 +65,220 @@ function isPatternSignal(signal: any): boolean {
 export function isHazardSignal(signal: any): boolean {
   return HAZARD_CLASSES.has(String(signal?.category || '')) ||
     signal?.signal_origin === 'monitor-naad-alerts';
+}
+
+// ── D6 / WO-CLIENT-THREAT-RELEVANCE: universal client-pathway test ──────────────
+// The pathway test that already existed for HAZARD classes (asset-geo) generalized to
+// ALL categories, because priority must derive from threat-to-THIS-client, not magnitude.
+// A signal has a pathway if ANY leg fires; no leg → awareness only (never an incident).
+// Behind feature_flags.pathway_gate_enabled — off = legacy hazard-only behavior, instant revert.
+export type PathwayLeg = 'asset' | 'entity' | 'operations' | null;
+export interface PathwayResult { has_pathway: boolean; leg: PathwayLeg; reasoning: string; }
+
+// Operations leg is a CATEGORY-ELIGIBILITY filter keyed on client-config `industry` —
+// NEVER an industry keyword matched against signal text. It only decides whether the
+// operating-area (location∈clients.locations) test is allowed to run for this category.
+const OPERATIONS_ELIGIBLE: Record<string, Set<string>> = {
+  energy:          new Set(['regulatory','operational','infrastructure','environmental']),
+  venue_security:  new Set(['operational','event','crowd','infrastructure']),
+};
+function operationsCategoryEligible(category: string | null, industry: string | null): boolean {
+  const set = OPERATIONS_ELIGIBLE[String(industry || '').toLowerCase()];
+  return !!set && !!category && set.has(String(category));
+}
+
+export async function isPathwayGateEnabled(supabase: any): Promise<boolean> {
+  try {
+    const { data } = await supabase.from('feature_flags').select('enabled')
+      .eq('key', 'pathway_gate_enabled').maybeSingle();
+    return data?.enabled === true;
+  } catch (_) { return false; }
+}
+
+// Evaluate the three legs. Read-only; each leg fails safe to "no pathway" on error.
+export async function evaluateClientPathway(supabase: any, signal: any): Promise<PathwayResult> {
+  const clientId = signal?.client_id;
+  if (!clientId) return { has_pathway: false, leg: null, reasoning: 'no client_id' };
+  const text = String(signal?.normalized_text || signal?.title || '').toLowerCase();
+
+  // LEG 1 — ASSET (PostGIS proximity to client_geo_assets / corridor / HQ). Reuse the existing scorer.
+  try {
+    const { data: existing } = await supabase.from('hazard_pathway_scores')
+      .select('has_pathway, reasoning').eq('signal_id', signal.id)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    let asset = existing;
+    if (!asset) {
+      const { data: scored } = await supabase.rpc('score_signal_hazard_pathway', { p_signal_id: signal.id });
+      asset = scored ? { has_pathway: scored.has_pathway, reasoning: scored.reason } : null;
+    }
+    if (asset?.has_pathway) return { has_pathway: true, leg: 'asset', reasoning: `asset: ${asset.reasoning || 'proximity to client asset'}` };
+  } catch (_) { /* asset leg best-effort */ }
+
+  // LEG 2 — ENTITY (CURATED/REVIEWED ONLY — never extracted/auto_extracted/suggested).
+  try {
+    const { data: curated } = await supabase.from('entities')
+      .select('id, name').eq('client_id', clientId).in('visibility_class', ['curated', 'reviewed']);
+    if (curated?.length) {
+      const curatedIds = new Set(curated.map((e: any) => e.id));
+      const mentions = Array.isArray(signal?.entity_mentions) ? signal.entity_mentions : [];
+      const hitId = mentions.map((m: any) => m?.entity_id).filter(Boolean).find((id: string) => curatedIds.has(id));
+      if (hitId) {
+        const e = curated.find((c: any) => c.id === hitId);
+        return { has_pathway: true, leg: 'entity', reasoning: `entity: mentions curated "${e?.name}"` };
+      }
+      for (const e of curated) {
+        if (e.name && tokenBoundaryMatch(text, String(e.name).toLowerCase())) {
+          return { has_pathway: true, leg: 'entity', reasoning: `entity: names curated "${e.name}"` };
+        }
+      }
+    }
+  } catch (_) { /* entity leg best-effort */ }
+
+  // LEG 3 — OPERATIONS (operating area from clients.locations; industry gates category eligibility).
+  try {
+    const { data: cfg } = await supabase.from('clients').select('locations, industry').eq('id', clientId).maybeSingle();
+    if (cfg?.locations?.length && operationsCategoryEligible(signal?.category, cfg.industry)) {
+      const locText = String(signal?.location || signal?.normalized_text || '').toLowerCase();
+      for (const loc of cfg.locations) {
+        if (loc && tokenBoundaryMatch(locText, String(loc).toLowerCase())) {
+          return { has_pathway: true, leg: 'operations', reasoning: `operations: location "${loc}" in operating area` };
+        }
+      }
+    }
+  } catch (_) { /* operations leg best-effort */ }
+
+  return { has_pathway: false, leg: null, reasoning: 'no asset/entity/operations pathway to client' };
+}
+
+// ── D6 RECENCY — "should this page NOW", distinct from pathway ("can it page"). ──────
+// Pathway decides connection; recency decides currency. An old signal with a real pathway
+// is AWARENESS, not an incident. Two legs that fail in OPPOSITE directions by stakes:
+//   • STATUS-GOVERNED (BCWS orders/alerts/fires carry authoritative status): fail SAFE.
+//     A monitor outage must NOT read as all-clear — an order active in last-known data stays
+//     'current' while the emitter is down (loud). Currency = active status, not article age.
+//   • DATE-GOVERNED (RSS/news/cyber — no status): fail CLOSED. event_time is unreliable
+//     (event_date is LLM-guessed; temporal_grounding is 100% 'unknown', never wired), so
+//     unproven recency → 'unknown' → AWARENESS. Awareness ≠ dropped: the signal still exists
+//     and is visible; it simply does not page.
+export type RecencyState = 'current' | 'aged_out' | 'unknown';
+export interface RecencyResult { state: RecencyState; basis: string; }
+
+const STATUS_SOURCES = new Set(['BCWS_evacuation', 'BCWS_active_fire', 'bcws_active_fire']);
+const ACTIVE_STATUS = new Set(['Order', 'Alert', 'Out of Control', 'Being Held']);
+// Date-governed windows (days) — consulted ONLY when a trustworthy event-time is present;
+// otherwise fail closed to awareness. Never invents currency from ingest time.
+const CATEGORY_RECENCY_DAYS: Record<string, number> = {
+  active_threat: 14, cyber: 14, regulatory: 28, protest: 5, operational: 14, environmental: 21, social_sentiment: 7,
+};
+
+function isStatusGovernedSignal(signal: any): boolean {
+  return STATUS_SOURCES.has(String(signal?.raw_json?.source || '')) ||
+    signal?.signal_origin === 'monitor-geo-wildfire';
+}
+
+// Heartbeat guard (same shape as the false-broken-geo finding: absence of a report is NOT
+// absence of the thing). Returns false if the emitter has not succeeded within windowMin.
+async function emitterHealthy(supabase: any, jobName: string, windowMin: number): Promise<boolean> {
+  try {
+    const { data } = await supabase.from('cron_heartbeat')
+      .select('completed_at').in('status', ['completed', 'succeeded'])
+      .eq('job_name', jobName).order('completed_at', { ascending: false }).limit(1).maybeSingle();
+    if (!data?.completed_at) return false;
+    return (Date.now() - new Date(data.completed_at).getTime()) / 60000 <= windowMin;
+  } catch (_) { return false; }
+}
+
+export async function recencyState(supabase: any, signal: any): Promise<RecencyResult> {
+  // STATUS-GOVERNED (authoritative; fail-safe on emitter outage).
+  if (isStatusGovernedSignal(signal)) {
+    const rj = signal?.raw_json || {};
+    const status = rj.highest_status || rj.evac_status || rj.fire_status || null;
+    const wasActive = !!status && ACTIVE_STATUS.has(String(status));
+    const healthy = await emitterHealthy(supabase, 'monitor-geo-wildfire-30min', 90); // ~3x the 30m cadence
+    if (!healthy) {
+      // Emitter DOWN — an outage must never become an all-clear. Keep active orders paging; scream.
+      if (wasActive) {
+        console.warn(`[recency] EMITTER DOWN (monitor-geo-wildfire-30min) — holding active status "${status}" CURRENT (fail-safe, not all-clear) for signal ${signal?.id}. Cron-health watchdog carries the loud finding.`);
+        return { state: 'current', basis: `status ${status} + emitter DOWN → held current (fail-safe; monitor-geo-wildfire-30min is a registered-critical job → watchdog fires)` };
+      }
+      return { state: 'unknown', basis: 'status source, emitter down, no known-active status' };
+    }
+    if (wasActive) {
+      const ageMin = signal?.created_at ? (Date.now() - new Date(signal.created_at).getTime()) / 60000 : Infinity;
+      if (ageMin <= 90) return { state: 'current', basis: `active status ${status}, re-emitted within 90m` };
+      return { state: 'aged_out', basis: `status ${status} not re-emitted in 90m (emitter healthy) → likely rescinded` };
+    }
+    return { state: 'aged_out', basis: `status ${status || 'none'} is not an active-response status` };
+  }
+  // DATE-GOVERNED (strictly fail-closed to AWARENESS — never dropped).
+  const win = CATEGORY_RECENCY_DAYS[String(signal?.category || '')];
+  const ed = signal?.event_date ? new Date(signal.event_date) : null;
+  if (win && ed && Number.isFinite(ed.getTime())) {
+    const ageDays = (Date.now() - ed.getTime()) / 86400000;
+    if (ageDays <= win) return { state: 'current', basis: `event_date ${signal.event_date} within ${win}d (${signal.category})` };
+    return { state: 'aged_out', basis: `event_date ${signal.event_date} older than ${win}d (${signal.category})` };
+  }
+  return { state: 'unknown', basis: 'no reliable event-time (event_date missing; temporal_grounding never wired) — fail closed to awareness' };
+}
+
+// D6 gate mode: 'off' (legacy), 'shadow' (compute + log, do NOT enforce), 'enforce' (authoritative).
+async function gateMode(supabase: any): Promise<'off' | 'shadow' | 'enforce'> {
+  try {
+    const { data } = await supabase.from('feature_flags').select('key, enabled')
+      .in('key', ['pathway_gate_enabled', 'pathway_gate_shadow']);
+    const m = new Map((data || []).map((r: any) => [r.key, r.enabled === true]));
+    if (m.get('pathway_gate_enabled')) return 'enforce';
+    if (m.get('pathway_gate_shadow')) return 'shadow';
+    return 'off';
+  } catch (_) { return 'off'; }
+}
+
+export interface D6PreGate {
+  refused: boolean;
+  branch: 'non_event' | 'no_pathway' | 'recency_awareness' | 'd6_pass';
+  reason: string; leg: PathwayLeg; geo: string | null; recency: RecencyState | null;
+}
+
+// The D6 pre-gates (eventhood → pathway → recency), computed once. Shared by enforce + shadow.
+async function computeD6PreGate(supabase: any, signal: any): Promise<D6PreGate> {
+  if (signal?.is_event === false) {
+    return { refused: true, branch: 'non_event', reason: 'not an event (statement/opinion/filing)', leg: null, geo: null, recency: null };
+  }
+  const pw = await evaluateClientPathway(supabase, signal);
+  if (!pw.has_pathway) {
+    return { refused: true, branch: 'no_pathway', reason: pw.reasoning, leg: null, geo: null, recency: null };
+  }
+  // Caveat-2 capture: when the pathway is ASSET, record whether it fired on real coordinates
+  // or a gazetteer text-derived place-name — that is where a false admit can hide.
+  let geo: string | null = null;
+  if (pw.leg === 'asset') {
+    try {
+      const { data } = await supabase.from('hazard_pathway_scores').select('geo_precision')
+        .eq('signal_id', signal.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      geo = data?.geo_precision ?? null;
+    } catch (_) { /* best-effort */ }
+  }
+  const rec = await recencyState(supabase, signal);
+  if (rec.state !== 'current') {
+    return { refused: true, branch: 'recency_awareness', reason: `recency ${rec.state}: ${rec.basis}`, leg: pw.leg, geo, recency: rec.state };
+  }
+  return { refused: false, branch: 'd6_pass', reason: `pathway leg=${pw.leg}${geo ? ' geo=' + geo : ''}, recency current`, leg: pw.leg, geo, recency: 'current' };
+}
+
+// Shadow logging: record what the D6 pre-gates WOULD decide, without enforcing. Legacy stays
+// authoritative. The report joins these 'shadow-d6' rows against the real (legacy) decisions.
+async function persistD6Shadow(supabase: any, signal: any, d6: D6PreGate, baseValues: any): Promise<void> {
+  try {
+    await supabase.from('incident_gate_decisions').insert({
+      signal_id: signal.id, caller_function: 'shadow-d6',
+      admitted: !d6.refused, branch: d6.branch,
+      reason: `SHADOW d6=${d6.refused ? 'refused' : 'pass'} branch=${d6.branch} leg=${d6.leg ?? '-'} geo=${d6.geo ?? '-'} recency=${d6.recency ?? '-'} | ${d6.reason}`,
+      category: baseValues.category, signal_type: baseValues.signal_type, signal_origin: baseValues.signal_origin,
+      relevance_score: baseValues.relevance_score, confidence: baseValues.confidence,
+      confidence_present: baseValues.confidence_present, corroboration_count: null,
+      assigned_priority: null, incident_id: null,
+    });
+  } catch (e) { console.error('[incident-gate] shadow persist threw:', (e as Error).message); }
 }
 
 // Severity → PRIORITY only (never admission). Mirrors the prior PECL grading intent
@@ -88,12 +308,15 @@ export async function countCorroboration(supabase: any, signal: any, windowDays 
     : [];
   if (entityIds.length === 0) return 0;
   const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('entity_mentions')
     .select('signal_id')
     .in('entity_id', entityIds)
     .neq('signal_id', signal.id)
     .gte('created_at', windowStart);
+  // WO-FAIL-LOUD-AUDIT-01: a failed corroboration lookup must NOT read as zero
+  // corroboration — that silently mis-scores the incident-creation gate. Fail loud.
+  if (error) throw new Error(`countCorroboration: entity_mentions query failed: ${error.message}`);
   const distinct = new Set((data || []).map((r: any) => r.signal_id));
   return distinct.size;
 }
@@ -103,9 +326,14 @@ export async function countCorroboration(supabase: any, signal: any, windowDays 
  * callers behave identically. Does NOT persist — call persistGateDecision separately so
  * the caller can attach the created incident_id.
  */
+// Life-safety signal classes for personal/family-safety clients — physical-world hazards where a
+// protected-location proximity hit must NEVER be gated out by a text-relevance floor tuned on the
+// corporate/cyber case.
+export const LIFE_SAFETY_CLASSES = new Set<string>(['civil_emergency', 'natural_disaster', 'wildfire']);
+
 export async function evaluateIncidentGate(
   supabase: any, signal: any, windowDays = 7,
-  opts: { corroborationOverride?: boolean } = {},
+  opts: { corroborationOverride?: boolean; clientClass?: string } = {},
 ): Promise<GateResult> {
   const category = signal?.category ?? null;
   const signal_type = signal?.signal_type ?? null;
@@ -128,11 +356,27 @@ export async function evaluateIncidentGate(
       values: baseValues };
   }
 
-  // 2. HAZARD PATHWAY (Step 6 — interim freeze LIFTED). A hazard/NAAD signal earns an
-  // incident ONLY via a client impact pathway (proximity / corridor / HQ). No pathway →
-  // awareness only. Pathway scoring also caps relevance to 0.40 for no-pathway hazards,
-  // so this is defence-in-depth over the relevance gate below.
-  if (isHazardSignal(signal)) {
+  // 2. CLIENT PATHWAY (D6 / WO-CLIENT-THREAT-RELEVANCE). Priority derives from
+  // threat-to-THIS-client, not magnitude. Flag ON: universal 3-leg test (asset/entity/
+  // operations) for ALL categories — no pathway → awareness only. Flag OFF: legacy
+  // hazard-only pathway (unchanged). Rule 4: this is ORDERING; the relevance threshold
+  // below is untouched. Go-live gated on the BC Place inversion + 0-of-15 replay.
+  // 2. D6 GATE (WO-CLIENT-THREAT-RELEVANCE) — mode-driven. 'enforce' = D6 pre-gates (eventhood →
+  // pathway → recency) authoritative; 'shadow' = compute + log to incident_gate_decisions, do NOT
+  // enforce (legacy stays authoritative); 'off' = legacy hazard-only. See computeD6PreGate.
+  const mode = await gateMode(supabase);
+  if (mode !== 'off') {
+    const d6 = await computeD6PreGate(supabase, signal);
+    if (mode === 'shadow') {
+      await persistD6Shadow(supabase, signal, d6, baseValues);
+      // shadow: do NOT enforce — fall through to legacy behavior below.
+    } else if (d6.refused) {
+      return { admit: false, branch: d6.branch as GateResult['branch'], priority: null,
+        reason: `${d6.branch}: ${d6.reason}`, values: baseValues };
+    }
+    // enforce + not refused: D6 passed — skip the legacy hazard branch, go to relevance/confidence.
+  }
+  if (mode !== 'enforce' && isHazardSignal(signal)) {
     let pathway: any = null;
     const { data: existing } = await supabase.from('hazard_pathway_scores')
       .select('has_pathway, reasoning').eq('signal_id', signal.id)
@@ -149,6 +393,21 @@ export async function evaluateIncidentGate(
         values: baseValues };
     }
     // pathway confirmed — fall through to the relevance/confidence gates.
+  }
+
+  // 2b. PERSONAL-SAFETY LIFE-SAFETY BYPASS. The relevance floor below is the cyber/sector-tuned noise
+  // control; it must not suppress a physical-proximity hazard for a personal/family-safety client. If
+  // this client is personal_safety AND the signal is a geo life-safety hazard (evac order/alert per the
+  // shared geo scorer, or a life-safety category with proximity data), admit regardless of the text
+  // relevance score — the geo score determines rank/priority, not admission. Corporate clients are
+  // unaffected (clientClass !== 'personal_safety').
+  const geoLifeSafety = signal?.raw_json?.geo_relevance?.isLifeSafety === true;
+  const lifeSafetyCategory = LIFE_SAFETY_CLASSES.has(String(category || '')) && !!signal?.raw_json?.proximity;
+  if (opts.clientClass === 'personal_safety' && (geoLifeSafety || lifeSafetyCategory)) {
+    return { admit: true, branch: 'admit_personal_safety_geo',
+      priority: geoLifeSafety ? 'p1' : 'p2',
+      reason: `personal_safety life-safety geo signal admitted regardless of text relevance ${rel ?? 'null'} (floor ${REL_MIN} bypassed): ${signal?.raw_json?.geo_relevance?.reason ?? category}`,
+      values: baseValues };
   }
 
   // 3. Relevance gate (always).

@@ -61,7 +61,6 @@ export const REQUIRED_EDGE_FUNCTIONS = [
   // Threat Analysis
   'threat-radar-analysis',
   'analyze-threat-escalation',
-  'identify-precursor-indicators',
   'perform-impact-analysis',
   'analyze-image-content',
   'analyze-sentiment-drift',
@@ -177,7 +176,6 @@ export const REQUIRED_EDGE_FUNCTIONS = [
   'propose-security-investments',
   'track-mitigation-effectiveness',
   'calculate-anticipation-index',
-  'fuse-geospatial-intelligence',
   'guide-decision-tree',
   
   // System Health

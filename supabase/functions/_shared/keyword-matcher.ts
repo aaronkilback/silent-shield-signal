@@ -1,3 +1,9 @@
+// @deprecated 2026-08-12 — this is the OLDER, LOOSER (includes-based) matcher: no token-boundary,
+// no tightened REGIONAL_ANCHORS, no tier-2 named-anchor, no deterministic flag. The authoritative
+// deterministic matcher is `_shared/deterministic-matcher.ts`. Do NOT import matchClientKeywords
+// from here for new code. (isFalsePositiveContent is still used by ingest-signal.) The
+// monitor→ingest-signal path that relies on this loose logic is tracked in WO-MATCHER-DIVERGENCE-01.
+//
 // Shared keyword matching utility for all monitors
 // Uses weighted scoring to pick the BEST client match, not just any match
 

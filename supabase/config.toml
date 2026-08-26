@@ -33,6 +33,9 @@ verify_jwt = true
 [functions.process-intelligence-document]
 verify_jwt = false
 
+[functions.attribution-nexus-gate]
+verify_jwt = false
+
 [functions.check-incident-escalation]
 verify_jwt = false
 
@@ -196,13 +199,7 @@ verify_jwt = false
 [functions.analyze-image-content]
 verify_jwt = false
 
-[functions.fuse-geospatial-intelligence]
-verify_jwt = false
-
 [functions.analyze-threat-escalation]
-verify_jwt = false
-
-[functions.identify-precursor-indicators]
 verify_jwt = false
 
 [functions.perform-impact-analysis]
@@ -329,7 +326,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.correlate-entities]
-verify_jwt = false
+verify_jwt = true
 
 [functions.create-entity]
 verify_jwt = true
@@ -341,7 +338,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.entity-deep-scan]
-verify_jwt = false
+verify_jwt = true
 
 [functions.investigate-poi]
 verify_jwt = false
@@ -574,6 +571,18 @@ verify_jwt = false
 [functions.send-sms]
 verify_jwt = false
 
+[functions.inbound-call-notify]
+verify_jwt = false
+
+[functions.contact-submit]
+verify_jwt = false
+
+[functions.aegis-qualify]
+verify_jwt = false
+
+[functions.aegis-qualify-sweep]
+verify_jwt = false
+
 [functions.list-communications]
 verify_jwt = false
 
@@ -762,7 +771,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.create-operator-invite]
-# INC-AITOOLS-XTENANT: was verify_jwt=false (self-checked getUser). Now platform-gated too.
+# INC-AITOOLS-XTENANT: was verify_jwt = true (self-checked getUser). Now platform-gated too.
 verify_jwt = true
 
 [functions.detect-threat-patterns]
@@ -790,7 +799,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.generate-lesson-video]
-verify_jwt = false
+verify_jwt = true
 
 [functions.heygen-webhook]
 verify_jwt = false
@@ -859,4 +868,52 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.accept-tenant-invitation]
+verify_jwt = false
+
+[functions.agent-sentinel]
+verify_jwt = false
+
+[functions.cipher-analyze-investigation]
+verify_jwt = false
+
+[functions.cipher-compute-fingerprint]
+verify_jwt = false
+
+[functions.cipher-endorse-hypothesis]
+verify_jwt = false
+
+[functions.cipher-guardrails-test]
+verify_jwt = false
+
+[functions.cipher-ingest-evidence]
+verify_jwt = false
+
+[functions.cipher-promote-hypothesis]
+verify_jwt = false
+
+[functions.cipher-reject-hypothesis]
+verify_jwt = false
+
+[functions.compute-linguistic-fingerprint]
+verify_jwt = false
+
+[functions.edit-child-safety-guidance]
+verify_jwt = false
+
+[functions.ingest-screenshot-evidence]
+verify_jwt = false
+
+[functions.monitor-geo-wildfire]
+verify_jwt = false
+
+[functions.monitor-x-single]
+verify_jwt = false
+
+[functions.r2-smoke-test]
+verify_jwt = false
+
+[functions.view-subject-exposure-report]
+verify_jwt = false
+
+[functions.x-query-probe]
 verify_jwt = false

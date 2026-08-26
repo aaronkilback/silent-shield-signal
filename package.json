@@ -26,6 +26,8 @@
     "check:signal-single-regression": "node scripts/check-signal-single-regression.mjs",
     "check:toast-raw-error": "node scripts/check-toast-raw-error.mjs",
     "check:openai-direct": "node scripts/check-no-direct-openai-fetch.mjs",
+    "check:prompt-hygiene": "node scripts/check-prompt-hygiene.mjs",
+    "check:secdef-anon": "node scripts/check-secdef-anon-grants.mjs --audit",
     "security-gate": "node scripts/security-gate/run.mjs",
     "security-gate:test": "node scripts/security-gate/negative-test.mjs",
     "security-gate:baseline": "node scripts/security-gate/run.mjs --update-baseline",

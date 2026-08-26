@@ -231,17 +231,14 @@ export async function userCanAccessClient(
   userId: string,
   clientId: string,
 ): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('clients')
-    .select('id, tenant_id, tenant_users!inner(user_id)')
-    .eq('id', clientId)
-    .eq('tenant_users.user_id', userId)
-    .limit(1);
-  if (error) {
-    console.error('[userCanAccessClient] lookup error:', error);
-    return false;
-  }
-  return Array.isArray(data) && data.length > 0;
+  // 2026-08-26 FIX: the previous implementation embedded `clients { tenant_users!inner }`, but there is
+  // NO foreign key between clients and tenant_users (they relate only via tenant_id → tenants), so the
+  // PostgREST embed errored and this helper returned FALSE for EVERYONE — silently rejecting legitimate
+  // members in every gate that used it. Delegate to the canonical RPC (get_user_accessible_client_ids),
+  // the same source RLS on `clients` uses, so this helper agrees with RLS instead of over-blocking.
+  if (!userId || !clientId) return false;
+  const ids = await getAccessibleClientIds(supabase, userId);
+  return ids.includes(clientId);
 }
 
 /**

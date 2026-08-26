@@ -34,6 +34,11 @@ jobs:
         env:
           SECURITY_GATE_BASE: origin/${{ github.base_ref || 'main' }}
         run: node scripts/security-gate/run.mjs
+      # Prompt hygiene (report-leak order, 2026-08-13): Detector 1 fails on any hardcoded client
+      # proper noun in a prompt/code line. Detector 2 (unscoped shared reads) is audit-only inside
+      # the script and never affects exit — gate it only after WO-UNSCOPED-READ-CLASSIFIER-01.
+      - name: prompt hygiene (no hardcoded client names in prompts)
+        run: node scripts/check-prompt-hygiene.mjs
       # Deploy-path drift: deployed functions must be a subset of the repo. Needs the Management API
       # token as a repo secret; skips (non-fatal) when unset so forks/no-secret runs still pass.
       - name: deploy-path drift
