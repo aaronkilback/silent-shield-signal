@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
+import { safeFetch } from "../_shared/safe-fetch.ts"; // WO-SSRF-SHARED-GUARD-01 wave 3
 import { callAiGateway, callAiGatewayStream, getUniversalGuardrails } from "../_shared/ai-gateway.ts";
 import { classifyUserSafeError, redactProviderLeak } from "../_shared/user-safe-errors.ts";
 import { validateMessages } from "../_shared/input-validation.ts";
@@ -6,8 +8,10 @@ import { fetchUserMemory, formatMemoryForPrompt, saveMemory, upsertPreferences, 
 import { logError } from "../_shared/error-logger.ts";
 // fortress-infrastructure.ts removed from system prompt to reduce token count (~5000 tokens saved)
 import { AEGIS_CORE_IDENTITY, AEGIS_CHAT_MODIFIERS, ANTI_FABRICATION_RULES, TOOL_USAGE_GUIDANCE, AEGIS_CAPABILITY_MANIFEST, getTimeContext } from "../_shared/aegis-persona.ts";
+import { compareExposureItems } from "../_shared/subject-retrieval.ts";
 import { buildCOP, formatCOPForPrompt } from "../_shared/common-operating-picture.ts";
 import { startTrace } from "../_shared/flight-recorder.ts";
+import { excludeDeletedSignals, excludeDeletedIncidents, excludeMergedEntities, excludeSupersededExposure } from "../_shared/soft-delete-filters.ts";
 import { getLearningPromptBlock, getSystemHealthMetrics } from "../_shared/learning-context-builder.ts";
 import { FORTRESS_PLATFORM_OVERVIEW, FORTRESS_AEGIS_CAPABILITIES, FORTRESS_WORKFLOW_INSTRUCTIONS, AEGIS_TOOL_SUMMARIZER_PROMPT, AEGIS_REPORT_PRESENTER_PROMPT, AEGIS_AGENT_CREATION_PROMPT, AEGIS_DATA_PRESENTER_PROMPT } from "../_shared/fortress-operational-prompt.ts";
 import { FORTRESS_CORE_DIRECTIVE } from "../_shared/fortress-core-directive.ts";
@@ -81,12 +85,12 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     }
   }
 
-  // Non-AI-gateway URLs: standard fetch with timeout
+  // Non-AI-gateway URLs: SSRF-guarded fetch with timeout — WO-SSRF-SHARED-GUARD-01 wave 3
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, {
+    const response = await safeFetch(url, {
       ...options,
       signal: controller.signal,
     });
@@ -156,7 +160,7 @@ function isMetaConversation(text: string): boolean {
 
 // Build the unified AEGIS system prompt from shared modules
 // Single source of truth — no more inline prompt duplication
-function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = ""): string {
+function buildDashboardAegisPrompt(tenantKnowledgeContext: string = "", behavioralCorrectionContext: string = "", learningContext: string = "", agentRosterContext: string = "", copContext: string = "", agentIntelligenceContext: string = "", loginSummaryContext: string = "", tenantName: string = "", clientContext: string = ""): string {
   const timeContext = getTimeContext();
 
   const tenantBoundaryBlock = tenantName
@@ -187,7 +191,7 @@ ${copContext}
 ${tenantKnowledgeContext}${behavioralCorrectionContext}
 ${learningContext ? `\n${learningContext}\n` : ''}
 ${FORTRESS_PLATFORM_OVERVIEW}
-
+${clientContext}
 ${FORTRESS_AEGIS_CAPABILITIES}
 
 ${ANTI_FABRICATION_RULES}
@@ -267,6 +271,75 @@ const PROPOSE_TRAVEL_EDIT_TOOL = {
   },
 };
 const tools = [...aegisToolDefinitions, PROPOSE_TRAVEL_EDIT_TOOL];
+
+// ── Subject-entity resolution for get_subject_exposure / run_subject_scan. NEVER silently picks among
+// duplicates (that bug produced a confident empty answer). Selection is by entity_index against a
+// DETERMINISTIC order; entity_id accepts a full uuid OR a prefix (prefix that matches >1 disambiguates
+// again — no arbitrary pick at the prefix layer either).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// DETERMINISTIC disambiguation ordering. entity_index is only stable if the disambiguation turn and the
+// selection turn produce the SAME order — so sort by a FIXED key (created_at DESC, matching how options are
+// displayed), NEVER by whatever the query happens to return. DO NOT "optimise" this ordering: changing the
+// sort silently makes entity_index select the wrong record across turns.
+function orderSubjectMatches(list: any[]): any[] {
+  return [...list].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+}
+async function buildSubjectOptions(sb: any, list: any[]): Promise<any[]> {
+  const ordered = orderSubjectMatches(list);
+  return Promise.all(ordered.map(async (e: any, i: number) => {
+    const { count } = await excludeSupersededExposure(sb.from("subject_exposure_items").select("id", { count: "exact", head: true })).eq("subject_entity_id", e.id).is("superseded_at", null);
+    const { data: c } = e.client_id ? await sb.from("clients").select("name").eq("id", e.client_id).maybeSingle() : { data: null };
+    return { option: i + 1, entity_id: e.id, name: e.name, client: c?.name ?? null, created: String(e.created_at ?? "").slice(0, 10), current_items: count ?? 0 };
+  }));
+}
+type SubjectResolution =
+  | { kind: "resolved"; entity: any }
+  | { kind: "ambiguous"; options: any[]; name: string }
+  | { kind: "bad_index"; options: any[]; name: string; given: number }
+  | { kind: "not_found"; label: string };
+async function resolveSubjectEntity(sb: any, args: { entity_id?: string; entity_name?: string; entity_index?: number }): Promise<SubjectResolution> {
+  const entity_id = args.entity_id?.trim();
+  const entity_name = args.entity_name?.trim();
+  const entity_index = args.entity_index;
+
+  if (entity_id) {
+    if (UUID_RE.test(entity_id)) {
+      const { data } = await excludeMergedEntities(sb.from("entities").select("id, name, client_id, created_at")).eq("id", entity_id).maybeSingle();
+      return data ? { kind: "resolved", entity: data } : { kind: "not_found", label: entity_id };
+    }
+    // PREFIX-tolerant (e.g. a model echoing the 8-char display form). uuid columns can't LIKE via PostgREST,
+    // so scan person entities and prefix-match in JS. >1 hit → disambiguate (no arbitrary prefix pick).
+    const prefix = entity_id.toLowerCase().replace(/[^0-9a-f]/g, "");
+    if (prefix.length >= 4) {
+      const { data: cand } = await excludeMergedEntities(sb.from("entities").select("id, name, client_id, created_at")).eq("type", "person").limit(5000);
+      const hits = (cand || []).filter((e: any) => String(e.id).toLowerCase().startsWith(prefix));
+      if (hits.length === 0) return { kind: "not_found", label: entity_id };
+      if (hits.length === 1) return { kind: "resolved", entity: hits[0] };
+      return { kind: "ambiguous", options: await buildSubjectOptions(sb, hits), name: entity_name ?? hits[0].name };
+    }
+    return { kind: "not_found", label: entity_id };
+  }
+
+  if (!entity_name) return { kind: "not_found", label: "(no entity given)" };
+  const { data: matches } = await excludeMergedEntities(sb.from("entities").select("id, name, client_id, created_at")).ilike("name", `%${entity_name}%`).eq("type", "person").limit(10);
+  const list = matches || [];
+  if (list.length === 0) return { kind: "not_found", label: entity_name };
+  if (list.length === 1) return { kind: "resolved", entity: list[0] };
+  if (entity_index != null) {
+    const ordered = orderSubjectMatches(list);
+    const idx = Number(entity_index);
+    if (!Number.isInteger(idx) || idx < 1 || idx > ordered.length) return { kind: "bad_index", options: await buildSubjectOptions(sb, list), name: entity_name, given: idx };
+    return { kind: "resolved", entity: ordered[idx - 1] };
+  }
+  return { kind: "ambiguous", options: await buildSubjectOptions(sb, list), name: entity_name };
+}
+function subjectAmbiguityResult(r: { options: any[]; name: string }, tool: string, bad?: number): any {
+  const opts = r.options.map((m: any) => `#${m.option}: ${m.name} — client ${m.client ?? "—"}, created ${m.created}, ${m.current_items} exposure items`).join(" · ");
+  return {
+    success: true, status: bad != null ? "bad_index" : "ambiguous", options: r.options,
+    message: `${bad != null ? `Index ${bad} is out of range. ` : ""}There are ${r.options.length} records matching "${r.name}". Ask the user which one, then call ${tool} again with entity_index set to that option number (1-${r.options.length}). Map the user's words to a number — "the first one" → 1, "the Aug 18 record" or "the one with 148 items" → whichever option matches. NEVER ask the user to type or echo a UUID. Options: ${opts}.`,
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // P0 TENANT-BOUNDARY ENFORCEMENT (Bug 4/5b P0 — application-layer trust boundary)
@@ -349,7 +422,8 @@ const TENANT_SCOPED_TOOLS = new Set<string>([
   "guide_decision_tree",
   "track_mitigation_effectiveness",
   "get_threat_intel_feeds",
-  "run_entity_deep_scan",
+  "get_subject_exposure",
+  "run_subject_scan",
   "search_social_media",
   "enrich_entity_descriptions",
   "extract_signal_insights",
@@ -708,7 +782,10 @@ async function executeTool(
       const { signal_ids, action, keep_signal_id } = args;
 
       if (!signal_ids || signal_ids.length < 2) {
-        // Dry-run scan mode: find potential duplicates from DB
+        // Dry-run scan mode: find potential duplicates from DB.
+        // @soft-delete-exempt: EXISTENCE check — "have I seen this content_hash before?" — a quarantined or
+        // deleted signal HAS been seen. Filtering to active-only would let deliberately-quarantined content
+        // return on the next ingest. Existence reads are exempt; display reads are filtered.
         const { data: dupScan } = await supabaseClient
           .from("signals").eq("tenant_id", tenantId).select("content_hash, id, title, created_at")
           .not("content_hash", "is", null).order("created_at", { ascending: false }).limit(500);
@@ -821,9 +898,9 @@ async function executeTool(
       cutoffDate.setDate(cutoffDate.getDate() - daysBack);
 
       // P0 Phase-C — restrict signal-quality analysis to caller's tenant
-      const { data: recentSignals, error: signalsError } = await supabaseClient
+      const { data: recentSignals, error: signalsError } = await excludeDeletedSignals(supabaseClient
         .from("signals")
-        .select("id, title, confidence, status, severity, created_at, source_id")
+        .select("id, title, confidence, status, severity, created_at, source_id"))
         .eq("tenant_id", tenantId)
         .gte("created_at", cutoffDate.toISOString())
         .order("created_at", { ascending: false });
@@ -2450,19 +2527,33 @@ Be thorough and include every piece of visible text and data.`,
       assertTenantContext("create_entity", tenantId);
       const { name, type, description, aliases } = args;
       
-      // Check if entity already exists
+      // Check if entity already exists.
+      // @soft-delete-exempt: EXISTENCE check — "does this name already exist?" — must SEE merged/deleted rows,
+      // because they are part of the answer. Filtering here would find nothing when a merged-away record holds
+      // the name and create a duplicate (the exact defect the entity-dedup merge undid). Rule: existence reads
+      // are exempt; display reads are filtered (existence is not display).
       const { data: existing } = await supabaseClient
         .from("entities")
-        .select("id, name")
+        .select("id, name, merged_into")
         .ilike("name", name)
         .limit(1)
         .maybeSingle();
-      
+
       if (existing) {
+        // Follow merged_into to the LIVE survivor — never point the caller at a merged-away (dead) record,
+        // or exemption alone would make this worse: it would report a tombstone id as "the existing entity".
+        let live: { id: string; name: string } = existing;
+        if (existing.merged_into) {
+          // @soft-delete-exempt: resolves the merged_into survivor by exact id (live by definition); part of
+          // the existence-check follow above, not a display read.
+          const { data: survivor } = await supabaseClient
+            .from("entities").select("id, name").eq("id", existing.merged_into).maybeSingle();
+          if (survivor) live = survivor;
+        }
         return {
           success: false,
-          message: `Entity "${existing.name}" already exists with ID: ${existing.id}`,
-          entity_id: existing.id
+          message: `Entity "${live.name}" already exists with ID: ${live.id}`,
+          entity_id: live.id
         };
       }
 
@@ -2561,9 +2652,9 @@ Be thorough and include every piece of visible text and data.`,
       // Filter by entity if provided
       else if (args.entity_id) {
         // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct check)
-        const { data: ridEntLink } = await supabaseClient
+        const { data: ridEntLink } = await excludeMergedEntities(supabaseClient
           .from("entities")
-          .select("id")
+          .select("id"))
           .eq("id", args.entity_id)
           .eq("tenant_id", tenantId)
           .limit(1)
@@ -2572,9 +2663,9 @@ Be thorough and include every piece of visible text and data.`,
           return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. read_intelligence_documents refused.` };
         }
         // First, get the entity name for text search fallback
-        const { data: entity } = await supabaseClient
+        const { data: entity } = await excludeMergedEntities(supabaseClient
           .from("entities")
-          .select("name, aliases")
+          .select("name, aliases"))
           .eq("id", args.entity_id)
           .single();
 
@@ -2684,6 +2775,7 @@ Be thorough and include every piece of visible text and data.`,
 
       if (!args.signal_id) {
         // Batch mode: find recent signals sharing the same content_hash
+        // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
         const { data: dupeGroups, error: dupeErr } = await supabaseClient
           .from("signals").eq("tenant_id", tenantId)
           .select("content_hash, id, title, created_at, client_id, clients(name)")
@@ -2707,6 +2799,7 @@ Be thorough and include every piece of visible text and data.`,
       }
 
       // Get the target signal
+      // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
       const { data: signal, error: signalError } = await supabaseClient
         .from("signals").eq("tenant_id", tenantId)
         .select("id, normalized_text, title, description, content_hash, created_at")
@@ -2721,6 +2814,7 @@ Be thorough and include every piece of visible text and data.`,
       }
 
       // Check for exact hash matches first
+      // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
       const { data: hashMatches } = await supabaseClient
         .from("signals").eq("tenant_id", tenantId)
         .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
@@ -2730,6 +2824,7 @@ Be thorough and include every piece of visible text and data.`,
         .limit(limit);
 
       // Check for near-duplicates via similarity
+      // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
       const { data: recentSignals } = await supabaseClient
         .from("signals").eq("tenant_id", tenantId)
         .select("id, title, normalized_text, created_at, status, severity, client_id, clients(name)")
@@ -2973,6 +3068,10 @@ Be thorough and include every piece of visible text and data.`,
 
       // P0 Phase-C — if feedback targets a signal, verify the signal is in caller's tenant
       if (object_type === 'signal' && object_id) {
+        // @soft-delete-exempt: the learning pipeline MUST accept feedback on quarantined/soft-deleted signals —
+        // analyst feedback marking a now-quarantined signal false_positive still trains the gate (CLAUDE.md
+        // Quarantine Doctrine; process-feedback:347 intentional service-role exclusion). Filtering here would
+        // drop legitimate feedback. A write gate, but EXEMPT for that documented reason — not filtered.
         const { data: sigCheck } = await supabaseClient
           .from('signals').eq("tenant_id", tenantId)
           .select('id, tenant_id')
@@ -3249,9 +3348,9 @@ Be thorough and include every piece of visible text and data.`,
       const cutoffDate = new Date(Date.now() - days_back * 24 * 60 * 60 * 1000).toISOString();
 
       // Build signal query
-      let signalQuery = supabaseClient
+      let signalQuery = excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity, confidence, created_at")
+        .select("id, source_id, category, severity, confidence, created_at"))
         .gte("created_at", cutoffDate)
         .order("created_at", { ascending: false });
 
@@ -3353,9 +3452,9 @@ Be thorough and include every piece of visible text and data.`,
       const { rule_type = "all", pattern_source, confidence_threshold = 0.8 } = args;
 
       // Get recent signal patterns
-      const { data: signals } = await supabaseClient
+      const { data: signals } = await excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity")
+        .select("id, source_id, category, severity"))
         .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
         .limit(1000);
 
@@ -3558,9 +3657,9 @@ Be thorough and include every piece of visible text and data.`,
       const cutoffDate = new Date(Date.now() - time_window_days * 24 * 60 * 60 * 1000).toISOString();
 
       // Get signals across all clients
-      let query = supabaseClient
+      let query = excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, client_id, source_id, category, severity, normalized_text, created_at, clients(name)")
+        .select("id, client_id, source_id, category, severity, normalized_text, created_at, clients(name)"))
         .gte("created_at", cutoffDate)
         .order("created_at", { ascending: false });
 
@@ -3667,16 +3766,16 @@ Be thorough and include every piece of visible text and data.`,
       const recentCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // Last 24h
 
       // Get baseline signals
-      const { data: baselineSignals } = await supabaseClient
+      const { data: baselineSignals } = await excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity, created_at")
+        .select("id, source_id, category, severity, created_at"))
         .gte("created_at", baselineCutoff)
         .lt("created_at", recentCutoff);
 
       // Get recent signals
-      const { data: recentSignals } = await supabaseClient
+      const { data: recentSignals } = await excludeDeletedSignals(supabaseClient
         .from("signals").eq("tenant_id", tenantId)
-        .select("id, source_id, category, severity, created_at")
+        .select("id, source_id, category, severity, created_at"))
         .gte("created_at", recentCutoff);
 
       const anomalies: any[] = [];
@@ -4550,13 +4649,15 @@ Deno.serve(async (req) => {
         ? iocScopedClientIds
         : ['00000000-0000-0000-0000-000000000000'];
 
-      const { data: iocMatches, error: iocError } = await supabaseClient
+      // @soft-delete-exempt: EXISTENCE check — "have I seen this IOC indicator before?"; a prior sighting in
+      // a since-deleted signal still counts as seen. (excludeTestAndDeleted retained for test-fixture hygiene.)
+      const { data: iocMatches, error: iocError } = await excludeTestAndDeleted(supabaseClient
         .from('signals')
         .select('id, title, severity, confidence, received_at, source_url, raw_json, client_id, clients(name)')
         .ilike('normalized_text', `%${indicator}%`)
         .in('client_id', iocClientScope)
         .order('received_at', { ascending: false })
-        .limit(10);
+        .limit(10));
 
       if (iocError) {
         return { error: iocError.message, message: "IOC lookup failed" };
@@ -4748,17 +4849,20 @@ Deno.serve(async (req) => {
 
       // Pre-check: target entity must belong to the caller's tenant.
       // .eq('tenant_id', …) rejects NULL-tenant entities (Provenance Doctrine).
-      const { data: urpOwnedEntity } = await supabaseClient
+      const { data: urpOwnedEntity } = await excludeMergedEntities(supabaseClient
         .from('entities')
-        .select('id')
+        .select('id'))
         .eq('id', urpEntityId)
         .eq('tenant_id', tenantId)
         .maybeSingle();
       if (!urpOwnedEntity) {
-        return {
-          error: `entity_id ${urpEntityId} not found in current tenant scope`,
-          entity_id: urpEntityId,
-        };
+        // Write gate refuses WITH A REASON (never redirect a write to a survivor). @soft-delete-exempt:
+        // existence lookup to say WHY the target is absent (merged / deleted / not-in-tenant).
+        const { data: urpGone } = await supabaseClient.from('entities').select('merged_into, deleted_at').eq('id', urpEntityId).eq('tenant_id', tenantId).maybeSingle();
+        const urpReason = urpGone?.merged_into ? "that entity has been merged into another record"
+          : urpGone?.deleted_at ? "that entity was deleted"
+          : "no entity with that id exists in your tenant";
+        return { error: `Cannot update risk profile: ${urpReason}.`, entity_id: urpEntityId };
       }
 
       const { error: urpUpdateError } = await supabaseClient
@@ -4794,8 +4898,8 @@ Deno.serve(async (req) => {
       // Fetch signal context if signal_id provided
       let signalData: any = null;
       if (signal_id) {
-        const { data: sig } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-          .select("id, title, category, severity, description, entity_tags")
+        const { data: sig } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+          .select("id, title, category, severity, description, entity_tags"))
           .eq("id", signal_id).maybeSingle();
         signalData = sig;
       }
@@ -4853,6 +4957,7 @@ Deno.serve(async (req) => {
       
       if (!primary_signal_id || !duplicate_signal_ids?.length) {
         // Return merge candidates from recent duplicate hash groups
+        // @soft-delete-exempt: existence check — deleted/merged rows are part of the answer
         const { data: dupScan } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
           .select("content_hash, id, title, created_at, client_id")
           .not("content_hash", "is", null).order("created_at", { ascending: false }).limit(500);
@@ -4992,7 +5097,7 @@ Deno.serve(async (req) => {
         if (!clientData) {
           return {
             error: "Client not found",
-            message: `Could not find a client matching '${rawClientName}'. Please use the exact client name from your Clients list (e.g., Petronas Canada).`,
+            message: `Could not find a client matching '${rawClientName}'. Please use the exact client name from your Clients list.`,
           };
         }
 
@@ -5093,8 +5198,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
       // Proceed even if client record is not found — still analyze signals by client_id
 
       const since = new Date(Date.now() - lookback_days * 86400000).toISOString();
-      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-        .select("raw_json, category, severity, entity_tags")
+      const { data: signals } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+        .select("raw_json, category, severity, entity_tags"))
         .eq("client_id", client_id).gte("received_at", since).limit(500);
 
       const kwCounts: Record<string, number> = {};
@@ -5207,8 +5312,8 @@ The signal is now in the database with status 'triaged' and rules have been appl
 
       // Analyze last 90 days of incident history to identify real failure patterns
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
-      const { data: incidents } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-        .select("id, title, status, priority, severity_level, opened_at, resolved_at, client_id, clients(name, industry)")
+      const { data: incidents } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+        .select("id, title, status, priority, severity_level, opened_at, resolved_at, client_id, clients(name, industry)"))
         .gte("opened_at", ninetyDaysAgo)
         .order("opened_at", { ascending: false }).limit(500);
 
@@ -5283,22 +5388,22 @@ The signal is now in the database with status 'triaged' and rules have been appl
       const { incident_id, format = "executive" } = args;
 
       if (!incident_id) {
-        const { data: openInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, title, status, priority, severity_level, opened_at, clients(name)")
+        const { data: openInc } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, title, status, priority, severity_level, opened_at, clients(name)"))
           .in("status", ["open", "investigating", "escalated"])
           .order("opened_at", { ascending: false }).limit(10);
         return { success: true, note: "incident_id required — showing open incidents to choose from", incidents: openInc || [], count: openInc?.length || 0 };
       }
 
-      const { data: incident, error: incErr } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-        .select("*, clients(name, industry)").eq("id", incident_id).maybeSingle();
+      const { data: incident, error: incErr } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+        .select("*, clients(name, industry)")).eq("id", incident_id).maybeSingle();
       if (incErr || !incident) return { error: "Incident not found", incident_id };
 
-      const { data: relatedSignals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
+      const { data: relatedSignals } = await excludeDeletedSignals(excludeTestAndDeleted(supabaseClient.from("signals").eq("tenant_id", tenantId)
         .select("id, title, severity, category, description, entity_tags, location, received_at")
         .eq("client_id", incident.client_id)
         .gte("received_at", new Date(Date.now() - 7 * 86400000).toISOString())
-        .order("received_at", { ascending: false }).limit(10);
+        .order("received_at", { ascending: false }).limit(10)));
 
       const ageMs = Date.now() - new Date(incident.opened_at).getTime();
       const ageHours = Math.round(ageMs / 3600000);
@@ -5371,8 +5476,8 @@ ${(relatedSignals || []).map((s: any) => `- [${(s.severity || "").toUpperCase()}
       let incidentContext = "";
       let incidentData: any = null;
       if (incident_id) {
-        const { data } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("*, clients(name, industry, locations)").eq("id", incident_id).maybeSingle();
+        const { data } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("*, clients(name, industry, locations)")).eq("id", incident_id).maybeSingle();
         incidentData = data;
         if (incidentData) {
           incidentContext = `Incident: ${incidentData.title || "Untitled"}\nStatus: ${incidentData.status} | Priority: ${incidentData.priority} | Severity: ${incidentData.severity_level}\nClient: ${(incidentData.clients as any)?.name} | Industry: ${(incidentData.clients as any)?.industry}`;
@@ -5453,8 +5558,8 @@ Return a JSON object (no markdown, only valid JSON):
 
       // If recording specific effectiveness data for an incident
       if (incident_id && mitigation_actions && outcome) {
-        const { data: incident } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, title, priority, severity_level, opened_at, resolved_at, status, clients(name)")
+        const { data: incident } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, title, priority, severity_level, opened_at, resolved_at, status, clients(name)"))
           .eq("id", incident_id).maybeSingle();
         const resTimeHours = incident?.opened_at && incident?.resolved_at
           ? Math.round((new Date(incident.resolved_at).getTime() - new Date(incident.opened_at).getTime()) / 3600000)
@@ -5472,12 +5577,12 @@ Return a JSON object (no markdown, only valid JSON):
       // Analytics mode: real incident resolution metrics over last 90 days
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
       const [resolvedResult, openResult] = await Promise.all([
-        supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, title, priority, severity_level, opened_at, resolved_at, client_id, clients(name)")
+        excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, title, priority, severity_level, opened_at, resolved_at, client_id, clients(name)"))
           .not("resolved_at", "is", null).gte("resolved_at", ninetyDaysAgo)
           .order("resolved_at", { ascending: false }).limit(200),
-        supabaseClient.from("incidents").eq("tenant_id", tenantId)
-          .select("id, priority, severity_level, opened_at")
+        excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+          .select("id, priority, severity_level, opened_at"))
           .in("status", ["open", "investigating", "escalated"]).gte("opened_at", ninetyDaysAgo).limit(200),
       ]);
 
@@ -6290,7 +6395,7 @@ Return a JSON object (no markdown, only valid JSON):
       if (query_type === 'signals' || query_type === 'comprehensive') {
         // PROD-S Track H1 (2026-05-23) — exclude quarantined signals from AEGIS
         // reasoning context. See src/lib/signal-query-filters.ts.
-        let signalsQ = supabaseClient.from('signals').eq("tenant_id", tenantId).select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json').neq('is_test', true).eq('quality_status', 'active');
+        let signalsQ = excludeDeletedSignals(supabaseClient.from('signals').eq("tenant_id", tenantId).select('id, title, description, severity, status, received_at, client_id, clients(name), normalized_text, category, source_url, raw_json')).neq('is_test', true).eq('quality_status', 'active');
         signalsQ = applyFilters(signalsQ);
         if (filters.severity?.length) signalsQ = signalsQ.in('severity', filters.severity);
         if (filters.status?.length) signalsQ = signalsQ.in('status', filters.status);
@@ -6304,7 +6409,11 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query incidents
       if (query_type === 'incidents' || query_type === 'comprehensive') {
-        let incQ = supabaseClient.from('incidents').eq("tenant_id", tenantId).select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary');
+        // 2026-08-13 (Q2 ruling): exclude test + soft-deleted incidents from user-facing answers.
+        // Aligns with the signals fetch (`.neq('is_test', true)`); a deleted demo incident had been
+        // surfaced as a real "incident in the past year".
+        let incQ = excludeDeletedIncidents(supabaseClient.from('incidents').eq("tenant_id", tenantId).select('id, title, priority, status, severity_level, opened_at, client_id, clients(name), summary'))
+          .neq('is_test', true).is('deleted_at', null);
         incQ = applyFilters(incQ);
         if (filters.priority?.length) incQ = incQ.in('priority', filters.priority);
         if (filters.status?.length) incQ = incQ.in('status', filters.status);
@@ -6314,7 +6423,7 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query entities — tenant-scoped via client_id IN tenant's clients
       if (query_type === 'entities' || query_type === 'comprehensive') {
-        let entQ = supabaseClient.from('entities').select('id, name, type, description, risk_level, threat_score, current_location, aliases');
+        let entQ = excludeMergedEntities(supabaseClient.from('entities').select('id, name, type, description, risk_level, threat_score, current_location, aliases'));
         if (filters.client_id) {
           entQ = entQ.eq('client_id', filters.client_id);
         } else if (scopedClientIds.length === 0) {
@@ -6333,7 +6442,10 @@ Return a JSON object (no markdown, only valid JSON):
 
       // Query clients — tenant-scoped via tenant_id
       if (query_type === 'clients' || query_type === 'comprehensive') {
-        let clientQ = supabaseClient.from('clients').select('id, name, industry, status, locations, monitoring_keywords, high_value_assets').eq('tenant_id', tenantId);
+        // 2026-08-13 (demo-gate ruling): exclude test clients from the AEGIS client data path.
+        // The dropdown hides them via status='active', but this path filtered neither status nor
+        // is_test, so a test client (e.g. Cascade Energy) + its live signals were reachable in chat.
+        let clientQ = supabaseClient.from('clients').select('id, name, industry, status, locations, monitoring_keywords, high_value_assets').eq('tenant_id', tenantId).eq('is_test', false);
         if (filters.client_id) {
           // already verified above that the client_id belongs to the caller's tenant
           clientQ = clientQ.eq('id', filters.client_id);
@@ -7195,9 +7307,9 @@ Return a JSON object (no markdown, only valid JSON):
         try {
           const cutoff = new Date();
           cutoff.setDate(cutoff.getDate() - 30);
-          const { data: signalRows, error: signalRowsError } = await supabaseClient
+          const { data: signalRows, error: signalRowsError } = await excludeDeletedSignals(supabaseClient
             .from("signals").eq("tenant_id", tenantId)
-            .select("id, title, severity, status, signal_type, created_at, classification, normalized_text")
+            .select("id, title, severity, status, signal_type, created_at, classification, normalized_text"))
             .is("deleted_at", null)
             .or("signal_type.is.null,signal_type.not.in.(historical,test)")
             .gte("created_at", cutoff.toISOString())
@@ -7277,93 +7389,90 @@ Return a JSON object (no markdown, only valid JSON):
       };
     }
 
-    case "run_entity_deep_scan": {
-      // P0 Phase-C — fail-closed tenant gate
-      assertTenantContext("run_entity_deep_scan", tenantId);
-      const { entity_id, entity_name } = args;
+    case "get_subject_exposure": {
+      // READ current exposure from the shared retrieval module (no scan). States its OWN denominator with
+      // dates; distinguishes "nothing on file / no scan run" from "scanned, nothing found".
+      assertTenantContext("get_subject_exposure", tenantId);
+      const { entity_id, entity_name, entity_index } = args;
       if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
+      const rez = await resolveSubjectEntity(supabaseClient, { entity_id, entity_name, entity_index });
+      if (rez.kind === "not_found") return { error: `Entity not found: ${rez.label}. Use search_entities.` };
+      if (rez.kind === "ambiguous") return subjectAmbiguityResult(rez, "get_subject_exposure");
+      if (rez.kind === "bad_index") return subjectAmbiguityResult(rez, "get_subject_exposure", rez.given);
+      const ent = rez.entity;
+      const targetEntityId = ent.id;
 
-      let targetEntityId = entity_id;
-      if (!targetEntityId && entity_name) {
-        const { data: foundEntity } = await supabaseClient.from("entities")
-          .select("id, name, type").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
-        if (!foundEntity) return { error: `Entity not found: ${entity_name}. Use search_entities to find the correct name.` };
-        targetEntityId = foundEntity.id;
+      const { data: items } = await excludeSupersededExposure(supabaseClient.from("subject_exposure_items")
+        .select("id, category, title, severity, is_finding, source_class, subject_awareness"))
+        .eq("subject_entity_id", targetEntityId).is("superseded_at", null);
+      const current = items || [];
+      // location aggregates (count + best/most-prominent rank) for consequence ranking
+      const allIds = current.map((i: any) => i.id);
+      const aggByItem = new Map<string, { count: number; best: number }>();
+      if (allIds.length) {
+        const { data: allLocs } = await supabaseClient.from("subject_exposure_locations")
+          .select("exposure_item_id, found_at_rank").in("exposure_item_id", allIds);
+        for (const l of (allLocs || [])) {
+          const a = aggByItem.get(l.exposure_item_id) ?? { count: 0, best: 999 };
+          a.count += 1; a.best = Math.min(a.best, l.found_at_rank ?? 999);
+          aggByItem.set(l.exposure_item_id, a);
+        }
+      }
+      for (const i of current) { const a = aggByItem.get(i.id) ?? { count: 0, best: 999 }; (i as any).location_count = a.count; (i as any).obscurity_rank = a.best; }
+      const { data: runs } = await supabaseClient.from("subject_scan_runs")
+        .select("scope, finished_at, started_at").eq("subject_entity_id", targetEntityId).eq("status", "completed")
+        .order("started_at", { ascending: false }).limit(1);
+      const latestRun = (runs || [])[0];
+      const repSweep = latestRun ? String(latestRun.finished_at || latestRun.started_at).slice(0, 10) : null;
+      const repDepth = latestRun?.scope?.depth ?? null;
+      const breachItems = current.filter((i: any) => i.category === "data_breach");
+      let breachChecked: string | null = null;
+      if (breachItems.length) {
+        const { data: bl } = await supabaseClient.from("subject_exposure_locations")
+          .select("date_captured").in("exposure_item_id", breachItems.map((i: any) => i.id)).order("date_captured", { ascending: false }).limit(1);
+        breachChecked = bl?.[0]?.date_captured ? String(bl[0].date_captured).slice(0, 10) : null;
       }
 
-      // Aggregate all available data for this entity in parallel
-      const [entityRes, contentRes, investigationsRes] = await Promise.all([
-        supabaseClient.from("entities").select("id, name, type, description, risk_level, threat_score, created_at, updated_at").eq("id", targetEntityId).maybeSingle(),
-        supabaseClient.from("entity_content").select("id, title, sentiment, content_type, published_date, source_url").eq("entity_id", targetEntityId).order("published_date", { ascending: false }).limit(30),
-        supabaseClient.from("investigations").select("id, title, status, created_at").eq("entity_id", targetEntityId).order("created_at", { ascending: false }).limit(5),
-      ]);
-
-      const entity = entityRes.data;
-      if (!entity) return { error: `Entity not found: ${targetEntityId}` };
-
-      const content = contentRes.data || [];
-      const investigations = investigationsRes.data || [];
-
-      // Also search signals that mention this entity
-      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-        .select("id, title, severity, category, received_at, location")
-        .or(`normalized_text.ilike.%${entity.name}%,title.ilike.%${entity.name}%`)
-        .order("received_at", { ascending: false }).limit(20);
-
-      // Sentiment analysis
-      const sentBreakdown: Record<string, number> = {};
-      for (const c of content) { const s = c.sentiment || "unknown"; sentBreakdown[s] = (sentBreakdown[s] || 0) + 1; }
-      const negCount = sentBreakdown["negative"] || 0;
-      const posCount = sentBreakdown["positive"] || 0;
-
-      // Signal severity breakdown
-      const sigSevBreakdown: Record<string, number> = {};
-      for (const s of (signals || [])) { const sv = s.severity || "unknown"; sigSevBreakdown[sv] = (sigSevBreakdown[sv] || 0) + 1; }
-
-      const overallRisk = entity.risk_level || (
-        (entity.threat_score || 0) >= 80 ? "critical" :
-        (entity.threat_score || 0) >= 60 ? "high" :
-        (entity.threat_score || 0) >= 40 ? "medium" : "low"
-      );
-
-      // Try to also call the edge function for OSINT data (non-blocking, short timeout)
-      let osintData: any = null;
-      const _dsUrl = Deno.env.get("SUPABASE_URL");
-      const _dsKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-      if (_dsUrl && _dsKey) {
-        try {
-          const dsResp = await fetch(`${_dsUrl}/functions/v1/entity-deep-scan`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_dsKey}` },
-            body: JSON.stringify({ entity_id: targetEntityId }),
-            signal: AbortSignal.timeout(10000),
-          });
-          if (dsResp.ok) osintData = await dsResp.json();
-        } catch (_) { /* edge function unavailable — DB data only */ }
+      // EMPTY DISTINCTION — required by the product
+      if (current.length === 0) {
+        if (!latestRun) return { success: true, subject: ent.name, status: "no_scan", message: `Nothing on file for "${ent.name}" — no scan has been run. This is NOT "nothing found." Offer run_subject_scan to run one.` };
+        return { success: true, subject: ent.name, status: "scanned_empty", denominator: { reputational_sweep: repSweep, reputational_depth: repDepth }, message: `Scanned ${repSweep}${repDepth ? ` (${repDepth})` : ""} — nothing currently on file for "${ent.name}". State the sweep date.` };
       }
-
+      // CONSEQUENCE-FIRST ranking — SAME comparator as the report (findings > non-findings, severity,
+      // corroboration, obscurity tiebreaker). No arbitrary insertion order; non-findings never top the list.
+      const tp = current.filter((i: any) => i.source_class !== "self_published" && i.category !== "data_breach").sort(compareExposureItems);
+      const sp = current.filter((i: any) => i.source_class === "self_published").sort(compareExposureItems);
+      const findingsCount = tp.filter((i: any) => i.is_finding).length;
+      const denomLine = `${current.length} current items · reputational sweep ${repSweep ?? "never"}${repDepth ? ` (${repDepth})` : ""}${breachChecked ? ` · breach check ${breachChecked}` : ""}`;
       return {
-        success: true,
-        entity,
-        overall_risk: overallRisk,
-        threat_score: entity.threat_score,
-        signal_summary: {
-          total: signals?.length || 0,
-          by_severity: sigSevBreakdown,
-          most_recent: signals?.[0] || null,
-        },
-        intelligence_summary: {
-          content_items: content.length,
-          sentiment_breakdown: sentBreakdown,
-          negative_ratio: content.length ? Math.round((negCount / content.length) * 100) : 0,
-          positive_ratio: content.length ? Math.round((posCount / content.length) * 100) : 0,
-          recent_headlines: content.slice(0, 5).map((c: any) => ({ title: c.title, sentiment: c.sentiment, published: c.published_date, url: c.source_url })),
-        },
-        investigations: { total: investigations.length, list: investigations },
-        osint_scan: osintData ? { status: "complete", findings_count: osintData.findings_count, overall_risk: osintData.overall_risk } : { status: "unavailable" },
-        scanned_at: new Date().toISOString(),
-        message: `Entity deep scan for "${entity.name}": Risk ${overallRisk?.toUpperCase()}, Threat score ${entity.threat_score || "N/A"}/100. ${signals?.length || 0} signals, ${content.length} intelligence items, ${investigations.length} investigations.`,
+        success: true, subject: ent.name, status: "has_items",
+        denominator: { current_items: current.length, reputational_sweep: repSweep, reputational_depth: repDepth, breach_check: breachChecked },
+        denominator_line: denomLine,
+        third_party: tp.slice(0, 15).map((i: any) => ({ title: i.title, category: i.category, severity: i.severity, is_finding: i.is_finding, locations: i.location_count, awareness: i.subject_awareness })),
+        counts: { third_party: tp.length, third_party_findings: findingsCount, self_published: sp.length, breach: breachItems.length },
+        message: `${denomLine}. Lead with the real findings (is_finding=true), highest-severity first; items marked is_finding=false are bare mentions — do NOT present them as findings. You MUST state the denominator (with dates).`,
       };
+    }
+
+    case "run_subject_scan": {
+      assertTenantContext("run_subject_scan", tenantId);
+      const { entity_id, entity_name, entity_index } = args;
+      if (!entity_id && !entity_name) return { error: "Either entity_id or entity_name is required" };
+      const rez = await resolveSubjectEntity(supabaseClient, { entity_id, entity_name, entity_index });
+      if (rez.kind === "not_found") return { error: `Entity not found: ${rez.label}.` };
+      if (rez.kind === "ambiguous") return subjectAmbiguityResult(rez, "run_subject_scan");
+      if (rez.kind === "bad_index") return subjectAmbiguityResult(rez, "run_subject_scan", rez.given);
+      const ent = rez.entity;
+      const targetEntityId = ent.id;
+      const _u = Deno.env.get("SUPABASE_URL"); const _k = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const resp = await fetch(`${_u}/functions/v1/subject-exposure`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${_k}` },
+        body: JSON.stringify({ action: "rescan", entityId: targetEntityId }),
+      });
+      const j = await resp.json().catch(() => ({}));
+      const d = (j as any)?.data ?? j;
+      if (!resp.ok || d?.error) return { error: `Scan failed to start: ${d?.error ?? resp.status}` };
+      return { success: true, subject: ent.name, scan_id: d?.scanId, status: "started", message: `Deep scan started for "${ent.name}" (7 categories, ~1 min, fire-and-persist). Results will land in the exposure set — do NOT claim results now; tell the user to check back shortly or use get_subject_exposure.` };
     }
 
     case "perform_external_web_search": {
@@ -7557,12 +7666,18 @@ Return a JSON object (no markdown, only valid JSON):
       // P0 Phase-C — if a specific incident_id is provided, verify it belongs to caller's tenant
       if (args.incident_id) {
         const asiScopedClientIds = await getScopedClientIds(supabaseClient, tenantId);
-        const { data: incCheck } = await supabaseClient
+        const { data: incCheck } = await excludeDeletedIncidents(supabaseClient
           .from('incidents').eq("tenant_id", tenantId)
-          .select('id, client_id')
+          .select('id, client_id'))
           .eq('id', args.incident_id)
           .maybeSingle();
-        if (!incCheck || !asiScopedClientIds.includes(incCheck.client_id)) {
+        if (!incCheck) {
+          // Write gate refuses WITH A REASON. @soft-delete-exempt: existence lookup (deleted / not-in-tenant).
+          const { data: incGone } = await supabaseClient.from('incidents').select('deleted_at').eq('id', args.incident_id).eq('tenant_id', tenantId).maybeSingle();
+          const incReason = incGone?.deleted_at ? "that incident was deleted" : `no incident with that id exists in tenant ${tenantName}`;
+          return { error: `Cannot summarize: ${incReason}.` };
+        }
+        if (!asiScopedClientIds.includes(incCheck.client_id)) {
           return {
             error: `TENANT_BOUNDARY: incident ${args.incident_id} is not in tenant ${tenantName}. auto_summarize_incidents refused.`,
           };
@@ -7589,8 +7704,8 @@ Return a JSON object (no markdown, only valid JSON):
 
       if (entity_id) {
         // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct check)
-        const { data: entity } = await supabaseClient.from("entities")
-          .select("id, name, type, description, risk_level, threat_score, created_at, tenant_id")
+        const { data: entity } = await excludeMergedEntities(supabaseClient.from("entities")
+          .select("id, name, type, description, risk_level, threat_score, created_at, tenant_id"))
           .eq("id", entity_id)
           .eq("tenant_id", tenantId)
           .maybeSingle();
@@ -7610,15 +7725,15 @@ Return a JSON object (no markdown, only valid JSON):
       }
 
       // Batch: list entities with missing descriptions in caller's tenant
-      const { data: entities } = await supabaseClient.from("entities")
-        .select("id, name, type, description, risk_level, threat_score")
+      const { data: entities } = await excludeMergedEntities(supabaseClient.from("entities")
+        .select("id, name, type, description, risk_level, threat_score"))
         .eq("tenant_id", tenantId)
         .or("description.is.null,description.eq.")
         .order("threat_score", { ascending: false, nullsFirst: false })
         .limit(limit);
 
-      const { count: totalEntities } = await supabaseClient.from("entities")
-        .select("id", { count: "exact", head: true })
+      const { count: totalEntities } = await excludeMergedEntities(supabaseClient.from("entities")
+        .select("id", { count: "exact", head: true }))
         .eq("tenant_id", tenantId);
 
       return {
@@ -7639,8 +7754,8 @@ Return a JSON object (no markdown, only valid JSON):
       const { signal_id, batch_mode, limit = 10 } = args;
 
       if (signal_id) {
-        const { data: signal } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-          .select("id, title, description, severity, category, entity_tags, location, received_at, source_id, confidence, quality_score, raw_json")
+        const { data: signal } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+          .select("id, title, description, severity, category, entity_tags, location, received_at, source_id, confidence, quality_score, raw_json"))
           .eq("id", signal_id).maybeSingle();
         if (!signal) return { error: `Signal not found: ${signal_id}` };
         return {
@@ -7662,8 +7777,8 @@ Return a JSON object (no markdown, only valid JSON):
       }
 
       // Batch: aggregate insights from recent signals
-      const { data: signals } = await supabaseClient.from("signals").eq("tenant_id", tenantId)
-        .select("id, title, severity, category, entity_tags, location, received_at, confidence, quality_score, raw_json")
+      const { data: signals } = await excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId)
+        .select("id, title, severity, category, entity_tags, location, received_at, confidence, quality_score, raw_json"))
         .not("is_test", "eq", true).order("received_at", { ascending: false }).limit(limit * 5);
 
       if (!signals?.length) return { success: true, insights: [], message: "No signals found for analysis" };
@@ -8057,10 +8172,10 @@ Return a JSON object (no markdown, only valid JSON):
       // P0 Phase-C — entity lookup is tenant-scoped via entities.tenant_id direct
       let entity = null;
       if (entity_id) {
-        const { data } = await supabaseClient.from("entities").select("*").eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
+        const { data } = await excludeMergedEntities(supabaseClient.from("entities").select("*")).eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
         entity = data;
       } else if (entity_name) {
-        const { data } = await supabaseClient.from("entities").select("*").eq("tenant_id", tenantId).ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
+        const { data } = await excludeMergedEntities(supabaseClient.from("entities").select("*")).eq("tenant_id", tenantId).ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
         entity = data;
       }
       if (!entity) return { error: `TENANT_BOUNDARY: principal entity not found in tenant ${tenantName}.` };
@@ -8098,16 +8213,16 @@ Return a JSON object (no markdown, only valid JSON):
 
       let resolvedEntityId = entity_id;
       if (!resolvedEntityId && entity_name) {
-        const { data: ent } = await supabaseClient.from("entities")
-          .select("id, name").ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
+        const { data: ent } = await excludeMergedEntities(supabaseClient.from("entities")
+          .select("id, name")).ilike("name", `%${entity_name}%`).limit(1).maybeSingle();
         resolvedEntityId = ent?.id;
         if (!resolvedEntityId) return { error: `Entity not found: ${entity_name}` };
       }
       if (!resolvedEntityId) return { error: "entity_id or entity_name is required" };
 
       // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
-      const { data: entity } = await supabaseClient.from("entities")
-        .select("id, name, type, risk_level, threat_score, tenant_id")
+      const { data: entity } = await excludeMergedEntities(supabaseClient.from("entities")
+        .select("id, name, type, risk_level, threat_score, tenant_id"))
         .eq("id", resolvedEntityId)
         .eq("tenant_id", tenantId)
         .maybeSingle();
@@ -8175,14 +8290,19 @@ Return a JSON object (no markdown, only valid JSON):
 
       // P0 Phase-C — entity must be linked to a client in caller's tenant before alert preferences can be configured
       // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
-      const { data: cpaEntity } = await supabaseClient
+      const { data: cpaEntity } = await excludeMergedEntities(supabaseClient
         .from("entities")
-        .select("id")
+        .select("id"))
         .eq("id", entity_id)
         .eq("tenant_id", tenantId)
         .maybeSingle();
       if (!cpaEntity) {
-        return { error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. configure_principal_alerts refused.` };
+        // Write gate refuses WITH A REASON. @soft-delete-exempt: existence lookup (merged/deleted/not-in-tenant).
+        const { data: cpaGone } = await supabaseClient.from("entities").select("merged_into, deleted_at").eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
+        const cpaReason = cpaGone?.merged_into ? "that entity has been merged into another record"
+          : cpaGone?.deleted_at ? "that entity was deleted"
+          : `no entity with that id exists in tenant ${tenantName}`;
+        return { error: `Cannot configure alerts: ${cpaReason}.` };
       }
 
       const updateData: any = { entity_id, updated_at: new Date().toISOString() };
@@ -8482,9 +8602,9 @@ Return a JSON object (no markdown, only valid JSON):
               const mediaSince = new Date();
               mediaSince.setDate(mediaSince.getDate() - (period_days || 7));
 
-              const { data: clientSignals } = await serviceClient
+              const { data: clientSignals } = await excludeDeletedSignals(serviceClient
                 .from("signals").eq("tenant_id", tenantId)
-                .select("id")
+                .select("id"))
                 .eq("client_id", client_id)
                 .gte("received_at", mediaSince.toISOString())
                 .limit(50);
@@ -8679,9 +8799,9 @@ Return a JSON object (no markdown, only valid JSON):
             // 1. Fetch OSINT media attachments linked to signals for this client
             let signalIds: string[] = [];
             if (client_id) {
-              const { data: clientSignals } = await serviceClient
+              const { data: clientSignals } = await excludeDeletedSignals(serviceClient
                 .from("signals").eq("tenant_id", tenantId)
-                .select("id")
+                .select("id"))
                 .eq("client_id", client_id)
                 .gte("received_at", mediaSince.toISOString())
                 .limit(100);
@@ -8937,8 +9057,8 @@ Return a JSON object (no markdown, only valid JSON):
         const errText = await orchestratorResponse.text();
         // Fallback: list recent incidents that could be investigated
         if (!incident_id) {
-          const { data: recentInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-            .select("id, title, status, priority, opened_at, client_id, clients(name)")
+          const { data: recentInc } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+            .select("id, title, status, priority, opened_at, client_id, clients(name)"))
             .in("status", ["open", "investigating"]).order("opened_at", { ascending: false }).limit(5);
           return {
             success: true,
@@ -8998,8 +9118,8 @@ Return a JSON object (no markdown, only valid JSON):
         const errText = await debateResponse.text();
         // Fallback: list open incidents for debate context
         if (!incident_id) {
-          const { data: debateInc } = await supabaseClient.from("incidents").eq("tenant_id", tenantId)
-            .select("id, title, status, priority, opened_at, client_id, clients(name)")
+          const { data: debateInc } = await excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId)
+            .select("id, title, status, priority, opened_at, client_id, clients(name)"))
             .in("status", ["open", "investigating", "escalated"]).order("opened_at", { ascending: false }).limit(5);
           return {
             success: true,
@@ -9560,15 +9680,15 @@ Return a JSON object (no markdown, only valid JSON):
           .from("ai_agents")
           .select("id, call_sign, codename, specialty, mission_scope, input_sources, output_types, system_prompt")
           .eq("is_active", true),
-        supabaseClient.from("signals").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
-        supabaseClient.from("incidents").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
+        excludeDeletedSignals(supabaseClient.from("signals").eq("tenant_id", tenantId).select("*", { count: "exact", head: true })),
+        excludeDeletedIncidents(supabaseClient.from("incidents").eq("tenant_id", tenantId).select("*", { count: "exact", head: true })),
         // R3 (Task #108) — tenant-scope the entity count so the self-assessment
         // surfaces the caller-tenant's entity total, not the cross-tenant
         // global. Mirrors the signals/incidents predicate already in place.
         // Empirical: pre-fix returned 2966 (global) to a CRT user whose scope
         // is 62 entities — a visibly-wrong confident number presented to the
         // operator alongside correctly-scoped signals/incidents counts.
-        supabaseClient.from("entities").eq("tenant_id", tenantId).select("*", { count: "exact", head: true }),
+        excludeMergedEntities(supabaseClient.from("entities").eq("tenant_id", tenantId).select("*", { count: "exact", head: true })),
       ]);
 
       if (agentsErr2 || !activeAgents2?.length) {
@@ -10189,7 +10309,7 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
     case "investigate_poi": {
       // P0 Phase-C — fail-closed tenant gate (kept even though endpoint returns stub)
       assertTenantContext("investigate_poi", tenantId);
-      return { error: "investigate_poi is not available — the OSINT investigation engine is not deployed. Use run_entity_deep_scan to access available intelligence, or perform_external_web_search for live OSINT." };
+      return { error: "investigate_poi is retired. Use get_subject_exposure to read a subject's current exposure (with its denominator), or run_subject_scan to run a fresh 7-category deep scan via the shared retrieval module." };
     }
 
     case "generate_poi_report": {
@@ -10198,28 +10318,35 @@ ${improveList}${r.summary ? `\nSummary: ${r.summary}` : ''}`;
       const { entity_id, investigation_id } = args;
 
       // P0 Phase-C — entity must be in caller's tenant (entities.tenant_id direct)
-      const { data: gprEntity } = await supabaseClient
+      const { data: gprEntity } = await excludeMergedEntities(supabaseClient
         .from("entities")
-        .select("id")
+        .select("id"))
         .eq("id", entity_id)
         .eq("tenant_id", tenantId)
         .maybeSingle();
       if (!gprEntity) {
-        return { success: false, error: `TENANT_BOUNDARY: entity is not in tenant ${tenantName}. POI report refused.` };
+        // Write gate refuses WITH A REASON (never redirect to a survivor). @soft-delete-exempt: existence lookup.
+        const { data: gprGone } = await supabaseClient.from("entities").select("merged_into, deleted_at").eq("id", entity_id).eq("tenant_id", tenantId).maybeSingle();
+        const gprReason = gprGone?.merged_into ? "that entity has been merged into another record"
+          : gprGone?.deleted_at ? "that entity was deleted"
+          : `no entity with that id exists in tenant ${tenantName}`;
+        return { success: false, error: `Cannot generate report: ${gprReason}.` };
       }
 
+      // Successor: generate-subject-exposure-report (the disabled generate-poi-report is retired). Persists
+      // issuable=false — a report is generated but NOT deliverable until an operator issues it.
       const { data: rptData, error: rptErr } = await supabaseClient.functions.invoke(
-        'generate-poi-report',
-        { body: { entity_id, investigation_id: investigation_id || undefined, tenant_id: tenantId } }
+        'generate-subject-exposure-report',
+        { body: { entityId: entity_id } }
       );
-      if (rptErr) return { success: false, error: rptErr.message };
+      const rpt = (rptData as any)?.data ?? rptData;
+      if (rptErr || rpt?.error) return { success: false, error: rptErr?.message ?? rpt?.error };
       return {
         success: true,
-        report_id: rptData?.report_id,
+        report_id: rpt?.reportId,
         entity_id,
-        confidence_score: rptData?.confidence_score,
-        threat_level: rptData?.threat_level,
-        summary: `Intelligence report generated for entity. Confidence: ${rptData?.confidence_score}%. Threat level: ${rptData?.threat_level?.toUpperCase()}. View the full report in the Entity Detail dialog under the Report tab.`,
+        issuable: false,
+        summary: `Reputational exposure report generated for the entity (${rpt?.counts?.third_party ?? 0} third-party, ${rpt?.counts?.breaches ?? 0} breach items). It is PERSISTED but issuable=false — an operator must review and issue it before delivery. Remediation is operator-authored.`,
       };
     }
 
@@ -10322,6 +10449,9 @@ Deno.serve(async (req) => {
       conversationId: (body as { conversation_id?: string }).conversation_id ?? null,
       functionName: 'dashboard-ai-assistant',
       actorSurface: 'aegis',
+      // the full tool menu offered to the model this request (names only) — forensics can see what it COULD
+      // have called, not just what it did.
+      offeredTools: tools.map((t) => (t as { function?: { name?: string }; name?: string }).function?.name ?? (t as { name?: string }).name ?? 'unknown'),
     });
     
     // ── COMMON OPERATING PICTURE ────────────────────────────────────────────
@@ -10847,7 +10977,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             if (isPdfUrl) {
               // PDFs MUST use base64 data URLs — signed/public URLs are NOT supported by the AI gateway
               try {
-                const pdfResp = await fetch(attachUrl);
+                const pdfResp = await safeFetch(attachUrl);  // WO-SSRF-SHARED-GUARD-01 Wave 4: attachUrl is caller-supplied
                 if (pdfResp.ok) {
                   const pdfBytes = new Uint8Array(await pdfResp.arrayBuffer());
                   const base64 = base64FromBytes(pdfBytes);
@@ -10978,12 +11108,29 @@ The user's message is just a conversational acknowledgment - respond in kind, do
     const writeRaw = async (bytes: Uint8Array) => { try { await sseWriter.write(bytes); } catch {} };
     const writeSSEText = async (text: string) => writeRaw(sseEnc.encode(text));
     const writeDone = () => writeSSEText('data: [DONE]\n\n');
+    // Flight recorder: accumulate the final assistant TEXT actually streamed to the user, so a trace retains
+    // what Aegis SAID (not just a path). Appended at the first-stream content point (no-tool answers) AND in
+    // pipeResponseBody (post-tool answers). Best-effort — parsing never affects the streamed bytes.
+    let recFinalText = '';
     const pipeResponseBody = async (body: ReadableStream<Uint8Array>) => {
       const r = body.getReader();
+      const _dec = new TextDecoder();
+      let _buf = '';
       while (true) {
         const { done, value } = await r.read();
         if (done) break;
         await writeRaw(value);
+        try {
+          _buf += _dec.decode(value, { stream: true });
+          const lines = _buf.split('\n');
+          _buf = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (raw === '[DONE]' || !raw) continue;
+            try { const c = JSON.parse(raw).choices?.[0]?.delta?.content; if (c) recFinalText += c; } catch { /* skip */ }
+          }
+        } catch { /* accumulation never affects the stream */ }
       }
     };
 
@@ -11094,7 +11241,28 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // via extraBody so both OpenAI and Gemini OpenAI-compat endpoints receive them.
         // skipGuardrails preserves the existing buildDashboardAegisPrompt(...) content
         // verbatim (per "no broader refactor" constraint).
-        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "");
+        // INC-CTX-CONTAM Class C (WO-PROMPT-ROSTER-01, 2026-08-12): the client roster is now
+        // DYNAMIC — THIS tenant's own clients only, from the client row. No static cross-tenant
+        // list. No tenant / no clients → empty (never a fallback naming other tenants' clients).
+        let clientContext = "";
+        try {
+          if (userTenantId) {
+            const { data: __tenantClientRows } = await supabaseClient
+              .from("clients")
+              .select("name, industry, status")
+              .eq("tenant_id", userTenantId)
+              .neq("status", "inactive");
+            const __lines = (__tenantClientRows || [])
+              .filter((c: any) => c?.name && !String(c.name).startsWith("_"))
+              .map((c: any) => `- ${c.name}${c.industry ? ` — ${c.industry}` : ""}`);
+            if (__lines.length > 0) {
+              clientContext = `\n═══ THIS TENANT'S CLIENTS (the ONLY clients you may reference) ═══\n${__lines.join("\n")}\n`;
+            }
+          }
+        } catch (e) {
+          console.warn("[Aegis] dynamic client context build failed (non-fatal):", e);
+        }
+        const __recSystemPrompt = buildDashboardAegisPrompt(tenantKnowledgeContext, behavioralCorrectionContext, learningContext, agentRosterContext, copContext, agentIntelligenceContext, loginSummaryContext, userTenantName ?? "", clientContext);
         // Flight recorder: prompt-assembly trace (final system prompt + context blocks).
         rec.prompt({
           systemPrompt: __recSystemPrompt,
@@ -11156,6 +11324,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               if (!delta) continue;
               if (delta.content) {
                 streamedContent += delta.content;
+                recFinalText += delta.content; // flight recorder: retain what was said (no-tool answer path)
                 await writeSSEText(`${line}\n\n`); // forward in OpenAI SSE format
               }
               if (delta.tool_calls) {
@@ -11513,32 +11682,56 @@ The user's message is just a conversational acknowledgment - respond in kind, do
             const _isHighRisk = _wraithHighRiskTools.includes(toolCall.function.name) ||
               toolCall.function.name.startsWith("delete_");
             if (_isHighRisk) {
+              // WO-INJECTION-GATE-FAILOPEN-01: fail-CLOSED for destructive tools, fail-open-LOUD
+              // otherwise. A skipped injection gate must never look identical to a clean check.
+              const _isDestructive = toolCall.function.name.startsWith("delete_");
+              let _gateOutcome = "unknown";
               try {
                 const _wraithUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/wraith-security-advisor`;
                 const _wraithKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
                 const _wraithResp = await Promise.race([
                   fetch(_wraithUrl, {
                     method: "POST",
-                    headers: { "Authorization": `Bearer ${_wraithKey}`, "Content-Type": "application/json" },
+                    // detect_prompt_injection is operator-only (Option A) — send the internal secret.
+                    headers: { "Authorization": `Bearer ${_wraithKey}`, "Content-Type": "application/json", "x-fortress-internal": Deno.env.get("FORTRESS_INTERNAL_SECRET") ?? "" },
                     body: JSON.stringify({ action: "detect_prompt_injection", message: _wraithCombined }),
                   }),
                   new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
                 ]) as Response;
                 if (_wraithResp.ok) {
                   const _wraithAiResult = await _wraithResp.json();
-                  if (_wraithAiResult?.blocked === true) {
-                    console.warn(`[WRAITH AI] Blocked high-risk tool: ${toolCall.function.name}`);
-                    return {
-                      tool_call_id: toolCall.id,
-                      role: "tool",
-                      name: toolCall.function.name,
-                      content: JSON.stringify({ success: false, error: "Request blocked by WRAITH AI: adversarial input detected in high-risk operation." }),
-                    };
-                  }
+                  if (_wraithAiResult?.blocked === true) _gateOutcome = "blocked";
+                  else if (_wraithAiResult?.analysis_ok === true) _gateOutcome = "checked_clean";
+                  else _gateOutcome = "analysis_error"; // reached but model/analysis failed
+                } else {
+                  _gateOutcome = `http_${_wraithResp.status}`;
                 }
               } catch (_wraithAiErr) {
-                // Timeout or network error — fail open, log and continue
-                console.warn(`[WRAITH AI] Check failed for ${toolCall.function.name}, continuing:`, _wraithAiErr);
+                _gateOutcome = (_wraithAiErr instanceof Error && _wraithAiErr.message === "timeout") ? "timeout" : "network_error";
+              }
+
+              if (_gateOutcome === "blocked") {
+                console.warn(`[WRAITH AI] Blocked high-risk tool: ${toolCall.function.name}`);
+                return { tool_call_id: toolCall.id, role: "tool", name: toolCall.function.name,
+                  content: JSON.stringify({ success: false, error: "Request blocked by WRAITH AI: adversarial input detected in high-risk operation." }) };
+              }
+
+              // Not a clean check (unavailable / errored / timed out): LOUD finding + fail-closed for destructive.
+              if (_gateOutcome !== "checked_clean") {
+                supabaseClient.rpc('record_platform_finding', {
+                  p_category: 'security_posture',
+                  p_severity: _isDestructive ? 'high' : 'medium',
+                  p_title: `Prompt-injection gate unavailable (${_gateOutcome}) on ${toolCall.function.name}`,
+                  p_analysis: `High-risk chat tool dispatched with injection-gate outcome=${_gateOutcome} (not a clean check). ${_isDestructive ? 'BLOCKED (fail-closed — destructive tool).' : 'Proceeded (fail-open — non-destructive).'} Chronic occurrences mean the gate is down — see WO-INJECTION-GATE-FAILOPEN-01. The agent-sentinel canary independently verifies gate health daily.`,
+                  p_plain_english: `The AI injection defence could not check a high-risk action (${toolCall.function.name}). ${_isDestructive ? 'It was blocked to be safe.' : 'It was allowed through.'}`,
+                  p_action: 'Check wraith-security-advisor detect_prompt_injection health (model route/auth). If chronic, treat the chat surface as unprotected.',
+                  p_affected_agent: 'dashboard-ai-assistant', p_affected_job: 'chat-tool-dispatch',
+                }).then(() => {}, (e: any) => console.warn('[WRAITH AI] gate-skip finding failed:', e?.message));
+                if (_isDestructive) {
+                  return { tool_call_id: toolCall.id, role: "tool", name: toolCall.function.name,
+                    content: JSON.stringify({ success: false, error: "Blocked: the prompt-injection safety check is unavailable and this is a destructive operation (fail-closed). Try again shortly." }) };
+                }
+                // non-destructive high-risk: fail open (proceed) — recorded loudly above.
               }
             }
             // ─────────────────────────────────────────────────────────────────────
@@ -11572,7 +11765,16 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               scopedTenantId: userTenantId ?? null,
               outcome: (_recOk && _recOk.success === false) ? 'refused' : 'ok',
               refusalReason: (_recOk && _recOk.success === false) ? String(_recOk.error ?? '').slice(0, 300) : null,
-              returnedObjectCount: _recOk && Array.isArray((_recOk as { data?: unknown }).data) ? ((_recOk as { data: unknown[] }).data.length) : undefined,
+              // Count both a bare-array result AND a { data: [...] } wrapper — a null count sitting next to a
+              // populated result_summary makes a trace reader distrust both fields.
+              returnedObjectCount: Array.isArray(result)
+                ? result.length
+                : (_recOk && Array.isArray((_recOk as { data?: unknown }).data) ? (_recOk as { data: unknown[] }).data.length : undefined),
+              // redacted summary of WHAT was returned (beside the count) — top-level shape + bounded preview;
+              // the recorder further strips secrets/embeddings and truncates.
+              resultSummary: _recOk
+                ? { success: _recOk.success ?? true, keys: Object.keys(_recOk).slice(0, 40), preview: _resultStr.slice(0, 2000) }
+                : { preview: _resultStr.slice(0, 2000) },
             });
             return {
               tool_call_id: toolCall.id,
@@ -11591,6 +11793,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
               toolName: toolCall.function.name, args,
               scopedTenantId: userTenantId ?? null,
               outcome: 'error', refusalReason: errorMessage.slice(0, 300),
+              resultSummary: { error: errorMessage.slice(0, 2000) },
             });
             // PROD-T.3 (2026-05-23) — sanitize tool error before LLM exposure.
             // Raw provider text (OPENAI_API_KEY, quota, RESOURCE_EXHAUSTED, etc.)
@@ -11682,7 +11885,7 @@ The user's message is just a conversational acknowledgment - respond in kind, do
         // have an accumulator). runProseLintAtFinish is intentionally unused here.
         void runProseLintAtFinish; // referenced to silence TS unused-var.
         // Flight recorder flush — post-stream, best-effort (the seam swallows errors).
-        await rec.finish({ status: recResponsePath === 'error' ? 'error' : 'ok', finalResponsePath: recResponsePath });
+        await rec.finish({ status: recResponsePath === 'error' ? 'error' : 'ok', finalResponsePath: recResponsePath, finalResponseText: recFinalText || undefined });
         try { await sseWriter.close(); } catch {}
       }
     })();
