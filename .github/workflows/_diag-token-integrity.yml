@@ -1,0 +1,51 @@
+name: DIAG — token integrity in CI (gate 4, temporary)
+
+# TEMPORARY diagnostic for the 9106 hunt. Runs in the `production` environment (so it reads the
+# SAME CLOUDFLARE_API_TOKEN the deploy uses) and prints ONLY non-reversible facts about the value —
+# never the value itself:
+#   - length (a Cloudflare API token is 40 chars)
+#   - whether it contains whitespace (an embedded space/newline alone causes 9106)
+#   - whether the first/last char is alphanumeric (catches leading/trailing junk)
+#   - a sha256 of the value — compare it to `printf %s '<your token>' | sha256sum` on your machine.
+#     Match => the GitHub secret is byte-identical to your token (value/scope are fine, look at wrangler).
+#     Differ => the stored secret is NOT your token (mangled in storage/transit).
+# It also retries the read on wrangler@4.98.0 (your local version) to isolate the CI wrangler version.
+# Delete this file once the cause is identified.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    name: Token integrity (prints no value)
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Inspect the injected token (no value printed)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "RESULT: CLOUDFLARE_API_TOKEN is EMPTY in this job — not resolving from the production env secret."
+            exit 0
+          fi
+          echo "len=${#CLOUDFLARE_API_TOKEN}   (a Cloudflare API token is 40 chars)"
+          case "$CLOUDFLARE_API_TOKEN" in *[[:space:]]*) echo "whitespace=YES  <-- embedded space/newline; this alone produces 9106";; *) echo "whitespace=no";; esac
+          case "$CLOUDFLARE_API_TOKEN" in [A-Za-z0-9]*) echo "first_char=alnum";; *) echo "first_char=NON-alnum";; esac
+          case "$CLOUDFLARE_API_TOKEN" in *[A-Za-z0-9]) echo "last_char=alnum";; *) echo "last_char=NON-alnum";; esac
+          echo "sha256=$(printf %s "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -d' ' -f1)"
+          echo "   -> compare locally:  printf %s '<your token>' | sha256sum"
+
+      - name: Retry the failing read on wrangler@4.98.0 (isolates the CI wrangler version)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          echo "CI default wrangler = $(npx wrangler --version 2>&1 | tail -1)"
+          echo "--- versions list on wrangler@4.98.0: ---"
+          npx -y wrangler@4.98.0 versions list --name silent-shield-signal 2>&1 | tail -10
