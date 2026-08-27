@@ -1,0 +1,77 @@
+name: Frontend Production Rollback (Governed)
+
+# Gate 7's rollback path, and the standing emergency lever. Rolls the live worker back to a prior
+# Cloudflare version ID through the SAME governed, environment-gated lane — so rollback is proven to
+# work before the manual wrangler route is closed (gate 4). Verifies the active version after rollback
+# and writes a rollback receipt.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_to_version_id:
+        description: Cloudflare Worker Version ID to roll back to (from `wrangler versions list`).
+        required: true
+        type: string
+      confirm_rollback:
+        description: Type ROLLBACK_FRONTEND_PRODUCTION to roll back.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Frontend Production Rollback
+    runs-on: ubuntu-latest
+    environment: production   # <- same reviewer + branch + env-secret gate as deploy
+    if: github.event.inputs.confirm_rollback == 'ROLLBACK_FRONTEND_PRODUCTION'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Roll back to version + verify active
+        id: rb
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          TARGET="${{ inputs.rollback_to_version_id }}"
+          echo "Rolling back silent-shield-signal to $TARGET"
+          npx wrangler rollback "$TARGET" --name silent-shield-signal -m "governed rollback (run ${{ github.run_id }}, actor ${{ github.actor }})" -y
+          # verify: the active (100%) version is now the target
+          ACTIVE="$(npx wrangler deployments list --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          echo "active_version=$ACTIVE"
+          if [ "$ACTIVE" != "$TARGET" ]; then
+            echo "ROLLBACK VERIFICATION FAILED: active=$ACTIVE expected=$TARGET"; exit 1
+          fi
+          echo "Rollback verified: active version is now $TARGET"
+
+      - name: Write rollback receipt
+        if: always()
+        run: |
+          mkdir -p release
+          cat > release/frontend-rollback-receipt.json <<EOF
+          {
+            "kind": "frontend_rollback_receipt",
+            "rolled_back_to_version_id": "${{ inputs.rollback_to_version_id }}",
+            "run_id": "${{ github.run_id }}",
+            "actor": "${{ github.actor }}",
+            "target_route": "fortress.silentshieldsecurity.com/*",
+            "result": "${{ steps.rb.outcome }}"
+          }
+          EOF
+
+      - name: Upload rollback receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-rollback-receipt
+          path: release/frontend-rollback-receipt.json
+          retention-days: 90

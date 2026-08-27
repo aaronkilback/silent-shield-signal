@@ -1,0 +1,163 @@
+name: Frontend Production Deploy (Governed)
+
+# Gate 6 — the governed one-click deploy. Runs in the `production` environment so the required
+# reviewer (gate 2), main-branch restriction (gate 3), and env-scoped Cloudflare token (gate 4)
+# gate it automatically. Records provenance (version.json + SHA + release receipt with the CF
+# version ID) and verifies the SERVED artifact matches the deployed SHA — so "what code is in
+# production right now" is answerable from a record, never by rebuilding and guessing.
+#
+# This is the path of least resistance: one dispatch + one approval, no local wrangler. Once the
+# CF token is env-scoped (gate 4), it is the ONLY authenticated route to production.
+
+on:
+  workflow_dispatch:
+    inputs:
+      approved_commit_sha:
+        description: Exact main commit SHA approved for production deploy.
+        required: true
+        type: string
+      confirm_deploy:
+        description: Type DEPLOY_FRONTEND_PRODUCTION to deploy.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+
+jobs:
+  deploy:
+    name: Frontend Production Deploy
+    runs-on: ubuntu-latest
+    environment: production   # <- reviewer + branch policy + env-scoped secrets gate this job
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.confirm_deploy == 'DEPLOY_FRONTEND_PRODUCTION'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Verify approved main commit
+        id: approved-source
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$HEAD_SHA" != "${{ inputs.approved_commit_sha }}" ]; then
+            echo "Approved SHA does not match checked-out main (approved=${{ inputs.approved_commit_sha }} head=$HEAD_SHA)."
+            exit 1
+          fi
+          echo "source_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Require exact CI success (same evidence gate as preflight)
+        uses: actions/github-script@v7
+        env:
+          APPROVED_SHA: ${{ steps.approved-source.outputs.source_sha }}
+        with:
+          script: |
+            const requiredSuccess = [
+              'TypeScript & Build', 'ESLint', 'Critical File Guard',
+              'Shared Imports Consistency (_shared/*)',
+              'Workstream D — confidence + provenance suite',
+              'Workstream D — no autonomous execution on score',
+              'Playwright E2E', 'Unit Tests (Vitest)', 'a1-guard',
+            ];
+            const sha = process.env.APPROVED_SHA;
+            const runs = await github.paginate(github.rest.checks.listForRef, {
+              owner: context.repo.owner, repo: context.repo.repo, ref: sha, per_page: 100,
+            });
+            const latestByName = new Map();
+            for (const run of runs) {
+              const e = latestByName.get(run.name);
+              if (!e || Date.parse(run.started_at || run.created_at) > Date.parse(e.started_at || e.created_at)) latestByName.set(run.name, run);
+            }
+            const failures = [];
+            for (const name of requiredSuccess) {
+              const run = latestByName.get(name);
+              if (!run) failures.push(`${name}: missing`);
+              else if (run.status !== 'completed' || run.conclusion !== 'success') failures.push(`${name}: status=${run.status} conclusion=${run.conclusion}`);
+            }
+            if (failures.length) core.setFailed(`Deploy blocked by CI evidence for ${sha}:\n${failures.join('\n')}`);
+            else core.info(`CI evidence passed for ${sha}`);
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Stamp served version.json (provenance)
+        run: >-
+          node scripts/release-control/frontend-release-control.mjs write-version
+          --dist dist
+          --source-sha "${{ steps.approved-source.outputs.source_sha }}"
+          --run-id "${{ github.run_id }}"
+          --target-route "fortress.silentshieldsecurity.com/*"
+          --target-environment "production"
+
+      - name: Assert Cloudflare token can write (fail fast, not mid-release)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then echo "CLOUDFLARE_API_TOKEN not present in this environment."; exit 1; fi
+          npx wrangler versions list --name silent-shield-signal >/dev/null 2>&1 || { echo "Token cannot read the worker — check Workers Scripts:Edit scope."; exit 1; }
+
+      - name: Deploy worker + capture version ID
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$(npx wrangler deploy --name silent-shield-signal 2>&1)"; echo "$OUT"
+          VID="$(echo "$OUT" | grep -oiE 'Current Version ID: [0-9a-f-]+' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          if [ -z "$VID" ]; then VID="$(npx wrangler deployments list --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"; fi
+          echo "version_id=$VID" >> "$GITHUB_OUTPUT"
+          echo "Deployed CF version ID: $VID"
+
+      - name: Served verification (fetch live /version.json, assert SHA)
+        id: served
+        run: |
+          set -euo pipefail
+          sleep 5
+          SERVED_SHA="$(curl -fsSL https://fortress.silentshieldsecurity.com/version.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).source_commit_sha||"")}catch{console.log("")}}')"
+          echo "served_sha=$SERVED_SHA"
+          if [ "$SERVED_SHA" != "${{ steps.approved-source.outputs.source_sha }}" ]; then
+            echo "SERVED VERIFICATION FAILED: live /version.json = '$SERVED_SHA', expected '${{ steps.approved-source.outputs.source_sha }}'"
+            echo "result=fail" >> "$GITHUB_OUTPUT"; exit 1
+          fi
+          echo "result=pass" >> "$GITHUB_OUTPUT"
+
+      - name: Write release receipt (durable record)
+        if: always()
+        run: >-
+          node scripts/release-control/frontend-release-control.mjs write-release-receipt
+          --version dist/version.json
+          --out release/frontend-release-receipt.json
+          --source-sha "${{ steps.approved-source.outputs.source_sha }}"
+          --run-id "${{ github.run_id }}"
+          --actor "${{ github.actor }}"
+          --target-route "fortress.silentshieldsecurity.com/*"
+          --target-environment "production"
+          --deployment-version-id "${{ steps.deploy.outputs.version_id }}"
+          --rollback-version-id ""
+          --served-verification-result "${{ steps.served.outputs.result || 'fail' }}"
+
+      - name: Upload release receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-release-receipt
+          path: |
+            release/frontend-release-receipt.json
+            dist/version.json
+          retention-days: 90
