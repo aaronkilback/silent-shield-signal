@@ -177,7 +177,10 @@ jobs:
           echo "result=pass" >> "$GITHUB_OUTPUT"
 
       - name: Write release receipt (durable record)
-        if: always()
+        # Only when a deploy actually happened. If an earlier step (e.g. token-assert) failed,
+        # the deploy step is skipped, version_id is empty, and there is nothing to receipt —
+        # skip cleanly instead of failing a second time on a missing --deployment-version-id.
+        if: always() && steps.deploy.outputs.version_id != ''
         run: >-
           node scripts/release-control/frontend-release-control.mjs write-release-receipt
           --version dist/version.json
@@ -192,7 +195,7 @@ jobs:
           --served-verification-result "${{ steps.served.outputs.result || 'fail' }}"
 
       - name: Upload release receipt
-        if: always()
+        if: always() && steps.deploy.outputs.version_id != ''
         uses: actions/upload-artifact@v4
         with:
           name: frontend-release-receipt
