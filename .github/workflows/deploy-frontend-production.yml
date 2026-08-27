@@ -51,10 +51,24 @@ jobs:
           fi
           echo "source_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Require exact CI success (same evidence gate as preflight)
+      - name: Determine if this deploy touches src/ (E2E requirement is conditional on it)
+        id: srcdiff
+        run: |
+          set -uo pipefail
+          # Baseline = the currently-LIVE deployed SHA (served version.json). First deploy has none → parent.
+          BASE="$(curl -fsSL https://fortress.silentshieldsecurity.com/version.json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).source_commit_sha||"")}catch{console.log("")}}' || true)"
+          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then BASE="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"; fi
+          if git diff --name-only "$BASE" "${{ steps.approved-source.outputs.source_sha }}" -- src/ | grep -q .; then
+            echo "src_changed=true" >> "$GITHUB_OUTPUT"; echo "src/ changed since $BASE — Playwright E2E is REQUIRED"
+          else
+            echo "src_changed=false" >> "$GITHUB_OUTPUT"; echo "no src/ change since $BASE — Playwright E2E may be skipped"
+          fi
+
+      - name: Require exact CI success (E2E required only when src/ is touched)
         uses: actions/github-script@v7
         env:
           APPROVED_SHA: ${{ steps.approved-source.outputs.source_sha }}
+          SRC_CHANGED: ${{ steps.srcdiff.outputs.src_changed }}
         with:
           script: |
             const requiredSuccess = [
@@ -62,9 +76,10 @@ jobs:
               'Shared Imports Consistency (_shared/*)',
               'Workstream D — confidence + provenance suite',
               'Workstream D — no autonomous execution on score',
-              'Playwright E2E', 'Unit Tests (Vitest)', 'a1-guard',
+              'Unit Tests (Vitest)', 'a1-guard',
             ];
             const sha = process.env.APPROVED_SHA;
+            const srcChanged = process.env.SRC_CHANGED === 'true';
             const runs = await github.paginate(github.rest.checks.listForRef, {
               owner: context.repo.owner, repo: context.repo.repo, ref: sha, per_page: 100,
             });
@@ -79,8 +94,17 @@ jobs:
               if (!run) failures.push(`${name}: missing`);
               else if (run.status !== 'completed' || run.conclusion !== 'success') failures.push(`${name}: status=${run.status} conclusion=${run.conclusion}`);
             }
-            if (failures.length) core.setFailed(`Deploy blocked by CI evidence for ${sha}:\n${failures.join('\n')}`);
-            else core.info(`CI evidence passed for ${sha}`);
+            // Playwright E2E: MUST be success when the deploy touches src/; may be skipped ONLY when it doesn't.
+            // (Prevents an E2E that is skipped for some other reason on a real frontend change from sailing through.)
+            const pw = latestByName.get('Playwright E2E');
+            if (srcChanged) {
+              if (!pw || pw.status !== 'completed' || pw.conclusion !== 'success')
+                failures.push(`Playwright E2E: deploy touches src/ so it must be success, got ${pw ? pw.status + '/' + pw.conclusion : 'missing'}`);
+            } else if (pw && pw.status === 'completed' && !['success', 'skipped'].includes(pw.conclusion)) {
+              failures.push(`Playwright E2E: ${pw.conclusion}`);
+            }
+            if (failures.length) core.setFailed(`Deploy blocked by CI evidence for ${sha} (src_changed=${srcChanged}):\n${failures.join('\n')}`);
+            else core.info(`CI evidence passed for ${sha} (src_changed=${srcChanged})`);
 
       - uses: actions/setup-node@v4
         with:
