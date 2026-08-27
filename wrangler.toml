@@ -4,9 +4,12 @@ routes = [
   { pattern = "fortress.silentshieldsecurity.com/*", zone_name = "silentshieldsecurity.com" }
 ]
 
-[build]
-command = "npm install && npm run build"
-
+# No [build] command for the prod worker: the governed workflow
+# (.github/workflows/deploy-frontend-production.yml) is the SINGLE build authority. It
+# runs `npm run build`, then stamps version.json into dist/, then `wrangler deploy`.
+# A wrangler [build] here re-runs Vite — and Vite's emptyOutDir wipes dist/, destroying
+# the stamped version.json BEFORE upload, so /version.json served the SPA fallback and
+# "what's running in prod" was unprovable. Root-caused + removed 2026-08-27.
 [assets]
 directory = "./dist"
 not_found_handling = "single-page-application"
