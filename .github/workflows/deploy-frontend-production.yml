@@ -131,9 +131,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then echo "CLOUDFLARE_API_TOKEN not present in this environment."; exit 1; fi
-          npx wrangler versions list --name silent-shield-signal >/dev/null 2>&1 || { echo "Token cannot read the worker — check Workers Scripts:Edit scope."; exit 1; }
+          # Capture wrangler's ACTUAL output instead of discarding it to /dev/null and printing a
+          # guess. GitHub Actions masks secret values in logs, so printing wrangler stderr is safe.
+          set +e
+          ASSERT_OUT="$(npx wrangler versions list --name silent-shield-signal 2>&1)"; rc=$?
+          set -e
+          echo "$ASSERT_OUT"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Cloudflare token could not read the worker (wrangler exit $rc). Read the full wrangler output above literally: '[code: 10000]' / 'Authentication error' = bad or mistyped token VALUE; 'authorization' / 'not authorized' / 403 = missing Workers Scripts permission or wrong account/zone."
+            exit 1
+          fi
+          echo "OK: token can read the worker."
 
       - name: Capture pre-deploy active version (rollback pointer for the receipt)
         id: predeploy
@@ -145,7 +155,11 @@ jobs:
           # `deployments status` (singular) = the CURRENT active deployment. `deployments list`
           # shows every historical deployment (all marked 100%) oldest-first, so head -1 there
           # returns the OLDEST version, not the live one — the pointer-capture bug fixed here.
-          PREV="$(npx wrangler deployments status --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          set +e
+          DS_OUT="$(npx wrangler deployments status --name silent-shield-signal 2>&1)"; rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then echo "::warning::deployments status failed (exit $rc) — rollback pointer will be 'none'. wrangler output:"; echo "$DS_OUT"; fi
+          PREV="$(printf '%s' "$DS_OUT" | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
           if [ -z "$PREV" ]; then PREV="none"; fi
           echo "prev_version_id=$PREV" >> "$GITHUB_OUTPUT"
           echo "Pre-deploy active version (rollback pointer): $PREV"
@@ -156,10 +170,20 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          set -euo pipefail
-          OUT="$(npx wrangler deploy --name silent-shield-signal 2>&1)"; echo "$OUT"
-          VID="$(echo "$OUT" | grep -oiE 'Current Version ID: [0-9a-f-]+' | grep -oiE '[0-9a-f-]{36}' | head -1)"
-          if [ -z "$VID" ]; then VID="$(npx wrangler deployments status --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"; fi
+          set -uo pipefail
+          # Capture combined output but PRINT it before any failure exit — under set -e a failed
+          # `OUT=$(... 2>&1)` aborts the step before echo, hiding the deploy error itself.
+          set +e
+          OUT="$(npx wrangler deploy --name silent-shield-signal 2>&1)"; rc=$?
+          set -e
+          echo "$OUT"
+          if [ "$rc" -ne 0 ]; then echo "::error::wrangler deploy failed (exit $rc) — see full wrangler output above."; exit 1; fi
+          VID="$(printf '%s' "$OUT" | grep -oiE 'Current Version ID: [0-9a-f-]+' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          if [ -z "$VID" ]; then
+            set +e; DSV_OUT="$(npx wrangler deployments status --name silent-shield-signal 2>&1)"; set -e
+            echo "$DSV_OUT"
+            VID="$(printf '%s' "$DSV_OUT" | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          fi
           echo "version_id=$VID" >> "$GITHUB_OUTPUT"
           echo "Deployed CF version ID: $VID"
 

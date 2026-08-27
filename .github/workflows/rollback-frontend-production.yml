@@ -49,10 +49,15 @@ jobs:
           # Use `deployments status` (singular = the current deployment), NOT `deployments list`
           # — the list shows EVERY historical deployment with a (100%) marker in oldest-first
           # order, so `head -1` there returns the oldest version, not the active one.
-          ACTIVE="$(npx wrangler deployments status --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
-          echo "active_version=$ACTIVE"
+          # Capture wrangler's real output — do not discard it; if verification fails we need it.
+          set +e
+          DS_OUT="$(npx wrangler deployments status --name silent-shield-signal 2>&1)"; rc=$?
+          set -e
+          echo "$DS_OUT"
+          ACTIVE="$(printf '%s' "$DS_OUT" | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          echo "active_version=$ACTIVE (deployments status exit $rc)"
           if [ "$ACTIVE" != "$TARGET" ]; then
-            echo "ROLLBACK VERIFICATION FAILED: active=$ACTIVE expected=$TARGET"; exit 1
+            echo "::error::ROLLBACK VERIFICATION FAILED: active=$ACTIVE expected=$TARGET (deployments status exit $rc) — see wrangler output above"; exit 1
           fi
           echo "Rollback verified: active version is now $TARGET"
 
