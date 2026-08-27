@@ -33,6 +33,11 @@ jobs:
   deploy:
     name: Build and Deploy (Staging)
     runs-on: ubuntu-latest
+    # Environment-scoped so the CF write token lives in the `staging` environment secret,
+    # not a repo-level secret readable by every workflow. No required reviewer on this
+    # environment, so push-to-`staging` auto-deploy still runs unattended. Part of gate 4:
+    # the repo-level CLOUDFLARE_API_TOKEN is deleted, so no ungated workflow can write CF.
+    environment: staging
     env:
       VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.STAGING_VITE_SUPABASE_PUBLISHABLE_KEY }}
