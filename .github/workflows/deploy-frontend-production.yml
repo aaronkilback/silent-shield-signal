@@ -142,7 +142,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -uo pipefail
-          PREV="$(npx wrangler deployments list --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          # `deployments status` (singular) = the CURRENT active deployment. `deployments list`
+          # shows every historical deployment (all marked 100%) oldest-first, so head -1 there
+          # returns the OLDEST version, not the live one — the pointer-capture bug fixed here.
+          PREV="$(npx wrangler deployments status --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
           if [ -z "$PREV" ]; then PREV="none"; fi
           echo "prev_version_id=$PREV" >> "$GITHUB_OUTPUT"
           echo "Pre-deploy active version (rollback pointer): $PREV"
@@ -156,7 +159,7 @@ jobs:
           set -euo pipefail
           OUT="$(npx wrangler deploy --name silent-shield-signal 2>&1)"; echo "$OUT"
           VID="$(echo "$OUT" | grep -oiE 'Current Version ID: [0-9a-f-]+' | grep -oiE '[0-9a-f-]{36}' | head -1)"
-          if [ -z "$VID" ]; then VID="$(npx wrangler deployments list --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"; fi
+          if [ -z "$VID" ]; then VID="$(npx wrangler deployments status --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"; fi
           echo "version_id=$VID" >> "$GITHUB_OUTPUT"
           echo "Deployed CF version ID: $VID"
 

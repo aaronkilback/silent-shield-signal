@@ -45,8 +45,11 @@ jobs:
           TARGET="${{ inputs.rollback_to_version_id }}"
           echo "Rolling back silent-shield-signal to $TARGET"
           npx wrangler rollback "$TARGET" --name silent-shield-signal -m "governed rollback (run ${{ github.run_id }}, actor ${{ github.actor }})" -y
-          # verify: the active (100%) version is now the target
-          ACTIVE="$(npx wrangler deployments list --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
+          # verify: the CURRENT active version is now the target.
+          # Use `deployments status` (singular = the current deployment), NOT `deployments list`
+          # — the list shows EVERY historical deployment with a (100%) marker in oldest-first
+          # order, so `head -1` there returns the oldest version, not the active one.
+          ACTIVE="$(npx wrangler deployments status --name silent-shield-signal 2>/dev/null | grep -oiE '\(100%\) [0-9a-f-]{36}' | grep -oiE '[0-9a-f-]{36}' | head -1)"
           echo "active_version=$ACTIVE"
           if [ "$ACTIVE" != "$TARGET" ]; then
             echo "ROLLBACK VERIFICATION FAILED: active=$ACTIVE expected=$TARGET"; exit 1
