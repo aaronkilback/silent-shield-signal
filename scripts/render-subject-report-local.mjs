@@ -48,6 +48,10 @@ const enriched = items.map((i) => {
   const ls = (byItem.get(i.id) ?? []).sort((a, b) => (a.found_at_rank ?? 999) - (b.found_at_rank ?? 999));
   return { ...i, locations: ls, location_count: ls.length, obscurity_rank: ls.length ? Math.min(...ls.map((l) => l.found_at_rank ?? 999)) : 999 };
 });
+// Identity-anchor gate (mirrors trg_subject_exposure_anchor_gate): a finding REQUIRES a typed anchor.
+// No anchor => unattributed volume. Pre-migration this applies the rule in-render; post-migration the
+// DB has already enforced it, so this is a no-op.
+for (const i of enriched) { if (i.is_finding && !(i.anchor_type && i.anchor_value)) i.is_finding = false; }
 const thirdParty = enriched.filter((i) => i.source_class !== "self_published" && i.category !== "data_breach").sort(compareExposureItems);
 const selfPublished = enriched.filter((i) => i.source_class === "self_published").sort(compareExposureItems);
 const breaches = enriched.filter((i) => i.category === "data_breach").sort((a, b) => (b.first_seen_date ?? "").localeCompare(a.first_seen_date ?? ""));
@@ -112,7 +116,11 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, chi
   const sevBadge = (s) => `<span class="sev sev-${esc(s)}">${esc(s || "—")}</span>`;
   const awareness = (a) => a ? `<span class="aware aware-${esc(a)}">${a === "unknown" ? "not previously known" : esc(a)}</span>` : "";
   const locList = (ls) => `<ul class="locs">${ls.map((l) => `<li><a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${typeof l.found_at_rank === "number" ? ` <span class="rank">rank ${l.found_at_rank}</span>` : ""}<div class="prov">found via <code>${esc(l.found_by_query || "—")}</code>${l.date_captured ? ` · captured ${esc(String(l.date_captured).slice(0, 10))}` : ""}</div></li>`).join("")}</ul>`;
-  const itemBlock = (i) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${i.locations.length} source${i.locations.length === 1 ? "" : "s"}:</div>${locList(i.locations)}</div>`;
+  const ANCHOR_LABEL = { email: "email", coordinate: "coordinate", profile_url: "profile URL", device: "device" };
+  const anchorLine = (i) => i.anchor_type && i.anchor_value
+    ? `<div class="anchor"><span class="alabel">Tied to</span> <span class="aval">${esc(i.anchor_value)}</span> <span class="atype">${esc(ANCHOR_LABEL[i.anchor_type] || i.anchor_type)}</span></div>`
+    : "";
+  const itemBlock = (i) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${i.locations.length} source${i.locations.length === 1 ? "" : "s"}:</div>${locList(i.locations)}</div>`;
   const tpFindings = (thirdParty || []).filter((i) => i.is_finding);
   const tpMentions = (thirdParty || []).filter((i) => !i.is_finding);
   const mentionRow = (m) => `<div class="mention-row"><span class="cat">${esc(m.category)}</span> ${esc(m.title)} — ${(m.locations || []).map((l) => `<a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${l.date_captured ? ` <span class="rank">(captured ${esc(String(l.date_captured).slice(0, 10))})</span>` : ""}`).join(", ")}</div>`;
@@ -133,6 +141,10 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, chi
   .item { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
   .ihead { font-size: 12px; margin-bottom: 4px; } .cat { text-transform: uppercase; letter-spacing: .04em; color: #666; margin-right: 8px; }
   .ititle { font-weight: bold; font-size: 15px; } .isum { color: #444; font-size: 13px; margin: 4px 0; }
+  .anchor { font-size: 12px; margin: 4px 0; padding: 3px 8px; background: #eef5ee; border-left: 3px solid #3a7d3a; border-radius: 3px; display: inline-block; }
+  .anchor .alabel { color: #3a7d3a; font-weight: bold; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
+  .anchor .aval { font-family: ui-monospace, Menlo, monospace; color: #1a1a1a; }
+  .anchor .atype { color: #777; font-size: 11px; } .anchor .atype:before { content: "· "; }
   .lcount { font-size: 12px; color: #666; margin-top: 6px; } ul.locs { margin: 4px 0 0; padding-left: 16px; font-size: 13px; } ul.locs li { margin: 4px 0; }
   ul.locs a { color: #1a4a8a; word-break: break-all; } .prov { color: #888; font-size: 11px; } .prov code { background: #f4f4f4; padding: 0 3px; }
   .rank { color: #999; font-size: 11px; }
