@@ -9,13 +9,18 @@ const RESULT_FILE = process.argv[2];
 const OUT = process.argv[3] || "/tmp/subject-exposure-report-preview.html";
 const FORMAT = (process.argv[4] || "reputational").toLowerCase();   // reputational | executive
 
-// ── unwrap the saved MCP result → render_input object ──
-const outer = JSON.parse(fs.readFileSync(RESULT_FILE, "utf8"));
-const txt = outer.result;
-const start = txt.indexOf('[{"render_input"');
-const end = txt.lastIndexOf("}]") + 2;
-const arr = JSON.parse(txt.slice(start, end));
-const input = JSON.parse(arr[0].render_input);
+// ── load render_input: accept either a plain render_input JSON object, or the raw saved MCP result ──
+const rawFile = fs.readFileSync(RESULT_FILE, "utf8");
+const parsed = JSON.parse(rawFile);
+let input;
+if (parsed && Array.isArray(parsed.items)) {
+  input = parsed;                                             // plain render_input object
+} else {
+  const txt = parsed.result;
+  const start = txt.indexOf('[{"render_input"');
+  const end = txt.lastIndexOf("}]") + 2;
+  input = JSON.parse(JSON.parse(txt.slice(start, end))[0].render_input);
+}
 
 // ── verbatim from _shared/subject-retrieval.ts ──
 const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
