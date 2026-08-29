@@ -133,6 +133,21 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then echo "CLOUDFLARE_API_TOKEN not present in this environment."; exit 1; fi
+          # Fail-fast token SHAPE check before the network call — turns a malformed stored secret
+          # into a one-line diagnosis instead of a cryptic Cloudflare 9106/10000. Keys off the
+          # cfut_ user-token prefix + no-whitespace. NOT a hardcoded length: CF token lengths vary
+          # by type (legacy 40, cfut_ user token ~53). Provenance: 2026-08-29 — paste corruption
+          # stored a whitespace-laden / doubled / truncated value and cost hours of 9106 hunting.
+          case "$CLOUDFLARE_API_TOKEN" in
+            *[[:space:]]*) echo "::error::CLOUDFLARE_API_TOKEN contains whitespace — stored secret is malformed (a valid token has none). Re-set the env secret from a clean copy."; exit 1 ;;
+          esac
+          case "$CLOUDFLARE_API_TOKEN" in
+            cfut_*) : ;;
+            *) echo "::error::CLOUDFLARE_API_TOKEN does not start with 'cfut_' (user API token prefix) — stored value is wrong/junk. If you intentionally switched token type, update this prefix check."; exit 1 ;;
+          esac
+          case "$CLOUDFLARE_API_TOKEN" in
+            *[!A-Za-z0-9_-]*) echo "::warning::CLOUDFLARE_API_TOKEN has characters outside [A-Za-z0-9_-] — unusual for a CF token; proceeding, inspect if auth fails." ;;
+          esac
           # Capture wrangler's ACTUAL output instead of discarding it to /dev/null and printing a
           # guess. GitHub Actions masks secret values in logs, so printing wrangler stderr is safe.
           set +e
