@@ -1885,7 +1885,7 @@ export function VIPDeepScanWizard() {
             Silent Shield™ Vulnerability Scan
           </h1>
           <p className="text-muted-foreground mt-1">
-            7-Day Intelligence Vulnerability Snapshot — AI-Powered Terrain Mapping & Threat Detection
+            AI-Assisted Open-Source Intelligence & Threat Exposure Assessment
           </p>
         </div>
         <div className="text-right">
