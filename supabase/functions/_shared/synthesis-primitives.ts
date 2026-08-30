@@ -5,8 +5,8 @@
 //     ONLY from finding-row values (names, counts, domains, dates, data-classes). The only logic is
 //     the presence/absence of required capability rows. No LLM generates any part of any sentence.
 //  2. Every emitted claim CITES the subject_exposure_items / subject_devices row ids it rests on.
-//     A primitive whose required rows are absent REFUSES (status 'refuses') — refusals are
-//     first-class output, as informative as fires, and never fabricate an absence into good news.
+//     A primitive whose required rows are absent is NOT_ASSERTED — first-class output, as
+//     informative as an established claim, and never fabricates an absence into good news.
 //  3. DECLARED vs DISCOVERED. A primitive asserting adversary reachability may rest ONLY on
 //     DISCOVERED rows (data_breach / data_broker / source_corroboration / legal). DECLARED rows
 //     (environmental coordinates, subject_devices) are labelled declared and never presented as
@@ -39,7 +39,11 @@ export interface DeviceRow {
 export interface PrimitiveResult {
   key: string;
   name: string;
-  status: "fires" | "partial" | "refuses";
+  // Report vocabulary (not engineering words):
+  //  established  — the claim is supported by cited rows and is asserted.
+  //  qualified    — a limited claim is asserted with an explicit stated caveat.
+  //  not_asserted — no supporting rows; the system checked and declines to make the claim.
+  status: "established" | "qualified" | "not_asserted";
   sentence: string;       // template-filled; the ONLY thing rendered
   cited_row_ids: string[]; // rows this claim rests on
   basis: "measured" | "assessment" | "none";
@@ -60,6 +64,22 @@ const emailsOf = (item: ExposureItem): string[] =>
   (item.anchor_value || "").split(",").map((s) => s.trim()).filter(Boolean);
 const domainsOf = (item: ExposureItem): string[] =>
   (item.anchor_value || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+// Display normalization — canonical casing for known brand tokens; RAW row values are PRESERVED,
+// this affects the rendered sentence only. Never changes meaning, only presentation.
+const BRAND_CANON: Record<string, string> = {
+  iphone: "iPhone", ipad: "iPad", ipod: "iPod", macbook: "MacBook", imac: "iMac",
+  macos: "macOS", ios: "iOS", ipados: "iPadOS", tvos: "tvOS", watchos: "watchOS", airpods: "AirPods",
+  "tp-link": "TP-Link", asus: "ASUS", netgear: "Netgear", ubiquiti: "Ubiquiti", "wi-fi": "Wi-Fi",
+};
+const normToken = (w: string): string => {
+  const key = w.toLowerCase();
+  if (BRAND_CANON[key]) return BRAND_CANON[key];
+  if (/[0-9]/.test(w)) return w; // keep versions / model numbers verbatim
+  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+};
+const displayLabel = (raw: string): string =>
+  raw.trim().split(/\s+/).map(normToken).filter(Boolean).join(" ");
 
 // Residence people-search brokers expose a HOME address; B2B brokers expose employer/role only.
 // EXACT eTLD+1 match (never substring — scalemylife.com !== mylife.com).
@@ -83,14 +103,14 @@ const basisOf = (rows: { finding_basis: string }[]): "measured" | "assessment" |
   if (rows.length === 0) return "none";
   return rows.some((r) => r.finding_basis === "analyst_assessment") ? "assessment" : "measured";
 };
-const refuse = (key: string, name: string, sentence: string, cited: string[]): PrimitiveResult =>
-  ({ key, name, status: "refuses", sentence, cited_row_ids: cited, basis: "none" });
+const notAsserted = (key: string, name: string, sentence: string, cited: string[]): PrimitiveResult =>
+  ({ key, name, status: "not_asserted", sentence, cited_row_ids: cited, basis: "none" });
 
 // ── P1 · Credential Compromise Path (discovered) ─────────────────────────────
 export function credentialCompromise(items: ExposureItem[]): PrimitiveResult {
   const pw = breaches(items).filter((b) => hasClass(b, /password/i));
   if (pw.length === 0) {
-    return refuse("P1", "Credential Compromise Path",
+    return notAsserted("P1", "Credential Compromise Path",
       "No breach in this scan exposed a password class tied to your email(s) — no credential-compromise claim is made.", []);
   }
   const emails = [...new Set(pw.flatMap(emailsOf))];
@@ -103,9 +123,9 @@ export function credentialCompromise(items: ExposureItem[]): PrimitiveResult {
     (active.length
       ? ` ${active.length} ${active.length > 1 ? "are" : "is a"} active credential-theft / credential-stuffing set${active.length > 1 ? "s" : ""} (${active.join("; ")}), the kind actively traded and replayed.`
       : "") +
-    ` IF any of these passwords is reused on a live account it would enable account takeover or credential-stuffing. ` +
-    `This does NOT assert that any account is currently compromised — only that reused credentials would be exploitable; rotate any still in use.`;
-  return { key: "P1", name: "Credential Compromise Path", status: "fires", sentence, cited_row_ids: pw.map((b) => b.id), basis: basisOf(pw) };
+    ` IF any of these passwords is reused on a live account it could enable account takeover or credential-stuffing. ` +
+    `This does NOT assert that any account is currently compromised — only that reused credentials could be exploitable; rotate any still in use.`;
+  return { key: "P1", name: "Credential Compromise Path", status: "established", sentence, cited_row_ids: pw.map((b) => b.id), basis: basisOf(pw) };
 }
 
 // ── P2 · Identity / Impersonation Kit (discovered) ───────────────────────────
@@ -120,16 +140,16 @@ export function identityKit(items: ExposureItem[]): PrimitiveResult {
   collect("physical address", brc.filter((b) => hasClass(b, /physical address/i)));
   collect("partial payment-card data", brc.filter((b) => hasClass(b, /credit card/i)));
   if (brk.length === 0 && attr.length < 2) {
-    return refuse("P2", "Identity / Impersonation Kit",
+    return notAsserted("P2", "Identity / Impersonation Kit",
       "Fewer than two identity attributes are publicly aggregated in this scan — no impersonation-kit claim is made.", []);
   }
   const cited = [...new Set(attr.flatMap((a) => a.rows))];
   const sentence =
-    `Publicly aggregated identity attributes are sufficient to construct a credible pretext or attempt knowledge-based verification: ` +
+    `The following identity attributes about you are publicly aggregated across broker and breach records: ` +
     `name, ${attr.map((a) => a.label).join(", ")}` +
-    (brk.length ? ` — contact/role via the broker listings (${[...new Set(brk.flatMap(domainsOf))].join(", ")}); the remainder via breach records.` : ` — from breach records.`) +
-    ` Not found in this scan: SIN/SSN, and no relatives were resolved.`;
-  return { key: "P2", name: "Identity / Impersonation Kit", status: "fires", sentence, cited_row_ids: cited, basis: basisOf(attr.flatMap((a) => brc.concat(brk)).filter((r) => cited.includes(r.id))) };
+    (brk.length ? ` — contact and role from the broker listings (${[...new Set(brk.flatMap(domainsOf))].join(", ")}); the remainder from breach records.` : ` — from breach records.`) +
+    ` Not observed in this scan: SIN/SSN; no relatives were resolved.`;
+  return { key: "P2", name: "Identity / Impersonation Kit", status: "established", sentence, cited_row_ids: cited, basis: basisOf(attr.flatMap((a) => brc.concat(brk)).filter((r) => cited.includes(r.id))) };
 }
 
 // ── P3 · Physical Locatability (discovered vs declared) ──────────────────────
@@ -147,23 +167,23 @@ export function physicalLocatability(items: ExposureItem[]): PrimitiveResult {
     const brokerNote = contactBrokers.length
       ? ` The data-broker listings (${[...new Set(contactBrokers.flatMap(domainsOf))].join(", ")}) expose your employer, not your home.`
       : "";
-    return refuse("P3", "Physical Locatability",
+    return notAsserted("P3", "Physical Locatability",
       `No public source in this scan exposes your residential address.${brokerNote}${declaredNote}`, declared.map((c) => c.id));
   }
 
   const parts: string[] = [];
-  if (resBrokers.length) parts.push(`residential people-search listings expose an address (${[...new Set(resBrokers.flatMap(domainsOf))].join(", ")})`);
+  if (resBrokers.length) parts.push(`a residential people-search listing (${[...new Set(resBrokers.flatMap(domainsOf))].join(", ")})`);
   if (addrBreaches.length) parts.push(
-    `physical-address fields appear in ${addrBreaches.length} breach record${addrBreaches.length > 1 ? "s" : ""} tied to your email (${addrBreaches.map((b) => breachName(b.title)).slice(0, 5).join(", ")}${addrBreaches.length > 5 ? ", …" : ""})`);
+    `physical-address fields in ${addrBreaches.length} breach record${addrBreaches.length > 1 ? "s" : ""} tied to your email (${addrBreaches.map((b) => breachName(b.title)).slice(0, 5).join(", ")}${addrBreaches.length > 5 ? ", …" : ""})`);
   const contactNote = contactBrokers.length
-    ? ` The B2B broker listings (${[...new Set(contactBrokers.flatMap(domainsOf))].join(", ")}) expose your employer, not your home.`
+    ? ` The B2B broker listings (${[...new Set(contactBrokers.flatMap(domainsOf))].join(", ")}) carry your employer, not your home.`
     : "";
   const sentence =
-    `A physical address associated with you is discoverable: ${parts.join("; and ")}. ` +
-    `This scan does NOT verify whether any is your CURRENT residence — breach and broker addresses are frequently historical or partial, so treat this as "an address is exposed," not "your home is pinpointed."${contactNote}${declaredNote}`;
+    `A physical address associated with you is present in these records: ${parts.join("; and ")}. ` +
+    `These are historical breach and broker records — this scan makes NO claim that any address is your current residence or is presently discoverable; it records only that an address value is present in the data.${contactNote}${declaredNote}`;
   return {
     key: "P3", name: "Physical Locatability",
-    status: resBrokers.length ? "fires" : "partial",
+    status: resBrokers.length ? "established" : "qualified",
     sentence, cited_row_ids: [...resBrokers, ...addrBreaches].map((r) => r.id), basis: basisOf([...resBrokers, ...addrBreaches]),
   };
 }
@@ -172,23 +192,23 @@ export function physicalLocatability(items: ExposureItem[]): PrimitiveResult {
 export function roleTargeting(items: ExposureItem[]): PrimitiveResult {
   const corr = corroborated(items);
   if (corr.length < 2) {
-    return refuse("P4", "Professional / Role Targeting",
+    return notAsserted("P4", "Professional / Role Targeting",
       `Fewer than two independently-corroborated public items about you were found — no role-targeting claim is made.`, corr.map((c) => c.id));
   }
   const cites = corr.map((c) => `"${c.title.replace(/\s*…$/, "").trim()}" (${[...new Set(domainsOf(c))].join(" + ")})`);
   const sentence =
-    `Your professional identity is publicly established and corroborated across ${corr.length} independent items: ${cites.join("; ")}. ` +
+    `Your professional identity is publicly documented and corroborated across ${corr.length} independent items: ${cites.join("; ")}. ` +
     `This supports social engineering that references your documented public history. (Presence is verified; adverse intent is not implied.)`;
-  return { key: "P4", name: "Professional / Role Targeting", status: "fires", sentence, cited_row_ids: corr.map((c) => c.id), basis: basisOf(corr) };
+  return { key: "P4", name: "Professional / Role Targeting", status: "established", sentence, cited_row_ids: corr.map((c) => c.id), basis: basisOf(corr) };
 }
 
 // ── P5 · Device Attack Surface (declared) ────────────────────────────────────
 export function deviceAttackSurface(devices: DeviceRow[]): PrimitiveResult {
   const exposed = devices.filter((d) => d.internet_exposed);
   if (exposed.length === 0) {
-    return refuse("P5", "Device Attack Surface", "No internet-facing device was declared — no device attack-surface claim is made.", []);
+    return notAsserted("P5", "Device Attack Surface", "No internet-facing device was declared — no device attack-surface claim is made.", []);
   }
-  const label = (d: DeviceRow) => `${d.vendor} ${d.product}`.trim();
+  const label = (d: DeviceRow) => displayLabel(`${d.vendor} ${d.product}`); // display only; raw row values preserved
   const assessable = exposed.filter((d) => d.version && d.version.trim() !== "" && !d.version_unknown);
   const unversioned = exposed.filter((d) => d.version_unknown || !(d.version && d.version.trim() !== ""));
   const parts: string[] = [];
@@ -201,7 +221,7 @@ export function deviceAttackSurface(devices: DeviceRow[]): PrimitiveResult {
     `Any actual vulnerability will rest on the live CVE lookup, never on an assumed version.`;
   return {
     key: "P5", name: "Device Attack Surface",
-    status: unversioned.length && assessable.length ? "partial" : "fires",
+    status: unversioned.length && assessable.length ? "qualified" : "established",
     sentence, cited_row_ids: exposed.map((d) => d.id), basis: "measured",
   };
 }
@@ -210,7 +230,7 @@ export function deviceAttackSurface(devices: DeviceRow[]): PrimitiveResult {
 export function litigationExposure(items: ExposureItem[]): PrimitiveResult {
   const legal = legalRows(items);
   if (legal.length === 0) {
-    return refuse("P6", "Litigation / Adversarial Relationship", "No legal matter naming you was found in this scan — no litigation-exposure claim is made.", []);
+    return notAsserted("P6", "Litigation / Adversarial Relationship", "No legal matter naming you was found in this scan — no litigation-exposure claim is made.", []);
   }
   const l = legal[0];
   const counter = (() => {
@@ -224,7 +244,7 @@ export function litigationExposure(items: ExposureItem[]): PrimitiveResult {
   const sentence =
     `A legal matter naming you — ${l.title.replace(/^Legal case:\s*/i, "")} — is publicly documented and corroborated across ${domains.length} sources (${domains.slice(0, 5).join(", ")}${domains.length > 5 ? ", …" : ""}). ` +
     `This is a reputational exposure${counter ? ` and identifies a named counterparty (${counter})` : ""}; the counterparty is a party of record, not asserted to be a threat.`;
-  return { key: "P6", name: "Litigation / Adversarial Relationship", status: "fires", sentence, cited_row_ids: legal.map((r) => r.id), basis: basisOf(legal) };
+  return { key: "P6", name: "Litigation / Adversarial Relationship", status: "established", sentence, cited_row_ids: legal.map((r) => r.id), basis: basisOf(legal) };
 }
 
 // ── runner ───────────────────────────────────────────────────────────────────
