@@ -24,8 +24,12 @@ if (parsed && Array.isArray(parsed.items)) {
 
 // ── verbatim from _shared/subject-retrieval.ts ──
 const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+// Authorship weighting: third-party content ABOUT the subject is the real exposure; self-published is
+// within the subject's control (context). Third-party ranks above self-published (lower number = first).
+const SRC_RANK = { third_party: 0, self_published: 1 };
 function compareExposureItems(a, b) {
   return (Number(b.is_finding ?? false) - Number(a.is_finding ?? false))
+    || ((SRC_RANK[a.source_class ?? "third_party"] ?? 0) - (SRC_RANK[b.source_class ?? "third_party"] ?? 0))
     || ((SEV_RANK[b.severity ?? ""] ?? 0) - (SEV_RANK[a.severity ?? ""] ?? 0))
     || ((b.location_count ?? 0) - (a.location_count ?? 0))
     || ((b.obscurity_rank ?? 0) - (a.obscurity_rank ?? 0));
@@ -107,15 +111,28 @@ for (const cat of ALL7) {
 }
 // Coverage-contradiction fix: a category with captured items WAS searched — never render "not searched"
 // next to captures in that category (page one was claiming legal not-searched beside legal captures).
+// A category is "searched" if items classified into it OR if the query battery ran terms for it —
+// the financial/professional/corporate/property QUERIES ran (director, bankruptcy, lien, mortgage…) but
+// their results classified as generic 'mention', so keying only on item category missed them.
+const QUERY_TERM_CAT = [
+  ["financial", /\b(bankrupt\w*|insolvenc\w*|lien|creditor|foreclos\w*|receivership|garnish\w*)\b/i],
+  ["professional", /\b(director|officer|founder|shareholder|disciplinary|licen[cs]e|misconduct)\b/i],
+  ["corporate", /\b(incorporat\w*|registered company|corporate registry|registrar of companies)\b/i],
+  ["property", /\b(propert\w*|real estate|deed|title search|mortgage|parcel|assessment roll)\b/i],
+  ["legal", /\b(lawsuit|sued|litigation|judgment|plaintiff|defendant|court)\b/i],
+];
 const capByCat = {};
+const touchCat = (cat, dstr) => { if (!dstr || !ALL7.includes(cat)) return; const d = String(dstr).slice(0, 10); if (!capByCat[cat] || capByCat[cat] < d) capByCat[cat] = d; };
 for (const i of enriched) {
-  const dts = (i.locations || []).map((l) => l.date_captured).filter(Boolean).concat(i.first_seen_date ? [i.first_seen_date] : []);
-  if (!dts.length) continue;
-  const latest = dts.map(String).sort().slice(-1)[0].slice(0, 10);
-  if (!capByCat[i.category] || capByCat[i.category] < latest) capByCat[i.category] = latest;
+  touchCat(i.category, i.first_seen_date);
+  for (const l of (i.locations || [])) {
+    touchCat(i.category, l.date_captured);
+    const q = String(l.found_by_query || "");
+    for (const [cat, re] of QUERY_TERM_CAT) if (re.test(q)) touchCat(cat, l.date_captured || i.first_seen_date);
+  }
 }
 for (const cat of ALL7) {
-  if (!categorySweeps[cat] && capByCat[cat]) categorySweeps[cat] = { last_swept: capByCat[cat], depth: "captures on file (no dedicated sweep record)", queries: null };
+  if (!categorySweeps[cat] && capByCat[cat]) categorySweeps[cat] = { last_swept: capByCat[cat], depth: "captures on file — no dedicated sweep record", queries: null };
 }
 const catsSwept = ALL7.filter((c) => categorySweeps[c]);
 const catsWithFindings = [...new Set([...thirdParty, ...breaches, ...verifiedPresence].map((i) => i.category))];
@@ -178,7 +195,7 @@ function renderReport({ meta, thirdParty, verifiedPresence, noise, breaches, rep
   const anchorLine = (i) => i.anchor_type && i.anchor_value
     ? `<div class="anchor"><span class="alabel">Tied to</span> <span class="aval">${esc(i.anchor_value)}</span> <span class="atype">${esc(ANCHOR_LABEL[i.anchor_type] || i.anchor_type)}</span></div>`
     : "";
-  const itemBlock = (i) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${i.locations.length} source${i.locations.length === 1 ? "" : "s"}:</div>${locList(i.locations)}</div>`;
+  const itemBlock = (i) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${(() => { const dd = new Set((i.locations || []).map((l) => l.domain).filter(Boolean)).size; const cc = i.locations.length; return `${dd} independent domain${dd === 1 ? "" : "s"}${cc !== dd ? ` · ${cc} capture${cc === 1 ? "" : "s"}` : ""}`; })()}:</div>${locList(i.locations)}</div>`;
   const tpFindings = thirdParty || [];              // adverse + anchored (environmental / legal / broker)
   const tpMentions = noise || [];                   // single-source name-matches — volume, not findings
   const presence = verifiedPresence || [];          // corroborated (>=2 domains) but neutral — confirmed footprint
