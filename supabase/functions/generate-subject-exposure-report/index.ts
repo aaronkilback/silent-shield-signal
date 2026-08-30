@@ -217,8 +217,11 @@ Deno.serve(async (req) => {
     return successResponse({
       reportId, issuable: false, storage_path: path, bucket: REPORT_BUCKET,
       view_url: signed?.signedUrl ?? null,
+      html,   // rendered HTML returned so the client can render it from a text/html blob — Supabase
+              // Storage neutralizes HTML content-type on serve (anti-XSS), so the signed URL alone
+              // shows raw source. The blob path renders reliably regardless of storage serving.
       counts: meta.counts, remediation_authored: remediation.authored,
-      note: "Report generated and PERSISTED, issuable=false. It will NOT deliver until an operator sets issuable=true. view_url is a 1-hour operator-review link. Remediation is operator-authored only.",
+      note: "Report generated and PERSISTED, issuable=false. It will NOT deliver until an operator sets issuable=true. Remediation is operator-authored only. Render `html` via a text/html blob; view_url is the stored (neutralized) copy.",
     });
   } catch (e) {
     console.error("[generate-subject-exposure-report] error:", e);

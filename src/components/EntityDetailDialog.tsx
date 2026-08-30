@@ -763,13 +763,18 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
         body: { entityId }
       });
       if (error || data?.error) throw new Error(data?.error || (error as any)?.message || 'Report generation failed');
-      setExposureResult({ reportId: data.reportId, view_url: data.view_url ?? null, counts: data.counts });
+      // Supabase Storage neutralizes HTML content-type on serve (anti-XSS), so the signed URL shows
+      // raw source. Render the returned HTML from a text/html blob instead — the browser honors it.
+      const blobUrl = data.html
+        ? URL.createObjectURL(new Blob([data.html], { type: 'text/html' }))
+        : (data.view_url ?? null);
+      setExposureResult({ reportId: data.reportId, view_url: blobUrl, counts: data.counts });
       toast({
         title: "Exposure report generated",
         description: `${data.counts?.findings ?? 0} findings · ${data.counts?.breaches ?? 0} breaches · draft (not issued).`,
         duration: 8000,
       });
-      if (data.view_url) window.open(data.view_url, '_blank', 'noopener');
+      if (blobUrl) window.open(blobUrl, '_blank', 'noopener');
     } catch (e: any) {
       console.error('Exposure report error:', e);
       toast({ title: "Exposure report failed", description: e.message, variant: "destructive" });
