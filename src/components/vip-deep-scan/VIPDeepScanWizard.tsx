@@ -655,7 +655,7 @@ export function VIPDeepScanWizard() {
 
       toast({
         title: "Deep Scan Initiated",
-        description: `Vulnerability Scan for ${formData.fullLegalName} has been queued. ${formData.priorityLevel === 'priority' ? 'Priority processing (72 hours)' : 'Standard processing (14 days)'}.`,
+        description: `Deep scan initiated for ${formData.fullLegalName}. Automated intelligence collection has started and findings are populating now. Analyst review is ${formData.priorityLevel === 'priority' ? 'expedited (Priority)' : 'prioritised by tier (Standard)'}.`,
       });
 
       // Clear persisted state only AFTER successful submission
@@ -708,7 +708,7 @@ export function VIPDeepScanWizard() {
             </div>
 
             <div className="space-y-4">
-              <Label>Processing Priority *</Label>
+              <Label>Review Priority *</Label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Card 
                   className={`cursor-pointer transition-all ${formData.priorityLevel === 'standard' ? 'border-primary ring-2 ring-primary/20' : 'hover:border-muted-foreground'}`}
@@ -718,8 +718,8 @@ export function VIPDeepScanWizard() {
                     <div className="flex items-center gap-3">
                       <Clock className="h-8 w-8 text-muted-foreground" />
                       <div>
-                        <h4 className="font-semibold">Standard Processing</h4>
-                        <p className="text-sm text-muted-foreground">14-day turnaround</p>
+                        <h4 className="font-semibold">Standard</h4>
+                        <p className="text-sm text-muted-foreground">Standard analyst-review priority</p>
                         <Badge variant="secondary" className="mt-1">Included</Badge>
                       </div>
                     </div>
@@ -734,8 +734,8 @@ export function VIPDeepScanWizard() {
                     <div className="flex items-center gap-3">
                       <Zap className="h-8 w-8 text-amber-500" />
                       <div>
-                        <h4 className="font-semibold">Priority Processing</h4>
-                        <p className="text-sm text-muted-foreground">72-hour turnaround</p>
+                        <h4 className="font-semibold">Priority</h4>
+                        <p className="text-sm text-muted-foreground">Expedited analyst-review priority</p>
                         <Badge className="mt-1 bg-amber-500">+10% Fee</Badge>
                       </div>
                     </div>
@@ -1761,7 +1761,7 @@ export function VIPDeepScanWizard() {
                   <div>
                     <p className="text-muted-foreground">Priority</p>
                     <Badge className={formData.priorityLevel === "priority" ? "bg-amber-500" : ""}>
-                      {formData.priorityLevel === "priority" ? "72 Hours" : "14 Days"}
+                      {formData.priorityLevel === "priority" ? "Priority" : "Standard"}
                     </Badge>
                   </div>
                   <div>
@@ -1857,9 +1857,9 @@ export function VIPDeepScanWizard() {
                     <div>
                       <h4 className="font-semibold">Ready to Initiate Deep Scan</h4>
                       <p className="text-sm text-muted-foreground">
-                        {formData.priorityLevel === "priority" 
-                          ? "Results will be delivered within 72 hours via secure portal."
-                          : "Results will be delivered within 14 days via secure portal."
+                        {formData.priorityLevel === "priority"
+                          ? "Automated collection starts immediately and findings populate now. Analyst review is expedited; the reviewed report is delivered via secure portal."
+                          : "Automated collection starts immediately and findings populate now. Analyst review is prioritised by tier; the reviewed report is delivered via secure portal."
                         }
                       </p>
                     </div>
@@ -1893,7 +1893,7 @@ export function VIPDeepScanWizard() {
             Step {currentStep} of {STEPS.length}
           </Badge>
           {formData.priorityLevel === "priority" && (
-            <p className="text-xs text-amber-600 mt-1 font-medium">72-Hour Priority</p>
+            <p className="text-xs text-amber-600 mt-1 font-medium">Priority Review</p>
           )}
         </div>
       </div>
