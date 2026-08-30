@@ -39,10 +39,10 @@ interface VIPIntakeData {
   securityPersonnel: string;
   pets: string;
   humanWildlifeConflict: string;
-  primaryDevices: string;
+  devices: Array<{ deviceType: string; vendor: string; product: string; version: string; versionUnknown: boolean; firmware: string; propertyIndex: number | null; internetExposed: boolean }>;
   emailProviders: string;
   cloudServices: string;
-  knownUsernames: string;
+  profiles: Array<{ platform: string; url: string; handle: string; verified: boolean }>;
   corporateAffiliations: string;
   vehicles: string;
   regularRoutes: string;
@@ -94,6 +94,13 @@ Deno.serve(async (req) => {
       if (!allowed) return errorResponse("CLIENT_NOT_AUTHORIZED: caller cannot access the requested client_id", 403);
     }
     // caller.kind === 'service_role' → trusted internal caller (no membership check)
+
+    // Resolve the client's tenant_id once (for provenance on subject_* writes; nullable columns).
+    let clientTenantId: string | null = null;
+    {
+      const { data: clientRow } = await supabase.from("clients").select("tenant_id").eq("id", clientId).maybeSingle();
+      clientTenantId = (clientRow?.tenant_id as string | undefined) ?? null;
+    }
 
     // ── COMPLIANCE: server-side consent enforcement (never trust the client alone) ──
     if (intakeData.consentDataCollection !== true) {
@@ -157,8 +164,8 @@ Deno.serve(async (req) => {
         pets: intakeData.pets,
         human_wildlife_conflict: intakeData.humanWildlifeConflict,
         digital_footprint: {
-          devices: intakeData.primaryDevices, email_providers: intakeData.emailProviders,
-          cloud_services: intakeData.cloudServices, usernames: intakeData.knownUsernames,
+          devices: intakeData.devices ?? [], email_providers: intakeData.emailProviders,
+          cloud_services: intakeData.cloudServices, profiles: intakeData.profiles ?? [],
           corporate_affiliations: intakeData.corporateAffiliations,
         },
         movement_patterns: {
@@ -380,6 +387,66 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── 4c. Structured Devices + Profiles capture (best-effort — NEVER fail the scan on these). ──
+    //   Devices/profiles are captured as structured arrays in the intake wizard (replacing the old
+    //   free-text primaryDevices/knownUsernames). Persist them into subject_devices / subject_profiles.
+    //   property_asset_id maps a device's propertyIndex to the client_geo_asset created for that property
+    //   in the SAME order as intakeData.properties. This function does not yet create client_geo_assets
+    //   (that is a separate workstream), so propertyAssetIds is currently empty → property_asset_id stays
+    //   null. Once geo-asset creation lands here, populate propertyAssetIds[index] with each created id and
+    //   the mapping below resolves automatically.
+    const propertyAssetIds: Array<string | null> = (intakeData.properties || []).map(() => null);
+    const subjectWrites: { profiles_inserted: number; devices_inserted: number; error?: string } = {
+      profiles_inserted: 0, devices_inserted: 0,
+    };
+    try {
+      const profileRows = (intakeData.profiles || [])
+        .filter((p) => (p?.url || "").trim() !== "")   // skip rows with an empty url
+        .map((p) => ({
+          entity_id: vipEntityId, client_id: clientId, tenant_id: clientTenantId,
+          platform: p.platform || "other", url: p.url.trim(), handle: (p.handle || "").trim() || null,
+          verified: p.verified === true,   // do NOT force true — assistant must actively confirm
+          created_by: actorUserId,
+        }));
+      if (profileRows.length > 0) {
+        const { error } = await supabase.from("subject_profiles").insert(profileRows);
+        if (error) throw new Error(`subject_profiles: ${error.message}`);
+        subjectWrites.profiles_inserted = profileRows.length;
+      }
+    } catch (e) {
+      subjectWrites.error = e instanceof Error ? e.message : String(e);
+      console.error("[VIP-DEEP-SCAN] subject_profiles insert failed (non-fatal):", subjectWrites.error);
+    }
+    try {
+      const deviceRows = (intakeData.devices || [])
+        .filter((d) => (d?.vendor || "").trim() !== "" || (d?.product || "").trim() !== "")   // skip empty rows (no make AND no model)
+        .map((d) => {
+          const version = (d.version || "").trim();
+          const firmware = (d.firmware || "").trim();
+          const propAssetId = (d.propertyIndex !== null && d.propertyIndex !== undefined)
+            ? (propertyAssetIds[d.propertyIndex] ?? null) : null;
+          return {
+            entity_id: vipEntityId, client_id: clientId, tenant_id: clientTenantId,
+            device_type: d.deviceType || "other",
+            vendor: (d.vendor || "").trim(), product: (d.product || "").trim(),
+            version: version || null, firmware: firmware || null,
+            version_unknown: d.versionUnknown === true,
+            internet_exposed: d.internetExposed === true,
+            property_asset_id: propAssetId,
+            created_by: actorUserId,
+          };
+        });
+      if (deviceRows.length > 0) {
+        const { error } = await supabase.from("subject_devices").insert(deviceRows);
+        if (error) throw new Error(`subject_devices: ${error.message}`);
+        subjectWrites.devices_inserted = deviceRows.length;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      subjectWrites.error = subjectWrites.error ? `${subjectWrites.error}; ${msg}` : msg;
+      console.error("[VIP-DEEP-SCAN] subject_devices insert failed (non-fatal):", msg);
+    }
+
     // ── 5. (REMOVED 2026-08-20 — operator ruling, FINDING-INTERNAL-ACTIVITY-SIGNALS) No tracking signal
     //    is emitted. The investigation record (INV-####) IS the audit record for a scan initiation.
     //    `signals` are observations about the WORLD, not about us — emitting a "VIP Deep Scan initiated"
@@ -407,6 +474,7 @@ Deno.serve(async (req) => {
       investigation: { id: investigation.id, file_number: investigation.file_number },
       tracking_signal: { emitted: false, audit_record: `investigation ${investigation.file_number}`, note: "No signal emitted — the investigation record is the audit trail; signals are world-observations, not platform activity (operator ruling 2026-08-20)." },
       enrichment_scans: scanResults,
+      subject_writes: subjectWrites,
       // requirement (b): state plainly what was fired and where results will appear — never silent success.
       reputational_scan: reputationalScan
         ? { ...reputationalScan, note: reputationalScan.ok ? `Deep reputational scan fired (scan ${reputationalScan.scan_id}). Findings will populate subject_exposure_items for entity ${vipEntityId}; run status in subject_scan_runs. NOTE: no UI reader is wired yet — results are persisted but not client-visible until the entity Investigate surface lands.` : `Reputational scan failed to fire: ${reputationalScan.error}` }

@@ -25,10 +25,10 @@ export type VIPAutoField =
   | "pets"
   | "humanWildlifeConflict"
   // Step 5: Digital Footprint
-  | "primaryDevices"
+  // (devices + profiles are structured arrays captured directly in the wizard —
+  //  they are NOT auto-applied string fields, so they are intentionally absent here.)
   | "emailProviders"
   | "cloudServices"
-  | "knownUsernames"
   | "corporateAffiliations"
   // Step 6: Vehicles & Routes
   | "vehicles"
@@ -143,21 +143,15 @@ export function resolveVIPFieldMapping(discovery: DiscoveryItem): VIPAutoField |
   // ============ DIGITAL FOOTPRINT ============
   if (type === "corporate") return "corporateAffiliations";
 
-  if (label.includes("username") || label.includes("handle") || label.includes("gaming") || label.includes("forum")) {
-    return "knownUsernames";
-  }
+  // usernames/handles + devices are now captured as structured profiles[]/devices[] in the wizard
+  // (not auto-applied string fields) — those discovery branches were removed intentionally.
 
-  if (label.includes("cloud") || label.includes("icloud") || label.includes("google drive") || 
+  if (label.includes("cloud") || label.includes("icloud") || label.includes("google drive") ||
       label.includes("dropbox") || label.includes("onedrive")) {
     return "cloudServices";
   }
 
-  if (label.includes("device") || label.includes("iphone") || label.includes("macbook") || 
-      label.includes("laptop") || label.includes("phone model")) {
-    return "primaryDevices";
-  }
-
-  if (label.includes("email provider") || label.includes("gmail") || label.includes("outlook") || 
+  if (label.includes("email provider") || label.includes("gmail") || label.includes("outlook") ||
       label.includes("protonmail")) {
     return "emailProviders";
   }

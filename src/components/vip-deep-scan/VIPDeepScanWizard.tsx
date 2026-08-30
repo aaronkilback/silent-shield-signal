@@ -47,6 +47,24 @@ interface PropertyInfo {
   notes: string;
 }
 
+interface DeviceInfo {
+  deviceType: string;
+  vendor: string;
+  product: string;
+  version: string;
+  versionUnknown: boolean;
+  firmware: string;
+  propertyIndex: number | null;
+  internetExposed: boolean;
+}
+
+interface ProfileInfo {
+  platform: string;
+  url: string;
+  handle: string;
+  verified: boolean;
+}
+
 interface VIPIntakeData {
   // Step 1: Client Selection
   clientId: string;
@@ -76,10 +94,10 @@ interface VIPIntakeData {
   humanWildlifeConflict: string;
   
   // Step 5: Digital Footprint
-  primaryDevices: string;
+  devices: DeviceInfo[];
   emailProviders: string;
   cloudServices: string;
-  knownUsernames: string;
+  profiles: ProfileInfo[];
   corporateAffiliations: string;
   
   // Step 6: Vehicles & Movement
@@ -137,10 +155,10 @@ const initialFormData: VIPIntakeData = {
   securityPersonnel: "",
   pets: "",
   humanWildlifeConflict: "",
-  primaryDevices: "",
+  devices: [],
   emailProviders: "",
   cloudServices: "",
-  knownUsernames: "",
+  profiles: [],
   corporateAffiliations: "",
   vehicles: "",
   regularRoutes: "",
@@ -277,7 +295,7 @@ export function VIPDeepScanWizard() {
   const newlineAppendFields = [
     "socialMediaHandles", "secondaryEmails", "secondaryPhones",
     "householdStaff", "securityPersonnel", "pets", "humanWildlifeConflict",
-    "primaryDevices", "cloudServices", "knownUsernames",
+    "cloudServices",
     "vehicles", "regularRoutes", "frequentedLocations", "gymClubMemberships",
     "preferredAirlines", "frequentDestinations",
     "knownAdversaries", "previousIncidents", "specificConcerns", "industryThreats",
@@ -526,9 +544,54 @@ export function VIPDeepScanWizard() {
   const updateProperty = (index: number, field: keyof PropertyInfo, value: any) => {
     setFormData(prev => ({
       ...prev,
-      properties: prev.properties.map((prop, i) => 
+      properties: prev.properties.map((prop, i) =>
         i === index ? { ...prop, [field]: value } : prop
       )
+    }));
+  };
+
+  const addDevice = () => {
+    setFormData(prev => ({
+      ...prev,
+      devices: [...prev.devices, {
+        deviceType: "", vendor: "", product: "", version: "",
+        versionUnknown: false, firmware: "", propertyIndex: null, internetExposed: false,
+      }]
+    }));
+  };
+
+  const removeDevice = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      devices: prev.devices.filter((_, i) => i !== index)
+    }));
+  };
+
+  const updateDevice = (index: number, field: keyof DeviceInfo, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      devices: prev.devices.map((d, i) => (i === index ? { ...d, [field]: value } : d))
+    }));
+  };
+
+  const addProfile = () => {
+    setFormData(prev => ({
+      ...prev,
+      profiles: [...prev.profiles, { platform: "", url: "", handle: "", verified: false }]
+    }));
+  };
+
+  const removeProfile = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      profiles: prev.profiles.filter((_, i) => i !== index)
+    }));
+  };
+
+  const updateProfile = (index: number, field: keyof ProfileInfo, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      profiles: prev.profiles.map((p, i) => (i === index ? { ...p, [field]: value } : p))
     }));
   };
 
@@ -1177,44 +1240,225 @@ export function VIPDeepScanWizard() {
       case 5:
         return (
           <div className="space-y-4">
+            {/* Devices — structured, add-as-many (mirrors Step 3 Properties) */}
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-base">Devices</Label>
+                <p className="text-sm text-muted-foreground">Routers, cameras, IoT, laptops, phones. Version drives CVE assessment.</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={addDevice}>
+                <Plus className="h-4 w-4 mr-1" /> Add device
+              </Button>
+            </div>
+
+            {formData.devices.map((device, index) => (
+              <Card key={index} className="p-4">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="secondary">Device {index + 1}</Badge>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeDevice(index)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Device Type</Label>
+                      <Select value={device.deviceType} onValueChange={(v) => updateDevice(index, "deviceType", v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="router">Router</SelectItem>
+                          <SelectItem value="modem_gateway">Modem / Gateway</SelectItem>
+                          <SelectItem value="nas">NAS</SelectItem>
+                          <SelectItem value="ip_camera_nvr">IP Camera / NVR</SelectItem>
+                          <SelectItem value="smart_lock">Smart Lock</SelectItem>
+                          <SelectItem value="thermostat">Thermostat</SelectItem>
+                          <SelectItem value="iot_hub">IoT Hub</SelectItem>
+                          <SelectItem value="printer">Printer</SelectItem>
+                          <SelectItem value="laptop">Laptop</SelectItem>
+                          <SelectItem value="phone">Phone</SelectItem>
+                          <SelectItem value="tv_streaming">TV / Streaming</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Make</Label>
+                      <Input
+                        value={device.vendor}
+                        onChange={(e) => updateDevice(index, "vendor", e.target.value)}
+                        placeholder="e.g. Netgear, Ubiquiti, Synology"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Model</Label>
+                      <Input
+                        value={device.product}
+                        onChange={(e) => updateDevice(index, "product", e.target.value)}
+                        placeholder="e.g. RAX50, UDM-Pro"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Version</Label>
+                      <Input
+                        value={device.version}
+                        disabled={device.versionUnknown}
+                        onChange={(e) => updateDevice(index, "version", e.target.value)}
+                        placeholder="e.g. 1.0.4.120"
+                      />
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`version-unknown-${index}`}
+                          checked={device.versionUnknown}
+                          onCheckedChange={(checked) => updateDevice(index, "versionUnknown", checked === true)}
+                        />
+                        <Label htmlFor={`version-unknown-${index}`} className="text-sm font-normal">
+                          Version unknown — asked, couldn't provide
+                        </Label>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Leave blank if not asked. Tick "unknown" only if you asked and they couldn't tell you.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Firmware</Label>
+                      <Input
+                        value={device.firmware}
+                        onChange={(e) => updateDevice(index, "firmware", e.target.value)}
+                        placeholder="e.g. build 2024-03-01 (optional)"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>At Property</Label>
+                      <Select
+                        value={device.propertyIndex === null ? "none" : String(device.propertyIndex)}
+                        onValueChange={(v) => updateDevice(index, "propertyIndex", v === "none" ? null : parseInt(v, 10))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="None / not specified" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None / not specified</SelectItem>
+                          {formData.properties.map((prop, pIdx) => (
+                            <SelectItem key={pIdx} value={String(pIdx)}>
+                              {prop.address?.trim() || `Property ${pIdx + 1}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`internet-exposed-${index}`}
+                      checked={device.internetExposed}
+                      onCheckedChange={(checked) => updateDevice(index, "internetExposed", checked === true)}
+                    />
+                    <Label htmlFor={`internet-exposed-${index}`} className="font-normal">Internet-exposed</Label>
+                  </div>
+                </div>
+              </Card>
+            ))}
+
+            {/* Online Profiles — structured, add-as-many */}
+            <div className="flex items-center justify-between pt-2">
+              <div>
+                <Label className="text-base">Online Profiles</Label>
+                <p className="text-sm text-muted-foreground">Confirmed accounts belonging to the principal.</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={addProfile}>
+                <Plus className="h-4 w-4 mr-1" /> Add profile
+              </Button>
+            </div>
+
+            {formData.profiles.map((profile, index) => (
+              <Card key={index} className="p-4">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="secondary">Profile {index + 1}</Badge>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeProfile(index)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Platform</Label>
+                      <Select value={profile.platform} onValueChange={(v) => updateProfile(index, "platform", v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select platform" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="linkedin">LinkedIn</SelectItem>
+                          <SelectItem value="x_twitter">X / Twitter</SelectItem>
+                          <SelectItem value="facebook">Facebook</SelectItem>
+                          <SelectItem value="instagram">Instagram</SelectItem>
+                          <SelectItem value="tiktok">TikTok</SelectItem>
+                          <SelectItem value="github">GitHub</SelectItem>
+                          <SelectItem value="youtube">YouTube</SelectItem>
+                          <SelectItem value="personal_site">Personal site</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Handle</Label>
+                      <Input
+                        value={profile.handle}
+                        onChange={(e) => updateProfile(index, "handle", e.target.value)}
+                        placeholder="e.g. @janedoe"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Profile URL</Label>
+                    <Input
+                      type="url"
+                      value={profile.url}
+                      onChange={(e) => updateProfile(index, "url", e.target.value)}
+                      placeholder="https://..."
+                    />
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`profile-verified-${index}`}
+                      checked={profile.verified}
+                      onCheckedChange={(checked) => updateProfile(index, "verified", checked === true)}
+                    />
+                    <Label htmlFor={`profile-verified-${index}`} className="font-normal">Confirmed this is theirs</Label>
+                  </div>
+                </div>
+              </Card>
+            ))}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Primary Devices</Label>
-                <Textarea 
-                  value={formData.primaryDevices}
-                  onChange={(e) => updateFormData("primaryDevices", e.target.value)}
-                  placeholder="iPhone 15 Pro (personal)&#10;MacBook Pro 16&quot; (work)&#10;iPad Pro (travel)"
-                  rows={3}
-                />
-              </div>
-              <div className="space-y-2">
                 <Label>Email Providers</Label>
-                <Textarea 
+                <Textarea
                   value={formData.emailProviders}
                   onChange={(e) => updateFormData("emailProviders", e.target.value)}
                   placeholder="Gmail (personal)&#10;Outlook (corporate)&#10;ProtonMail (secure)"
                   rows={3}
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Cloud Services</Label>
-                <Textarea 
+                <Textarea
                   value={formData.cloudServices}
                   onChange={(e) => updateFormData("cloudServices", e.target.value)}
                   placeholder="iCloud, Google Drive, Dropbox, OneDrive..."
-                  rows={2}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Known Usernames</Label>
-                <Textarea 
-                  value={formData.knownUsernames}
-                  onChange={(e) => updateFormData("knownUsernames", e.target.value)}
-                  placeholder="Gaming handles, forum usernames, legacy accounts..."
-                  rows={2}
+                  rows={3}
                 />
               </div>
             </div>
