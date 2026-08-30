@@ -469,7 +469,11 @@ Deno.serve(async (req) => {
     // PHASE 5: RELATIONSHIP & NETWORK ANALYSIS (AI-Powered)
     // ═══════════════════════════════════════════════════════════════════════════
     
-    if (GEMINI_API_KEY || PERPLEXITY_API_KEY) {
+    // Perplexity ONLY — this phase searches the live web for associates/controversies.
+    // An ungrounded model (gpt-4o-mini) would FABRICATE relationships and write them to
+    // entity_relationships as fact. Never substitute a model for live data: if there is
+    // no live search source, this phase does not run (no fabricated network).
+    if (PERPLEXITY_API_KEY) {
       try {
         let analysisPrompt = `Analyze the entity "${entity.name}" (${entity.type}). `;
         if (entity.description) analysisPrompt += `Description: ${entity.description}. `;
@@ -485,9 +489,9 @@ Deno.serve(async (req) => {
         
         Return as JSON array with objects containing: name, relationship_type, description, risk_level (critical/high/medium/low), confidence (0-100)`;
 
-        const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://api.openai.com/v1/chat/completions';
-        const apiKey = PERPLEXITY_API_KEY || GEMINI_API_KEY;
-        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gpt-4o-mini';
+        const apiUrl = 'https://api.perplexity.ai/chat/completions';
+        const apiKey = PERPLEXITY_API_KEY;
+        const model = 'sonar';
 
         const aiResponse = await fetchWithRetry(apiUrl, {
           method: 'POST',
@@ -627,7 +631,27 @@ Return as JSON array with objects: { finding_type, title, description, risk_leve
     // PHASE 5C: SANCTIONS & REGISTRY SCREENING
     // ═══════════════════════════════════════════════════════════════════════════
     
-    if (PERPLEXITY_API_KEY || GEMINI_API_KEY) {
+    // Explicit "screening did not run" record — the ONLY thing this phase may emit when a
+    // real screening can't be performed. Never a clearance, never a match. This is how the
+    // ABSENCE of a check stays visible instead of masquerading as good news.
+    const screeningNotPerformed = (reason: string) => ({
+      category: 'sanctions_screening',
+      type: 'screening_not_performed',
+      label: '⚠️ Sanctions/registry screening NOT performed',
+      value: `No OFAC / EU / UN / PEP / Interpol screening ran: ${reason}. Absence of findings here is NOT a clearance.`,
+      source: 'Sanctions Screening',
+      confidence: 0,
+      riskLevel: 'info',
+      commentary: 'This entity was NOT screened. Do not interpret the lack of a match as a clean result — no check was performed.',
+    });
+
+    // Perplexity ONLY. A sanctions/PEP/Interpol screening is a VERDICT: an ungrounded model
+    // (gpt-4o-mini) would invent match/clear results, and a fabricated "clear" tells a client
+    // someone passed OFAC/PEP/Interpol when NO check ran — the most dangerous fabricated good
+    // news. This path may NEVER emit a verdict without a real screening behind it; with no live
+    // source we record NOT-PERFORMED (below), never a clearance. Perplexity is an OPEN-SOURCE
+    // search, not the authoritative OFAC/EU/UN API — results are framed as such.
+    if (PERPLEXITY_API_KEY) {
       try {
         console.log(`[DEEP-SCAN] Running sanctions/registry screening for ${entity.name}`);
         const sanctionsPrompt = `Check "${entity.name}" (${entity.type}) against:
@@ -639,12 +663,12 @@ Return as JSON array with objects: { finding_type, title, description, risk_leve
 6. PEP (Politically Exposed Persons) databases
 7. Interpol and law enforcement notices
 
-Return as JSON array with objects: { check_type, entity_matched, list_name, match_confidence (0-100), description, risk_level (critical/high/medium/low/info), is_exact_match (boolean) }
-If no matches found for a category, include an entry with risk_level "info" confirming clean status.`;
+Search the live web for each. Return as JSON array with objects: { check_type, entity_matched, list_name, match_confidence (0-100), description, risk_level (critical/high/medium/low/info), is_exact_match (boolean) }
+If your search finds no match for a category, include an entry with risk_level "info" whose description states no match was found in this open-source search. Do NOT assert an authoritative clearance — report only what the search actually returned.`;
 
-        const apiUrl = PERPLEXITY_API_KEY ? 'https://api.perplexity.ai/chat/completions' : 'https://api.openai.com/v1/chat/completions';
-        const apiKey = PERPLEXITY_API_KEY || GEMINI_API_KEY;
-        const model = PERPLEXITY_API_KEY ? 'sonar' : 'gpt-4o-mini';
+        const apiUrl = 'https://api.perplexity.ai/chat/completions';
+        const apiKey = PERPLEXITY_API_KEY;
+        const model = 'sonar';
 
         const sanctionsResponse = await fetchWithRetry(apiUrl, {
           method: 'POST',
@@ -673,25 +697,36 @@ If no matches found for a category, include an entry with risk_level "info" conf
                 results.push({
                   category: 'sanctions_screening',
                   type: finding.check_type || 'sanctions_check',
-                  label: `${isMatch ? '🚨' : '✅'} ${finding.list_name || finding.check_type}: ${isMatch ? 'MATCH' : 'Clear'}`,
-                  value: finding.description || `${finding.list_name} screening result`,
-                  source: finding.list_name || 'Sanctions Screening',
+                  // A non-match is "no match in an open-source (Perplexity) search" — NOT an
+                  // authoritative "Clear" verdict from the OFAC/EU/UN API.
+                  label: `${isMatch ? '🚨' : '☑️'} ${finding.list_name || finding.check_type}: ${isMatch ? 'MATCH' : 'No match (open-source)'}`,
+                  value: finding.description || `${finding.list_name} open-source screening result`,
+                  source: `${finding.list_name || 'Sanctions Screening'} (open-source search via Perplexity)`,
                   confidence: Math.min(finding.match_confidence || 70, 80),
                   riskLevel: isMatch ? (finding.risk_level || 'critical') : 'info',
-                  commentary: isMatch 
-                    ? `⚠️ Potential sanctions match on ${finding.list_name}. Manual verification required.`
-                    : `No match found on ${finding.list_name}.`
+                  commentary: isMatch
+                    ? `⚠️ Potential sanctions match on ${finding.list_name}. Open-source search only — confirm against the authoritative list before relying on this.`
+                    : `No match found for ${finding.list_name} in an open-source web search. This is NOT an authoritative clearance — the official ${finding.list_name} list was not directly queried.`
                 });
               }
             } catch (parseErr) {
               console.error('[DEEP-SCAN] Failed to parse sanctions results:', parseErr);
             }
           }
+        } else {
+          // Non-OK from the live source — the screening did not complete. Record NOT-PERFORMED;
+          // never treat an empty/failed response as "clear".
+          results.push(screeningNotPerformed(`the live screening source returned HTTP ${sanctionsResponse.status}`));
         }
         await delay(1500);
       } catch (e) {
         console.error('[DEEP-SCAN] Sanctions screening error:', e);
+        results.push(screeningNotPerformed(`the live screening source errored (${e instanceof Error ? e.message : 'unknown error'})`));
       }
+    } else {
+      // No live screening source configured — never fabricate a verdict. Record the ABSENCE
+      // of screening explicitly so it can never be read as a clearance.
+      results.push(screeningNotPerformed('no live screening source is configured (PERPLEXITY_API_KEY absent)'));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
