@@ -53,12 +53,50 @@ const enriched = items.map((i) => {
   const ls = (byItem.get(i.id) ?? []).sort((a, b) => (a.found_at_rank ?? 999) - (b.found_at_rank ?? 999));
   return { ...i, locations: ls, location_count: ls.length, obscurity_rank: ls.length ? Math.min(...ls.map((l) => l.found_at_rank ?? 999)) : 999 };
 });
-// Identity-anchor gate (mirrors trg_subject_exposure_anchor_gate): a finding REQUIRES a typed anchor.
-// No anchor => unattributed volume. Pre-migration this applies the rule in-render; post-migration the
-// DB has already enforced it, so this is a no-op.
-for (const i of enriched) { if (i.is_finding && !(i.anchor_type && i.anchor_value)) i.is_finding = false; }
-const thirdParty = enriched.filter((i) => i.source_class !== "self_published" && i.category !== "data_breach").sort(compareExposureItems);
-const selfPublished = enriched.filter((i) => i.source_class === "self_published").sort(compareExposureItems);
+// ── Identity-anchor gate + THREE-BUCKET classification (2026-08-29 rework) ──
+// finding = anchored AND adverse · verified_presence = anchored (corroborated) AND neutral · noise = unanchored.
+// Anchors: email(owned) · coordinate(declared) · data_broker · source_corroboration(>=2 independent domains)
+//          [· profile_url · device when intake lands]. Broker domains match EXACT eTLD+1, NEVER substring.
+const BROKER_DOMAINS = ["rocketreach.co","zoominfo.com","spokeo.com","beenverified.com","whitepages.com","intelius.com","radaris.com","mylife.com","peoplefinder.com","truepeoplesearch.com","fastpeoplesearch.com","apollo.io","lusha.com","contactout.com","signalhire.com","nuwber.com","clustrmaps.com","thatsthem.com"];
+const host1 = (h) => String(h || "").toLowerCase().replace(/^www\./, "");
+const isBrokerDomain = (h) => { const x = host1(h); return BROKER_DOMAINS.some((d) => x === d || x.endsWith("." + d)); };
+const ADVERSE_CATS = new Set(["data_breach", "environmental", "legal", "financial", "professional", "media"]);
+const CORROBORATION_MIN_DOMAINS = 2;
+for (const i of enriched) {
+  // Environmental findings are coordinate-anchored; their SOURCE is the live hazard feed. Attach it so the
+  // footer's "every finding carries a source URL" is TRUE (was rendering 0 sources — a false claim).
+  if (i.category === "environmental" && (!i.locations || i.locations.length === 0)) {
+    const hz = String(i.title || "").split(" · ")[1]?.split(":")[0]?.trim().toLowerCase() || "";
+    const FEED = hz.includes("wildfire") ? { domain: "CWFIS / BC Wildfire Service", url: "https://cwfis.cfs.nrcan.gc.ca/" }
+      : hz.includes("air") ? { domain: "Environment Canada — AQHI", url: "https://weather.gc.ca/airquality/forecast/current/" }
+      : hz.includes("road") ? { domain: "DriveBC", url: "https://www.drivebc.ca/" }
+      : hz.includes("avalanche") ? { domain: "Avalanche Canada", url: "https://avalanche.ca/" }
+      : { domain: "Environment Canada — Weather", url: "https://weather.gc.ca/" };
+    i.locations = [{ url: FEED.url, domain: FEED.domain, found_by_query: "live hazard feed", found_at_rank: 1 }];
+    i.location_count = 1; i.obscurity_rank = 1;
+  }
+  // Full-email fix: capture the whole account list, not up to the first period (".com" was truncating it).
+  if (i.category === "data_breach" && typeof i.summary === "string") {
+    const m = i.summary.match(/Affected account\(s\):\s*(.+?)\.\s*Breach/i);
+    if (m) { i.anchor_type = "email"; i.anchor_value = m[1].trim(); }
+  }
+  const domains = [...new Set((i.locations || []).map((l) => host1(l.domain)).filter(Boolean))];
+  const brokerHits = domains.filter(isBrokerDomain);
+  const corroborated = domains.length >= CORROBORATION_MIN_DOMAINS;
+  if (!(i.anchor_type && i.anchor_value)) {
+    if (brokerHits.length) { i.anchor_type = "data_broker"; i.anchor_value = brokerHits.join(", "); }
+    else if (corroborated) { i.anchor_type = "source_corroboration"; i.anchor_value = domains.join(", "); }
+  }
+  const anchored = !!(i.anchor_type && i.anchor_value);
+  const adverse = ADVERSE_CATS.has(i.category) || brokerHits.length > 0;
+  i.exposure_class = !anchored ? "noise" : (adverse ? "finding" : "verified_presence");
+  i.is_finding = i.exposure_class === "finding";
+  i.corroboration_domains = domains.length;
+}
+const thirdParty = enriched.filter((i) => i.category !== "data_breach" && i.exposure_class === "finding").sort(compareExposureItems);
+const verifiedPresence = enriched.filter((i) => i.exposure_class === "verified_presence").sort((a, b) => (b.corroboration_domains ?? 0) - (a.corroboration_domains ?? 0));
+const noise = enriched.filter((i) => i.category !== "data_breach" && i.exposure_class === "noise").sort(compareExposureItems);
+const selfPublished = [];   // folded into the three buckets; unverified name-matches are noise, not "yours"
 const breaches = enriched.filter((i) => i.category === "data_breach").sort((a, b) => (b.first_seen_date ?? "").localeCompare(a.first_seen_date ?? ""));
 const runsArr = input.runs ?? [];
 const dstr = (r) => (r?.finished_at || r?.started_at || "").slice(0, 10);
@@ -67,9 +105,24 @@ for (const cat of ALL7) {
   const run = runsArr.find((r) => (r.scope?.categories || []).includes(cat));
   categorySweeps[cat] = run ? { last_swept: dstr(run), depth: run.scope?.depth ?? "—", queries: run.counts?.battery_queries ?? null } : null;
 }
+// Coverage-contradiction fix: a category with captured items WAS searched — never render "not searched"
+// next to captures in that category (page one was claiming legal not-searched beside legal captures).
+const capByCat = {};
+for (const i of enriched) {
+  const dts = (i.locations || []).map((l) => l.date_captured).filter(Boolean).concat(i.first_seen_date ? [i.first_seen_date] : []);
+  if (!dts.length) continue;
+  const latest = dts.map(String).sort().slice(-1)[0].slice(0, 10);
+  if (!capByCat[i.category] || capByCat[i.category] < latest) capByCat[i.category] = latest;
+}
+for (const cat of ALL7) {
+  if (!categorySweeps[cat] && capByCat[cat]) categorySweeps[cat] = { last_swept: capByCat[cat], depth: "captures on file (no dedicated sweep record)", queries: null };
+}
 const catsSwept = ALL7.filter((c) => categorySweeps[c]);
-const catsNeverSwept = ALL7.filter((c) => !categorySweeps[c]);
-const catsWithFindings = [...new Set([...thirdParty, ...selfPublished].map((i) => i.category))];
+const catsWithFindings = [...new Set([...thirdParty, ...breaches, ...verifiedPresence].map((i) => i.category))];
+// Coverage-contradiction fix: a category with ANY captured item WAS searched — never claim "not searched"
+// while findings/captures exist in it (page one was saying legal not-searched next to legal captures).
+const catsWithAnyCapture = new Set(enriched.map((i) => i.category));
+const catsNeverSwept = ALL7.filter((c) => !categorySweeps[c] && !catsWithAnyCapture.has(c));
 const catsEmpty = catsSwept.filter((c) => !catsWithFindings.includes(c));
 const breachDates = breaches.flatMap((b) => (b.locations || []).map((l) => l.date_captured)).filter(Boolean).sort();
 const breachLastChecked = breachDates.length ? String(breachDates[breachDates.length - 1]).slice(0, 10) : null;
@@ -103,20 +156,20 @@ const meta = {
 const reportId = "preview0-0000-0000-0000-000000000000";
 const html = FORMAT === "executive"
   ? renderExecutive({ meta, thirdParty, selfPublished, breaches })
-  : renderReport({ meta, thirdParty, selfPublished, breaches, reportId, childSafety });
+  : renderReport({ meta, thirdParty, verifiedPresence, noise, breaches, reportId, childSafety });
 fs.writeFileSync(OUT, html);
 
 console.log("format:", FORMAT);
 console.log("wrote:", OUT, "(" + html.length + " bytes)");
-console.log("sections:", JSON.stringify({
-  third_party_findings: thirdParty.filter((i) => i.is_finding).length,
-  third_party_mentions: thirdParty.filter((i) => !i.is_finding).length,
-  self_published: selfPublished.length,
-  breaches: breaches.length,
+console.log("buckets:", JSON.stringify({
+  adverse_findings: thirdParty.length + breaches.length,
+  "  breach": breaches.length, "  environmental+broker+legal": thirdParty.length,
+  verified_public_presence: verifiedPresence.length,
+  noise_volume: noise.length,
 }));
 
 // ── renderReport + renderChildSafety — copied verbatim from the edge function ──
-function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, childSafety }) {
+function renderReport({ meta, thirdParty, verifiedPresence, noise, breaches, reportId, childSafety }) {
   const cov = meta.coverage;
   const sevBadge = (s) => `<span class="sev sev-${esc(s)}">${esc(s || "—")}</span>`;
   const awareness = (a) => a ? `<span class="aware aware-${esc(a)}">${a === "unknown" ? "not previously known" : esc(a)}</span>` : "";
@@ -126,8 +179,9 @@ function renderReport({ meta, thirdParty, selfPublished, breaches, reportId, chi
     ? `<div class="anchor"><span class="alabel">Tied to</span> <span class="aval">${esc(i.anchor_value)}</span> <span class="atype">${esc(ANCHOR_LABEL[i.anchor_type] || i.anchor_type)}</span></div>`
     : "";
   const itemBlock = (i) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${i.locations.length} source${i.locations.length === 1 ? "" : "s"}:</div>${locList(i.locations)}</div>`;
-  const tpFindings = (thirdParty || []).filter((i) => i.is_finding);
-  const tpMentions = (thirdParty || []).filter((i) => !i.is_finding);
+  const tpFindings = thirdParty || [];              // adverse + anchored (environmental / legal / broker)
+  const tpMentions = noise || [];                   // single-source name-matches — volume, not findings
+  const presence = verifiedPresence || [];          // corroborated (>=2 domains) but neutral — confirmed footprint
   const mentionRow = (m) => `<div class="mention-row"><span class="cat">${esc(m.category)}</span> ${esc(m.title)} — ${(m.locations || []).map((l) => `<a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${l.date_captured ? ` <span class="rank">(captured ${esc(String(l.date_captured).slice(0, 10))})</span>` : ""}`).join(", ")}</div>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Reputational Exposure — ${esc(meta.subject.name)}</title>
@@ -201,9 +255,9 @@ ${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note
 ${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
 <p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
 
-<h2>3 · Self-Published Footprint</h2>
-<p class="section-intro">What you publish about yourself — reported separately. This is within your control; it is here for completeness, not as a finding.</p>
-${selfPublished.length ? selfPublished.map(itemBlock).join("") : '<p class="empty-note">No self-published accounts surfaced.</p>'}
+<h2>3 · Verified Public Presence</h2>
+<p class="section-intro">Content about you confirmed by two or more independent sources but NOT adverse — your genuine public footprint (press, profiles, appearances). Not exposure, and not called such; but it is what an adversary assembles a picture from, so it is on the record. Distinct from the single-source name-matches in the volume below, whose attribution is unverified.</p>
+${presence.length ? presence.map(itemBlock).join("") : '<p class="empty-note">No corroborated public presence surfaced (nothing confirmed by 2+ independent sources).</p>'}
 
 <h2>4 · Breach Exposure</h2>
 <p class="section-intro">Data breaches affecting your personal accounts (Have I Been Pwned).</p>
