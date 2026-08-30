@@ -1337,23 +1337,18 @@ export function VIPDeepScanWizard() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>At Property</Label>
-                      <Select
-                        value={device.propertyIndex === null ? "none" : String(device.propertyIndex)}
-                        onValueChange={(v) => updateDevice(index, "propertyIndex", v === "none" ? null : parseInt(v, 10))}
-                      >
+                      <Label className="text-muted-foreground">At Property</Label>
+                      {/* Disabled until the geo workstream creates client_geo_assets — property_asset_id would
+                          resolve to null for every device today, so the field must not look like it works. */}
+                      <Select value="none" disabled onValueChange={() => {}}>
                         <SelectTrigger>
-                          <SelectValue placeholder="None / not specified" />
+                          <SelectValue placeholder="—" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">None / not specified</SelectItem>
-                          {formData.properties.map((prop, pIdx) => (
-                            <SelectItem key={pIdx} value={String(pIdx)}>
-                              {prop.address?.trim() || `Property ${pIdx + 1}`}
-                            </SelectItem>
-                          ))}
+                          <SelectItem value="none">—</SelectItem>
                         </SelectContent>
                       </Select>
+                      <p className="text-xs text-muted-foreground">Property linking arrives with the geo workstream — not captured yet.</p>
                     </div>
                   </div>
 
