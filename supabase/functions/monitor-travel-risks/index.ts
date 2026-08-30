@@ -138,29 +138,12 @@ Return as JSON: { "flights": [...], "airport_conditions": {...}, "weather_impact
         }
       }
 
-      // Fallback: use AI gateway with web-search-capable model
-      try {
-        const fallbackResult = await callAiGateway({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: "system", content: "You are a flight status analyst. Use your knowledge of current airline schedules and conditions to provide the best available flight status information. Return valid JSON only, no markdown." },
-            { role: "user", content: flightPrompt }
-          ],
-          functionName: 'monitor-travel-risks',
-          retries: 1,
-        });
-        if (!fallbackResult.error && fallbackResult.text) {
-          try {
-            const cleaned = fallbackResult.text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            const parsed = JSON.parse(cleaned);
-            parsed.citations = [];
-            parsed.source = "ai-gateway-fallback";
-            console.log("Flight status retrieved via AI gateway fallback");
-            return parsed;
-          } catch { console.warn("Failed to parse AI gateway flight status response"); }
-        }
-      } catch (error) {
-        console.error("AI gateway flight status fallback also failed:", error);
+      // NO model fallback. An LLM cannot know real-time flight status; a fabricated
+      // status is worse than an outage (model-as-live-data doctrine). Perplexity
+      // down or unconfigured -> return null; the caller renders "No real-time flight
+      // data available." Never substitute a model for live data.
+      if (!PERPLEXITY_API_KEY) {
+        console.warn("Flight status: PERPLEXITY_API_KEY not configured — real-time flight status unavailable (no fabrication).");
       }
       return null;
     }
@@ -216,27 +199,13 @@ Return as JSON: { "safety_level": "low|medium|high|critical", "advisories": [...
         }
       }
 
-      // Fallback: use AI gateway
-      try {
-        const fallbackResult = await callAiGateway({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: "system", content: "You are a travel security analyst. Using your knowledge of current world events, provide the most up-to-date destination intelligence. Focus on real, verifiable conditions. Return detailed analysis as prose, not JSON." },
-            { role: "user", content: `Provide current travel security intelligence for ${city}, ${country} for travel around ${travelDates}. Cover: travel advisories, weather conditions, security threats, civil unrest, health risks, infrastructure issues, and any major events affecting travel. Be specific about current conditions.` }
-          ],
-          functionName: 'monitor-travel-risks',
-          retries: 1,
-        });
-        if (!fallbackResult.error && fallbackResult.text) {
-          console.log("Destination intel retrieved via AI gateway fallback");
-          return {
-            content: fallbackResult.text,
-            citations: [],
-            source: "ai-gateway-fallback"
-          };
-        }
-      } catch (error) {
-        console.error("AI gateway destination intel fallback also failed:", error);
+      // NO model fallback. An LLM cannot know current destination conditions, threats,
+      // or advisories — inventing them is worse than an outage (model-as-live-data
+      // doctrine). Perplexity down or unconfigured -> return null; the caller renders
+      // "No real-time destination intelligence available." The risk assessment still
+      // runs on Fortress signals/incidents. Never substitute a model for live data.
+      if (!PERPLEXITY_API_KEY) {
+        console.warn("Destination intel: PERPLEXITY_API_KEY not configured — real-time destination intelligence unavailable (no fabrication).");
       }
       return null;
     }
@@ -533,7 +502,7 @@ Respond with a JSON object:
         messages: [
           {
             role: "system",
-            content: "You are a travel risk analyst with access to current world events, weather patterns, and travel advisories. Provide REALISTIC risk assessments based on ACTUAL conditions at the destination. Only create alerts for genuine, verified risks - not hypothetical scenarios. Focus on destination-specific threats, route-specific issues, and time-sensitive concerns. If the destination is generally safe with no current threats, indicate low risk.",
+            content: "You are a travel risk analyst. Assess risk ONLY from the intelligence provided in the user message (Fortress signals, incidents, alerts, and any real-time data explicitly present). Do NOT use your own training knowledge of current world events, weather, or advisories — where a section states data is unavailable, treat it as unavailable rather than filling it in from memory. Only create alerts for genuine risks evidenced by the provided data, never hypothetical scenarios. If the provided intelligence shows no current threats, indicate low risk.",
           },
           {
             role: "user",
