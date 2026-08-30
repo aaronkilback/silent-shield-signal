@@ -52,11 +52,15 @@ export interface ExposureItem { title: string; category: string; summary?: strin
 // the thing IS; (3) corroboration = location count; (4) obscurity is the TIEBREAKER among items equal on
 // the above — a buried real finding beats a prominent one, but obscurity NEVER promotes a non-finding.
 const SEV_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+// Authorship weighting: third-party content ABOUT the subject is the real exposure; self-published is within
+// the subject's control (context). Third-party ranks above self-published (lower number = first).
+const SRC_RANK: Record<string, number> = { third_party: 0, self_published: 1 };
 export function compareExposureItems(
-  a: { is_finding?: boolean; severity?: string | null; location_count?: number; obscurity_rank?: number },
-  b: { is_finding?: boolean; severity?: string | null; location_count?: number; obscurity_rank?: number },
+  a: { is_finding?: boolean; severity?: string | null; location_count?: number; obscurity_rank?: number; source_class?: string | null },
+  b: { is_finding?: boolean; severity?: string | null; location_count?: number; obscurity_rank?: number; source_class?: string | null },
 ): number {
   return (Number(b.is_finding ?? false) - Number(a.is_finding ?? false))                 // findings first
+    || ((SRC_RANK[a.source_class ?? "third_party"] ?? 0) - (SRC_RANK[b.source_class ?? "third_party"] ?? 0)) // third-party exposure above self-published context
     || ((SEV_RANK[b.severity ?? ""] ?? 0) - (SEV_RANK[a.severity ?? ""] ?? 0))            // consequence
     || ((b.location_count ?? 0) - (a.location_count ?? 0))                                // corroboration
     || ((b.obscurity_rank ?? 0) - (a.obscurity_rank ?? 0));                               // obscurity tiebreaker (buried = higher rank first)
