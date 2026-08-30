@@ -210,10 +210,15 @@ Deno.serve(async (req) => {
     });
     if (insErr) return errorResponse(`report persist failed: ${insErr.message}`, 500);
 
+    // Short-lived signed URL for OPERATOR review only (private bucket). issuable=false still gates any
+    // client delivery — this link lets the operator read the draft, nothing more. Signed, never public.
+    const { data: signed } = await supabase.storage.from(REPORT_BUCKET).createSignedUrl(path, 3600);
+
     return successResponse({
       reportId, issuable: false, storage_path: path, bucket: REPORT_BUCKET,
+      view_url: signed?.signedUrl ?? null,
       counts: meta.counts, remediation_authored: remediation.authored,
-      note: "Report generated and PERSISTED, issuable=false. It will NOT deliver until an operator sets issuable=true. Remediation is operator-authored only.",
+      note: "Report generated and PERSISTED, issuable=false. It will NOT deliver until an operator sets issuable=true. view_url is a 1-hour operator-review link. Remediation is operator-authored only.",
     });
   } catch (e) {
     console.error("[generate-subject-exposure-report] error:", e);

@@ -69,6 +69,8 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
     categories: string[];
   } | null>(null);
   const [runningInvestigation, setRunningInvestigation] = useState(false);
+  const [generatingExposure, setGeneratingExposure] = useState(false);
+  const [exposureResult, setExposureResult] = useState<{ reportId: string; view_url: string | null; counts: any } | null>(null);
   const [synthesizing, setSynthesizing] = useState(false);
   const [contentSynthesis, setContentSynthesis] = useState<string | null>(null);
   const [runningAssessment, setRunningAssessment] = useState(false);
@@ -747,6 +749,32 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
       toast({ title: "Analysis failed", description: error.message, variant: "destructive" });
     } finally {
       setSynthesizing(false);
+    }
+  };
+
+  // Generate the reputational-exposure report (findings + breach + synthesis) from stored intelligence.
+  // The function persists it issuable=false and returns a 1-hour signed view_url for operator review.
+  const handleGenerateExposureReport = async () => {
+    if (!entityId) return;
+    setGeneratingExposure(true);
+    setExposureResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-subject-exposure-report', {
+        body: { entityId }
+      });
+      if (error || data?.error) throw new Error(data?.error || (error as any)?.message || 'Report generation failed');
+      setExposureResult({ reportId: data.reportId, view_url: data.view_url ?? null, counts: data.counts });
+      toast({
+        title: "Exposure report generated",
+        description: `${data.counts?.findings ?? 0} findings · ${data.counts?.breaches ?? 0} breaches · draft (not issued).`,
+        duration: 8000,
+      });
+      if (data.view_url) window.open(data.view_url, '_blank', 'noopener');
+    } catch (e: any) {
+      console.error('Exposure report error:', e);
+      toast({ title: "Exposure report failed", description: e.message, variant: "destructive" });
+    } finally {
+      setGeneratingExposure(false);
     }
   };
 
@@ -2150,6 +2178,35 @@ export const EntityDetailDialog = ({ entityId, open, onOpenChange }: EntityDetai
           </TabsContent>
 
           <TabsContent value="report" className="mt-4 space-y-4">
+            {/* Reputational Exposure Report — findings + breach + synthesis, from stored intelligence */}
+            <Card className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-primary" />
+                  <div>
+                    <div className="text-sm font-medium">Reputational Exposure Report</div>
+                    <div className="text-xs text-muted-foreground">Findings, breach exposure, and the synthesis picture — assembled from stored intelligence. Draft only (not issued to any client).</div>
+                  </div>
+                </div>
+                <Button size="sm" onClick={handleGenerateExposureReport} disabled={generatingExposure}>
+                  {generatingExposure
+                    ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating…</>)
+                    : (<><Shield className="w-4 h-4 mr-2" />Generate Exposure Report</>)}
+                </Button>
+              </div>
+              {exposureResult && (
+                <div className="mt-3 flex items-center gap-3 border-t pt-3 text-sm">
+                  <Badge variant="outline">{exposureResult.counts?.findings ?? 0} findings</Badge>
+                  <Badge variant="outline">{exposureResult.counts?.breaches ?? 0} breaches</Badge>
+                  <Badge variant="outline">{exposureResult.counts?.verified_presence ?? 0} verified</Badge>
+                  {exposureResult.view_url
+                    ? (<a href={exposureResult.view_url} target="_blank" rel="noopener noreferrer" className="text-primary underline">Open report ↗</a>)
+                    : (<span className="text-muted-foreground">stored (no view link)</span>)}
+                  <span className="ml-auto text-xs text-muted-foreground">draft · not issued</span>
+                </div>
+              )}
+            </Card>
+
             {/* Investigation metadata bar */}
             {latestInvestigation && (
               <Card className="p-3">
