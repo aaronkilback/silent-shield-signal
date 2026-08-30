@@ -419,7 +419,18 @@ Deno.serve(async (req) => {
     }
     try {
       const deviceRows = (intakeData.devices || [])
-        .filter((d) => (d?.vendor || "").trim() !== "" || (d?.product || "").trim() !== "")   // skip empty rows (no make AND no model)
+        // Keep a row if it carries ANY meaningful signal: a make or model, OR the
+        // operator flagged it internet-exposed / version-unknown. An internet-exposed
+        // gateway the subject can't version is a FINDING ("unidentified internet-exposed
+        // device requiring identification"), not an empty row — dropping it silently
+        // loses the worst device (operator ruling 2026-08-30). Only a row with no make,
+        // no model, and neither flag set is a truly-empty accidental row → skip.
+        .filter((d) =>
+          (d?.vendor || "").trim() !== "" ||
+          (d?.product || "").trim() !== "" ||
+          d?.internetExposed === true ||
+          d?.versionUnknown === true
+        )
         .map((d) => {
           const version = (d.version || "").trim();
           const firmware = (d.firmware || "").trim();
