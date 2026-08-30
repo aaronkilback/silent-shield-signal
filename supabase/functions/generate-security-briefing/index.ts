@@ -77,6 +77,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Option A — honest refuse (operator ruling 2026-08-30). A security briefing asserts
+    // CURRENT conditions (risk rating, latest developments, advisories, emergency contacts).
+    // Without a live intelligence source, gpt-4o-mini would fabricate those from training
+    // data — the model-as-live-data defect. We do NOT build a partial briefing from Fortress
+    // data alone (that mis-scopes and gets the scoping wrong). No live source -> no briefing.
+    if (!perplexityIntel) {
+      return successResponse({
+        success: false,
+        briefing_unavailable: true,
+        location: { city, country },
+        reason: PERPLEXITY_API_KEY
+          ? "The live intelligence source returned no data for this location. A security briefing asserts current conditions and will not be fabricated without a live source."
+          : "No live intelligence source is configured (PERPLEXITY_API_KEY absent). A security briefing asserts current conditions and will not be generated from a model's training data.",
+      });
+    }
+
     const formatSignals = (sigs: any[]) => {
       if (!sigs || sigs.length === 0) return "No recent signals.";
       return sigs.map(s => `- [${s.severity?.toUpperCase() || 'INFO'}] ${s.title} (${new Date(s.created_at).toLocaleDateString()}): ${s.content?.substring(0, 200) || ''}`).join('\n');
@@ -104,7 +120,7 @@ ${formatExistingReports(existingReports || [])}
 ${perplexityIntel?.content || 'Real-time intelligence not available.'}
 ${perplexityIntel?.citations?.length ? `Sources: ${perplexityIntel.citations.slice(0, 5).join(', ')}` : ''}
 
-Create a professional security briefing with location overview, risk rating, key risks, latest developments, security advice, transportation, emergency contacts, and travel advisory.`;
+Create a professional security briefing with location overview, risk rating, key risks, latest developments, security advice, transportation, emergency contacts, and travel advisory. Use ONLY the intelligence provided above (real-time Perplexity data + Fortress data). Do NOT invent developments, advisories, dates, or emergency contact numbers that are not present in the provided sources — omit a field rather than fabricating it.`;
 
     const tools = [{
       type: "function",
@@ -133,7 +149,7 @@ Create a professional security briefing with location overview, risk rating, key
     const aiResult = await callAiGateway({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: "You are an expert security analyst who produces professional security briefings in the style of International SOS and Control Risks." },
+        { role: "system", content: "You are an expert security analyst who produces professional security briefings in the style of International SOS and Control Risks. Base every statement strictly on the intelligence provided in the user message; never add facts, dates, developments, or contact numbers from your own training knowledge. If the provided data does not support a field, omit it rather than inventing it." },
         { role: "user", content: prompt }
       ],
       functionName: 'generate-security-briefing',
