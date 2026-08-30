@@ -128,10 +128,16 @@ Deno.serve(async (req) => {
     }
     for (const cat of ALL7) if (!categorySweeps[cat] && capByCat[cat]) categorySweeps[cat] = { last_swept: capByCat[cat], depth: "captures on file — no dedicated sweep record", queries: null } as any;
     const catsSwept = ALL7.filter((c) => categorySweeps[c]);
+    // A DEDICATED sweep = a real scan-run scope for that category. A category "swept" only via incidental
+    // captures (capByCat, line 129) is NOT a dedicated sweep and must not be claimed as a clean bill.
+    const isDedicatedSweep = (c: string) => !!categorySweeps[c] && !String((categorySweeps[c] as any).depth || "").includes("no dedicated sweep");
     const catsWithFindings = [...new Set([...findings, ...breaches, ...verifiedPresence].map((i: any) => i.category))];
     const catsWithAnyCapture = new Set(enriched.map((i: any) => i.category));
     const catsNeverSwept = ALL7.filter((c) => !categorySweeps[c] && !catsWithAnyCapture.has(c));
-    const catsEmpty = catsSwept.filter((c: string) => !catsWithFindings.includes(c));
+    // "Swept, no findings" is a clean-bill claim — restrict it to DEDICATED sweeps. Incidental-capture-only
+    // categories are listed separately so we never over-claim (WO #4, 2026-08-30).
+    const catsEmpty = ALL7.filter((c: string) => isDedicatedSweep(c) && !catsWithFindings.includes(c));
+    const catsIncidentalOnly = ALL7.filter((c: string) => !!categorySweeps[c] && !isDedicatedSweep(c) && !catsWithFindings.includes(c));
     // Breach producer — last time HIBP was checked (latest capture among current breach locations).
     const breachDates = breaches.flatMap((b: any) => (b.locations || []).map((l: any) => l.date_captured)).filter(Boolean).sort();
     const breachLastChecked = breachDates.length ? String(breachDates[breachDates.length - 1]).slice(0, 10) : null;
@@ -188,6 +194,7 @@ Deno.serve(async (req) => {
           breach: breachLastChecked ? { last_checked: breachLastChecked, current_findings: breaches.length } : null,
         },
         categories_with_findings: catsWithFindings, categories_swept_empty: catsEmpty,
+        categories_incidental_only: catsIncidentalOnly,
         not_searched: { categories_never_swept: catsNeverSwept, sources_not_covered: SOURCES_NOT_COVERED, family_not_scanned: familyNotScanned },
       },
       counts: { findings: findings.length, verified_presence: verifiedPresence.length, noise: noise.length, breaches: breaches.length },
@@ -234,7 +241,27 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   const cov = meta.coverage;
   const sevBadge = (s: string) => `<span class="sev sev-${esc(s)}">${esc(s || "—")}</span>`;
   const awareness = (a: string) => a ? `<span class="aware aware-${esc(a)}">${a === "unknown" ? "not previously known" : esc(a)}</span>` : "";
-  const locList = (ls: any[]) => `<ul class="locs">${ls.map((l) => `<li><a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${typeof l.found_at_rank === "number" ? ` <span class="rank">rank ${l.found_at_rank}</span>` : ""}<div class="prov">found via <code>${esc(l.found_by_query || "—")}</code>${l.date_captured ? ` · captured ${esc(String(l.date_captured).slice(0, 10))}` : ""}</div></li>`).join("")}</ul>`;
+  // Collapse captures by domain, then by DISTINCT query — one line per query with a capture count,
+  // so a source that returns the same query across many pages (e.g. 54 near-identical pressreader
+  // captures) reads as "pressreader.com · found via <q> ×N", not 54 duplicate lines. Rank dropped —
+  // a rank is meaningful per-capture, not per collapsed group.
+  const locList = (ls: any[]) => {
+    const byDomain = new Map<string, { url: string; queries: Map<string, { count: number; date: string | null }> }>();
+    for (const l of ls || []) {
+      const d = l.domain || l.url || "—";
+      if (!byDomain.has(d)) byDomain.set(d, { url: l.url, queries: new Map() });
+      const g = byDomain.get(d)!;
+      const q = String(l.found_by_query || "—");
+      if (!g.queries.has(q)) g.queries.set(q, { count: 0, date: null });
+      const qi = g.queries.get(q)!;
+      qi.count++;
+      const dt = l.date_captured ? String(l.date_captured).slice(0, 10) : null;
+      if (dt && (!qi.date || dt > qi.date)) qi.date = dt;
+    }
+    return `<ul class="locs">${[...byDomain.entries()].map(([domain, g]) =>
+      `<li><a href="${esc(g.url)}">${esc(domain)}</a>${g.queries.size > 1 ? ` <span class="rank">${g.queries.size} queries</span>` : ""}<div class="prov">${[...g.queries.entries()].map(([q, qi]) =>
+        `found via <code>${esc(q)}</code>${qi.count > 1 ? ` <span class="rank">×${qi.count} captures</span>` : ""}${qi.date ? ` · captured ${esc(qi.date)}` : ""}`).join("<br>")}</div></li>`).join("")}</ul>`;
+  };
   const ANCHOR_LABEL: Record<string, string> = { email: "email", coordinate: "coordinate", profile_url: "profile URL", device: "device", data_broker: "data broker", source_corroboration: "source corroboration" };
   const anchorLine = (i: any) => i.anchor_type && i.anchor_value
     ? `<div class="anchor"><span class="alabel">Tied to</span> <span class="aval">${esc(i.anchor_value)}</span> <span class="atype">${esc(ANCHOR_LABEL[i.anchor_type] || i.anchor_type)}</span></div>` : "";
@@ -242,10 +269,21 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations)}</div>`;
   // Third-party split: real findings render prominently; bare mentions are counted + collapsed (web) or
   // moved to Appendix A (print), so the PDF the client keeps never silently omits the mention volume.
-  const tpFindings = findings || [];               // adverse + anchored (environmental / legal / broker)
+  // Environmental findings are LIVE HAZARD-FEED results (wildfire/weather/road tied to a coordinate),
+  // not things others wrote — they get their own section and no search "rank". Everything else adverse
+  // is third-party (written by others).
+  const isEnvFeed = (f: any) => f.category === "environmental" || f.anchor_type === "coordinate";
+  const envFindings = (findings || []).filter(isEnvFeed);
+  const tpFindings = (findings || []).filter((f: any) => !isEnvFeed(f));  // written-by-others (legal / broker)
   const tpMentions = noise || [];                   // single-source name-matches — volume, not findings
   const presence = verifiedPresence || [];          // corroborated (>=2 domains) but neutral — confirmed footprint
   const mentionRow = (m: any) => `<div class="mention-row"><span class="cat">${esc(m.category)}</span> ${esc(m.title)} — ${(m.locations || []).map((l: any) => `<a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${l.date_captured ? ` <span class="rank">(captured ${esc(String(l.date_captured).slice(0, 10))})</span>` : ""}`).join(", ")}</div>`;
+  // Hazard-feed finding renderer — location + hazard + severity + measurement; NO rank, NO domain/query list.
+  const envBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">environmental</span>${sevBadge(i.severity)}${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}${i.first_seen_date ? `<div class="prov">measured ${esc(String(i.first_seen_date).slice(0, 10))}</div>` : ""}</div>`;
+  // Dynamic section numbering — sections number sequentially in render order, so a conditional section
+  // (Family, only on family engagements) never leaves a gap or keeps a stale number.
+  let __sn = 0;
+  const sec = (t: string) => `<h2>${++__sn} · ${t}</h2>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Reputational Exposure — ${esc(meta.subject.name)}</title>
 <style>
@@ -310,42 +348,47 @@ ${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this re
 
 <div class="part-divider">Part I · What this means &amp; what to do</div>
 
-<h2>1 · Synthesis</h2>
+${sec("Synthesis")}
 <div class="caveat"><strong>Coverage:</strong> this reflects public and breach sources only — see Section 7 (Scope &amp; Method) for what was <em>not</em> checked (e.g. dark-web marketplaces, paywalled records).</div>
 <p class="section-intro">What the findings in this report add up to — the higher-order exposure picture. Each item is a fixed template filled ONLY from those findings (listed in Part II below); no narrative is generated. States: <strong>ESTABLISHED</strong> (asserted from cited rows), <strong>QUALIFIED</strong> (asserted with a stated limit), <strong>NOT ASSERTED</strong> (checked, no basis — shown because the absence is itself informative).</p>
 ${synthesis && synthesis.length ? renderSynthesisSection(synthesis) : '<p class="empty-note">No synthesis primitives evaluated.</p>'}
 
-<h2>2 · Remediation</h2>
+${sec("Remediation")}
 ${meta.remediation.authored
     ? `${meta.remediation.summary ? `<p>${esc(meta.remediation.summary)}</p>` : ""}${meta.remediation.items.length ? `<ol>${meta.remediation.items.map((r: any) => `<li><strong>${esc(r.action)}</strong>${r.finding_ref ? ` <span class="rank">(${esc(r.finding_ref)})</span>` : ""}${r.rationale ? `<div class="isum">${esc(r.rationale)}</div>` : ""}</li>`).join("")}</ol>` : ""}<p class="section-intro">Remediation authored by analyst.</p>`
     : `<div class="rem-placeholder"><strong>Pending analyst review.</strong> Remediation for this assessment is authored by your analyst and added before the report is issued — it is never machine-generated.</div>`}
 
-${childSafety ? renderChildSafety(childSafety) : ""}
+${childSafety ? sec("Family &amp; Child Safety") + renderChildSafety(childSafety) : ""}
 
 <div class="part-divider">Part II · The evidence <span class="pd-sub">— supporting findings the conclusions above rest on</span></div>
 
-<h2>4 · Breach Exposure</h2>
+${sec("Breach Exposure")}
 <p class="section-intro">Data breaches affecting your personal accounts (Have I Been Pwned).</p>
 <div class="caveat"><strong>On severity and age:</strong> severity here reflects the <em>type</em> of data exposed, not the <em>age</em> of the breach. A breach from 2013 and a recent credential-stealer log may both show High. Read the breach date on each — a recent stealer-log finding means a device may have been compromised and credentials may be live, which is materially more urgent than a historical breach whose passwords you have since changed. Differentiated remediation guidance is in development.</div>
 ${breaches.length ? breaches.map(itemBlock).join("") : '<p class="empty-note">No breaches found for the personal emails checked.</p>'}
 
-<h2>5 · Third-Party Exposure</h2>
+${envFindings.length ? `${sec("Environmental Exposure")}
+<p class="section-intro">Physical hazards at locations tied to you (home, family, property) from live hazard feeds — wildfire, weather, air quality, road, avalanche. These are conditions in the world around you, measured from feeds; they are not content anyone wrote about you, and they carry no search "rank".</p>
+${envFindings.map(envBlock).join("")}` : ""}
+
+${sec("Third-Party Exposure")}
 <p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
 ${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>'}
 ${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
 <p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
 
-<h2>6 · Verified Public Presence</h2>
+${sec("Verified Public Presence")}
 <p class="section-intro">Content about you confirmed by two or more independent sources but NOT adverse — your genuine public footprint (press, profiles, appearances). Not exposure, and not called such; but it is what an adversary assembles a picture from, so it is on the record. Distinct from the single-source name-matches in the volume below, whose attribution is unverified.</p>
 ${presence.length ? presence.map(itemBlock).join("") : '<p class="empty-note">No corroborated public presence surfaced (nothing confirmed by 2+ independent sources).</p>'}
 
-<h2>7 · Scope &amp; Method</h2>
+${sec("Scope &amp; Method")}
 <p class="section-intro">What we searched, when, and — equally — what we did not. A finding is only as meaningful as the space it was found in; and "searched" is only meaningful with a date. Each producer below is dated on its own last sweep.</p>
 <table class="cov">
   <tr><td>Reputational sweep — by category</td><td>${ALL7.map((c) => { const s = (cov.producers.reputational_by_category || {})[c]; return s ? `<span class="pill">${esc(c)} — swept ${esc(s.last_swept)} (${esc(s.depth)})</span>` : `<span class="pill oos">${esc(c)} — not searched</span>`; }).join("")}</td></tr>
   <tr><td>Breach check (HIBP)</td><td>${cov.producers.breach ? `checked ${esc(cov.producers.breach.last_checked)} · ${esc(cov.producers.breach.current_findings)} current finding(s)` : '<span class="empty-note">not run</span>'}</td></tr>
   <tr><td>Categories with findings</td><td>${cov.categories_with_findings.length ? cov.categories_with_findings.map((c: string) => `<span class="pill">${esc(c)}</span>`).join("") : '<span class="empty-note">none</span>'}</td></tr>
-  <tr><td>Categories swept, no current findings</td><td>${cov.categories_swept_empty.length ? cov.categories_swept_empty.map((c: string) => `<span class="pill empty">${esc(c)}</span>`).join("") : '<span class="empty-note">none — every swept category has a current finding</span>'}</td></tr>
+  <tr><td>Searched via OSINT battery — no current findings</td><td>${cov.categories_swept_empty.length ? `${cov.categories_swept_empty.map((c: string) => `<span class="pill empty">${esc(c)}</span>`).join("")}<div class="prov">Our open-source battery surfaced nothing in these categories. This is NOT a dedicated public-records, court-registry, or financial-database search — those sources are listed under "not covered" below, so read this as "nothing surfaced in open sources", not a cleared records check.</div>` : '<span class="empty-note">none — every dedicated-sweep category has a current finding</span>'}</td></tr>
+  ${cov.categories_incidental_only?.length ? `<tr><td>Incidental captures only — no dedicated sweep</td><td>${cov.categories_incidental_only.map((c: string) => `<span class="pill">${esc(c)}</span>`).join("")}<div class="prov">Surfaced in passing by other queries, not deliberately searched — treat as "not assessed", not "clear".</div></td></tr>` : ""}
 </table>
 <div class="notsearched"><strong>What was NOT searched — the edges of this assessment:</strong>
   ${cov.not_searched.categories_never_swept.length ? `<div>Categories never swept for this subject: ${cov.not_searched.categories_never_swept.map((c: string) => `<span class="pill oos">${esc(c)}</span>`).join("")}</div>` : "<div>All seven exposure categories have been swept at least once.</div>"}
@@ -376,7 +419,6 @@ function renderChildSafety(cs: any): string {
   const protocols = (cs.protocols || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
   const escalation = (cs.escalation || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.content?.org || r.title)}${draftTag(r)}</h4><p><strong>${esc(r.content?.contact)}</strong></p><p>${esc(r.content?.note)}</p>${prov(r)}</div>`).join("");
   return `
-<h2>3 · Family &amp; Child Safety</h2>
 <p class="section-intro">Advisory guidance for the household. This section does not scan or analyse any minor — it is authored safety guidance and an assessment of what the principal's own public posts reveal.</p>
 ${framing}
 ${platform ? `<h3 style="font-size:15px;margin-top:20px">Platform Inventory &amp; Guidance</h3>${platform}` : (cs.selected_platforms?.length ? "" : `<p class="empty-note">No platforms were specified for the household's children.</p>`)}

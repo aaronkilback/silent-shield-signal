@@ -143,25 +143,35 @@ export function credentialCompromise(items: ExposureItem[]): PrimitiveResult {
 export function identityKit(items: ExposureItem[]): PrimitiveResult {
   const brk = brokers(items);
   const brc = breaches(items);
-  const parts: string[] = ["name"];
   const rows: string[] = [];
-  const add = (phrase: string, rws: ExposureItem[]) => { if (rws.length) { parts.push(phrase); rows.push(...rws.map((r) => r.id)); } };
-  add("job and employer", [...brk, ...brc.filter((b) => hasClass(b, /employer|job title/i))]);
-  add("email and phone", [...brk, ...brc.filter((b) => hasClass(b, /phone number/i))]);
-  add("date of birth", brc.filter((b) => hasClass(b, /date of birth/i)));
-  add("a home address", brc.filter((b) => hasClass(b, /physical address/i)));
-  add("part of a payment card", brc.filter((b) => hasClass(b, /credit card/i)));
-  if (brk.length === 0 && parts.length < 3) {
+  // Breach-only SENSITIVE attributes. B2B brokers (zoominfo/rocketreach) carry name + employer + work
+  // contact — NOT these. Attributing DOB / home address / card to LEAKED DATA keeps P2 consistent with
+  // P3 (which correctly says the brokers carry your employer, not your home). Fixes the contradiction.
+  const breachSensitive: string[] = [];
+  const addSensitive = (phrase: string, re: RegExp) => {
+    const m = brc.filter((b) => hasClass(b, re));
+    if (m.length) { breachSensitive.push(phrase); rows.push(...m.map((r) => r.id)); }
+  };
+  addSensitive("date of birth", /dates? of birth/i);   // data class is "Dates of birth" (plural)
+  addSensitive("home address", /physical address/i);
+  addSensitive("part of a payment-card number", /credit card/i);
+  const hasBroker = brk.length > 0;
+  if (hasBroker) rows.push(...brk.map((r) => r.id));
+  if (!hasBroker && breachSensitive.length < 2) {
     return notAsserted("P2", "Identity / Impersonation Kit",
       "Too few personal details were found in public sources to build an identity picture.", []);
   }
-  const cited = [...new Set(rows)];
   const brokerDomains = [...new Set(brk.flatMap(domainsOf))];
+  const brokerPart = hasBroker
+    ? `Public broker sites (${andList(brokerDomains)}) list your name, job and employer, and work contact details.`
+    : "";
+  const breachPart = breachSensitive.length
+    ? `Leaked data ${hasBroker ? "also " : ""}exposes your ${andList(breachSensitive)}.`
+    : "";
+  const cited = [...new Set(rows)];
   return {
     key: "P2", name: "Identity / Impersonation Kit", status: "established",
-    found: brk.length
-      ? `Your ${andList(parts)} are gathered on public broker sites (${andList(brokerDomains)}) and in leaked data.`
-      : `Your ${andList(parts)} are gathered in leaked data.`,
+    found: [brokerPart, breachPart].filter(Boolean).join(" "),
     means: `Someone could use these details to pretend to be you, or to answer "security questions" meant to prove your identity.`,
     notSaying: "We did not find your SIN, and we did not find your family members.",
     cited_row_ids: cited, basis: basisOf(brc.concat(brk).filter((r) => cited.includes(r.id))),
