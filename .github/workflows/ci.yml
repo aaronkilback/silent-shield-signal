@@ -108,6 +108,8 @@ jobs:
           COUNT=$(grep -r "vip_id" src/ --include="*.ts" --include="*.tsx" 2>/dev/null | wc -l)
           [ "$COUNT" -gt "0" ] && echo "WARNING: $COUNT vip_id references found"
           exit 0
+      - name: Anchor-gate constants agree (shared TS module == SQL migration)
+        run: node scripts/check-anchor-gate-constants.mjs
 
   shared-imports:
     name: Shared Imports Consistency (_shared/*)
