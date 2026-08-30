@@ -258,3 +258,25 @@ export function runSynthesis(items: ExposureItem[], devices: DeviceRow[]): Primi
     litigationExposure(items),
   ];
 }
+
+// ── report renderer ──────────────────────────────────────────────────────────
+// Emits the inner HTML of the Synthesis section (the report template wraps the <h2> + intro).
+// NOT_ASSERTED primitives are rendered EXPLICITLY — the refusal is part of the value. The
+// machine-traceable row ids ride in a data-cited-rows attribute so the client-visible text stays
+// readable ("Rests on N finding rows") while the audit trail is preserved in the HTML source.
+const STATE_LABEL: Record<string, string> = {
+  established: "ESTABLISHED", qualified: "QUALIFIED", not_asserted: "NOT ASSERTED",
+};
+const escHtml = (s: unknown): string =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c]!);
+
+export function renderSynthesisSection(results: PrimitiveResult[]): string {
+  return results.map((r) => {
+    const cite = r.cited_row_ids.length
+      ? `<div class="isum">Rests on ${r.cited_row_ids.length} finding row${r.cited_row_ids.length > 1 ? "s" : ""} recorded in this report.</div>`
+      : `<div class="isum">No supporting rows in this scan — the claim is withheld.</div>`;
+    return `<div class="synth synth-${escHtml(r.status)}" data-cited-rows="${escHtml(r.cited_row_ids.join(","))}">` +
+      `<h4>${escHtml(r.name)} <span class="synth-state">${STATE_LABEL[r.status] || escHtml(r.status)}</span></h4>` +
+      `<p>${escHtml(r.sentence)}</p>${cite}</div>`;
+  }).join("");
+}

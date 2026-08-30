@@ -10,6 +10,7 @@ import {
 
 import { compareExposureItems } from "../_shared/subject-retrieval.ts";
 import { excludeMergedEntities, excludeSupersededExposure } from "../_shared/soft-delete-filters.ts";
+import { runSynthesis, renderSynthesisSection } from "../_shared/synthesis-primitives.ts";
 
 const REPORT_BUCKET = "generated-reports";   // private bucket (migration 20260212143009), signed-URL only
 
@@ -51,7 +52,7 @@ Deno.serve(async (req) => {
 
     // ── gather: CURRENT items only (superseded/aged-out excluded), their locations, family disposition ──
     const { data: items } = await excludeSupersededExposure(supabase.from("subject_exposure_items")
-      .select("id, category, title, summary, severity, is_finding, exposure_class, anchor_type, anchor_value, source_class, fingerprint, subject_awareness, first_seen_date"))
+      .select("id, category, title, summary, severity, is_finding, exposure_class, anchor_type, anchor_value, source_class, fingerprint, subject_awareness, first_seen_date, finding_basis"))
       .eq("subject_entity_id", entityId);
       // WO-LEGAL-FABRICATION-CONTAIN LIFTED 2026-08-30: the identity-anchor gate replaces the blanket
       // exclusion with its precise intent. A corroborated legal matter (>=2 independent domains ->
@@ -170,6 +171,12 @@ Deno.serve(async (req) => {
       };
     }
 
+    // ── synthesis primitives (deterministic, template-only; _shared/synthesis-primitives.ts) ──
+    const { data: subjectDevices } = await supabase.from("subject_devices")
+      .select("id, vendor, product, version, version_unknown, internet_exposed, device_type")
+      .eq("entity_id", entityId);
+    const synthesis = runSynthesis((items ?? []) as any, (subjectDevices ?? []) as any);
+
     const meta = {
       subject: { name: entity.name, entity_id: entityId },
       client: client?.name ?? null,
@@ -185,10 +192,11 @@ Deno.serve(async (req) => {
       },
       counts: { findings: findings.length, verified_presence: verifiedPresence.length, noise: noise.length, breaches: breaches.length },
       remediation,
+      synthesis,
     };
 
     const reportId = crypto.randomUUID();
-    const html = renderReport({ meta, findings, verifiedPresence, noise, breaches, reportId, childSafety });
+    const html = renderReport({ meta, findings, verifiedPresence, noise, breaches, reportId, childSafety, synthesis });
 
     // store the rendered HTML in the private generated-reports bucket
     const path = `reputational-exposure/${entityId}/${reportId}.html`;
@@ -214,7 +222,7 @@ Deno.serve(async (req) => {
 });
 
 // ── PRINT-HTML renderer — light theme, print-optimised (NOT the app dark CSS). ──
-function renderReport({ meta, findings, verifiedPresence, noise, breaches, reportId, childSafety }: any): string {
+function renderReport({ meta, findings, verifiedPresence, noise, breaches, reportId, childSafety, synthesis }: any): string {
   const cov = meta.coverage;
   const sevBadge = (s: string) => `<span class="sev sev-${esc(s)}">${esc(s || "—")}</span>`;
   const awareness = (a: string) => a ? `<span class="aware aware-${esc(a)}">${a === "unknown" ? "not previously known" : esc(a)}</span>` : "";
@@ -239,6 +247,12 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   h1 { font-size: 26px; margin: 0 0 4px; } h2 { font-size: 18px; border-bottom: 2px solid #1a1a1a; padding-bottom: 4px; margin: 32px 0 12px; }
   .sub { color: #555; font-size: 13px; margin-bottom: 24px; }
   .section-intro { color: #444; font-size: 13px; font-style: italic; margin: 0 0 12px; }
+  .synth { border: 1px solid #e0e0e0; border-left: 4px solid #999; border-radius: 6px; padding: 11px 14px; margin: 10px 0; page-break-inside: avoid; }
+  .synth h4 { margin: 0 0 6px; font-size: 14px; } .synth p { margin: 0 0 6px; }
+  .synth-state { font-size: 10px; font-weight: 700; letter-spacing: .05em; padding: 1px 6px; border-radius: 3px; color: #fff; vertical-align: middle; }
+  .synth-established { border-left-color: #b03a2e; } .synth-established .synth-state { background: #b03a2e; }
+  .synth-qualified { border-left-color: #b9770e; } .synth-qualified .synth-state { background: #b9770e; }
+  .synth-not_asserted { border-left-color: #7f8c8d; } .synth-not_asserted .synth-state { background: #7f8c8d; }
   table.cov { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; } .cov td { padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; } .cov td:first-child { color: #666; width: 40%; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef; margin: 2px 3px 2px 0; }
   .pill.empty { background: #f4f4f4; color: #888; } .pill.oos { background: #fbeaea; color: #a33; }
@@ -313,7 +327,11 @@ ${presence.length ? presence.map(itemBlock).join("") : '<p class="empty-note">No
 <div class="caveat"><strong>On severity and age:</strong> severity here reflects the <em>type</em> of data exposed, not the <em>age</em> of the breach. A breach from 2013 and a recent credential-stealer log may both show High. Read the breach date on each — a recent stealer-log finding means a device may have been compromised and credentials may be live, which is materially more urgent than a historical breach whose passwords you have since changed. Differentiated remediation guidance is in development.</div>
 ${breaches.length ? breaches.map(itemBlock).join("") : '<p class="empty-note">No breaches found for the personal emails checked.</p>'}
 
-<h2>5 · Remediation</h2>
+<h2>5 · Synthesis</h2>
+<p class="section-intro">What the individual findings above add up to — the higher-order exposure picture. Each item is a fixed template filled ONLY from the findings in this report; no narrative is generated. States: <strong>ESTABLISHED</strong> (asserted from cited rows), <strong>QUALIFIED</strong> (asserted with a stated limit), <strong>NOT ASSERTED</strong> (checked, no basis — shown because the absence is itself informative).</p>
+${synthesis && synthesis.length ? renderSynthesisSection(synthesis) : '<p class="empty-note">No synthesis primitives evaluated.</p>'}
+
+<h2>6 · Remediation</h2>
 ${meta.remediation.authored
     ? `${meta.remediation.summary ? `<p>${esc(meta.remediation.summary)}</p>` : ""}${meta.remediation.items.length ? `<ol>${meta.remediation.items.map((r: any) => `<li><strong>${esc(r.action)}</strong>${r.finding_ref ? ` <span class="rank">(${esc(r.finding_ref)})</span>` : ""}${r.rationale ? `<div class="isum">${esc(r.rationale)}</div>` : ""}</li>`).join("")}</ol>` : ""}<p class="section-intro">Remediation authored by analyst.</p>`
     : `<div class="rem-placeholder"><strong>Pending analyst review.</strong> Remediation for this assessment is authored by your analyst and added before the report is issued — it is never machine-generated.</div>`}
@@ -342,7 +360,7 @@ function renderChildSafety(cs: any): string {
   const protocols = (cs.protocols || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
   const escalation = (cs.escalation || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.content?.org || r.title)}${draftTag(r)}</h4><p><strong>${esc(r.content?.contact)}</strong></p><p>${esc(r.content?.note)}</p>${prov(r)}</div>`).join("");
   return `
-<h2>6 · Family &amp; Child Safety</h2>
+<h2>7 · Family &amp; Child Safety</h2>
 <p class="section-intro">Advisory guidance for the household. This section does not scan or analyse any minor — it is authored safety guidance and an assessment of what the principal's own public posts reveal.</p>
 ${framing}
 ${platform ? `<h3 style="font-size:15px;margin-top:20px">Platform Inventory &amp; Guidance</h3>${platform}` : (cs.selected_platforms?.length ? "" : `<p class="empty-note">No platforms were specified for the household's children.</p>`)}
