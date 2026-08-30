@@ -175,7 +175,7 @@ Deno.serve(async (req) => {
     const { data: subjectDevices } = await supabase.from("subject_devices")
       .select("id, vendor, product, version, version_unknown, internet_exposed, device_type")
       .eq("entity_id", entityId);
-    const synthesis = runSynthesis((items ?? []) as any, (subjectDevices ?? []) as any);
+    const synthesis = runSynthesis((items ?? []) as any, (subjectDevices ?? []) as any, entity.name);
 
     const meta = {
       subject: { name: entity.name, entity_id: entityId },
@@ -253,6 +253,9 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   .synth-established { border-left-color: #b03a2e; } .synth-established .synth-state { background: #b03a2e; }
   .synth-qualified { border-left-color: #b9770e; } .synth-qualified .synth-state { background: #b9770e; }
   .synth-not_asserted { border-left-color: #7f8c8d; } .synth-not_asserted .synth-state { background: #7f8c8d; }
+  .synth-part { margin: 0 0 4px; font-size: 13.5px; } .synth-lab { font-weight: 700; display: inline-block; min-width: 82px; color: #333; }
+  .part-divider { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #555; border-top: 2px solid #cfcfcf; margin: 40px 0 10px; padding-top: 10px; }
+  .part-divider .pd-sub { font-weight: 400; text-transform: none; letter-spacing: 0; color: #888; font-size: 12px; }
   table.cov { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; } .cov td { padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; } .cov td:first-child { color: #666; width: 40%; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef; margin: 2px 3px 2px 0; }
   .pill.empty { background: #f4f4f4; color: #888; } .pill.oos { background: #fbeaea; color: #a33; }
@@ -295,9 +298,40 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
 </style></head><body>
 <h1>Reputational Exposure Assessment</h1>
 <div class="sub"><strong>${esc(meta.subject.name)}</strong>${meta.client ? ` · prepared for ${esc(meta.client)}` : ""} · generated ${esc(meta.generated_at.slice(0, 10))} · report ${esc(reportId.slice(0, 8))}</div>
-${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this report contains family &amp; child-safety guidance (Section 6) that has NOT been reviewed or signed by a child-safety professional. It must not be delivered to a client in this state.</div>` : ""}
+${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this report contains family &amp; child-safety guidance (Section 3) that has NOT been reviewed or signed by a child-safety professional. It must not be delivered to a client in this state.</div>` : ""}
 
-<h2>1 · Scope &amp; Method</h2>
+<div class="part-divider">Part I · What this means &amp; what to do</div>
+
+<h2>1 · Synthesis</h2>
+<div class="caveat"><strong>Coverage:</strong> this reflects public and breach sources only — see Section 7 (Scope &amp; Method) for what was <em>not</em> checked (e.g. dark-web marketplaces, paywalled records).</div>
+<p class="section-intro">What the findings in this report add up to — the higher-order exposure picture. Each item is a fixed template filled ONLY from those findings (listed in Part II below); no narrative is generated. States: <strong>ESTABLISHED</strong> (asserted from cited rows), <strong>QUALIFIED</strong> (asserted with a stated limit), <strong>NOT ASSERTED</strong> (checked, no basis — shown because the absence is itself informative).</p>
+${synthesis && synthesis.length ? renderSynthesisSection(synthesis) : '<p class="empty-note">No synthesis primitives evaluated.</p>'}
+
+<h2>2 · Remediation</h2>
+${meta.remediation.authored
+    ? `${meta.remediation.summary ? `<p>${esc(meta.remediation.summary)}</p>` : ""}${meta.remediation.items.length ? `<ol>${meta.remediation.items.map((r: any) => `<li><strong>${esc(r.action)}</strong>${r.finding_ref ? ` <span class="rank">(${esc(r.finding_ref)})</span>` : ""}${r.rationale ? `<div class="isum">${esc(r.rationale)}</div>` : ""}</li>`).join("")}</ol>` : ""}<p class="section-intro">Remediation authored by analyst.</p>`
+    : `<div class="rem-placeholder"><strong>Pending analyst review.</strong> Remediation for this assessment is authored by your analyst and added before the report is issued — it is never machine-generated.</div>`}
+
+${childSafety ? renderChildSafety(childSafety) : ""}
+
+<div class="part-divider">Part II · The evidence <span class="pd-sub">— supporting findings the conclusions above rest on</span></div>
+
+<h2>4 · Breach Exposure</h2>
+<p class="section-intro">Data breaches affecting your personal accounts (Have I Been Pwned).</p>
+<div class="caveat"><strong>On severity and age:</strong> severity here reflects the <em>type</em> of data exposed, not the <em>age</em> of the breach. A breach from 2013 and a recent credential-stealer log may both show High. Read the breach date on each — a recent stealer-log finding means a device may have been compromised and credentials may be live, which is materially more urgent than a historical breach whose passwords you have since changed. Differentiated remediation guidance is in development.</div>
+${breaches.length ? breaches.map(itemBlock).join("") : '<p class="empty-note">No breaches found for the personal emails checked.</p>'}
+
+<h2>5 · Third-Party Exposure</h2>
+<p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
+${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>'}
+${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
+<p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
+
+<h2>6 · Verified Public Presence</h2>
+<p class="section-intro">Content about you confirmed by two or more independent sources but NOT adverse — your genuine public footprint (press, profiles, appearances). Not exposure, and not called such; but it is what an adversary assembles a picture from, so it is on the record. Distinct from the single-source name-matches in the volume below, whose attribution is unverified.</p>
+${presence.length ? presence.map(itemBlock).join("") : '<p class="empty-note">No corroborated public presence surfaced (nothing confirmed by 2+ independent sources).</p>'}
+
+<h2>7 · Scope &amp; Method</h2>
 <p class="section-intro">What we searched, when, and — equally — what we did not. A finding is only as meaningful as the space it was found in; and "searched" is only meaningful with a date. Each producer below is dated on its own last sweep.</p>
 <table class="cov">
   <tr><td>Reputational sweep — by category</td><td>${ALL7.map((c) => { const s = (cov.producers.reputational_by_category || {})[c]; return s ? `<span class="pill">${esc(c)} — swept ${esc(s.last_swept)} (${esc(s.depth)})</span>` : `<span class="pill oos">${esc(c)} — not searched</span>`; }).join("")}</td></tr>
@@ -311,32 +345,6 @@ ${childSafety?.contains_draft ? `<div class="draft-banner">⚠ DRAFT — this re
   <ul>${cov.not_searched.sources_not_covered.map((s: string) => `<li>${esc(s)}</li>`).join("")}</ul>
   ${cov.not_searched.family_not_scanned.length ? `<div style="margin-top:6px">Household members not scanned:</div><ul>${cov.not_searched.family_not_scanned.map((f: any) => `<li><strong>${esc(f.name)}</strong> — ${esc(f.reason)}</li>`).join("")}</ul>` : ""}
 </div>
-
-<h2>2 · Third-Party Exposure</h2>
-<p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
-${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>'}
-${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
-<p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
-
-<h2>3 · Verified Public Presence</h2>
-<p class="section-intro">Content about you confirmed by two or more independent sources but NOT adverse — your genuine public footprint (press, profiles, appearances). Not exposure, and not called such; but it is what an adversary assembles a picture from, so it is on the record. Distinct from the single-source name-matches in the volume below, whose attribution is unverified.</p>
-${presence.length ? presence.map(itemBlock).join("") : '<p class="empty-note">No corroborated public presence surfaced (nothing confirmed by 2+ independent sources).</p>'}
-
-<h2>4 · Breach Exposure</h2>
-<p class="section-intro">Data breaches affecting your personal accounts (Have I Been Pwned).</p>
-<div class="caveat"><strong>On severity and age:</strong> severity here reflects the <em>type</em> of data exposed, not the <em>age</em> of the breach. A breach from 2013 and a recent credential-stealer log may both show High. Read the breach date on each — a recent stealer-log finding means a device may have been compromised and credentials may be live, which is materially more urgent than a historical breach whose passwords you have since changed. Differentiated remediation guidance is in development.</div>
-${breaches.length ? breaches.map(itemBlock).join("") : '<p class="empty-note">No breaches found for the personal emails checked.</p>'}
-
-<h2>5 · Synthesis</h2>
-<p class="section-intro">What the individual findings above add up to — the higher-order exposure picture. Each item is a fixed template filled ONLY from the findings in this report; no narrative is generated. States: <strong>ESTABLISHED</strong> (asserted from cited rows), <strong>QUALIFIED</strong> (asserted with a stated limit), <strong>NOT ASSERTED</strong> (checked, no basis — shown because the absence is itself informative).</p>
-${synthesis && synthesis.length ? renderSynthesisSection(synthesis) : '<p class="empty-note">No synthesis primitives evaluated.</p>'}
-
-<h2>6 · Remediation</h2>
-${meta.remediation.authored
-    ? `${meta.remediation.summary ? `<p>${esc(meta.remediation.summary)}</p>` : ""}${meta.remediation.items.length ? `<ol>${meta.remediation.items.map((r: any) => `<li><strong>${esc(r.action)}</strong>${r.finding_ref ? ` <span class="rank">(${esc(r.finding_ref)})</span>` : ""}${r.rationale ? `<div class="isum">${esc(r.rationale)}</div>` : ""}</li>`).join("")}</ol>` : ""}<p class="section-intro">Remediation authored by analyst.</p>`
-    : `<div class="rem-placeholder"><strong>Pending analyst review.</strong> Remediation for this assessment is authored by your analyst and added before the report is issued — it is never machine-generated.</div>`}
-
-${childSafety ? renderChildSafety(childSafety) : ""}
 
 ${tpMentions.length ? `<div class="print-appendix">
 <h2>Appendix A — Mentions (${tpMentions.length})</h2>
@@ -360,7 +368,7 @@ function renderChildSafety(cs: any): string {
   const protocols = (cs.protocols || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.title)}${draftTag(r)}</h4><p>${esc(r.content?.body)}</p>${prov(r)}</div>`).join("");
   const escalation = (cs.escalation || []).map((r: any) => `<div class="cs-block${r.is_emergency ? " emergency" : ""}"><h4>${r.is_emergency ? "🚨 " : ""}${esc(r.content?.org || r.title)}${draftTag(r)}</h4><p><strong>${esc(r.content?.contact)}</strong></p><p>${esc(r.content?.note)}</p>${prov(r)}</div>`).join("");
   return `
-<h2>7 · Family &amp; Child Safety</h2>
+<h2>3 · Family &amp; Child Safety</h2>
 <p class="section-intro">Advisory guidance for the household. This section does not scan or analyse any minor — it is authored safety guidance and an assessment of what the principal's own public posts reveal.</p>
 ${framing}
 ${platform ? `<h3 style="font-size:15px;margin-top:20px">Platform Inventory &amp; Guidance</h3>${platform}` : (cs.selected_platforms?.length ? "" : `<p class="empty-note">No platforms were specified for the household's children.</p>`)}
