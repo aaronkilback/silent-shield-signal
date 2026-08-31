@@ -104,7 +104,9 @@ replacement asserts an ordering it cannot verify.
   has no reported decision) is **NOT a legal finding** — it is a **media finding that mentions litigation**,
   titled as the article says (e.g. the Vancouver Sun headline), **no case name asserted, no party order
   implied**, anchored to the news source.
-- **Suppress vs media path:** legal category stays SUPPRESSED until CanLII is integrated (no regex case
+- **Suppress vs media path (RULED 2026-08-31):** legal category stays SUPPRESSED **indefinitely — not "until
+  CanLII", but until something AUTHORIZED replaces the classifier** (CanLII blocked on legal review,
+  WO-CANLII-INTEGRATION). The media path may surface litigation-in-press sooner. (no regex case
   names). The **media-finding path could surface litigation-in-press sooner** (Kilback/Olynyk would return
   as a real *media* finding with no fabricated case name) — operator to decide whether to open that path
   before CanLII lands.
