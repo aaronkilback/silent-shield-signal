@@ -15,6 +15,22 @@ import { runSynthesis, renderSynthesisSection } from "../_shared/synthesis-primi
 const REPORT_BUCKET = "generated-reports";   // private bucket (migration 20260212143009), signed-URL only
 
 const ALL7 = ["legal", "financial", "professional", "media", "social", "corporate", "property"];
+// D3: Section 7 is COVERAGE vocabulary. Each sweep-category is displayed by what its QUERY TERMS actually
+// search for (derived from buildBattery in _shared/subject-retrieval.ts), never by the bare internal name —
+// so "returned nothing" cannot be misread (e.g. "media returned nothing" = no ADVERSE press, not "no press").
+const CAT_LABEL: Record<string, string> = {
+  legal: "Court cases — civil litigation &amp; criminal proceedings",
+  financial: "Financial distress — bankruptcy, liens, insolvency",
+  professional: "Professional discipline — sanctions, licence actions, misconduct",
+  media: "Adverse news coverage — investigations, allegations, scandal",
+  social: "Social-media &amp; open-web presence — name across platforms",
+  corporate: "Corporate roles — directorships, officers, ownership",
+  property: "Property &amp; real-estate records — ownership, deeds, mortgages",
+};
+// The seven are two DIFFERENT questions. Adverse = "did anything bad surface?"; presence = "does a footprint
+// exist?". "Returned nothing" means different things in each group — so the render groups them and states it.
+const ADVERSE_CATS = ["legal", "financial", "professional", "media"];
+const PRESENCE_CATS = ["social", "corporate", "property"];
 const SOURCES_NOT_COVERED = [
   "Credentialed dark-web forums and marketplaces (access-restricted)",
   "Private or locked social-media accounts",
@@ -292,6 +308,25 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // (Family, only on family engagements) never leaves a gap or keeps a stale number.
   let __sn = 0;
   const sec = (t: string) => `<h2>${++__sn} · ${t}</h2>`;
+  // D3 · Section 7 coverage rendering. Each sweep-category is shown by CAT_LABEL (what its terms search for),
+  // grouped adverse vs presence, with its outcome. Outcome derives from the existing coverage sets — this is
+  // a render change only, no recomputation. "findings" never appears; the assessment lives in Part I.
+  const catOutcome = (c: string): { txt: string; cls: string } => {
+    if (cov.not_searched.categories_never_swept.includes(c)) return { txt: "not searched", cls: "oos" };
+    if (cov.categories_with_findings.includes(c)) return { txt: "returned material — assessed in Part I", cls: "" };
+    if ((cov.categories_incidental_only || []).includes(c)) return { txt: "surfaced only in passing — not a dedicated search", cls: "" };
+    if (cov.categories_swept_empty.includes(c)) return { txt: "returned nothing", cls: "empty" };
+    return { txt: "searched", cls: "" };
+  };
+  const covRow = (c: string): string => {
+    const s = (cov.producers.reputational_by_category || {})[c];
+    const o = catOutcome(c);
+    const dedicated = s && s.depth && !String(s.depth).includes("no dedicated");
+    const when = s ? ` <span class="rank">searched ${esc(s.last_swept)}${dedicated ? ` (${esc(s.depth)})` : ""}</span>` : "";
+    return `<div class="covcat"><span class="pill ${o.cls}">${CAT_LABEL[c] || esc(c)}</span> <span class="covout">${esc(o.txt)}</span>${when}</div>`;
+  };
+  const covGroup = (title: string, note: string, cats: string[]): string =>
+    `<div class="covgroup"><div class="covgt">${title}</div><div class="prov">${note}</div>${cats.map(covRow).join("")}</div>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Reputational Exposure — ${esc(meta.subject.name)}</title>
 <style>
@@ -313,6 +348,9 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   table.cov { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; } .cov td { padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; } .cov td:first-child { color: #666; width: 40%; }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef; margin: 2px 3px 2px 0; }
   .pill.empty { background: #f4f4f4; color: #888; } .pill.oos { background: #fbeaea; color: #a33; }
+  .covgroup { margin: 10px 0; } .covgt { font-weight: bold; font-size: 13px; color: #333; margin-top: 8px; }
+  .covgroup > .prov { margin: 2px 0 6px; } .covcat { padding: 3px 0; font-size: 13px; }
+  .covout { color: #555; } .covcat .rank { margin-left: 4px; }
   .notsearched { background: #fafaf5; border: 1px solid #e8e4d0; border-radius: 6px; padding: 12px 16px; margin: 12px 0; font-size: 13px; }
   .notsearched ul { margin: 6px 0 0; padding-left: 18px; } .notsearched li { margin: 2px 0; }
   .item { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
@@ -381,7 +419,7 @@ ${envFindings.map(envBlock).join("")}` : ""}
 
 ${sec("Third-Party Exposure")}
 <p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
-<p class="section-intro">Some items note the <strong>position</strong> they appeared at in the search results we ran — position 1 is the first result; a higher number means it appeared further down. Position records where something showed up, not how serious it is.</p>
+<p class="section-intro">Some items note the <strong>position</strong> they reached in the search results. Position 1 is the first result. This is the best position an item reached in any single search we ran, so a low number from a narrow search means less than the same number from a broad name search. Position records where something showed up, not how serious it is.</p>
 ${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>'}
 ${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
 <p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
@@ -391,16 +429,15 @@ ${sec("Verified Public Presence")}
 ${presence.length ? presence.map(itemBlock).join("") : '<p class="empty-note">No corroborated public presence surfaced (nothing confirmed by 2+ independent sources).</p>'}
 
 ${sec("Scope &amp; Method")}
-<p class="section-intro">What we searched, when, and — equally — what we did not. A finding is only as meaningful as the space it was found in; and "searched" is only meaningful with a date. Each producer below is dated on its own last sweep.</p>
+<p class="section-intro">This section is about <strong>coverage</strong> — which searches we ran, when, and what each returned. It does not judge exposure; that happens in Part I (the synthesis). Here a search either <em>returned something</em> or <em>returned nothing</em>, and "searched" is only meaningful with a date. Each search below is dated on its own last run.</p>
+<p class="section-intro">The seven searches are two different questions. Read each category's outcome against its group.</p>
+${covGroup("Searches for adverse records", `Looking for something adverse under the subject's name. "Returned nothing" here means nothing adverse surfaced in open sources — NOT a dedicated public-records, court-registry, or financial-database check (those are under "not covered" below); read it as "nothing surfaced in open sources", not a cleared-records result.`, ADVERSE_CATS)}
+${covGroup("Searches for public footprint", `Looking for whether a public footprint exists. "Returned nothing" here means no footprint surfaced.`, PRESENCE_CATS)}
 <table class="cov">
-  <tr><td>Reputational sweep — by category</td><td>${ALL7.map((c) => { const s = (cov.producers.reputational_by_category || {})[c]; return s ? `<span class="pill">${esc(c)} — swept ${esc(s.last_swept)} (${esc(s.depth)})</span>` : `<span class="pill oos">${esc(c)} — not searched</span>`; }).join("")}</td></tr>
-  <tr><td>Breach check (HIBP)</td><td>${cov.producers.breach ? `checked ${esc(cov.producers.breach.last_checked)} · ${esc(cov.producers.breach.current_findings)} current finding(s)` : '<span class="empty-note">not run</span>'}</td></tr>
-  <tr><td>Categories with findings</td><td>${cov.categories_with_findings.length ? cov.categories_with_findings.map((c: string) => `<span class="pill">${esc(c)}</span>`).join("") : '<span class="empty-note">none</span>'}</td></tr>
-  <tr><td>Searched via OSINT battery — no current findings</td><td>${cov.categories_swept_empty.length ? `${cov.categories_swept_empty.map((c: string) => `<span class="pill empty">${esc(c)}</span>`).join("")}<div class="prov">Our open-source battery surfaced nothing in these categories. This is NOT a dedicated public-records, court-registry, or financial-database search — those sources are listed under "not covered" below, so read this as "nothing surfaced in open sources", not a cleared records check.</div>` : '<span class="empty-note">none — every dedicated-sweep category has a current finding</span>'}</td></tr>
-  ${cov.categories_incidental_only?.length ? `<tr><td>Incidental captures only — no dedicated sweep</td><td>${cov.categories_incidental_only.map((c: string) => `<span class="pill">${esc(c)}</span>`).join("")}<div class="prov">Surfaced in passing by other queries, not deliberately searched — treat as "not assessed", not "clear".</div></td></tr>` : ""}
+  <tr><td>Breach check (HIBP)</td><td>${cov.producers.breach ? `checked ${esc(cov.producers.breach.last_checked)} · ${esc(cov.producers.breach.current_findings)} breach(es) currently affecting your accounts` : '<span class="empty-note">not run</span>'}</td></tr>
 </table>
 <div class="notsearched"><strong>What was NOT searched — the edges of this assessment:</strong>
-  ${cov.not_searched.categories_never_swept.length ? `<div>Categories never swept for this subject: ${cov.not_searched.categories_never_swept.map((c: string) => `<span class="pill oos">${esc(c)}</span>`).join("")}</div>` : "<div>All seven exposure categories have been swept at least once.</div>"}
+  ${cov.not_searched.categories_never_swept.length ? `<div>Categories never searched for this subject: ${cov.not_searched.categories_never_swept.map((c: string) => `<span class="pill oos">${CAT_LABEL[c] || esc(c)}</span>`).join("")}</div>` : "<div>All seven search categories have been run at least once.</div>"}
   <div style="margin-top:6px">Sources this method does not cover:</div>
   <ul>${cov.not_searched.sources_not_covered.map((s: string) => `<li>${esc(s)}</li>`).join("")}</ul>
   ${cov.not_searched.family_not_scanned.length ? `<div style="margin-top:6px">Household members not scanned:</div><ul>${cov.not_searched.family_not_scanned.map((f: any) => `<li><strong>${esc(f.name)}</strong> — ${esc(f.reason)}</li>`).join("")}</ul>` : ""}
