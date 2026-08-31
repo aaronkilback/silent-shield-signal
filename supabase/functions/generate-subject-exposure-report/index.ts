@@ -270,7 +270,11 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   const anchorLine = (i: any) => i.anchor_type && i.anchor_value && i.anchor_type !== "coordinate"
     ? `<div class="anchor"><span class="alabel">Tied to</span> <span class="aval">${esc(i.anchor_value)}</span> <span class="atype">${esc(ANCHOR_LABEL[i.anchor_type] || i.anchor_type)}</span></div>` : "";
   const srcCount = (i: any) => { const dd = new Set((i.locations || []).map((l: any) => l.domain).filter(Boolean)).size; const cc = i.locations.length; return `${dd} independent domain${dd === 1 ? "" : "s"}${cc !== dd ? ` · ${cc} capture${cc === 1 ? "" : "s"}` : ""}`; };
-  const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations)}</div>`;
+  // D1: rank is stated as a plain fact ("appeared at position N in search results"), not editorialized as
+  // "buried". Meaning is defined ONCE at the top of the Third-Party Exposure section. Only search-derived
+  // items ever carry a real rank (<999); breach/environmental render nothing here (breach has no search rank,
+  // environmental renders via envBlock), so "in search results" is truthful wherever this actually prints.
+  const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="position">${i.obscurity_rank >= 999 ? "" : `appeared at position ${i.obscurity_rank} in search results`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations)}</div>`;
   // Third-party split: real findings render prominently; bare mentions are counted + collapsed (web) or
   // moved to Appendix A (print), so the PDF the client keeps never silently omits the mention volume.
   // Environmental findings are LIVE HAZARD-FEED results (wildfire/weather/road tied to a coordinate),
@@ -322,7 +326,7 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   .rank { color: #999; font-size: 11px; }
   .sev { font-size: 11px; padding: 1px 6px; border-radius: 3px; font-weight: bold; } .sev-critical { background: #7a1f1f; color: #fff; } .sev-high { background: #c0392b; color: #fff; } .sev-medium { background: #e6a817; color: #1a1a1a; } .sev-low { background: #ddd; color: #333; }
   .aware { font-size: 11px; padding: 1px 6px; border-radius: 3px; margin-left: 6px; } .aware-unknown { background: #c0392b; color: #fff; } .aware-disputed { background: #e6a817; } .aware-known { background: #eee; color: #777; }
-  .buried { color: #7a5; font-size: 11px; margin-left: 6px; }
+  .position { color: #7a5; font-size: 11px; margin-left: 6px; }
   .caveat { background: #fff8e6; border-left: 3px solid #e6a817; padding: 8px 12px; font-size: 13px; margin: 10px 0; }
   .rem-placeholder { color: #888; font-style: italic; border: 1px dashed #ccc; padding: 16px; border-radius: 6px; }
   .empty-note { color: #888; font-style: italic; font-size: 13px; }
@@ -377,6 +381,7 @@ ${envFindings.map(envBlock).join("")}` : ""}
 
 ${sec("Third-Party Exposure")}
 <p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
+<p class="section-intro">Some items note the <strong>position</strong> they appeared at in the search results we ran — position 1 is the first result; a higher number means it appeared further down. Position records where something showed up, not how serious it is.</p>
 ${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>'}
 ${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
 <p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
