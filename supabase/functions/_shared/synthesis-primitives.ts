@@ -344,11 +344,19 @@ const escHtml = (s: unknown): string =>
   String(s ?? "").replace(/[&<>"']/g, (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c]!);
 
 export function renderSynthesisSection(results: PrimitiveResult[]): string {
-  return results.map((r) => {
+  // Reorder so the thinking section leads with what was established and does not END on declines. Sort:
+  // established -> qualified -> not_asserted -> not_assessed. Stable within a rank (preserves P1..P6 order).
+  // The two decline states are grouped under one heading but KEEP their own badge so they stay distinct.
+  const RANK: Record<string, number> = { established: 0, qualified: 1, not_asserted: 2, not_assessed: 3 };
+  const noClaim = (s: string) => s === "not_asserted" || s === "not_assessed";
+  const sorted = [...results].sort((a, b) => (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9));
+  const firstNoClaim = sorted.findIndex((r) => noClaim(r.status));
+  return sorted.map((r, i) => {
+    const heading = (firstNoClaim !== -1 && i === firstNoClaim) ? `<h3 class="synth-group">No claim made in this scan</h3>` : "";
     const cite = r.cited_row_ids.length
       ? `Based on ${r.cited_row_ids.length} finding${r.cited_row_ids.length > 1 ? "s" : ""} listed later in this report.`
       : "No supporting findings in this scan.";
-    return `<div class="synth synth-${escHtml(r.status)}" data-cited-rows="${escHtml(r.cited_row_ids.join(","))}">` +
+    return heading + `<div class="synth synth-${escHtml(r.status)}" data-cited-rows="${escHtml(r.cited_row_ids.join(","))}">` +
       `<h4>${escHtml(r.name)} <span class="synth-state">${STATE_LABEL[r.status] || escHtml(r.status)}</span></h4>` +
       `<p class="synth-part"><span class="synth-lab">Found</span> ${escHtml(r.found)}</p>` +
       `<p class="synth-part"><span class="synth-lab">Means</span> ${escHtml(r.means)}</p>` +

@@ -32,6 +32,13 @@ Every row is a lookup on values already in the DB — no model, no interpretatio
 discipline as synthesis-primitives.ts). Output is a `significance` label + a mechanical action, both from the
 table, attached per finding.
 
+**Traceability (operator addition 2026-08-31):** the significance line must be **traceable to the data class
+that triggered it**, the same way findings carry their source query. A client must be able to ask *"why was
+this breach tiered that way?"* and get the answer **from the rule** — "tiered *credentials may be live now*
+because the breach title matched `stealer log` and the data classes include `Passwords`" — not from a bare
+assertion. Each emitted significance carries the triggering (data-class / date / title) signal(s) as its
+provenance, auditable end to end like the source URL + query on every other finding.
+
 ### Part B — analyst worksheet
 Order the findings by **what needs doing first** (significance tier), with the **mechanical action
 pre-filled** from Part A (rotate / opt-out / monitor / escalate). Leaves the **judgment to the analyst** —

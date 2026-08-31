@@ -399,13 +399,25 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // sweep_category per location (cov.sweep_outcome), NOT the old item-category ∩ ALL7 name-collision.
   // Three states: contributed-to-a-finding (names the finding, Option B) / material-but-no-finding /
   // returned-nothing. "findings" as a bare word never appears in the sweep rows; Part I holds the assessment.
+  // Item-2: one finding surfaced by several searches must not repeat its headline in every category. Name a
+  // finding the FIRST time it leads a category (render order), and collapse EXACT repeats of that leading
+  // title to "the same finding". Robust for N findings — each distinct one is named once on first mention; a
+  // rule that only worked for a single shared finding is the name-collision shape and is avoided. catOutcome
+  // has this side effect, is called once per category in fixed render order, so output stays deterministic.
+  const namedFindings = new Set<string>();
   const catOutcome = (c: string): { txt: string; cls: string } => {
     const o = (cov.sweep_outcome || {})[c] || { state: "nothing", titles: [] };
     if (o.state === "not_searched") return { txt: "not searched", cls: "oos" };
     if (o.state === "finding") {
       const t = (o.titles || []).filter(Boolean);   // raw titles — covRow esc()s o.txt exactly once
-      const ref = t.length ? `: “${t[0]}”${t.length > 1 ? ` (+${t.length - 1} more)` : ""}` : "";
-      return { txt: `returned material — contributed to a finding (Part I)${ref}`, cls: "" };
+      const lead = t[0];
+      const more = t.length > 1 ? ` (+${t.length - 1} more)` : "";
+      if (lead && namedFindings.has(lead)) {
+        return { txt: `returned material — contributed to the same finding${more}`, cls: "" };
+      }
+      if (lead) namedFindings.add(lead);
+      const ref = lead ? `: “${lead}”` : "";
+      return { txt: `returned material — contributed to a finding (Part I)${ref}${more}`, cls: "" };
     }
     if (o.state === "material_no_finding") return { txt: "returned material — none of it rose to a finding", cls: "" };
     return { txt: "returned nothing", cls: "empty" };   // searched, zero tagged locations
@@ -435,6 +447,7 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   .synth-qualified { border-left-color: #b9770e; } .synth-qualified .synth-state { background: #b9770e; }
   .synth-not_asserted { border-left-color: #7f8c8d; } .synth-not_asserted .synth-state { background: #7f8c8d; }
   .synth-not_assessed { border-left-color: #34495e; } .synth-not_assessed .synth-state { background: #34495e; }
+  .synth-group { font-size: 13px; font-weight: 700; color: #666; text-transform: uppercase; letter-spacing: .04em; margin: 16px 0 6px; padding-top: 8px; border-top: 1px solid #e5e5e5; }
   .synth-part { margin: 0 0 4px; font-size: 13.5px; } .synth-lab { font-weight: 700; display: inline-block; min-width: 82px; color: #333; }
   .part-divider { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #555; border-top: 2px solid #cfcfcf; margin: 40px 0 10px; padding-top: 10px; }
   .part-divider .pd-sub { font-weight: 400; text-transform: none; letter-spacing: 0; color: #888; font-size: 12px; }
@@ -507,6 +520,7 @@ ${sec("Breach Exposure")}
 ${breaches.length ? breaches.map(itemBlock).join("") : '<p class="empty-note">No breaches found for the personal emails checked.</p>'}
 
 ${envFindings.length ? `${sec("Environmental Exposure")}
+<p class="section-intro">Exposure is not only what is written about you — it is also the physical conditions at the places tied to you. This section reports live hazards at those locations.</p>
 <p class="section-intro">Physical hazards at locations tied to you (home, family, property) from live hazard feeds — wildfire, weather, air quality, road, avalanche. These are conditions in the world around you, measured from feeds; they are not content anyone wrote about you, and they carry no search "rank".</p>
 ${envFindings.map(envBlock).join("")}` : ""}
 
