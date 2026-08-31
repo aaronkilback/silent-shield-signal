@@ -44,8 +44,9 @@ export interface PrimitiveResult {
   key: string;
   name: string;
   // Report vocabulary: established (asserted from cited rows) / qualified (asserted with a stated
-  // limit) / not_asserted (checked, no basis — declined).
-  status: "established" | "qualified" | "not_asserted";
+  // limit) / not_asserted (checked, no basis — declined) / not_assessed (we did NOT look — the category
+  // was suppressed or its producer did not run; epistemically distinct from not_asserted).
+  status: "established" | "qualified" | "not_asserted" | "not_assessed";
   found: string;
   means: string;
   notSaying: string;
@@ -116,11 +117,24 @@ const notAsserted = (key: string, name: string, found: string, cited: string[]):
     means: "We make no claim here.",
     notSaying: "This is not proof of the opposite — only that this scan found no basis for it.",
     cited_row_ids: cited, basis: "none" });
+// RATIFIED PRINCIPLE: any primitive whose "not found" would rest on a category that was SUPPRESSED or a
+// producer that DID NOT RUN must return not_assessed ("we did not look"), never not_asserted ("we looked,
+// found no basis"). Claiming a clean not-found for something never searched is the fabrication we are
+// closing. not_assessed carries its own found/means/notSaying so the distinction is explicit to the reader.
+const notAssessed = (key: string, name: string, found: string, means: string, notSaying: string): PrimitiveResult =>
+  ({ key, name, status: "not_assessed", found, means, notSaying, cited_row_ids: [], basis: "none" });
 
 // ── P1 · Credential Compromise Path (discovered) ─────────────────────────────
-export function credentialCompromise(items: ExposureItem[]): PrimitiveResult {
+export function credentialCompromise(items: ExposureItem[], breachChecked = true): PrimitiveResult {
   const pw = breaches(items).filter((b) => hasClass(b, /password/i));
   if (pw.length === 0) {
+    // If the HIBP breach check did not run, we did NOT look — never claim "no leaked password found".
+    if (!breachChecked) {
+      return notAssessed("P1", "Credential Compromise Path",
+        "Leaked-credential databases were not checked in this scan.",
+        "We make no claim about whether your passwords have leaked, either way.",
+        "This is not 'no leak exists' — the breach check did not run. See Scope & Method.");
+    }
     return notAsserted("P1", "Credential Compromise Path",
       "No leaked password was found for your email addresses in this scan.", []);
   }
@@ -219,15 +233,18 @@ export function physicalLocatability(items: ExposureItem[]): PrimitiveResult {
 
 // ── P4 · Professional / Role Targeting (discovered) ──────────────────────────
 export function roleTargeting(items: ExposureItem[]): PrimitiveResult {
+  // COUNT THE THING YOU LIST: "sources" are the independent domains we cite, so both the threshold and the
+  // count are domains.length (not corr.length — the number of corroborated topics). Prevents "confirmed by 3
+  // sources" printed above a list of 6 domains.
   const corr = corroborated(items);
-  if (corr.length < 2) {
+  const domains = [...new Set(corr.flatMap(domainsOf))];
+  if (domains.length < 2) {
     return notAsserted("P4", "Professional / Role Targeting",
       "Fewer than two independent public sources about your work were found.", corr.map((c) => c.id));
   }
-  const domains = [...new Set(corr.flatMap(domainsOf))];
   return {
     key: "P4", name: "Professional / Role Targeting", status: "established",
-    found: `Your work history is public and confirmed by ${corr.length} separate sources (${domains.slice(0, 4).join(", ")}${domains.length > 4 ? ", and more" : ""}).`,
+    found: `Your work history is public and confirmed by ${domains.length} separate sources (${domains.slice(0, 4).join(", ")}${domains.length > 4 ? ", and more" : ""}).`,
     means: "Someone targeting you could sound convincing by referring to your real career and public work.",
     notSaying: "This is your normal public profile, not a sign anyone is actually targeting you.",
     cited_row_ids: corr.map((c) => c.id), basis: basisOf(corr),
@@ -258,7 +275,16 @@ export function deviceAttackSurface(devices: DeviceRow[]): PrimitiveResult {
 }
 
 // ── P6 · Litigation / Adversarial Relationship (discovered) ──────────────────
-export function litigationExposure(items: ExposureItem[], subjectName: string = ""): PrimitiveResult {
+export function litigationExposure(items: ExposureItem[], subjectName: string = "", legalSuppressed = false): PrimitiveResult {
+  // Legal category is suppressed at the item-load layer (classifier rebuild pending). We did NOT look at
+  // court records — so P6 must say NOT ASSESSED, never "no court case was found". Claiming the latter while
+  // legal is hidden is exactly the cross-section contradiction (Part I says none; Section 5/7 show one).
+  if (legalSuppressed) {
+    return notAssessed("P6", "Litigation / Adversarial Relationship",
+      "Court records were not assessed in this scan.",
+      "We make no claim about litigation or an adversarial relationship, either way.",
+      "This is not 'no court case exists' — the court-records category was not evaluated. See Scope & Method for what was and was not searched.");
+  }
   const legal = legalRows(items);
   if (legal.length === 0) {
     return notAsserted("P6", "Litigation / Adversarial Relationship", "No court case naming you was found in this scan.", []);
@@ -284,14 +310,15 @@ export function litigationExposure(items: ExposureItem[], subjectName: string = 
 }
 
 // ── runner ───────────────────────────────────────────────────────────────────
-export function runSynthesis(items: ExposureItem[], devices: DeviceRow[], subjectName: string = ""): PrimitiveResult[] {
+export function runSynthesis(items: ExposureItem[], devices: DeviceRow[], subjectName: string = "",
+  opts: { legalSuppressed?: boolean; breachChecked?: boolean } = {}): PrimitiveResult[] {
   return [
-    credentialCompromise(items),
+    credentialCompromise(items, opts.breachChecked !== false),
     identityKit(items),
     physicalLocatability(items),
     roleTargeting(items),
     deviceAttackSurface(devices),
-    litigationExposure(items, subjectName),
+    litigationExposure(items, subjectName, opts.legalSuppressed === true),
   ];
 }
 
@@ -301,7 +328,7 @@ export function runSynthesis(items: ExposureItem[], devices: DeviceRow[], subjec
 // primitives render EXPLICITLY — the refusal is part of the value. Machine-traceable row ids ride
 // in data-cited-rows so the client-visible line stays readable while the audit trail is preserved.
 const STATE_LABEL: Record<string, string> = {
-  established: "ESTABLISHED", qualified: "QUALIFIED", not_asserted: "NOT ASSERTED",
+  established: "ESTABLISHED", qualified: "QUALIFIED", not_asserted: "NOT ASSERTED", not_assessed: "NOT ASSESSED",
 };
 const escHtml = (s: unknown): string =>
   String(s ?? "").replace(/[&<>"']/g, (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as Record<string, string>)[c]!);

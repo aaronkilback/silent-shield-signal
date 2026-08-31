@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
     let locs: any[] = [];
     if (ids.length) {
       const { data } = await supabase.from("subject_exposure_locations")
-        .select("exposure_item_id, url, domain, found_by_query, found_at_rank, date_captured, sweep_category").in("exposure_item_id", ids);
+        .select("exposure_item_id, url, domain, found_by_query, found_at_rank, date_captured, sweep_category, corroborates, gate_failed").in("exposure_item_id", ids);
       locs = data ?? [];
     }
     const byItem = new Map<string, any[]>();
@@ -230,7 +230,12 @@ Deno.serve(async (req) => {
     const { data: subjectDevices } = await supabase.from("subject_devices")
       .select("id, vendor, product, version, version_unknown, internet_exposed, device_type")
       .eq("entity_id", entityId);
-    const synthesis = runSynthesis((items ?? []) as any, (subjectDevices ?? []) as any, entity.name);
+    // legalSuppressed lives in ONE place (matches the .neq("category","legal") item filter above) so P6
+    // reports NOT ASSESSED (we did not look), never NOT ASSERTED (we looked, found nothing). breachChecked
+    // gates P1 the same way: null breach date -> not checked -> NOT ASSESSED. When the legal classifier is
+    // rebuilt and un-suppressed, flip legalSuppressed to false and P6 returns to real assessment.
+    const synthesis = runSynthesis((items ?? []) as any, (subjectDevices ?? []) as any, entity.name,
+      { legalSuppressed: true, breachChecked: breachLastChecked != null });
 
     const meta = {
       subject: { name: entity.name, entity_id: entityId },
@@ -297,7 +302,10 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // a rank is meaningful per-capture, not per collapsed group.
   const locList = (ls: any[]) => {
     const byDomain = new Map<string, { url: string; queries: Map<string, { count: number; date: string | null }> }>();
-    for (const l of ls || []) {
+    // Item-2: render only gate-PASSING locations. Gate-failed (name-only co-occurrences, incl. the malformed
+    // D4 domain) are excluded from the finding's source list — they are not sources for it. The exclusion
+    // count is surfaced by srcCount; the complete search space remains on record in Appendix A.
+    for (const l of (ls || []).filter((x: any) => x.gate_failed == null)) {
       const d = l.domain || l.url || "—";
       if (!byDomain.has(d)) byDomain.set(d, { url: l.url, queries: new Map() });
       const g = byDomain.get(d)!;
@@ -319,7 +327,20 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // All other anchor types (email / profile URL / device / data broker) still render their value.
   const anchorLine = (i: any) => i.anchor_type && i.anchor_value && i.anchor_type !== "coordinate"
     ? `<div class="anchor"><span class="alabel">Tied to</span> <span class="aval">${esc(i.anchor_value)}</span> <span class="atype">${esc(ANCHOR_LABEL[i.anchor_type] || i.anchor_type)}</span></div>` : "";
-  const srcCount = (i: any) => { const dd = new Set((i.locations || []).map((l: any) => l.domain).filter(Boolean)).size; const cc = i.locations.length; return `${dd} independent domain${dd === 1 ? "" : "s"}${cc !== dd ? ` · ${cc} capture${cc === 1 ? "" : "s"}` : ""}`; };
+  // Item-2 (corroboration gate honored): count ONLY gate-passing locations (gate_failed IS NULL). A page
+  // where the subject's name appeared but nothing tied it to this finding is NOT a source for the finding —
+  // counting it inflates corroboration. The excluded count is stated inline (named, not just a number).
+  const srcCount = (i: any) => {
+    const locs = i.locations || [];
+    const pass = locs.filter((l: any) => l.gate_failed == null);
+    const excluded = locs.length - pass.length;
+    const dd = new Set(pass.map((l: any) => l.domain).filter(Boolean)).size;
+    const cc = pass.length;
+    const note = excluded > 0
+      ? ` <span class="rank">${excluded} name-only match${excluded === 1 ? "" : "es"} excluded — the subject's name appeared but nothing tied the page to this finding</span>`
+      : "";
+    return `${dd} independent domain${dd === 1 ? "" : "s"}${cc !== dd ? ` · ${cc} capture${cc === 1 ? "" : "s"}` : ""}${note}`;
+  };
   // D1: rank is stated as a plain fact ("appeared at position N in search results"), not editorialized as
   // "buried". Meaning is defined ONCE at the top of the Third-Party Exposure section. Only search-derived
   // items ever carry a real rank (<999); breach/environmental render nothing here (breach has no search rank,
@@ -381,6 +402,7 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   .synth-established { border-left-color: #b03a2e; } .synth-established .synth-state { background: #b03a2e; }
   .synth-qualified { border-left-color: #b9770e; } .synth-qualified .synth-state { background: #b9770e; }
   .synth-not_asserted { border-left-color: #7f8c8d; } .synth-not_asserted .synth-state { background: #7f8c8d; }
+  .synth-not_assessed { border-left-color: #34495e; } .synth-not_assessed .synth-state { background: #34495e; }
   .synth-part { margin: 0 0 4px; font-size: 13.5px; } .synth-lab { font-weight: 700; display: inline-block; min-width: 82px; color: #333; }
   .part-divider { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #555; border-top: 2px solid #cfcfcf; margin: 40px 0 10px; padding-top: 10px; }
   .part-divider .pd-sub { font-weight: 400; text-transform: none; letter-spacing: 0; color: #888; font-size: 12px; }
