@@ -300,12 +300,13 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // so a source that returns the same query across many pages (e.g. 54 near-identical pressreader
   // captures) reads as "pressreader.com · found via <q> ×N", not 54 duplicate lines. Rank dropped —
   // a rank is meaningful per-capture, not per collapsed group.
-  const locList = (ls: any[]) => {
+  const locList = (ls: any[], applyGate = true) => {
     const byDomain = new Map<string, { url: string; queries: Map<string, { count: number; date: string | null }> }>();
-    // Item-2: render only gate-PASSING locations. Gate-failed (name-only co-occurrences, incl. the malformed
-    // D4 domain) are excluded from the finding's source list — they are not sources for it. The exclusion
-    // count is surfaced by srcCount; the complete search space remains on record in Appendix A.
-    for (const l of (ls || []).filter((x: any) => x.gate_failed == null)) {
+    // Item-2: render only gate-PASSING locations for reputational findings. Gate-failed (name-only
+    // co-occurrences, incl. the malformed D4 domain) are excluded — not sources for the finding; the count
+    // is surfaced by srcCount and the complete search space stays in Appendix A. Breaches pass applyGate=false
+    // (HIBP email-match, the gate is meaningless for them).
+    for (const l of (applyGate ? (ls || []).filter((x: any) => x.gate_failed == null) : (ls || []))) {
       const d = l.domain || l.url || "—";
       if (!byDomain.has(d)) byDomain.set(d, { url: l.url, queries: new Map() });
       const g = byDomain.get(d)!;
@@ -330,10 +331,14 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // Item-2 (corroboration gate honored): count ONLY gate-passing locations (gate_failed IS NULL). A page
   // where the subject's name appeared but nothing tied it to this finding is NOT a source for the finding —
   // counting it inflates corroboration. The excluded count is stated inline (named, not just a number).
+  // The corroboration gate applies ONLY to reputational name-match findings. Breach records are HIBP
+  // email-matches (their pages never contain the subject's name, so they "fail" gate1_subject meaninglessly)
+  // — exempt data_breach so a real breach never renders "0 independent domains".
+  const gateApplies = (i: any) => i.category !== "data_breach";
   const srcCount = (i: any) => {
     const locs = i.locations || [];
-    const pass = locs.filter((l: any) => l.gate_failed == null);
-    const excluded = locs.length - pass.length;
+    const pass = gateApplies(i) ? locs.filter((l: any) => l.gate_failed == null) : locs;
+    const excluded = gateApplies(i) ? locs.length - pass.length : 0;
     const dd = new Set(pass.map((l: any) => l.domain).filter(Boolean)).size;
     const cc = pass.length;
     const note = excluded > 0
@@ -345,7 +350,7 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // "buried". Meaning is defined ONCE at the top of the Third-Party Exposure section. Only search-derived
   // items ever carry a real rank (<999); breach/environmental render nothing here (breach has no search rank,
   // environmental renders via envBlock), so "in search results" is truthful wherever this actually prints.
-  const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="position">${i.obscurity_rank >= 999 ? "" : `appeared at position ${i.obscurity_rank} in search results`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations)}</div>`;
+  const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="position">${i.obscurity_rank >= 999 ? "" : `appeared at position ${i.obscurity_rank} in search results`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations, gateApplies(i))}</div>`;
   // Third-party split: real findings render prominently; bare mentions are counted + collapsed (web) or
   // moved to Appendix A (print), so the PDF the client keeps never silently omits the mention volume.
   // Environmental findings are LIVE HAZARD-FEED results (wildfire/weather/road tied to a coordinate),
