@@ -376,6 +376,17 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   const tpMentions = noise || [];                   // single-source name-matches — volume, not findings
   const presence = verifiedPresence || [];          // corroborated (>=2 domains) but neutral — confirmed footprint
   const mentionRow = (m: any) => `<div class="mention-row"><span class="cat">${esc(m.category)}</span> ${esc(m.title)} — ${(m.locations || []).map((l: any) => `<a href="${esc(l.url)}">${esc(l.domain || l.url)}</a>${l.date_captured ? ` <span class="rank">(captured ${esc(String(l.date_captured).slice(0, 10))})</span>` : ""}`).join(", ")}</div>`;
+  // Appendix A split (D5): partition mentions into content the subject PUBLISHED THEMSELVES (self_published —
+  // their own footprint) vs pages PUBLISHED BY OTHERS. NO false-match/incidental sub-split — no field
+  // distinguishes them and we do not guess. source_class is fully populated on mention rows. The leading line
+  // states the self/other breakdown BEFORE the raw total, so 148 does not read as alarming before the reader
+  // learns nearly half is their own posting.
+  const selfMentions = tpMentions.filter((m: any) => m.source_class === "self_published");
+  const otherMentions = tpMentions.filter((m: any) => m.source_class !== "self_published");
+  const mentionsBody = () =>
+    `<p class="section-intro">Of these ${tpMentions.length} pages, ${selfMentions.length} are content you published yourself. The remaining ${otherMentions.length} were published by others.</p>` +
+    (selfMentions.length ? `<h4>Published by you (${selfMentions.length})</h4><p class="section-intro">Content you published yourself — included for completeness; it is your footprint, not something written about you.</p>${selfMentions.map(mentionRow).join("")}` : "") +
+    (otherMentions.length ? `<h4>Published by others (${otherMentions.length})</h4><p class="section-intro">Pages where your name appears that you did not publish. No finding is attached to these. Some are other people who share your name, or pages that matched your name incidentally. We have not separated those from genuine mentions.</p>${otherMentions.map(mentionRow).join("")}` : "");
   // Hazard-feed finding renderer — location + hazard + severity + measurement; NO rank, NO domain/query list.
   const envBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">environmental</span>${sevBadge(i.severity)}${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}${i.first_seen_date ? `<div class="prov">measured ${esc(String(i.first_seen_date).slice(0, 10))}</div>` : ""}</div>`;
   // Dynamic section numbering — sections number sequentially in render order, so a conditional section
@@ -501,7 +512,7 @@ ${sec("Third-Party Exposure")}
 <p class="section-intro">What is out there about you, written by others — real findings first (highest-consequence first). Bare mentions of your name that carry no finding are counted and collapsed below, so you can see the volume without the report implying they are problems.</p>
 <p class="section-intro">Some items note the <strong>position</strong> they reached in the search results. Position 1 is the first result. This is the best position an item reached in any single search we ran, so a low number from a narrow search means less than the same number from a broad name search. Position records where something showed up, not how serious it is.</p>
 ${tpFindings.length ? tpFindings.map(itemBlock).join("") : '<p class="empty-note">No third-party FINDINGS (a finding is a legal matter, breach, or documented event — not a bare mention).</p>'}
-${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${tpMentions.map(mentionRow).join("")}</details>
+${tpMentions.length ? `<details class="mentions screen-collapse"><summary><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached.</strong> Pages where your name appears without a legal matter, breach, or event — expand to review.</summary>${mentionsBody()}</details>
 <p class="print-ptr"><strong>Also found — ${tpMentions.length} mention${tpMentions.length === 1 ? "" : "s"} of your name with no finding attached</strong> — pages where your name appears without a legal matter, breach, or event. Listed in full at <strong>Appendix A</strong>.</p>` : ""}
 
 ${sec("Verified Public Presence")}
@@ -526,7 +537,7 @@ ${covGroup("Searches for public footprint", `Looking for whether a public footpr
 ${tpMentions.length ? `<div class="print-appendix">
 <h2>Appendix A — Mentions (${tpMentions.length})</h2>
 <p class="section-intro">Every page where the subject's name appeared WITHOUT a finding attached — included in full so the complete search space is on the record, not silently omitted from the deliverable. URL and capture date for each.</p>
-${tpMentions.map(mentionRow).join("")}
+${mentionsBody()}
 </div>` : ""}
 
 <footer>Silent Shield Security · Reputational Exposure Assessment · Confidential. Every finding above carries the source URL and the query that surfaced it — this report is auditable end to end.</footer>
