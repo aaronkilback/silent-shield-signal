@@ -84,3 +84,21 @@ unmeasurable here. Reported honestly, not papered over.
 - **Source:** pressreader.com (Vancouver Sun). **No case name, no party order, no citation.** `category='media'`.
 - Renderer rule: subject line = the passing location's stored snippet sentence(s) containing the full name +
   the legal-event verb, verbatim/trimmed — never synthesized.
+
+## Verb-list ruling (2026-08-31, operator): ship current M2; candidates DEFERRED with constraints
+Final M2 (shipped): sued | charged | convicted | acquitted | arrested | indicted | lawsuit | pleaded guilty
+| found liable | prosecuted | malicious prosecution.
+
+**Deferred candidates — the CONSTRAINED forms are the versions to test later (never the bare terms):**
+- `settled the (suit|lawsuit|claim|case)`
+- `cleared of (charges|wrongdoing)`
+- `(suit|lawsuit|complaint|claim) filed against`
+- `under investigation`
+- `faces allegations`
+- `named in a complaint`
+- **`denied wrongdoing` — EXCLUDED PERMANENTLY** (presupposes an accusation; not itself an event).
+
+**Revisit trigger (condition, not a date):** when **five distinct subjects** have been scanned, OR the **first
+real legal-in-press capture that current M2 misses** — whichever comes first. To make the second trigger
+observable: **when a capture passes M1 but fails M2, record it** (not a finding, not displayed — countable),
+so a too-narrow list is learnable. Implemented as `subject_exposure_locations.m1_pass` / `.m2_pass`.
