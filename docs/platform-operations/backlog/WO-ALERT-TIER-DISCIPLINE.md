@@ -22,3 +22,10 @@ Two defects in one alert: **wrong tier** (interruption/pageable for an internal 
 ## Cross-refs
 WO-ALERT-PAUSE-RECONCILE (parent) · the 3 rows are among the five being CANCELLED (ruling #2). Alert-tier
 doctrine already partly in `_shared/alert-tier.ts`.
+
+## Added 2026-08-31 (log only, do not fix now)
+`alert_status='superseded'` now carries **two distinct meanings** — (a) naturally aged-out / replaced, and
+(b) **operator-cancelled** (WO-ALERT-PAUSE-RECONCILE) — distinguished **only** by `error_class`
+(`operator_cancelled`). Any consumer reading `status` alone **conflates them**. Note it; do NOT add an enum
+value now — flagged so a future reader/query does not treat an operator-cancelled alert as a benign
+auto-supersede (or vice versa).
