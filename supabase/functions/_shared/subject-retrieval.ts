@@ -46,7 +46,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, idx: numb
   return out;
 }
 interface Raw { title: string; url: string; snippet: string; domain?: string; category: string; phase: number; query: string; rank?: number; source_class?: "third_party" | "self_published"; }
-export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; found_at_rank?: number; }
+export interface ExposureLocation { url: string; domain?: string; platform?: string; title?: string; snippet?: string; found_by_query?: string; phase: number; found_at_rank?: number; sweep_category?: string; }
 export interface ExposureItem { title: string; category: string; summary?: string; severity?: string; is_finding?: boolean; fingerprint: string; source_class?: "third_party" | "self_published"; locations: ExposureLocation[]; }
 
 // Consequence-first ranking used by BOTH surfaces (AEGIS get_subject_exposure + the report) so they never
@@ -520,7 +520,10 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
     // dedupe identical URLs into one location (same place found by 2 queries is not two findings)
     const seen = new Set<string>();
     const locations: ExposureLocation[] = [];
-    for (const f of fs) { if (seen.has(f.url)) continue; seen.add(f.url); locations.push({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase, found_at_rank: f.rank }); }
+    // WO-SWEEP-CATEGORY-MAPPING: f.category IS the sweep category (bq.category for battery, inherited for
+    // pivot) — persist it so Section 7 reads "did this search return material" from a real field, not a
+    // name-collision. The producer knows it here; before this fix it was dropped.
+    for (const f of fs) { if (seen.has(f.url)) continue; seen.add(f.url); locations.push({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase, found_at_rank: f.rank, sweep_category: f.category }); }
     items.push({ title, category, summary, severity, is_finding, source_class, fingerprint: key.replace(/[^a-z0-9]+/g, "-").slice(0, 80), locations });
   }
   return items;
@@ -547,6 +550,7 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
         title: loc.title ?? null, snippet: loc.snippet ?? null, found_by_query: loc.found_by_query ?? null, phase: loc.phase, found_at_rank: loc.found_at_rank ?? null,
         corroborates: g.corroborates, gate_failed: g.gate_failed,
         m1_pass: mf.m1_pass, m2_pass: mf.m2_pass,
+        sweep_category: loc.sweep_category ?? "unclassified",   // WO-SWEEP-CATEGORY-MAPPING (forward path)
       }, { onConflict: "exposure_item_id,url" });
     }
   }

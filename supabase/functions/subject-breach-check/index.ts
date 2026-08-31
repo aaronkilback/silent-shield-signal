@@ -108,6 +108,7 @@ Deno.serve(async (req) => {
         snippet: (breach.Description ?? "").replace(/<[^>]+>/g, "").slice(0, 300),
         published_date: breach.BreachDate ?? null, date_captured: new Date().toISOString(),
         found_by_query: `HIBP breachedaccount:${affected.join("|")}`, phase: 1,
+        sweep_category: "unclassified",   // WO-SWEEP-CATEGORY-MAPPING: breach is not one of the seven reputational sweeps
       }, { onConflict: "exposure_item_id,url" });
       written++;
     }

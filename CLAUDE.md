@@ -40,6 +40,18 @@ Supabase keys updated and validated.
 - **Lifting a containment is also a tracked decision** — record what replaced it and whether the replacement actually covers the original intent (a gate that scores sources does not cover a classification defect).
 - **Provenance:** WO-LEGAL-FABRICATION — the legal-classifier fabrication (`Legal case: Filing v. Kilback`, `Kilback v. Photo`, motivational posts mislabeled high-severity legal) was contained by `.neq("category","legal")` in two functions with **no WO/incident doc, only comments**. The blanket exclusion was then lifted in one of the two on the assumption a corroboration gate covered it (it scores sources, not classification), and the divergence + still-broken classifier surfaced only by accident during unrelated source-restore review, a full week later. Sibling of the Population-Before-Check rule.
 
+## Deployed-Not-Committed Standing Rule (2026-08-31 — RATIFIED)
+
+**A change is done when it is verified RUNNING in prod — not when it is committed, merged, or deployed-without-verification.** "The deploy succeeded" and "the deployed artifact contains my change" are DIFFERENT claims; the gap between them is where silent regressions live. Every deploy in a build must prove all four:
+
+1. **The deployed version number** after the deploy (from the platform, not inferred).
+2. **The deployed source actually contains the change — read back from the DEPLOYED BUNDLE, not the repo** (`get_edge_function` / fetch the served artifact). A green deploy of a stale bundle passes (1) and fails this.
+3. **`verify_jwt` confirmed by response BODY** (401 shape), per function — never assumed from config.
+4. **The behavioral change visible in OUTPUT** — a real invocation whose result shows the change. Items 3 and 4 are the ones that catch a deploy that "succeeded" but shipped nothing.
+
+- **End every build with a coverage table:** every file changed, which function bundle(s) embed it, whether that function has been redeployed SINCE the change, and the deployed version. **Anything changed but not redeployed is NOT done.** A shared file (`_shared/*`) is only live in the functions that have been redeployed since it changed — list each.
+- **Provenance:** ratified during WO-SWEEP-CATEGORY-MAPPING after a week where multiple "fixed"/"deployed" claims were later found not running (stale ai-gateway hiding in content drift, SRC_RANK's three-pass deployed-state confusion, built-but-unrun orphans). Companion to Population-Before-Check (aperture) and Track-Every-Containment (tracking): this rule governs *running-state truth*. Twin of the "one real run before done" discipline.
+
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
 **No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.

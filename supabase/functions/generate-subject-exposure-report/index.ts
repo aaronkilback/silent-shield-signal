@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
     let locs: any[] = [];
     if (ids.length) {
       const { data } = await supabase.from("subject_exposure_locations")
-        .select("exposure_item_id, url, domain, found_by_query, found_at_rank, date_captured").in("exposure_item_id", ids);
+        .select("exposure_item_id, url, domain, found_by_query, found_at_rank, date_captured, sweep_category").in("exposure_item_id", ids);
       locs = data ?? [];
     }
     const byItem = new Map<string, any[]>();
@@ -154,6 +154,28 @@ Deno.serve(async (req) => {
     // categories are listed separately so we never over-claim (WO #4, 2026-08-30).
     const catsEmpty = ALL7.filter((c: string) => isDedicatedSweep(c) && !catsWithFindings.includes(c));
     const catsIncidentalOnly = ALL7.filter((c: string) => !!categorySweeps[c] && !isDedicatedSweep(c) && !catsWithFindings.includes(c));
+    // WO-SWEEP-CATEGORY-MAPPING: the per-category outcome now reads the PERSISTED sweep_category on each
+    // location (Option A) — no more item-category ∩ ALL7 name-collision. state 'finding' = a location tagged
+    // with c belongs to a finding or breach item; 'material_no_finding' = c has a tagged location but none on
+    // a finding/breach; else 'nothing' (searched, zero tagged) / 'not_searched'. Finding TITLES are collected
+    // for the Part-I contribution reference (Option B) so a reader sees which finding — and, when one story
+    // is surfaced by several searches, the repeated title reveals it is one story, not several findings.
+    const sweepOutcome: Record<string, { state: string; titles: string[] }> = {};
+    for (const c of ALL7) {
+      let hasFinding = false, hasAny = false;
+      const titles = new Set<string>();
+      for (const it of enriched) {
+        const substantive = (it.exposure_class === "finding" || it.category === "data_breach");
+        for (const l of (it.locations || [])) {
+          if (l.sweep_category !== c) continue;
+          hasAny = true;
+          if (substantive) { hasFinding = true; if (it.title) titles.add(String(it.title).trim()); }
+        }
+      }
+      const state = hasFinding ? "finding" : hasAny ? "material_no_finding"
+        : (catsNeverSwept.includes(c) ? "not_searched" : "nothing");
+      sweepOutcome[c] = { state, titles: [...titles].filter(Boolean) };
+    }
     // Breach producer — last time HIBP was checked (latest capture among current breach locations).
     const breachDates = breaches.flatMap((b: any) => (b.locations || []).map((l: any) => l.date_captured)).filter(Boolean).sort();
     const breachLastChecked = breachDates.length ? String(breachDates[breachDates.length - 1]).slice(0, 10) : null;
@@ -211,6 +233,7 @@ Deno.serve(async (req) => {
         },
         categories_with_findings: catsWithFindings, categories_swept_empty: catsEmpty,
         categories_incidental_only: catsIncidentalOnly,
+        sweep_outcome: sweepOutcome,   // WO-SWEEP-CATEGORY-MAPPING — persisted-sweep-category outcome per category
         not_searched: { categories_never_swept: catsNeverSwept, sources_not_covered: SOURCES_NOT_COVERED, family_not_scanned: familyNotScanned },
       },
       counts: { findings: findings.length, verified_presence: verifiedPresence.length, noise: noise.length, breaches: breaches.length },
@@ -308,15 +331,20 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // (Family, only on family engagements) never leaves a gap or keeps a stale number.
   let __sn = 0;
   const sec = (t: string) => `<h2>${++__sn} · ${t}</h2>`;
-  // D3 · Section 7 coverage rendering. Each sweep-category is shown by CAT_LABEL (what its terms search for),
-  // grouped adverse vs presence, with its outcome. Outcome derives from the existing coverage sets — this is
-  // a render change only, no recomputation. "findings" never appears; the assessment lives in Part I.
+  // D3 + WO-SWEEP-CATEGORY-MAPPING · Section 7 coverage rendering. The outcome now reads the PERSISTED
+  // sweep_category per location (cov.sweep_outcome), NOT the old item-category ∩ ALL7 name-collision.
+  // Three states: contributed-to-a-finding (names the finding, Option B) / material-but-no-finding /
+  // returned-nothing. "findings" as a bare word never appears in the sweep rows; Part I holds the assessment.
   const catOutcome = (c: string): { txt: string; cls: string } => {
-    if (cov.not_searched.categories_never_swept.includes(c)) return { txt: "not searched", cls: "oos" };
-    if (cov.categories_with_findings.includes(c)) return { txt: "returned material — assessed in Part I", cls: "" };
-    if ((cov.categories_incidental_only || []).includes(c)) return { txt: "surfaced only in passing — not a dedicated search", cls: "" };
-    if (cov.categories_swept_empty.includes(c)) return { txt: "returned nothing", cls: "empty" };
-    return { txt: "searched", cls: "" };
+    const o = (cov.sweep_outcome || {})[c] || { state: "nothing", titles: [] };
+    if (o.state === "not_searched") return { txt: "not searched", cls: "oos" };
+    if (o.state === "finding") {
+      const t = (o.titles || []).filter(Boolean);   // raw titles — covRow esc()s o.txt exactly once
+      const ref = t.length ? `: “${t[0]}”${t.length > 1 ? ` (+${t.length - 1} more)` : ""}` : "";
+      return { txt: `returned material — contributed to a finding (Part I)${ref}`, cls: "" };
+    }
+    if (o.state === "material_no_finding") return { txt: "returned material — none of it rose to a finding", cls: "" };
+    return { txt: "returned nothing", cls: "empty" };   // searched, zero tagged locations
   };
   const covRow = (c: string): string => {
     const s = (cov.producers.reputational_by_category || {})[c];
