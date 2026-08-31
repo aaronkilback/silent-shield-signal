@@ -9,6 +9,7 @@
 // used to EXPAND (supplementary queries) or VERIFY (homonym filter), never to RESTRICT discovery.
 import { callAiGateway } from "./ai-gateway.ts";
 import { gateLocation } from "./corroboration-gate.ts";
+import { evaluateMediaLitigation, locationFlags } from "./media-litigation-gate.ts";
 
 export const SUBJECT_RETRIEVAL_VERSION = "subject-retrieval-v1-2026-08-18";
 
@@ -497,8 +498,16 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
     const hasFinancial = /\b(filed for bankruptcy|declared bankruptcy|bankruptcy filing|chapter (?:7|11|13)|insolvency proceeding|tax lien against|foreclosure (?:on|proceeding)|placed in receivership|wage garnishment)\b/i.test(blob);
     const hasProfessional = /\b(disciplinary action|was (?:sanctioned|reprimanded|suspended|disbarred)|licen[cs]e (?:revoked|suspended)|struck off (?:the )?(?:register|roll)|professional misconduct (?:finding|complaint)|malpractice (?:suit|claim|judgment))\b/i.test(blob);
     const hasMediaEvent = /\b(arrested|indicted|embezzl|defrauded|sexual assault|criminal charges?|restraining order)\b/i.test(blob);
+    // WO-MEDIA-LITIGATION-FINDING: a press capture that names the subject by FULL name AND states a legal
+    // event in the article's OWN words (M1 ∧ M2, co-located on one capture) is an honest MEDIA finding —
+    // headline title + verbatim subject line, NO case name / party order / citation. Checked BEFORE the
+    // (still-fabricating, display-suppressed) legal path: a qualifying capture becomes media; a bare
+    // "X v. Y" name-match with no legal event stays category='legal' (suppressed at display).
+    const media = evaluateMediaLitigation(_subjectName, fs.map((f) => ({ url: f.url, domain: f.domain, title: f.title, snippet: f.snippet })));
     let category: string, severity: string | undefined, is_finding: boolean;
-    if (isRealLegal) { category = "legal"; severity = "high"; is_finding = true; }
+    let summary: string | undefined;
+    if (media.isMedia) { category = "media"; severity = "medium"; is_finding = true; summary = media.subjectLine || undefined; }
+    else if (isRealLegal) { category = "legal"; severity = "high"; is_finding = true; }
     else if (hasFinancial) { category = "financial"; severity = "medium"; is_finding = true; }
     else if (hasProfessional) { category = "professional"; severity = "medium"; is_finding = true; }
     else if (hasMediaEvent) { category = "media"; severity = "medium"; is_finding = true; }
@@ -506,12 +515,13 @@ export function clusterFindings(_subjectName: string, findings: Raw[], urlQuerie
     const rep = fs.slice().sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999))[0];
     // Only a REAL case gets the "Legal case: X v. Y" title; a fabricated one (no legal context) keeps its
     // page title and is a mention, so the report never presents a pub race as a court case.
-    const title = (isCase && realCase) ? `Legal case: ${key.slice(5).split("|").map(cap).join(" v. ")}` : (rep.title || _subjectName);
+    const title = media.isMedia ? (media.headline || rep.title || _subjectName)
+      : ((isCase && realCase) ? `Legal case: ${key.slice(5).split("|").map(cap).join(" v. ")}` : (rep.title || _subjectName));
     // dedupe identical URLs into one location (same place found by 2 queries is not two findings)
     const seen = new Set<string>();
     const locations: ExposureLocation[] = [];
     for (const f of fs) { if (seen.has(f.url)) continue; seen.add(f.url); locations.push({ url: f.url, domain: f.domain, platform: undefined, title: f.title, snippet: f.snippet, found_by_query: f.query, phase: f.phase, found_at_rank: f.rank }); }
-    items.push({ title, category, summary: undefined, severity, is_finding, source_class, fingerprint: key.replace(/[^a-z0-9]+/g, "-").slice(0, 80), locations });
+    items.push({ title, category, summary, severity, is_finding, source_class, fingerprint: key.replace(/[^a-z0-9]+/g, "-").slice(0, 80), locations });
   }
   return items;
 }
@@ -530,10 +540,13 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
       // Corroboration gate — the ONLY place the gate runs (besides the one-off backfill). The DB trigger
       // just counts corroborates=true. See _shared/corroboration-gate.ts (WO-EXPOSURE-CORROBORATION).
       const g = gateLocation({ subjectName: subject.name, category: item.category, findingTitle: item.title, snippet: loc.snippet, title: loc.title });
+      // media-litigation miss telemetry (WO-MEDIA-LITIGATION-FINDING): m1_pass AND NOT m2_pass = a countable miss.
+      const mf = locationFlags(subject.name, { snippet: loc.snippet, title: loc.title });
       await supabase.from("subject_exposure_locations").upsert({
         exposure_item_id: row.id, url: loc.url, domain: loc.domain ?? null, platform: loc.platform ?? null,
         title: loc.title ?? null, snippet: loc.snippet ?? null, found_by_query: loc.found_by_query ?? null, phase: loc.phase, found_at_rank: loc.found_at_rank ?? null,
         corroborates: g.corroborates, gate_failed: g.gate_failed,
+        m1_pass: mf.m1_pass, m2_pass: mf.m2_pass,
       }, { onConflict: "exposure_item_id,url" });
     }
   }

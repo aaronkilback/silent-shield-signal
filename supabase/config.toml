@@ -915,5 +915,17 @@ verify_jwt = false
 [functions.view-subject-exposure-report]
 verify_jwt = false
 
+[functions.subject-retrieval]
+verify_jwt = true
+
+[functions.subject-exposure]
+verify_jwt = true
+
+[functions.subject-breach-check]
+verify_jwt = true
+
+[functions.deliver-subject-exposure-report]
+verify_jwt = true
+
 [functions.x-query-probe]
 verify_jwt = false
