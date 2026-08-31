@@ -51,3 +51,32 @@ explains it. **Step 2 (not now):** the P1.4 pageable-SLA check must consult `is_
 suppress/downgrade when paused (the PAUSED probe already covers those rows), OR the two checks unify so a
 held-during-pause row is reported once, pause-aware. No alert row touched, no cron re-enabled, nothing
 dispatched.
+
+## Step 2 (2026-08-31) — ruling follow-ups (report only, nothing applied)
+
+### Item 1 — the check fix (design, NOT applied): distinguishing held-by-pause from stuck-anyway
+Distinguisher is **claim-eligibility**, using the delivery mechanism's OWN predicate (`claim_pending_email_alerts`):
+- **Held-by-pause** = a row the claim RPC WOULD send on re-enable = `channel='email' AND status='pending' AND
+  client_id NOT NULL AND a matching active+verified client_alert_recipient exists`. (= the LOW PAUSED set.)
+- **Stuck-anyway** (must STILL fire P1.4 even while paused, the pause does not explain it): `status='sending'`
+  past lease+idempotency-window (→ requires_reconciliation, never sent), recipient `unrouted:*`/no verified
+  recipient, `client_id NULL` (INC-ALERTS-BRIDGE null-FK). None of these drain on re-enable.
+- **Fix:** when `is_cron_job_active('alert-delivery-v2-email')=false`, P1.4 subtracts the claim-eligible
+  (held-by-pause) rows from its CRITICAL/HIGH count; a non-empty remainder (stuck-anyway) still fires. Ties
+  the watchdog's suppression to what the pipeline would actually deliver, so it can never mute a genuinely
+  stuck row. Do not apply until approved.
+
+### Item 2 — the pause (report only, do not act)
+- **What the 5 held alerts are** (content in `alerts.response_json.body`; incident_id NULL is normal — signal/
+  agent-derived, not incident-linked): 2 **notification** = CISA CVE/**intrusion advisories** (HIGH/P1, "asset
+  match: not confirmed — advisory"); **3 interruption** = **"Agent TIER2-REVIEW proposes raising [NAAD yellow
+  severe-thunderstorm warning] from medium to high"** — INTERNAL AGENT severity-change proposals, minted at
+  **interruption (pageable) tier** to the Petronas recipient. Interruption tier for an internal proposal about
+  a yellow thunderstorm warning is **mis-tiered** (separate defect worth its own WO).
+- **Sign-off record:** NONE. No doc records what "alert-pipeline sign-off" was blocking on (only this WO
+  mentions "alert-pipeline"). Stated plainly per ruling.
+- **Re-enable behavior:** `claim_pending_email_alerts` claims ANY `status='pending'` email alert with a verified
+  recipient **with NO age filter** and **no cross-alert dedup** (per-alert idempotency only guards re-sends of
+  `sending` rows). So on re-enable **all 5 drain at once** to `ak+petronas-launch@` — including 3 interruption
+  pages about a ~week-old severe-thunderstorm agent-proposal. Nothing age-suppresses a stale interruption alert
+  on the way out. → argues for **selective drain / age-suppression**, not a blind re-enable. Operator's call.
