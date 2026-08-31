@@ -263,7 +263,11 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
         `found via <code>${esc(q)}</code>${qi.count > 1 ? ` <span class="rank">×${qi.count} captures</span>` : ""}${qi.date ? ` · captured ${esc(qi.date)}` : ""}`).join("<br>")}</div></li>`).join("")}</ul>`;
   };
   const ANCHOR_LABEL: Record<string, string> = { email: "email", coordinate: "coordinate", profile_url: "profile URL", device: "device", data_broker: "data broker", source_corroboration: "source corroboration" };
-  const anchorLine = (i: any) => i.anchor_type && i.anchor_value
+  // D6: never print a raw coordinate in a client-facing document. The human label (e.g. "Kilback children
+  // school") is already carried in the item TITLE, so a coordinate anchor line adds nothing but precise
+  // geolocation of the subject/family in an emailed file. Suppress it entirely for coordinate anchors.
+  // All other anchor types (email / profile URL / device / data broker) still render their value.
+  const anchorLine = (i: any) => i.anchor_type && i.anchor_value && i.anchor_type !== "coordinate"
     ? `<div class="anchor"><span class="alabel">Tied to</span> <span class="aval">${esc(i.anchor_value)}</span> <span class="atype">${esc(ANCHOR_LABEL[i.anchor_type] || i.anchor_type)}</span></div>` : "";
   const srcCount = (i: any) => { const dd = new Set((i.locations || []).map((l: any) => l.domain).filter(Boolean)).size; const cc = i.locations.length; return `${dd} independent domain${dd === 1 ? "" : "s"}${cc !== dd ? ` · ${cc} capture${cc === 1 ? "" : "s"}` : ""}`; };
   const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="buried">${i.obscurity_rank >= 999 ? "" : `buried at rank ${i.obscurity_rank}`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations)}</div>`;
