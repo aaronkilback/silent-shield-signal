@@ -25,3 +25,29 @@ The watchdog panel reports three findings that appear to describe the same rows:
   **WO-SUBSET-RULE-DEFECT**: a check judging a condition without seeing the state that explains it.
 - **NOT the same set →** alerts meant to page a human went undelivered for days. **Report immediately and
   stop** — that becomes the priority over the entire queue.
+
+## Step 1 findings (2026-08-31) — SAME SET. Watchdog defect, not an alert failure.
+1. **Undispatched rows (CRITICAL+HIGH):** exactly 5, all **Petronas Canada**, recipient
+   `ak+petronas-launch@silentshieldsecurity.com`, status=pending, sent_at NULL:
+   - interruption: `1c62b1ee` (5447m), `fc2de315` (5086m), `c23e8415` (4713m)
+   - notification: `58e9b09e` (9560m), `0f8693d7` (9530m)
+2. **PAUSED-finding rows:** the identical 5 (`in_paused_set=true` on exactly these; every other
+   pending/superseded pageable row is false on both predicates).
+3. **Same set? YES.** 3 interruption + 2 notification = the 5 held-by-pause alerts.
+4. **Pause:** enabled **2026-08-25 14:59:25Z**, `paused_by=operator`, reason on record: *"Operator
+   deliberately paused pending alert-pipeline sign-off — sends stay OFF until the operator is satisfied (INC
+   alert-pipeline)."* `cron.job.active=false`.
+5. **Does the undispatched check read the pause state? NO — the defect.** `is_cron_job_active` is called
+   **exactly once** in system-watchdog (line 3127, the pause-aware INC-ALERT-DELIVERY probe that emits the
+   LOW PAUSED finding). The **P1.4-PAGEABLE check (lines 4298-4382)** that emits the CRITICAL (interruption
+   >15m) and HIGH (notification >60m) findings checks tier + `sent_at IS NULL` + age + excludes `unrouted:*`
+   — and **never reads the pause.** So it raises a **deliberate operator pause as CRITICAL for ~6 days.**
+
+**Verdict:** NOT an alert-delivery failure — the 5 pageable alerts are intentionally held and will drain on
+re-enable. It is the **watchdog double-counting a deliberate operator action at CRITICAL** because the
+pageable-SLA check is blind to the pause state that the PAUSED probe already sees. **Same class as
+WO-SUBSET-RULE-DEFECT / Population-Before-Check:** a check judging a condition without seeing the state that
+explains it. **Step 2 (not now):** the P1.4 pageable-SLA check must consult `is_cron_job_active` and
+suppress/downgrade when paused (the PAUSED probe already covers those rows), OR the two checks unify so a
+held-during-pause row is reported once, pause-aware. No alert row touched, no cron re-enabled, nothing
+dispatched.
