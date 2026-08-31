@@ -173,7 +173,11 @@ export function identityKit(items: ExposureItem[]): PrimitiveResult {
     key: "P2", name: "Identity / Impersonation Kit", status: "established",
     found: [brokerPart, breachPart].filter(Boolean).join(" "),
     means: `Someone could use these details to pretend to be you, or to answer "security questions" meant to prove your identity.`,
-    notSaying: "We did not find your SIN, and we did not find your family members.",
+    // D2: the scan searches ONLY the subject (name + emails) — family members are never a search input.
+    // "did not FIND your family members" asserted a search that never ran; corrected to "did not SEARCH".
+    // (The SIN half is retained pending operator ruling — see the sibling report; it rests on retrieved
+    // breach data classes, but is asserted unconditionally even in the broker-only path.)
+    notSaying: "We did not find your SIN, and we did not search for your family members — see the Scope & Method section.",
     cited_row_ids: cited, basis: basisOf(brc.concat(brk).filter((r) => cited.includes(r.id))),
   };
 }
