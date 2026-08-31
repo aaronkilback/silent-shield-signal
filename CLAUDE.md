@@ -23,6 +23,15 @@ Supabase keys updated and validated.
 - **Frontend/anon-read tables need a policy BEFORE RLS is enabled**, or the app breaks — never blind-enable a table the frontend reads directly; write the (owner/tenant-scoped) policy first.
 - **Provenance:** INC-RLS-EXPOSURE-2026-07-28 — backfill-snapshot tables leaked real tenant/client mappings + intelligence to the unauthenticated anon key because they shipped RLS-disabled. Full record: `docs/platform-operations/incidents/INC-RLS-EXPOSURE-2026-07-28.md`.
 
+## Population-Before-Check Standing Rule (2026-08-31 — RATIFIED)
+
+**Before writing any guard, detector, matcher, or scan, define the population it ranges over and prove the checker's aperture covers all of it.** A correct rule evaluated over a convenient subset reports "clean" over the part it can see while the defect lives in the uncovered part — a false pass that manufactures confidence, which is worse than no check at all.
+
+- **State the population explicitly** — ALL deployed functions, ALL locations of a finding, ALL importers regardless of deploy date — not the subset that happens to be in hand.
+- **Prove every member is evaluated, or name the excluded members and why** — a declared, logged exclusion, never a silent narrowing.
+- **A partially-blind checker must fail loud / report its own coverage** — never emit a bare "clean" over an aperture narrower than the rule's domain.
+- **Provenance:** three instances in one week (Aug 2026) — (1) `drift.mjs` scoped to the deployed-⊄-repo orphan set only, blind to content drift (the stale ai-gateway hid there); (2) corroboration Gate 2 tested a finding against a title derived from the same capture; (3) the sonar-caller scan swept the pre-fix subset and missed `monitor-travel-risks`. Backlog + full pattern: `docs/platform-operations/backlog/WO-SUBSET-RULE-DEFECT.md`. Twin of the negative-finding-needs-a-complete-search-space discipline.
+
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
 **No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.

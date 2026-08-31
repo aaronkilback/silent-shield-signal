@@ -1,6 +1,7 @@
 # WO-SUBSET-RULE-DEFECT — checks evaluated over a subset instead of their full population
 
-**Status:** LOGGED (do not start). Candidate for a standing rule.
+**Status:** Standing rule **RATIFIED 2026-08-31** into CLAUDE.md ("Population-Before-Check Standing Rule").
+Implementation of fixes to the three checks below stays **UNSTARTED** (per ruling).
 **Opened:** 2026-08-31 (operator observation, WO-SONAR-CREDENTIAL).
 
 ## The pattern (three instances in one week — not coincidence)
