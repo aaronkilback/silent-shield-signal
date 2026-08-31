@@ -102,3 +102,26 @@ Final M2 (shipped): sued | charged | convicted | acquitted | arrested | indicted
 real legal-in-press capture that current M2 misses** — whichever comes first. To make the second trigger
 observable: **when a capture passes M1 but fails M2, record it** (not a finding, not displayed — countable),
 so a too-narrow list is learnable. Implemented as `subject_exposure_locations.m1_pass` / `.m2_pass`.
+
+## Step 3 (2026-08-31) — BUILT + OPENED (proof)
+- **Gate module:** `_shared/media-litigation-gate.ts` (single source; M1 via corroboration-gate.subjectNamePresent,
+  M2 = proven verb list; verbatim subject-line extraction; per-location m1/m2 flags). Committed.
+- **Miss telemetry:** migration applied — `subject_exposure_locations.m1_pass/.m2_pass`. Reclassify populated
+  all 215 legal captures: **91 M1-pass, 32 M1-pass/M2-fail (= revisit-trigger baseline).**
+- **Reclassify (one-off fn, run then deleted):** applied the gate to existing captures; **exactly 1 item →
+  media (Olynyk 202773a2)**; 4 items had a qualifying capture (the one real matter). title=headline,
+  summary=verbatim subject line.
+- **Acceptance test — HOLDS:** hunting-club post + motivational quote **stayed `legal` (suppressed), NOT media.**
+  Only the real Olynyk matter reclassified.
+- **Render (report 37b7cfa9):** media finding shows headline "Prosecution policy comes back to bite Liberals"
+  + subject line "Ken Olynyk sued the ministry and conservation officer Aaron Kilback…" (pressreader,
+  single_source). **No case name, no party order** (verified: no "Kilback v. Olynyk" / "Olynyk v. Kilback").
+- **category=media, legal count 0 on both surfaces** (subject-exposure + generator both suppress legal; active
+  legal items = 0). Two-line render via the EXISTING itemBlock (title+summary) — no generator code change; the
+  generator stays v46 (verify_jwt=true, confirmed by 401). Findings count 17→18 (the real matter, back honestly).
+
+### Deferred (documented, not a silent gap) — scanner classify wiring
+`_shared/subject-retrieval.ts` classify is NOT yet wired to emit media-litigation at SCAN time, so **NEW
+captures are not media-classified until the scanner ships** (subject-retrieval is the blocked orphan). This
+lands WITH **WO-SCANNER-DEPLOY-DRIFT** scanner deploy — same gate module, applied at classify time. Until then
+the media path is live for existing data (reclassified) and re-runs on demand.
