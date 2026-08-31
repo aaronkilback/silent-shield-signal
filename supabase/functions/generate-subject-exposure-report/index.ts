@@ -53,12 +53,12 @@ Deno.serve(async (req) => {
     // ── gather: CURRENT items only (superseded/aged-out excluded), their locations, family disposition ──
     const { data: items } = await excludeSupersededExposure(supabase.from("subject_exposure_items")
       .select("id, category, title, summary, severity, is_finding, exposure_class, anchor_type, anchor_value, source_class, fingerprint, subject_awareness, first_seen_date, finding_basis"))
-      .eq("subject_entity_id", entityId);
-      // WO-LEGAL-FABRICATION-CONTAIN LIFTED 2026-08-30: the identity-anchor gate replaces the blanket
-      // exclusion with its precise intent. A corroborated legal matter (>=2 independent domains ->
-      // source_corroboration anchor, adverse -> exposure_class='finding') is a real finding; a bare
-      // single-source "X v. <noun>" name-match has no anchor -> exposure_class='noise'. The gate does what
-      // the .neq was crudely approximating, without burying the one real legal matter with the fabricated ones.
+      .eq("subject_entity_id", entityId)
+      // WO-LEGAL-FABRICATION (2026-08-31): blanket legal suppression REINSTATED. The 2026-08-30 lift assumed
+      // the corroboration gate covered legal fabrication; it scores SOURCES, not classification — a fabricated
+      // "X v. Y" on a page naming the subject in legal context passes it. OFF until the classifier is rebuilt
+      // (CanLII-verified). Matches subject-exposure. Suppresses the one real case (Kilback v. Olynyk) — accepted.
+      .neq("category", "legal");
     const ids = (items ?? []).map((i: any) => i.id);
     let locs: any[] = [];
     if (ids.length) {
