@@ -38,3 +38,9 @@ labeled it **CHRONIC at 25 minutes old**. A test row inherited the real alerts' 
 
 ## Do NOT
 Report only. Do not change the fingerprint or the classifier.
+
+## Added 2026-08-31 (operator, log only)
+The digit-normalized fingerprint makes `occurrence_count` and `first_seen_at` properties of a **SHAPE, not an
+incident**. Therefore **every age and recurrence figure on the panel is unverified**: e.g. "92d / x11",
+"101d / x39", "112d / x35" are the age of the **shape's first appearance** and the count of **all episodes of
+that shape**, NOT one continuous incident. Do not read any panel age/recurrence as per-incident until fixed.
