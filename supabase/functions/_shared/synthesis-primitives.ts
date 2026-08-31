@@ -169,15 +169,22 @@ export function identityKit(items: ExposureItem[]): PrimitiveResult {
     ? `Leaked data ${hasBroker ? "also " : ""}exposes your ${andList(breachSensitive)}.`
     : "";
   const cited = [...new Set(rows)];
+  // "Not saying" is built from two independently-gated clauses:
+  //  • FAMILY (always holds) — the scan searches ONLY the subject (name + emails); family members are
+  //    never a search input, so "did not SEARCH for your family members" is an honest scope statement,
+  //    not a fabricated absence (D2). The unscanned-family capability gap is WO-FAMILY-SCAN-GAP.
+  //  • SIN (gated, option b) — "did not FIND your SIN" rests on breach DATA CLASSES, so it may be
+  //    asserted ONLY when breach data was actually retrieved for the subject (brc.length > 0). On the
+  //    broker-only path no breach was checked, so the clause is OMITTED entirely — unfounded there.
+  const familyNote = "did not search for your family members — see the Scope & Method section.";
+  const notSaying = brc.length > 0
+    ? `We did not find your SIN, and we ${familyNote}`
+    : `We ${familyNote}`;
   return {
     key: "P2", name: "Identity / Impersonation Kit", status: "established",
     found: [brokerPart, breachPart].filter(Boolean).join(" "),
     means: `Someone could use these details to pretend to be you, or to answer "security questions" meant to prove your identity.`,
-    // D2: the scan searches ONLY the subject (name + emails) — family members are never a search input.
-    // "did not FIND your family members" asserted a search that never ran; corrected to "did not SEARCH".
-    // (The SIN half is retained pending operator ruling — see the sibling report; it rests on retrieved
-    // breach data classes, but is asserted unconditionally even in the broker-only path.)
-    notSaying: "We did not find your SIN, and we did not search for your family members — see the Scope & Method section.",
+    notSaying,
     cited_row_ids: cited, basis: basisOf(brc.concat(brk).filter((r) => cited.includes(r.id))),
   };
 }
