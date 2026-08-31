@@ -319,10 +319,11 @@ Deno.serve(async (req) => {
             body: JSON.stringify({ model: 'sonar', max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
           });
           if (resp.status === 401 || resp.status === 403) {
+            const errBody = (await resp.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 200);
             await recordFinding(supabase, {
               category: 'data_integrity', severity: 'high',
               title: `Grounding guard: PERPLEXITY_API_KEY present but REJECTED (HTTP ${resp.status})`,
-              analysis: `PERPLEXITY_API_KEY is configured but a live sonar auth call returned ${resp.status} — the key is present-but-invalid (expired/revoked/wrong). The pre-fix gateway does NOT downgrade a rejected sonar call to an ungrounded model (fail-closed, verified), so this degrades to errors rather than fabrication — but the 6 sonar-backed features are effectively DOWN. WO-SCANNER-AI-GATEWAY-STALE.`,
+              analysis: `PERPLEXITY_API_KEY is configured but a live sonar auth call returned ${resp.status} — the key is present-but-invalid (expired/revoked/wrong). Provider response: ${errBody || '(empty body)'}. The pre-fix gateway does NOT downgrade a rejected sonar call to an ungrounded model (fail-closed, verified), so this degrades to errors rather than fabrication — but the 6 sonar-backed features are effectively DOWN. WO-SCANNER-AI-GATEWAY-STALE.`,
               plainEnglish: `The live-web search key is set but no longer works (rejected). Web-grounded AI features will error out until the key is renewed — they will not fabricate, but they will not work.`,
               action: `Rotate/renew PERPLEXITY_API_KEY. Live sonar auth check returned HTTP ${resp.status}.`,
             });
