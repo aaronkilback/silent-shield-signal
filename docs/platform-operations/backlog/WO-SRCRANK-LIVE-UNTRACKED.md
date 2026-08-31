@@ -20,16 +20,19 @@ neither.
   changes ride any function's redeploy, untracked.** Cross-reference **WO-DEPLOY-LANE-REPAIR** (content-drift
   dimension) and the Population-Before-Check / Track-Every-Containment standing rules.
 
-## The authorship model is HALF-SHIPPED
-- **Consumer LIVE:** `SRC_RANK` sort in the generator (v45) — active.
-- **Producer NOT shipped:** nothing populates `source_class` on scan (subject-retrieval v43, the scanner,
-  predates it and is the unlanded orphan). `compareExposureItems` defaults absent `source_class` to
-  `third_party`, so **SRC_RANK currently sorts everything as third_party → a no-op in practice.** It only
-  *becomes* behavior once the producer ships. So it is live-but-inert today, which is its own trap: it will
-  silently change report ordering the day the producer lands, again with no decision gate.
-- **Ruling required:** decide `SRC_RANK` (consumer) and **WO-SELF-PUBLISHED-CLASS** (producer:
-  `source_class` population + the self-published-vs-third-party classification) **together** — they are one
-  authorship model, currently split across a shipped half and an unshipped half.
+## CORRECTION 2026-08-31 — SRC_RANK is FULLY LIVE, not a no-op (my earlier claim was wrong)
+- **Producer IS shipped.** `source_class` population (`isSelfPublished` → third_party/self_published) is in
+  the DEPLOYED scanner **v43** (line ~334) — NOT in the repo-vs-v43 diff. Stored items carry it: **261 have
+  source_class (191 third_party / 78 self_published / … ), 65 ACTIVE self_published.** Only 6 are null (0 active).
+- **Consumer IS live.** The generator (v45, since 2026-08-30) sorts those populated values by SRC_RANK →
+  **third-party findings have been rendering ABOVE self-published in client reports for a day.** This is real
+  behavior, not inert. My prior "defaults everything to third_party → no-op" statement was **incorrect** and
+  is retracted here.
+- **The scanner deploy (Part A) adds nothing new for SRC_RANK.** The scanner only *exports*
+  `compareExposureItems` (consumers = generator + dashboard-ai-assistant); it never calls it. So shipping the
+  scanner just syncs its exported copy — behaviorally inert for the scanner.
+- **Ruling still required** on the authorship model (SRC_RANK ordering) with **WO-SELF-PUBLISHED-CLASS** — but
+  note it is ALREADY affecting client output, so the ruling is on live behavior, not a pending change.
 
 ## Do NOT (per ruling)
 Do not reverse SRC_RANK, do not ship the producer. Log only; rule the two together later.
