@@ -36,3 +36,13 @@ neither.
 
 ## Do NOT (per ruling)
 Do not reverse SRC_RANK, do not ship the producer. Log only; rule the two together later.
+
+## CLOSED-WITH-FINDING (2026-08-31, operator)
+Not reversing SRC_RANK — the third-party-above-self-published ordering is correct and has been live in client
+reports since 2026-08-30 (producer in scanner v43, consumer in generator v45). **The finding is not the sort
+order — it is that determining WHAT WAS ACTUALLY DEPLOYED took THREE passes today** (first "undeployed/awaiting
+ruling", then "live in generator but no-op", then "fully live producer+consumer"). That difficulty of knowing
+running-state is the defect — the same class as WO-DEPLOY-LANE-REPAIR (content drift) and the whole
+git-≠-prod theme. **Dropped from the queue: SRC_RANK was never awaiting a ruling.** WO-SELF-PUBLISHED-CLASS now
+inherits ONLY the classification question (self-published vs third-party), NOT the ranking one (settled: live,
+correct, kept).
