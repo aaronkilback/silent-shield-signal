@@ -252,10 +252,20 @@ export function roleTargeting(items: ExposureItem[]): PrimitiveResult {
 }
 
 // ── P5 · Device Attack Surface (declared) ────────────────────────────────────
-export function deviceAttackSurface(devices: DeviceRow[]): PrimitiveResult {
+// D7: HELD until the vulnerability (CVE/KEV) check produces a result. Asserting a device inventory with no
+// vulnerability finding ("we can check … the check still has to run") reads as a section that says nothing.
+// Until a CVE producer exists for subject_devices (Task #27), cveChecked is false and P5 is HELD (not_assessed)
+// whenever devices are on file — fail-closed. Flip cveChecked true where the CVE result is wired.
+export function deviceAttackSurface(devices: DeviceRow[], cveChecked = false): PrimitiveResult {
   const exposed = devices.filter((d) => d.internet_exposed);
   if (exposed.length === 0) {
     return notAsserted("P5", "Device Attack Surface", "No internet-connected device was recorded for you.", []);
+  }
+  if (!cveChecked) {
+    return notAssessed("P5", "Device Attack Surface",
+      "Device attack surface not assessed — the vulnerability check has not run.",
+      "We make no claim about whether your devices have known security flaws, either way.",
+      `${exposed.length} internet-connected device${exposed.length > 1 ? "s are" : " is"} on file; this section is held until the vulnerability (CVE/KEV) check produces a result.`);
   }
   const label = (d: DeviceRow) => displayLabel(`${d.vendor} ${d.product}`); // display only; raw row values preserved
   const assessable = exposed.filter((d) => d.version && d.version.trim() !== "" && !d.version_unknown);
@@ -311,13 +321,13 @@ export function litigationExposure(items: ExposureItem[], subjectName: string = 
 
 // ── runner ───────────────────────────────────────────────────────────────────
 export function runSynthesis(items: ExposureItem[], devices: DeviceRow[], subjectName: string = "",
-  opts: { legalSuppressed?: boolean; breachChecked?: boolean } = {}): PrimitiveResult[] {
+  opts: { legalSuppressed?: boolean; breachChecked?: boolean; cveChecked?: boolean } = {}): PrimitiveResult[] {
   return [
     credentialCompromise(items, opts.breachChecked !== false),
     identityKit(items),
     physicalLocatability(items),
     roleTargeting(items),
-    deviceAttackSurface(devices),
+    deviceAttackSurface(devices, opts.cveChecked === true),
     litigationExposure(items, subjectName, opts.legalSuppressed === true),
   ];
 }

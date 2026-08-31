@@ -235,7 +235,9 @@ Deno.serve(async (req) => {
     // gates P1 the same way: null breach date -> not checked -> NOT ASSESSED. When the legal classifier is
     // rebuilt and un-suppressed, flip legalSuppressed to false and P6 returns to real assessment.
     const synthesis = runSynthesis((items ?? []) as any, (subjectDevices ?? []) as any, entity.name,
-      { legalSuppressed: true, breachChecked: breachLastChecked != null });
+      // cveChecked=false: no CVE/KEV producer exists for subject_devices yet (Task #27) — P5 Device Attack
+      // Surface is HELD (D7). Flip true when the vulnerability result is wired.
+      { legalSuppressed: true, breachChecked: breachLastChecked != null, cveChecked: false });
 
     const meta = {
       subject: { name: entity.name, entity_id: entityId },
