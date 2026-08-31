@@ -8,6 +8,7 @@
 // anchor (that would miss pre-current-employer history, e.g. the 2011 Olynyk case). Anchors are
 // used to EXPAND (supplementary queries) or VERIFY (homonym filter), never to RESTRICT discovery.
 import { callAiGateway } from "./ai-gateway.ts";
+import { gateLocation } from "./corroboration-gate.ts";
 
 export const SUBJECT_RETRIEVAL_VERSION = "subject-retrieval-v1-2026-08-18";
 
@@ -526,9 +527,13 @@ async function persist(supabase: any, subject: Subject, owner: RetrieveOpts["own
     }, { onConflict: "subject_entity_id,fingerprint" }).select("id").single();
     if (error || !row) continue;
     for (const loc of item.locations) {
+      // Corroboration gate — the ONLY place the gate runs (besides the one-off backfill). The DB trigger
+      // just counts corroborates=true. See _shared/corroboration-gate.ts (WO-EXPOSURE-CORROBORATION).
+      const g = gateLocation({ subjectName: subject.name, category: item.category, findingTitle: item.title, snippet: loc.snippet, title: loc.title });
       await supabase.from("subject_exposure_locations").upsert({
         exposure_item_id: row.id, url: loc.url, domain: loc.domain ?? null, platform: loc.platform ?? null,
         title: loc.title ?? null, snippet: loc.snippet ?? null, found_by_query: loc.found_by_query ?? null, phase: loc.phase, found_at_rank: loc.found_at_rank ?? null,
+        corroborates: g.corroborates, gate_failed: g.gate_failed,
       }, { onConflict: "exposure_item_id,url" });
     }
   }

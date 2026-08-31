@@ -20,6 +20,7 @@
  * Exact-match rule ([[feedback_exact_match_not_substring]]): broker domains match by EXACT eTLD+1,
  * NEVER substring — scalemylife.com is NOT mylife.com.
  */
+import { anchorFromGated } from "./corroboration-gate.ts";
 
 export const BROKER_DOMAINS = [
   "rocketreach.co", "zoominfo.com", "spokeo.com", "beenverified.com", "whitepages.com", "intelius.com",
@@ -46,7 +47,7 @@ export interface ExposureLike {
   anchor_type?: string | null;
   anchor_value?: string | null;
 }
-export interface LocationLike { domain?: string | null }
+export interface LocationLike { domain?: string | null; corroborates?: boolean | null }
 
 export interface AnchorResult { anchor_type: string | null; anchor_value: string | null }
 export interface ClassifyResult extends AnchorResult {
@@ -77,7 +78,13 @@ export function deriveAnchor(
   }
   if (!(anchor_type && anchor_value)) {
     if (brokerHits.length) { anchor_type = "data_broker"; anchor_value = brokerHits.join(", "); }
-    else if (domains.length >= CORROBORATION_MIN_DOMAINS) { anchor_type = "source_corroboration"; anchor_value = domains.join(", "); }
+    else {
+      // Architecture B (WO-EXPOSURE-CORROBORATION): corroboration counts locations the TS gate PASSED
+      // (corroborates=true), NOT raw domains. Mirror of the DB trigger fn_sel_reclassify (pure counter);
+      // single_source is adverse-only. name_match_only leaves the item unanchored (-> noise).
+      const g = anchorFromGated(item.category, locations || []);
+      if (g.anchor_type !== "name_match_only") { anchor_type = g.anchor_type; anchor_value = g.passing_domains.join(", "); }
+    }
   }
   return { anchor_type, anchor_value, brokerHits, distinctDomains: domains.length };
 }
