@@ -24,7 +24,10 @@ comment on column public.subject_exposure_locations.gate_failed is
   'NULL=gated&passed · gate1_subject · gate2_entity · not_gated(never gated, health metric). Set by the TS gate at scan time / backfill.';
 
 -- Amendment 4: single_source anchor (1 passing domain on an adverse finding).
+-- NB: there were TWO redundant anchor_type CHECKs (chk_sei_anchor_type + subject_exposure_items_anchor_type_check).
+-- Consolidate to ONE (chk_sei_anchor_type) that includes single_source, or the trigger recompute is rejected.
+alter table public.subject_exposure_items drop constraint if exists chk_sei_anchor_type;
 alter table public.subject_exposure_items drop constraint if exists subject_exposure_items_anchor_type_check;
-alter table public.subject_exposure_items add constraint subject_exposure_items_anchor_type_check
+alter table public.subject_exposure_items add constraint chk_sei_anchor_type
   check (anchor_type is null or anchor_type in
     ('email','coordinate','profile_url','device','data_broker','source_corroboration','single_source'));
