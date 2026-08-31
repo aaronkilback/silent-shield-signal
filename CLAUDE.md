@@ -32,6 +32,14 @@ Supabase keys updated and validated.
 - **A partially-blind checker must fail loud / report its own coverage** — never emit a bare "clean" over an aperture narrower than the rule's domain.
 - **Provenance:** three instances in one week (Aug 2026) — (1) `drift.mjs` scoped to the deployed-⊄-repo orphan set only, blind to content drift (the stale ai-gateway hid there); (2) corroboration Gate 2 tested a finding against a title derived from the same capture; (3) the sonar-caller scan swept the pre-fix subset and missed `monitor-travel-risks`. Backlog + full pattern: `docs/platform-operations/backlog/WO-SUBSET-RULE-DEFECT.md`. Twin of the negative-finding-needs-a-complete-search-space discipline.
 
+## Track-Every-Containment Standing Rule (2026-08-31 — RATIFIED)
+
+**Any suppression, containment, feature disablement, or deliberate "off until fixed" gets a backlog WO at the moment it is made, and the code comment that implements it references that WO by ID.** A containment that lives only in a code comment is untracked: it silently becomes permanent, and it rides through unrelated work unmentioned because nothing surfaces it. The comment records *that* something was hidden — not a tracked commitment to unhide it, and not a place the next reviewer will look.
+
+- **At the moment of containment:** open the WO (defect, blast radius, the condition to lift), and put its ID in the code comment (`// <WO-ID>: <what and why>`). No silent `.neq`, no bare `if (false)`, no undocumented `DISABLED` flag.
+- **Lifting a containment is also a tracked decision** — record what replaced it and whether the replacement actually covers the original intent (a gate that scores sources does not cover a classification defect).
+- **Provenance:** WO-LEGAL-FABRICATION — the legal-classifier fabrication (`Legal case: Filing v. Kilback`, `Kilback v. Photo`, motivational posts mislabeled high-severity legal) was contained by `.neq("category","legal")` in two functions with **no WO/incident doc, only comments**. The blanket exclusion was then lifted in one of the two on the assumption a corroboration gate covered it (it scores sources, not classification), and the divergence + still-broken classifier surfaced only by accident during unrelated source-restore review, a full week later. Sibling of the Population-Before-Check rule.
+
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
 **No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.
