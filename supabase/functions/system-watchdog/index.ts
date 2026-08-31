@@ -4316,7 +4316,7 @@ Deno.serve(async (req) => {
         // Q1 — tier=interruption stuck past 15 min window (real routing).
         const { data: intrStuck } = await supabase
           .from('alerts')
-          .select('id, tier, created_at, recipient, incident_id')
+          .select('id, tier, created_at, recipient, incident_id, channel, status, client_id')
           .eq('tier', 'interruption')
           .is('sent_at', null)
           .lt('created_at', intrCutoff)
@@ -4328,7 +4328,7 @@ Deno.serve(async (req) => {
         // Q2 — tier=notification stuck past 60 min window (real routing).
         const { data: notifStuck } = await supabase
           .from('alerts')
-          .select('id, tier, created_at, recipient, incident_id')
+          .select('id, tier, created_at, recipient, incident_id, channel, status, client_id')
           .eq('tier', 'notification')
           .is('sent_at', null)
           .lt('created_at', notifCutoff)
@@ -4343,7 +4343,7 @@ Deno.serve(async (req) => {
         //      because the failure is at generation, not delivery.
         const { data: routingFail } = await supabase
           .from('alerts')
-          .select('id, tier, created_at, recipient, incident_id')
+          .select('id, tier, created_at, recipient, incident_id, channel, status, client_id')
           .in('tier', ['interruption', 'notification'])
           .is('sent_at', null)
           .like('recipient', 'unrouted:%')
@@ -4354,13 +4354,47 @@ Deno.serve(async (req) => {
           .not('client_id', 'is', null)
           .order('created_at', { ascending: true });
 
-        const intrCount = (intrStuck ?? []).length;
-        const notifCount = (notifStuck ?? []).length;
+        // WO-ALERT-PAUSE-RECONCILE (2026-08-31): pause-aware suppression. While alert-delivery-v2-email is
+        // DELIBERATELY paused, a row that claim_pending_email_alerts WOULD drain on re-enable (held-by-pause)
+        // is NOT a delivery failure — the LOW "PAUSED" probe already reports it. Suppress ONLY those from the
+        // CRITICAL/HIGH count. A stuck-anyway row (status='sending', or a recipient not in the verified
+        // allowlist) is NOT claim-eligible and STILL fires, because the pause does not explain it. The
+        // distinguisher IS the drain RPC's own predicate. Unknown pause-state → do NOT suppress (louder is safe).
+        let deliveryPaused = false;
+        try {
+          const { data: act } = await supabase.rpc('is_cron_job_active', { p_jobname: 'alert-delivery-v2-email' });
+          deliveryPaused = act === false;
+        } catch (_e) { deliveryPaused = false; }
+        const claimEligible = async (a: any): Promise<boolean> => {
+          // mirrors claim_pending_email_alerts: channel email + status pending + an active, verified recipient
+          // whose email equals the alert recipient (case-insensitive). ilike w/o wildcards = ci-equality.
+          if (a.channel !== 'email' || a.status !== 'pending' || !a.client_id || !a.recipient) return false;
+          const { count } = await supabase.from('client_alert_recipients')
+            .select('id', { count: 'exact', head: true })
+            .eq('client_id', a.client_id).eq('active', true).not('verified_at', 'is', null)
+            .ilike('email', a.recipient);
+          return (count || 0) > 0;
+        };
+        const dropHeldByPause = async (rows: any[]): Promise<any[]> => {
+          if (!deliveryPaused) return rows;
+          const live: any[] = [];
+          for (const a of rows) { if (!(await claimEligible(a))) live.push(a); }
+          return live;
+        };
+        const intrLive = await dropHeldByPause(intrStuck ?? []);
+        const notifLive = await dropHeldByPause(notifStuck ?? []);
+        const intrHeld = (intrStuck ?? []).length - intrLive.length;
+        const notifHeld = (notifStuck ?? []).length - notifLive.length;
+        const intrCount = intrLive.length;
+        const notifCount = notifLive.length;
         const routingCount = (routingFail ?? []).length;
+        if (deliveryPaused && (intrHeld > 0 || notifHeld > 0)) {
+          console.log(`[watchdog P1.4] delivery paused — suppressed ${intrHeld} interruption + ${notifHeld} notification held-by-pause row(s) (covered by LOW PAUSED probe); ${intrCount}+${notifCount} stuck-anyway remain.`);
+        }
 
         if (intrCount > 0) {
           const oldestMin = Math.floor(
-            (nowMs - new Date(intrStuck![0].created_at).getTime()) / 60000,
+            (nowMs - new Date(intrLive[0].created_at).getTime()) / 60000,
           );
           missionFindings.push({
             category: 'mission_health',
@@ -4374,7 +4408,7 @@ Deno.serve(async (req) => {
 
         if (notifCount > 0) {
           const oldestMin = Math.floor(
-            (nowMs - new Date(notifStuck![0].created_at).getTime()) / 60000,
+            (nowMs - new Date(notifLive[0].created_at).getTime()) / 60000,
           );
           missionFindings.push({
             category: 'mission_health',
