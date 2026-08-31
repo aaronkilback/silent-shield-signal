@@ -76,4 +76,37 @@ The classification fabrication was **contained by hiding output** (blanket suppr
 demotion), **never fixed at collection.** The classifier still emits fabricated legal findings; they are now
 merely demoted rather than shown. And it was tracked by nothing until this doc.
 
-## Step 1 ends here — awaiting ruling. No fix, no code, no redeploy.
+## Step 2 (2026-08-31) — suppression SHIPPED; classifier rebuild scoped (report-only)
+
+**Suppression reinstated + deployed** (operator-approved): `generate-subject-exposure-report` v46 now carries
+`.neq("category","legal")` matching subject-exposure. verify_jwt=true preserved (401 on unauth). Regenerated
+report `097ae092` (Kilback): rendered HTML contains **no "Kilback v. Olynyk"**; synthesis P6 = **NOT ASSERTED**
+("No court case naming you was found"); Section 5 (Third-Party Exposure) legal-free; all 6 synthesis
+primitives still render (P6 flipped to not_asserted, not dropped → numbering intact); sections 1–7
+contiguous. Count parity: 1 active legal item exists, both consumers apply identical `.neq` → both return 0.
+
+**Party order (ruled): the classifier cannot determine it.** matchCaseName retired in the rebuild; no
+replacement asserts an ordering it cannot verify.
+
+**Classifier — REBUILD, not tune (do not build yet).** Retire `matchCaseName` entirely.
+- **Evidence bar for a legal finding:** a citation, OR a CanLII-verified match, OR an explicit
+  sued/charged/convicted/judgment sentence naming the subject by FULL name. Never a regex over a
+  name-matched snippet; never assert a case name/party order not given canonically by the source.
+- **CanLII API scope (verified 2026-08-31):** covers BC + all Canadian courts/tribunals; returns
+  citation, court, date, **canonical style-of-cause (fixes party order)**, URL, snippet; search by party
+  name/citation. **Free API key**, apply at canlii.org/en/api (gated, describe scope). Rate limits: **1
+  concurrent · 2 req/s · 5,000/day hard cap** (ample for per-subject scans). **COMMERCIAL USE = OPEN
+  BLOCKER:** free reproduction is for personal use *with attribution*; the terms restrict systematic
+  programmatic downloading + commercial applications, and API keys are oriented to research/educational.
+  Fortress is a sold product → **explicit CanLII authorization / legal review REQUIRED before building or
+  applying.** Do not assume permitted.
+- **Unreported-matter gap:** a matter documented in press but absent from CanLII (Olynyk v. Kilback likely
+  has no reported decision) is **NOT a legal finding** — it is a **media finding that mentions litigation**,
+  titled as the article says (e.g. the Vancouver Sun headline), **no case name asserted, no party order
+  implied**, anchored to the news source.
+- **Suppress vs media path:** legal category stays SUPPRESSED until CanLII is integrated (no regex case
+  names). The **media-finding path could surface litigation-in-press sooner** (Kilback/Olynyk would return
+  as a real *media* finding with no fabricated case name) — operator to decide whether to open that path
+  before CanLII lands.
+
+## Step 1 ends here — Step 2 shipped the suppression + scoped the rebuild. Classifier rebuild NOT started.
