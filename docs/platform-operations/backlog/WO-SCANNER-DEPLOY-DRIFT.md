@@ -34,3 +34,27 @@ The corroboration gate is live for EXISTING rows (backfilled + counter trigger) 
 until `subject-retrieval` ships. New scans land `corroborates=false` / `gate_failed='not_gated'` —
 undercount (safe direction, amendment 1), but currently invisible (no probe on `not_gated`). WO does not
 close until the gate is live for new scans.
+
+## Part A CLOSED (2026-08-31) — scanner deployed from repo; orphan closed; gates live on new scans
+`subject-retrieval` now deploys **from repo source** (entrypoint landed + committed to main; `verify_jwt=true`
+confirmed by 401). The git-≠-prod orphan for the scanner is closed. config.toml now carries verify_jwt for all
+5 subject-* functions (view=false, others=true).
+- **What shipped (exhaustive):** corroboration-gate wiring (ACTIVE) + media-litigation classify wiring (NEW,
+  ACTIVE) + ai-gateway fixed version (first propagation to scanner, behaviorally INERT — scanner uses
+  gpt-4o-mini not sonar) + SRC_RANK in exported compareExposureItems (INERT — scanner never calls it). Four
+  other _shared modules byte-identical.
+- **Fresh scan proof (Kilback, scan 890d604b, completed):** 140 new locations gated at scan time —
+  `gate_failed` = {passed 131, gate2_entity 3, gate1_subject 6}, **ZERO not_gated**; global Probe-2i not_gated
+  = **0**. → **WO-EXPOSURE-CORROBORATION CLOSED** (was PARTIAL; the gate is now live for new scans, oracle met).
+- **Media gate live at classify time (item-4 real test PASSED):** the Olynyk matter was **re-found this scan**
+  (`202773a2.scan_id=890d604b`) and **classified `category='media'` LIVE** (headline + verbatim subject line,
+  no case name) — NOT carried over from the reclassify pass. → **WO-MEDIA-LITIGATION-FINDING scanner-wiring
+  deferral CLOSED.**
+- **Miss telemetry live:** 69 M1-pass/M2-fail misses recorded on this scan's captures (WO revisit-trigger).
+- **Legal fabrication (operator check):** this scan produced **0 legal items** (media 1 + mention 67). The
+  fabrication code path (`isRealLegal → category='legal'`) is UNCHANGED (media is additive, checked first);
+  it simply did not trigger on this scan's captures. So fabrication is NOT fixed — the capability remains
+  (WO-LEGAL-FABRICATION still open, classifier rebuild pending) — it just didn't manifest this run.
+- **Remaining (not Part A's blocker):** the other 4 subject-* functions have repo entrypoints but still run
+  their old orphan-deployed versions; redeploy for git↔prod parity is optional. The repo-wide parity audit
+  (original Part A item 2) remains.
