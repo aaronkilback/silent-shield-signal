@@ -52,6 +52,11 @@ Deno.serve(async (req) => {
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? null;
   const supabase = createClient(url, serviceKey);
   const hb = await startHeartbeat(supabase, 'agent-sentinel-daily');
+  // Optional operator self-test hook (never sent by cron). __probe_secret_name lets the grounding-guard
+  // probe (2j) evaluate a DIFFERENT env-var name so its finding-firing path can be proven against a
+  // deliberately-absent variable without unsetting the real key. It can only change WHICH name is read
+  // (never fake a value) — it always reads real runtime env. __probe_skip_live_call skips the paid call.
+  const reqBody = await req.json().catch(() => ({} as Record<string, unknown>));
 
   const report = {
     rls_disabled_tables: [] as string[],
@@ -285,6 +290,53 @@ Deno.serve(async (req) => {
       }
     } catch (e: any) {
       console.warn('[sentinel] corroboration-gate coverage probe error:', e?.message);
+    }
+
+    // ── Probe 2j: sonar grounding guard (WO-SCANNER-AI-GATEWAY-STALE) ──
+    // 102 deployed functions run the pre-fix ai-gateway; 6 call a sonar model. Those 6 stay web-grounded
+    // ONLY while PERPLEXITY_API_KEY is set AND valid. An empty/absent key makes the pre-fix gateway
+    // silently fall back to an UNGROUNDED model (no log line) — real-time answers fabricated from training
+    // data. Nothing else watches this single-point trigger. Present != valid, so we also do one live call.
+    try {
+      const secretName = (typeof reqBody?.__probe_secret_name === 'string' && reqBody.__probe_secret_name)
+        ? reqBody.__probe_secret_name as string : 'PERPLEXITY_API_KEY';
+      const secretVal = (Deno.env.get(secretName) ?? '').trim();
+      if (secretVal === '') {
+        await recordFinding(supabase, {
+          category: 'data_integrity', severity: 'high',
+          title: `Grounding guard: ${secretName} absent/empty — sonar callers would run ungrounded`,
+          analysis: `${secretName} is unset or empty in the function environment. The pre-fix ai-gateway (bundled by ~102 deployed functions; 6 request a sonar model: agent-chat, agent-knowledge-seeker, dashboard-ai-assistant, ingest-expert-media, query-expert-knowledge, tech-radar-scanner) SILENTLY falls back to an ungrounded model when this key is empty — no log line — so those features answer real-time questions from training data (fabrication). WO-SCANNER-AI-GATEWAY-STALE; the fix is not yet propagated (WO-AIGATEWAY-PROPAGATION).`,
+          plainEnglish: `The live-web search key is missing. Six AI features that answer real-time questions would silently switch to guessing from training data instead of searching the web, with nothing in the logs to show it. Restore PERPLEXITY_API_KEY.`,
+          action: `Set the PERPLEXITY_API_KEY Supabase secret. Until the pre-fix gateway is redeployed (WO-AIGATEWAY-PROPAGATION), an empty key = silent ungrounded output for the 6 sonar callers.`,
+        });
+        report.findings_written++;
+      } else if (reqBody?.__probe_skip_live_call !== true) {
+        // Present != valid — one minimal live call confirms the configured key actually authenticates.
+        try {
+          const resp = await fetch('https://api.perplexity.ai/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${secretVal}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'sonar', max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+          });
+          if (resp.status === 401 || resp.status === 403) {
+            await recordFinding(supabase, {
+              category: 'data_integrity', severity: 'high',
+              title: `Grounding guard: PERPLEXITY_API_KEY present but REJECTED (HTTP ${resp.status})`,
+              analysis: `PERPLEXITY_API_KEY is configured but a live sonar auth call returned ${resp.status} — the key is present-but-invalid (expired/revoked/wrong). The pre-fix gateway does NOT downgrade a rejected sonar call to an ungrounded model (fail-closed, verified), so this degrades to errors rather than fabrication — but the 6 sonar-backed features are effectively DOWN. WO-SCANNER-AI-GATEWAY-STALE.`,
+              plainEnglish: `The live-web search key is set but no longer works (rejected). Web-grounded AI features will error out until the key is renewed — they will not fabricate, but they will not work.`,
+              action: `Rotate/renew PERPLEXITY_API_KEY. Live sonar auth check returned HTTP ${resp.status}.`,
+            });
+            report.findings_written++;
+          } else {
+            console.log(`[sentinel] grounding guard: sonar auth OK (HTTP ${resp.status})`);
+          }
+        } catch (e: any) {
+          // Network/timeout — inconclusive, NOT a finding (do not assert an invalid key from a transient error).
+          console.warn('[sentinel] grounding guard: live sonar auth check inconclusive:', e?.message);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] grounding-guard probe error:', e?.message);
     }
 
     // ── Probe 2f: anon-surface config invariants (audit 2026-08-02) ──
