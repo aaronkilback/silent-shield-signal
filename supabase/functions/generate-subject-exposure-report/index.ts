@@ -335,6 +335,20 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // email-matches (their pages never contain the subject's name, so they "fail" gate1_subject meaninglessly)
   // — exempt data_breach so a real breach never renders "0 independent domains".
   const gateApplies = (i: any) => i.category !== "data_breach";
+  // Media subject-line trim (RENDER-ONLY; the stored summary stays faithful to the truncated source). Strip
+  // ONLY a trailing coordinating conjunction and trailing comma/whitespace — nothing else, no rewrite, no
+  // added words. Append an ellipsis ONLY when the result lacks terminal punctuation. Media items only —
+  // breach/environmental summaries are structured strings, never verbatim snippets, and are never trimmed.
+  const tidySubjectLine = (s: string): string => {
+    let t = (s || "").trim();
+    if (!t) return t;
+    t = t.replace(/\s*(?:\.\.\.|…)\s*$/, "").trim();               // normalize any existing trailing ellipsis
+    t = t.replace(/[\s,]+$/, "");                                   // trailing comma/whitespace
+    t = t.replace(/\s*,?\s*\b(and|or|but|nor|yet|so|for)\b$/i, ""); // ONE trailing coordinating conjunction
+    t = t.replace(/[\s,]+$/, "");                                   // any comma/whitespace left behind
+    if (t && !/[.!?]$/.test(t)) t += "…";                          // ellipsis ONLY when no terminal punctuation
+    return t;
+  };
   const srcCount = (i: any) => {
     const locs = i.locations || [];
     const pass = gateApplies(i) ? locs.filter((l: any) => l.gate_failed == null) : locs;
@@ -350,7 +364,7 @@ function renderReport({ meta, findings, verifiedPresence, noise, breaches, repor
   // "buried". Meaning is defined ONCE at the top of the Third-Party Exposure section. Only search-derived
   // items ever carry a real rank (<999); breach/environmental render nothing here (breach has no search rank,
   // environmental renders via envBlock), so "in search results" is truthful wherever this actually prints.
-  const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="position">${i.obscurity_rank >= 999 ? "" : `appeared at position ${i.obscurity_rank} in search results`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations, gateApplies(i))}</div>`;
+  const itemBlock = (i: any) => `<div class="item"><div class="ihead"><span class="cat">${esc(i.category)}</span>${sevBadge(i.severity)}<span class="position">${i.obscurity_rank >= 999 ? "" : `appeared at position ${i.obscurity_rank} in search results`}</span>${awareness(i.subject_awareness)}</div><div class="ititle">${esc(i.title)}</div>${anchorLine(i)}${i.summary ? `<div class="isum">${esc(i.category === "media" ? tidySubjectLine(i.summary) : i.summary)}</div>` : ""}<div class="lcount">${srcCount(i)}:</div>${locList(i.locations, gateApplies(i))}</div>`;
   // Third-party split: real findings render prominently; bare mentions are counted + collapsed (web) or
   // moved to Appendix A (print), so the PDF the client keeps never silently omits the mention volume.
   // Environmental findings are LIVE HAZARD-FEED results (wildfire/weather/road tied to a coordinate),
