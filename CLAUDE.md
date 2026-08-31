@@ -52,6 +52,15 @@ Supabase keys updated and validated.
 - **End every build with a coverage table:** every file changed, which function bundle(s) embed it, whether that function has been redeployed SINCE the change, and the deployed version. **Anything changed but not redeployed is NOT done.** A shared file (`_shared/*`) is only live in the functions that have been redeployed since it changed — list each.
 - **Provenance:** ratified during WO-SWEEP-CATEGORY-MAPPING after a week where multiple "fixed"/"deployed" claims were later found not running (stale ai-gateway hiding in content drift, SRC_RANK's three-pass deployed-state confusion, built-but-unrun orphans). Companion to Population-Before-Check (aperture) and Track-Every-Containment (tracking): this rule governs *running-state truth*. Twin of the "one real run before done" discipline.
 
+## Absence-Is-Not-A-Value Standing Rule (2026-08-31 — RATIFIED)
+
+**A missing record is not a fact.** Never infer a result from the absence of a row, a key, or a flag. If a producer's *"it ran and found nothing"* and *"it never ran"* are indistinguishable in storage, that is a **defect in the producer**, not a case to interpret at read time. **Write a positive marker for the thing that happened** — record that the work ran (and when), so a later reader distinguishes a proven-empty result from an unrecorded one instead of guessing.
+
+- **Read-time inference over absence is prohibited.** No `X IS NULL → X did not happen`; no `no rows → clean`; no `key missing → not applicable`. Absence has at least two causes (didn't-run and ran-empty, or not-eligible and failed), and storage that collapses them forces a wrong read.
+- **The fix lives in the producer, not the reader.** A read-time patch (exemption, coalesce, default) hides the collapse; it does not repair the record. Persist the positive fact (`ran_at`, `checked_at`, an explicit `not_applicable` state distinct from a failure) so every consumer reads truth, not just the one you patched.
+- **Provenance — four instances, all 2026-08-31, all found within one day:** no breach location read as "no breach" (`WO-BREACH-RUN-MARKER`); no sweep key read as "nothing searched" (`WO-SWEEP-CATEGORY-MAPPING`); `gate_failed` on an ineligible population read as a failed match (`WO-GATE-POPULATION-SCOPE`); P6 read a suppressed category as a clean not-found (`WO-LEGAL-FABRICATION`). The epistemic twins already in the synthesis layer: `not_assessed` vs `not_asserted` (did-not-look vs looked-and-found-nothing) and `not_applicable` vs failure.
+- Companion to **Population-Before-Check** (aperture), **Track-Every-Containment** (tracking), and **Deployed-Not-Committed** (running-state truth). This one governs **storage truth**.
+
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
 **No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.
