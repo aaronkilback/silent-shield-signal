@@ -265,6 +265,28 @@ Deno.serve(async (req) => {
       console.warn('[sentinel] ingest-funnel liveness probe error:', e?.message);
     }
 
+    // ── Probe 2i: corroboration-gate coverage (WO-EXPOSURE-CORROBORATION) ──
+    // subject_exposure_locations.gate_failed='not_gated' = a location that never went through the TS
+    // corroboration gate, so it counts as ZERO corroboration (undercount). Expected 0 after the WO
+    // backfill; non-zero means new scans are landing ungated because subject-retrieval is not yet
+    // redeployed with the gate (WO-SCANNER-DEPLOY-DRIFT) — the interim undercount, made visible.
+    try {
+      const { count: notGated } = await supabase.from('subject_exposure_locations')
+        .select('id', { count: 'exact', head: true }).eq('gate_failed', 'not_gated');
+      if ((notGated || 0) > 0) {
+        await recordFinding(supabase, {
+          category: 'data_integrity', severity: 'high',
+          title: `Corroboration gate coverage gap: ${notGated} exposure location(s) not gated`,
+          analysis: `${notGated} subject_exposure_locations row(s) carry gate_failed='not_gated' — never scored by the TS corroboration gate, so they count as ZERO corroboration (undercount). Expected 0 after the WO-EXPOSURE-CORROBORATION backfill. Non-zero means new scans are landing ungated because subject-retrieval has not been redeployed with the gate (WO-SCANNER-DEPLOY-DRIFT); real findings may be under-anchored until it ships.`,
+          plainEnglish: `${notGated} exposure records were never scored for corroboration, so any finding resting on them is under-counted — a real finding could be hidden. This is the interim gap flagged in WO-EXPOSURE-CORROBORATION.`,
+          action: `Ship the corroboration gate to the scanner (WO-SCANNER-DEPLOY-DRIFT: restore + deploy subject-retrieval), then re-gate the new rows. Query: select count(*) from subject_exposure_locations where gate_failed='not_gated'.`,
+        });
+        report.findings_written++;
+      }
+    } catch (e: any) {
+      console.warn('[sentinel] corroboration-gate coverage probe error:', e?.message);
+    }
+
     // ── Probe 2f: anon-surface config invariants (audit 2026-08-02) ──
     // Deterministic "the door is shut" checks. Each dangerous set must be EMPTY; non-empty = high.
     // Logic + allowlist live in DB (public.security_anon_surface_scan() + security_anon_surface_allowlist)
