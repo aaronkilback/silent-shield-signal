@@ -29,5 +29,19 @@ and without the drift check actually running. Five concrete defects, all measure
   content-drift = acknowledged tracked gap). Standing rule: **Population-Before-Check** (CLAUDE.md).
 - Same silent-signal class as **WO-ERROR-TABLE-UNWATCHED** (written-but-unread) and **WO-SUBSET-RULE-DEFECT**.
 
+## Restore follow-ups (logged 2026-08-31 from WO-SCANNER-SOURCE-RESTORE — do NOT fix now)
+The five subject-* entrypoints were committed to the repo (branch `restore/subject-exposure-orphans`).
+Three items surfaced during that restore, to be handled by THIS WO / the eventual deliberate deploy:
+1. **deliver-subject-exposure-report hardcoded project URL** — `VIEW_BASE =
+   "https://kpuqukppbmwebiptqmog.supabase.co/functions/v1/view-subject-exposure-report"` should be
+   env-derived, not a baked prod project ref. Code-hygiene fix, not now.
+2. **view-subject-exposure-report bundled stale `_shared`** — the deployed bundle carries the old broken
+   `userCanAccessClient` (embed-join) as dead code. This is the content-drift dimension (#5 above); a
+   redeploy on the repo's current `_shared` clears it. Log only.
+3. **`config.toml` has NO entries for any of the five.** On the eventual deliberate deploy,
+   **`view-subject-exposure-report` MUST be `verify_jwt=false`** (public token viewer; the default `true`
+   breaks client access) and the other four `true`. A naive deploy gets view- wrong. Record against the
+   deploy step, not now.
+
 ## Do NOT (per ruling)
 Log only. Do not touch CI, secrets, the baseline, or drift.mjs yet. Part A (source restore) goes first.
