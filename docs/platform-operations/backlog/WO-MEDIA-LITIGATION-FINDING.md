@@ -57,3 +57,30 @@ article). **Everything else is rejected**, including:
 - All Instagram/LinkedIn/quote/directory noise — REJECTED.
 The `Filing v. Kilback` row is instructive: it had a location with an event word but 0 with the full name →
 rejected, because M1∧M2 must co-occur on the SAME capture.
+
+## Step 2 (2026-08-31) — build conditions reported, awaiting verb-list ruling
+
+### Condition 1 — M2 verb list, FP risk (population-before-check)
+**Empirical result against the 56-item / 215-location corpus: current M2 = 4 TP / 0 FP. All 7 candidate
+terms = 0 occurrences** (settled 0, under-investigation 0, allegation 0, complaint 0, cleared 0, wrongdoing
+0, filed 1 — the one "filed" is the fabricated *"Filing v. Kilback"* noun). **The corpus is one subject with
+ONE real legal matter (Olynyk), so it CANNOT validate the candidate verbs** — their real-world FP risk is
+unmeasurable here. Reported honestly, not papered over.
+- **Reasoned (not measured) per-term FP risk:** `settled` bare = HIGH (settled area/estate/down) — exclude
+  or require "settled the (suit|lawsuit|claim|case)"; `cleared of` bare = MOD-HIGH (snow/debris) — require
+  "cleared of (charges|wrongdoing)"; `under investigation` = LOW-MOD (mitigated by M1 co-location); `faces
+  allegations` = LOW-MOD; `named in a complaint` = LOW; `filed against` = require object "(suit|lawsuit|
+  complaint|claim) filed against" (bare "filed" too broad); `denied wrongdoing` = WEAK — not an event by
+  itself, do NOT make it a standalone trigger.
+- **Recommendation:** ship the PROVEN current M2 now (4TP/0FP). Treat candidates as UNVALIDATED — add only
+  with the constraints above, and MEASURE FP as more subjects are scanned (measure-before-and-after). Await
+  operator ruling on the final list before building.
+
+### Condition 2 — subject line (verbatim, not generated) — Olynyk render
+- **Title (headline, kept):** `Prosecution policy comes back to bite Liberals | Vancouver Sun`
+- **Subject line (near-verbatim from the stored snippet — the sentence carrying M1∧M2):**
+  *"Ken Olynyk sued the ministry and conservation officer Aaron Kilback after he was charged twice with the
+  same offence, for shooting a cougar…"*
+- **Source:** pressreader.com (Vancouver Sun). **No case name, no party order, no citation.** `category='media'`.
+- Renderer rule: subject line = the passing location's stored snippet sentence(s) containing the full name +
+  the legal-event verb, verbatim/trimmed — never synthesized.
