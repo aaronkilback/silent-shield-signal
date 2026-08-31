@@ -160,21 +160,32 @@ Deno.serve(async (req) => {
     // a finding/breach; else 'nothing' (searched, zero tagged) / 'not_searched'. Finding TITLES are collected
     // for the Part-I contribution reference (Option B) so a reader sees which finding — and, when one story
     // is surfaced by several searches, the repeated title reveals it is one story, not several findings.
+    // Contributing-finding title order is DETERMINISTIC (not iteration luck): severity desc → finding-class
+    // over other → most locations → title alphabetical. The final alphabetical key GUARANTEES the same report
+    // regenerated twice shows the same leading title. Category name is deliberately NOT a key — ordering by
+    // category would reintroduce the name-collision this WO removed. Symptom of the broker-page-as-finding
+    // ranking gap is WO-BROKER-PAGE-FINDING-CLASS.
+    const SEV_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
     const sweepOutcome: Record<string, { state: string; titles: string[] }> = {};
     for (const c of ALL7) {
-      let hasFinding = false, hasAny = false;
-      const titles = new Set<string>();
+      let hasAny = false;
+      const findingItems = new Map<string, any>();   // dedup contributing findings by item id
       for (const it of enriched) {
         const substantive = (it.exposure_class === "finding" || it.category === "data_breach");
         for (const l of (it.locations || [])) {
           if (l.sweep_category !== c) continue;
           hasAny = true;
-          if (substantive) { hasFinding = true; if (it.title) titles.add(String(it.title).trim()); }
+          if (substantive && it.title) findingItems.set(it.id, it);
         }
       }
-      const state = hasFinding ? "finding" : hasAny ? "material_no_finding"
+      const sorted = [...findingItems.values()].sort((a, b) =>
+        ((SEV_RANK[b.severity] ?? 0) - (SEV_RANK[a.severity] ?? 0)) ||
+        (((b.exposure_class === "finding" ? 1 : 0)) - ((a.exposure_class === "finding" ? 1 : 0))) ||
+        ((b.location_count ?? 0) - (a.location_count ?? 0)) ||
+        String(a.title).localeCompare(String(b.title)));
+      const state = sorted.length ? "finding" : hasAny ? "material_no_finding"
         : (catsNeverSwept.includes(c) ? "not_searched" : "nothing");
-      sweepOutcome[c] = { state, titles: [...titles].filter(Boolean) };
+      sweepOutcome[c] = { state, titles: sorted.map((it) => String(it.title).trim()) };
     }
     // Breach producer — last time HIBP was checked (latest capture among current breach locations).
     const breachDates = breaches.flatMap((b: any) => (b.locations || []).map((l: any) => l.date_captured)).filter(Boolean).sort();
