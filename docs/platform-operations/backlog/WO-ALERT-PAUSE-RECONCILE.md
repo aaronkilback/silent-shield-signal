@@ -80,3 +80,18 @@ Distinguisher is **claim-eligibility**, using the delivery mechanism's OWN predi
   `sending` rows). So on re-enable **all 5 drain at once** to `ak+petronas-launch@` — including 3 interruption
   pages about a ~week-old severe-thunderstorm agent-proposal. Nothing age-suppresses a stale interruption alert
   on the way out. → argues for **selective drain / age-suppression**, not a blind re-enable. Operator's call.
+
+## Step 3 (2026-08-31) — ruling executed
+- **Delivery-check (ruling #4 last question) — NO STOP.** Internal-proposal shape: 3 minted (all post-pause,
+  pending, delivered=0). Everything ever delivered to a real client: 5 rows, all notification-tier, 0
+  internal-proposal, 0 interruption. No internal proposal / interruption page has ever reached Petronas.
+- **Check fix (ruling #1) — APPLIED + DEPLOYED + PROVEN.** system-watchdog v-next; P1.4 pause-aware via
+  claim-eligibility. Run 1 (5 held, cron paused): P1.4 CRITICAL/HIGH **resolved, not re-emitted** (quiet).
+  Run 2 (synthetic stuck-anyway = interruption, recipient not in verified allowlist, cron STILL paused):
+  fresh **CRITICAL fired**. Synthetic removed; cron still paused; 5 held untouched; 0 open P1.4 findings.
+- **Cancellations (ruling #2) — DONE.** All 5 → `status='superseded'`, `error_class='operator_cancelled'`,
+  reason in `error_message_safe`, `sent_at` NULL, retained (not deleted). `claim_eligible=false` +
+  `p14_would_catch=false` → **nothing dispatches on re-enable, nothing re-flags them.**
+- **Cron (ruling #3):** still PAUSED. Not re-enabled (queue now empty, but mis-tiering unfixed —
+  WO-ALERT-TIER-DISCIPLINE — before re-enable is safe).
+- New WOs logged: WO-ALERT-TIER-DISCIPLINE (nothing delivered to client → no stop), WO-ALERT-AGE-SUPPRESSION.
