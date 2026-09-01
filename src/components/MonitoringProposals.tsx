@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Loader2, CheckCircle, XCircle, Clock, Brain, Plus, Minus, Building2 } from "lucide-react";
 import { useTenantScopedClientIds } from "@/hooks/useTenantScopedClientIds";
+import { AsyncListState } from "@/components/ui/async-list-state";
 
 interface MonitoringProposal {
   id: string;
@@ -38,6 +39,7 @@ const typeConfig: Record<string, { icon: typeof Plus; label: string; color: stri
 export function MonitoringProposals({ userId }: Props) {
   const [proposals, setProposals] = useState<MonitoringProposal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [clientNames, setClientNames] = useState<Record<string, string>>({});
   // Tenant boundary for the observed tenant. undefined=loading, null=All-Tenants
@@ -86,6 +88,7 @@ export function MonitoringProposals({ userId }: Props) {
 
       if (error) throw error;
       setProposals((data as MonitoringProposal[]) || []);
+      setError(null);
 
       // Fetch client names
       const clientIds = [...new Set((data || []).map(p => p.client_id).filter(Boolean))];
@@ -101,6 +104,7 @@ export function MonitoringProposals({ userId }: Props) {
       }
     } catch (error) {
       console.error('Error fetching monitoring proposals:', error);
+      setError('Failed to load monitoring proposals');
       toast.error('Failed to load monitoring proposals');
     } finally {
       setLoading(false);
@@ -129,27 +133,24 @@ export function MonitoringProposals({ userId }: Props) {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   const pending = proposals.filter(p => p.status === 'pending');
   const reviewed = proposals.filter(p => p.status !== 'pending');
 
   return (
     <div className="space-y-6">
-      {pending.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center text-muted-foreground">
-            <Brain className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            No pending monitoring proposals
-          </CardContent>
-        </Card>
-      ) : (
+      <AsyncListState
+        loading={loading}
+        error={error}
+        isEmpty={pending.length === 0}
+        emptyState={
+          <Card>
+            <CardContent className="py-12 text-center text-muted-foreground">
+              <Brain className="w-10 h-10 mx-auto mb-3 opacity-40" />
+              No pending monitoring proposals
+            </CardContent>
+          </Card>
+        }
+      >
         <div className="space-y-4">
           {pending.map((proposal) => {
             const config = typeConfig[proposal.proposal_type] || typeConfig.add_keyword;
@@ -219,7 +220,7 @@ export function MonitoringProposals({ userId }: Props) {
             );
           })}
         </div>
-      )}
+      </AsyncListState>
 
       {reviewed.length > 0 && (
         <div>

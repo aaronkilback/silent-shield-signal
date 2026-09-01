@@ -15,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AsyncListState } from "@/components/ui/async-list-state";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertCircle, CheckCircle, X, Brain, FileText, BellRing, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -41,6 +42,7 @@ export function AgentActionApprovalQueue() {
   const { user } = useAuth();
   const [actions, setActions] = useState<PendingAction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -53,8 +55,10 @@ export function AgentActionApprovalQueue() {
       .order('created_at', { ascending: false });
     if (error) {
       toast.error(`Failed to load queue: ${error.message}`);
+      setError(error.message);
       setActions([]);
     } else {
+      setError(null);
       setActions((data as PendingAction[]) ?? []);
     }
     setLoading(false);
@@ -96,21 +100,21 @@ export function AgentActionApprovalQueue() {
     await refresh();
   };
 
-  if (loading) {
-    return <div className="text-sm text-muted-foreground py-8 text-center">Loading approval queue…</div>;
-  }
-  if (actions.length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-12 text-center">
-          <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500/40" />
-          <p className="text-sm text-muted-foreground">Inbox zero. No agent actions awaiting your approval.</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
+    <AsyncListState
+      loading={loading}
+      error={error}
+      isEmpty={actions.length === 0}
+      loadingState={<div className="text-sm text-muted-foreground py-8 text-center">Loading approval queue…</div>}
+      emptyState={
+        <Card>
+          <CardContent className="py-12 text-center">
+            <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500/40" />
+            <p className="text-sm text-muted-foreground">Inbox zero. No agent actions awaiting your approval.</p>
+          </CardContent>
+        </Card>
+      }
+    >
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{actions.length} action{actions.length === 1 ? '' : 's'} awaiting review</p>
@@ -251,5 +255,6 @@ export function AgentActionApprovalQueue() {
         );
       })}
     </div>
+    </AsyncListState>
   );
 }

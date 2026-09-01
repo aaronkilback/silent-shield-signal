@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SignalMergeProposals } from "@/components/SignalMergeProposals";
 import { MonitoringProposals } from "@/components/MonitoringProposals";
+import { AsyncListState } from "@/components/ui/async-list-state";
 
 interface RuleProposal {
   key: string;
@@ -37,6 +38,7 @@ const RuleApprovals = () => {
   const navigate = useNavigate();
   const [proposals, setProposals] = useState<RuleProposal[]>([]);
   const [loadingProposals, setLoadingProposals] = useState(true);
+  const [proposalsError, setProposalsError] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const isEmbedded = useIsEmbedded();
 
@@ -62,8 +64,10 @@ const RuleApprovals = () => {
 
       if (error) throw error;
       setProposals((data as any[]) || []);
+      setProposalsError(null);
     } catch (error) {
       console.error("Error fetching proposals:", error);
+      setProposalsError("Failed to load rule proposals");
       toast.error("Failed to load rule proposals");
     } finally {
       setLoadingProposals(false);
@@ -159,14 +163,18 @@ const RuleApprovals = () => {
 
           <TabsContent value="rules" className="space-y-6">
 
-        {pendingProposals.length === 0 && (
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              No pending rule proposals
-            </CardContent>
-          </Card>
-        )}
-
+        <AsyncListState
+          loading={loadingProposals}
+          error={proposalsError}
+          isEmpty={pendingProposals.length === 0}
+          emptyState={
+            <Card>
+              <CardContent className="py-12 text-center text-muted-foreground">
+                No pending rule proposals
+              </CardContent>
+            </Card>
+          }
+        >
         <div className="space-y-4">
           {pendingProposals.map((proposal) => (
             <Card key={proposal.key} className="border-primary/20">
@@ -268,6 +276,7 @@ const RuleApprovals = () => {
             </Card>
           ))}
         </div>
+        </AsyncListState>
 
         {reviewedProposals.length > 0 && (
           <>

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Loader2, CheckCircle, XCircle, Clock, GitMerge } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { AsyncListState } from "@/components/ui/async-list-state";
 
 interface SignalMergeProposal {
   id: string;
@@ -27,6 +28,7 @@ interface SignalMergeProposalsProps {
 export const SignalMergeProposals = ({ userId }: SignalMergeProposalsProps) => {
   const [proposals, setProposals] = useState<SignalMergeProposal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,8 +44,10 @@ export const SignalMergeProposals = ({ userId }: SignalMergeProposalsProps) => {
 
       if (error) throw error;
       setProposals(data || []);
+      setError(null);
     } catch (error) {
       console.error("Error fetching merge proposals:", error);
+      setError("Failed to load signal merge proposals");
       toast.error("Failed to load signal merge proposals");
     } finally {
       setLoading(false);
@@ -112,27 +116,23 @@ export const SignalMergeProposals = ({ userId }: SignalMergeProposalsProps) => {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   const pendingProposals = proposals.filter(p => p.status === "pending");
   const reviewedProposals = proposals.filter(p => p.status !== "pending");
 
   return (
     <div className="space-y-6">
-      {pendingProposals.length === 0 && (
-        <Card>
-          <CardContent className="py-12 text-center text-muted-foreground">
-            No pending signal merge proposals
-          </CardContent>
-        </Card>
-      )}
-
+      <AsyncListState
+        loading={loading}
+        error={error}
+        isEmpty={pendingProposals.length === 0}
+        emptyState={
+          <Card>
+            <CardContent className="py-12 text-center text-muted-foreground">
+              No pending signal merge proposals
+            </CardContent>
+          </Card>
+        }
+      >
       <div className="space-y-4">
         {pendingProposals.map((proposal) => (
           <Card key={proposal.id} className="border-primary/20">
@@ -216,6 +216,7 @@ export const SignalMergeProposals = ({ userId }: SignalMergeProposalsProps) => {
           </Card>
         ))}
       </div>
+      </AsyncListState>
 
       {reviewedProposals.length > 0 && (
         <>

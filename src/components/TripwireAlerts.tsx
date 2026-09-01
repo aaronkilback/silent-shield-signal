@@ -9,6 +9,7 @@ import { Loader2 } from "lucide-react";
 import { useClientSelection } from "@/hooks/useClientSelection";
 import { useTenant } from "@/hooks/useTenant";
 import { resolveTenantScope, realtimeTenantFilter } from "@/lib/realtime-tenant-filter";
+import { AsyncListState } from "@/components/ui/async-list-state";
 
 interface Incident {
   id: string;
@@ -48,6 +49,7 @@ export const TripwireAlerts = () => {
   const { getFilterTenantIds, currentTenant, isAllTenantsView, isHydrating } = useTenant();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Phase 4 tenant-isolation: scope server-side for ALL roles (super_admin
@@ -83,9 +85,11 @@ export const TripwireAlerts = () => {
         const { data, error } = await query;
 
         if (error) throw error;
+        setError(null);
         setIncidents((data || []) as Incident[]);
       } catch (error) {
         console.error("Error loading incidents:", error);
+        setError(error instanceof Error ? error.message : "Failed to load incidents");
       } finally {
         setLoading(false);
       }
@@ -117,33 +121,32 @@ export const TripwireAlerts = () => {
     // re-subscribes with the correct filter.
   }, [selectedClientId, currentTenant?.id, isAllTenantsView, isHydrating]);
 
-  if (loading) {
-    return (
-      <Card className="p-6 bg-card border-border">
-        <div className="flex justify-center py-8">
-          <Loader2 className="w-6 h-6 animate-spin text-primary" />
-        </div>
-      </Card>
-    );
-  }
-
-  if (incidents.length === 0) {
-    return (
-      <Card className="p-6 bg-card border-border">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-status-success/10">
-              <Bell className="w-5 h-5 text-status-success" />
-            </div>
-            <h2 className="text-xl font-semibold text-foreground">Active Incidents</h2>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">No active incidents - all clear!</p>
-      </Card>
-    );
-  }
-
   return (
+    <AsyncListState
+      loading={loading}
+      error={error}
+      isEmpty={incidents.length === 0}
+      loadingState={
+        <Card className="p-6 bg-card border-border">
+          <div className="flex justify-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          </div>
+        </Card>
+      }
+      emptyState={
+        <Card className="p-6 bg-card border-border">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-status-success/10">
+                <Bell className="w-5 h-5 text-status-success" />
+              </div>
+              <h2 className="text-xl font-semibold text-foreground">Active Incidents</h2>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground">No active incidents - all clear!</p>
+        </Card>
+      }
+    >
     <Card className="p-6 bg-card border-border">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
@@ -201,5 +204,6 @@ export const TripwireAlerts = () => {
         </Button>
       </div>
     </Card>
+    </AsyncListState>
   );
 };

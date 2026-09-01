@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CheckCircle2, XCircle, AlertCircle, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { AsyncListState } from "@/components/ui/async-list-state";
 
 interface OSINTSource {
   name: string;
@@ -28,6 +29,7 @@ interface OSINTSourcesDialogProps {
 export function OSINTSourcesDialog({ open, onOpenChange }: OSINTSourcesDialogProps) {
   const [sources, setSources] = useState<OSINTSource[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -37,7 +39,8 @@ export function OSINTSourcesDialog({ open, onOpenChange }: OSINTSourcesDialogPro
 
   const loadSources = async () => {
     setLoading(true);
-    
+    setError(null);
+
     try {
       // Fetch sources from database
       const { data: dbSources, error } = await supabase
@@ -78,6 +81,7 @@ export function OSINTSourcesDialog({ open, onOpenChange }: OSINTSourcesDialogPro
     } catch (error) {
       console.error('Error loading sources:', error);
       setSources([]);
+      setError('Failed to load OSINT sources');
     } finally {
       setLoading(false);
     }
@@ -137,15 +141,21 @@ export function OSINTSourcesDialog({ open, onOpenChange }: OSINTSourcesDialogPro
         </DialogHeader>
 
         <ScrollArea className="h-[60vh] pr-4">
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : sources.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No OSINT sources configured yet
-            </div>
-          ) : (
+          <AsyncListState
+            loading={loading}
+            error={error}
+            isEmpty={sources.length === 0}
+            loadingState={
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            }
+            emptyState={
+              <div className="text-center py-8 text-muted-foreground">
+                No OSINT sources configured yet
+              </div>
+            }
+          >
             <div className="space-y-6">
               {Object.entries(groupedSources).map(([category, categorySources]) => (
                 <div key={category}>
@@ -184,7 +194,7 @@ export function OSINTSourcesDialog({ open, onOpenChange }: OSINTSourcesDialogPro
                 </div>
               ))}
             </div>
-          )}
+          </AsyncListState>
         </ScrollArea>
       </DialogContent>
     </Dialog>

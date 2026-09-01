@@ -11,6 +11,7 @@ import { extractHttpUrl } from "@/lib/extractHttpUrl";
 import { SignalFeedback } from "@/components/SignalFeedback";
 import { differenceInDays } from "date-fns";
 import { classifyTemporalBucket, effectiveRecencyDate, isUpcoming, type RecencySignal } from "@/lib/temporal-recency";
+import { AsyncListState } from "@/components/ui/async-list-state";
 
 
 
@@ -93,6 +94,7 @@ export const LiveEventFeed = () => {
   const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(new Set());
   const [lastUpdateTime, setLastUpdateTime] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<string>('7d'); // Default to last 7 days for live feed
 
   useEffect(() => {
@@ -168,7 +170,9 @@ export const LiveEventFeed = () => {
 
       if (error) {
         console.error('Error fetching signals:', error);
+        setError(error.message);
       } else if (data) {
+        setError(null);
         setSignals(data);
         visibleSignalIdsRef.current = new Set(data.map((s) => s.id));
         await fetchUpdateCounts(data.map((s) => s.id));
@@ -356,13 +360,18 @@ export const LiveEventFeed = () => {
         </div>
       </div>
       
-      {sortedSignals.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p>{signals.length === 0 ? 'No signals detected yet' : 'No signals in selected time range'}</p>
-          <p className="text-sm mt-2">{signals.length === 0 ? 'All systems nominal' : 'Try expanding the date filter'}</p>
-        </div>
-      ) : (
+      <AsyncListState
+        loading={loading}
+        error={error}
+        isEmpty={sortedSignals.length === 0}
+        emptyState={
+          <div className="text-center py-12 text-muted-foreground">
+            <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>{signals.length === 0 ? 'No signals detected yet' : 'No signals in selected time range'}</p>
+            <p className="text-sm mt-2">{signals.length === 0 ? 'All systems nominal' : 'Try expanding the date filter'}</p>
+          </div>
+        }
+      >
         <div className="space-y-3">
           {sortedSignals.map((signal) => {
             const isRecentlyUpdated = recentlyUpdated.has(signal.id);
@@ -506,7 +515,7 @@ export const LiveEventFeed = () => {
           })}
 
         </div>
-      )}
+      </AsyncListState>
     </Card>
   );
 };
