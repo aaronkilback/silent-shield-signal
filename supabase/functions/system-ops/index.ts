@@ -20,6 +20,7 @@
  */
 
 import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
 import type { SystemOpsAction, HealthCheckResult as SharedHealthCheckResult, HealthStatus, DomainRequest } from "../_shared/types.ts";
 import { callAiGateway } from "../_shared/ai-gateway.ts";
 
@@ -836,11 +837,19 @@ async function handleDetectContradictions(body: Record<string, unknown>): Promis
   console.log(`[SystemOps:contradictions] Scanning signals from last ${lookbackDays} days...`);
 
   const cutoff = new Date(Date.now() - lookbackDays * 86400000).toISOString();
-  const { data: signals, error: sigError } = await supabase
+  // INTENTIONAL CROSS-CLIENT PAIRING (operator ruling 2026-09-01). Contradiction detection asks
+  // "do two sources disagree about the same fact?" — a question that does NOT respect client
+  // boundaries. The candidate pool is deliberately platform-wide and pairs signals where
+  // a.client_id !== b.client_id (below). This is SAFE ONLY BECAUSE signal_contradictions is
+  // OPERATOR-ONLY: RLS sc_sel = super_admin, and get_signal_contradictions is containment-disabled
+  // in the tenant AI assistant. Widening signal_contradictions to tenant-readable BREAKS this
+  // reasoning and re-opens a cross-tenant disclosure path — DO NOT. Ref: WO-CORRELATE-SIGNALS-TENANT-SCOPE.
+  // is_test excluded: a contradiction between a fixture and a real signal is noise regardless of tenancy.
+  const { data: signals, error: sigError } = await excludeTestAndDeleted(supabase
     .from('signals')
     .select('id, title, normalized_text, entity_tags, severity, category, confidence, client_id, received_at')
     .not('entity_tags', 'is', null)
-    .gte('received_at', cutoff)
+    .gte('received_at', cutoff))
     .order('received_at', { ascending: false })
     .limit(300);
 

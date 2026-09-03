@@ -15,6 +15,7 @@
 
 import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
 import { enqueueJob } from "../_shared/queue.ts";
+import { excludeTestAndDeleted } from "../_shared/signal-query-filters.ts";
 
 const THREAT_SIGNAL_TYPES = new Set(['sabotage', 'protest', 'threat', 'violence', 'theft']);
 
@@ -83,12 +84,15 @@ Deno.serve(async (req) => {
       const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
       // Fetch all signals for this client in the last 7 days (excluding pattern signals)
-      const { data: recentSignals } = await supabase
+      // WO-ENTITY-MENTION-CONTAMINATION: exclude test/deleted signals from the pattern candidate pool
+      // (client-scoping already prevented cross-tenant mixing; this makes the test exclusion explicit,
+      // not incidental).
+      const { data: recentSignals } = await excludeTestAndDeleted(supabase
         .from('signals')
         .select('id, title, signal_type, severity_score, severity, location, entity_tags, created_at, raw_json')
         .eq('client_id', client.id)
         .neq('signal_type', 'pattern')
-        .gte('created_at', sevenDaysAgo)
+        .gte('created_at', sevenDaysAgo))
         .order('created_at', { ascending: false });
 
       if (!recentSignals || recentSignals.length === 0) continue;

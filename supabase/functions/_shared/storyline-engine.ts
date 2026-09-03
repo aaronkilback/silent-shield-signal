@@ -41,11 +41,24 @@ export async function classifySignalIntoStoryline(
     entity_tags?: string[];
     location?: string;
     client_id?: string;
+    is_test?: boolean;
   }
 ): Promise<StorylineResult> {
   const startTime = Date.now();
 
   try {
+    // WO-ENTITY-MENTION-CONTAMINATION: never file a test-provenance signal into a storyline —
+    // it would mix a fixture with real signals. Test signals do not get storylines.
+    if (signal.is_test) {
+      console.warn(`[storyline] signal ${signal.id} is test-provenance — skipping storyline classification`);
+      return { action: 'no_match', storylineId: null, storylineTitle: null, similarity: 0, isNewDevelopment: false };
+    }
+    // WO-CORRELATE-SIGNALS-TENANT-SCOPE: a signal with no client_id must NOT fall back to a
+    // platform-wide storyline pull — that was the cross-tenant hole. Skip + log, never fall back.
+    if (!signal.client_id) {
+      console.warn(`[storyline] signal ${signal.id} has no client_id — skipping (no platform-wide fallback)`);
+      return { action: 'no_match', storylineId: null, storylineTitle: null, similarity: 0, isNewDevelopment: false };
+    }
     // 1. Fetch active storylines for this client (or global)
     let query = supabase
       .from('signal_storylines')
