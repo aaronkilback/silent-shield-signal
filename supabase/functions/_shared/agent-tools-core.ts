@@ -101,7 +101,7 @@ const queryEntityRelationships: ToolHandler = {
         .eq('from_entity_id', entity.id)
         .limit(10),
       supabase
-        .from('entity_mentions')
+        .from('entity_mentions_real') // WO-ENTITY-MENTION-CONTAMINATION: seam (exclude test-provenance)
         .select('id', { count: 'exact', head: true })
         .eq('entity_id', entity.id)
         .gte('created_at', new Date(Date.now() - 90 * 86400_000).toISOString()),

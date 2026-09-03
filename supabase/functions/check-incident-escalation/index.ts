@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
       const windowStart = new Date();
       windowStart.setDate(windowStart.getDate() - windowDays);
       const { data: related } = await supabase
-        .from('entity_mentions')
+        .from('entity_mentions_real') // WO-ENTITY-MENTION-CONTAMINATION: seam (related-signals linker — exclude test)
         .select('signal_id, entity_id')
         .in('entity_id', entityIds)
         .neq('signal_id', signalId)

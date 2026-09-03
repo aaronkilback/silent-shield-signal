@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
       // We build a map: signal_id -> [entity_id, ...]
       const signalIds = recentSignals.map(s => s.id);
       const { data: mentionRows } = await supabase
-        .from('entity_mentions')
+        .from('entity_mentions_real') // WO-ENTITY-MENTION-CONTAMINATION: seam (exclude test-provenance)
         .select('signal_id, entity_id, entities(id, name)')
         .in('signal_id', signalIds);
 
