@@ -65,6 +65,24 @@ Mention count/recency/density is **not display-only.** It feeds, in descending s
 
 ---
 
+## DID IT MATTER? — measured impact (the answer)
+
+**Yes. Fixture corroboration was admitting real signals as incidents.** Replaying `countCorroboration`'s exact logic in the correct 7-day point-in-time window over a 500-signal sample of real (`is_test=false`) signals from the test-active period (May–Jul 2026):
+
+- **13 / 500 sampled real signals flip admit→reject** once test mentions are excluded — i.e. their corroboration cleared the incident-admit bar (≥2) *only* because test-provenance mentions were counted. Via the confidence-null fallback branch, these would have been (or were) admitted as incidents on fixture corroboration.
+- 243 / 500 had test corroboration inflating their count; 452 would-admit on the base table.
+- **Sampled, not exhaustive — 13 is a floor for the sample.** Upper bound on the confidence-null-branch harm, not proven-shipped incidents.
+
+This is the finding of the workstream. The number to remember is **13/500 flips**.
+
+## Fix status (2026-09-03)
+
+- **Step 1 (generator) — DONE, prod.** Migration `20260901000000_entity_mentions_stamp_is_test.sql`: `entity_mentions.is_test` stamped by BEFORE INSERT trigger; backfill 2,897 test / 9,345 real / 0 unresolved; ownerless mentions RAISE. Verified (content-probe + 3-case behavioural test + row count unchanged).
+- **Step 2 (seam) — IN PROGRESS.** Migration `20260901000100_entity_mentions_real_seam.sql`: `entity_mentions_real` view (single filtered count path) + `notify_entity_mentioned` neutralized (refuses test mentions). First consumer converted: **`countCorroboration`** → reads the seam. Deployed + 4-point-verified in prod: `ai-decision-engine` v182, `check-incident-escalation` v127 (both verify_jwt=false, served bundles confirmed to contain `entity_mentions_real`).
+- **Remaining consumers (step 2 cont.):** `refresh_entity_quality_score` (DB fn), `synthesize-entity-narratives`, `threat-radar-analysis`, `correlate-entities` Phase 4D, `detect-threat-patterns`, `agent-tools-core`, `identify-precursor-indicators`, plus the `check-incident-escalation` post-admission "related signals" linker (a second base-table read in its own index). CI grep-guard backstop after.
+- **Step 3 (cleanup) — NOT STARTED.** Report blast radius on the 467 first (esp. the 173 fully-test Petronas entities → recompute/archival decision).
+- **Sibling finding split out to `WO-ENTITY-PROVENANCE-GAP`.**
+
 ## Root-cause shape (three layers, all the same defect)
 
 1. **A test client (Cascade Energy) is plumbed into production monitors.** This is the generator-level defect — the 4-signals-under-real-clients problem at scale. Test signals are born correctly flagged `is_test=true`, but they mention real shared entities.
