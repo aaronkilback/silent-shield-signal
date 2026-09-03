@@ -18,6 +18,7 @@ import { Loader2, CheckCircle, Shield, XCircle, Brain, History, Link2, Users, Sw
 import { IncidentLocationMap } from "./IncidentLocationMap";
 import { IncidentFeedbackDialog } from "./incidents/IncidentFeedbackDialog";
 import { AIAnalysisTimeline } from "./incidents/AIAnalysisTimeline";
+import { IncidentDecisionBriefPanel } from "./incidents/IncidentDecisionBriefPanel";
 import { WorkspaceButton } from "./workspace";
 import { useNavigate } from "react-router-dom";
 import { useActivityTracking } from "@/hooks/useActivityTracking";
@@ -263,6 +264,8 @@ export const IncidentActionDialog = ({
           <div className="flex-1 overflow-y-auto mt-4">
             {/* Overview Tab */}
             <TabsContent value="overview" className="m-0 space-y-4">
+              <IncidentDecisionBriefPanel incidentId={fullIncident.id} enabled={open} />
+
               {/* Summary */}
               {fullIncident.summary && (
                 <div className="p-3 bg-muted/50 rounded-lg">

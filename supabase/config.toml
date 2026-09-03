@@ -358,6 +358,9 @@ verify_jwt = true
 [functions.generate-incident-briefing]
 verify_jwt = true
 
+[functions.incident-decision-brief]
+verify_jwt = true
+
 [functions.generate-learning-context]
 verify_jwt = false
 
