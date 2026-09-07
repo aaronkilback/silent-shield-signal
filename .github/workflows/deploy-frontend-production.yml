@@ -106,13 +106,37 @@ jobs:
             } else {
               const pr = merged[0];
               const headSha = pr.head.sha;
-              const prRuns = await github.paginate(github.rest.checks.listForRef, {
-                owner: context.repo.owner, repo: context.repo.repo, ref: headSha, per_page: 100,
+              // Select the E2E evidence by TRIGGERING EVENT, never by conclusion or start-time alone.
+              // Only pull_request runs on the PR head are consulted; push-event runs are NEVER consulted,
+              // whatever their conclusion. WHY (FF-collision, found on B1's first real use, 2026-09-07):
+              // a fast-forward merge puts the PR head sha on main, so a push-event ci.yml run lands on the
+              // SAME sha with E2E 'skipped' (E2E is pull_request-only); the previous latest-by-start-time
+              // selection took that newer skip and refused a genuinely-passed E2E.
+              //
+              // We resolve the E2E JOB by name across pull_request runs (latest first), NOT by scoping to
+              // a workflow-file path. The only coupling is the job name 'Playwright E2E' — the same string
+              // the rest of this gate already depends on. If that job is renamed OR E2E stops running on
+              // pull_request, NO run is found and the gate REFUSES (fail-closed) — correct, though it would
+              // present as "no PR-event E2E evidence", so a job rename must update this string too. This is
+              // deliberately robust to the ci.yml file being renamed or E2E moving to another workflow — a
+              // path=='.github/workflows/ci.yml' filter would silently find nothing and refuse everything.
+              const wfRuns = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+                owner: context.repo.owner, repo: context.repo.repo, head_sha: headSha, per_page: 100,
               });
-              const e2e = latestRun(prRuns, 'Playwright E2E');
-              if (!e2e) failures.push(`Playwright E2E: introducing PR #${pr.number} (head ${headSha}) has no E2E run — refuse (no evidence).`);
-              else if (e2e.status !== 'completed' || e2e.conclusion !== 'success') failures.push(`Playwright E2E: introducing PR #${pr.number} (head ${headSha}) E2E=${e2e.status}/${e2e.conclusion} — require success, refuse.`);
-              else core.info(`Playwright E2E: success on introducing PR #${pr.number} (head ${headSha}).`);
+              const prRunsNewestFirst = wfRuns
+                .filter((r) => r.event === 'pull_request')
+                .sort((a, b) => Date.parse(b.run_started_at || b.created_at) - Date.parse(a.run_started_at || a.created_at));
+              let e2e = null, e2eRunId = null;
+              for (const run of prRunsNewestFirst) {   // multiple pull_request runs → latest by start time wins
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  owner: context.repo.owner, repo: context.repo.repo, run_id: run.id, per_page: 100,
+                });
+                const found = jobs.find((j) => j.name === 'Playwright E2E');
+                if (found) { e2e = found; e2eRunId = run.id; break; }
+              }
+              if (!e2e) failures.push(`Playwright E2E: no pull_request run with a 'Playwright E2E' job on PR #${pr.number} head ${headSha} — refuse (no PR-event E2E evidence).`);
+              else if (e2e.status !== 'completed' || e2e.conclusion !== 'success') failures.push(`Playwright E2E: PR #${pr.number} head ${headSha} pull_request run ${e2eRunId} E2E job=${e2e.status}/${e2e.conclusion} — require success, refuse.`);
+              else core.info(`Playwright E2E: success on PR #${pr.number} head ${headSha} (pull_request run ${e2eRunId}).`);
             }
 
             if (failures.length) core.setFailed(`Deploy blocked by CI evidence for ${sha}:\n${failures.join('\n')}`);
