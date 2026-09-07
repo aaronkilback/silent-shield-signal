@@ -51,24 +51,10 @@ jobs:
           fi
           echo "source_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Determine if this deploy touches src/ (E2E requirement is conditional on it)
-        id: srcdiff
-        run: |
-          set -uo pipefail
-          # Baseline = the currently-LIVE deployed SHA (served version.json). First deploy has none → parent.
-          BASE="$(curl -fsSL https://fortress.silentshieldsecurity.com/version.json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).source_commit_sha||"")}catch{console.log("")}})' || true)"
-          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then BASE="$(git rev-parse HEAD^ 2>/dev/null || git rev-parse HEAD)"; fi
-          if git diff --name-only "$BASE" "${{ steps.approved-source.outputs.source_sha }}" -- src/ | grep -q .; then
-            echo "src_changed=true" >> "$GITHUB_OUTPUT"; echo "src/ changed since $BASE — Playwright E2E is REQUIRED"
-          else
-            echo "src_changed=false" >> "$GITHUB_OUTPUT"; echo "no src/ change since $BASE — Playwright E2E may be skipped"
-          fi
-
-      - name: Require exact CI success (E2E required only when src/ is touched)
+      - name: Require exact CI success + genuine E2E resolved from the introducing PR (fail-closed)
         uses: actions/github-script@v7
         env:
           APPROVED_SHA: ${{ steps.approved-source.outputs.source_sha }}
-          SRC_CHANGED: ${{ steps.srcdiff.outputs.src_changed }}
         with:
           script: |
             const requiredSuccess = [
@@ -79,32 +65,58 @@ jobs:
               'Unit Tests (Vitest)', 'a1-guard',
             ];
             const sha = process.env.APPROVED_SHA;
-            const srcChanged = process.env.SRC_CHANGED === 'true';
+            const failures = [];
+
+            const latestRun = (runs, name) => {
+              let out = null;
+              for (const run of runs) {
+                if (run.name !== name) continue;
+                if (!out || Date.parse(run.started_at || run.created_at) > Date.parse(out.started_at || out.created_at)) out = run;
+              }
+              return out;
+            };
+
+            // (1) Non-E2E required checks are read on the approved main SHA itself.
             const runs = await github.paginate(github.rest.checks.listForRef, {
               owner: context.repo.owner, repo: context.repo.repo, ref: sha, per_page: 100,
             });
-            const latestByName = new Map();
-            for (const run of runs) {
-              const e = latestByName.get(run.name);
-              if (!e || Date.parse(run.started_at || run.created_at) > Date.parse(e.started_at || e.created_at)) latestByName.set(run.name, run);
-            }
-            const failures = [];
             for (const name of requiredSuccess) {
-              const run = latestByName.get(name);
+              const run = latestRun(runs, name);
               if (!run) failures.push(`${name}: missing`);
               else if (run.status !== 'completed' || run.conclusion !== 'success') failures.push(`${name}: status=${run.status} conclusion=${run.conclusion}`);
             }
-            // Playwright E2E: MUST be success when the deploy touches src/; may be skipped ONLY when it doesn't.
-            // (Prevents an E2E that is skipped for some other reason on a real frontend change from sailing through.)
-            const pw = latestByName.get('Playwright E2E');
-            if (srcChanged) {
-              if (!pw || pw.status !== 'completed' || pw.conclusion !== 'success')
-                failures.push(`Playwright E2E: deploy touches src/ so it must be success, got ${pw ? pw.status + '/' + pw.conclusion : 'missing'}`);
-            } else if (pw && pw.status === 'completed' && !['success', 'skipped'].includes(pw.conclusion)) {
-              failures.push(`Playwright E2E: ${pw.conclusion}`);
+
+            // (2) Playwright E2E — FAIL-CLOSED, resolved from the PR that introduced the approved commit.
+            //     WO-E2E-DEPLOY-GATE-EVIDENCE (B1). WHY: E2E runs ONLY on pull_request (against the
+            //     staging-built Pages preview) and is keyed to the PR HEAD sha, never the main sha — on
+            //     the deployed main sha E2E is ALWAYS 'skipped'. The old gate read the main sha, so its
+            //     E2E requirement never validated a real run (it passed on skip, or blocked on a src
+            //     change it could never satisfy). We now resolve E2E from the introducing PR's head.
+            //     No merged PR, no E2E run on that head, or non-'success' => REFUSE. 'skipped' is NEVER
+            //     accepted, regardless of whether src/ changed. A src change pushed straight to main
+            //     (no PR) is therefore correctly BLOCKED — open a PR so E2E runs on the change, then
+            //     deploy the resulting commit. (B2 branch-protection-to-require-PRs is a SEPARATE,
+            //     deferred decision — WO-E2E-BRANCH-PROTECTION-DECISION — not bundled into this fix.)
+            const prs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+              owner: context.repo.owner, repo: context.repo.repo, commit_sha: sha,
+            });
+            const merged = prs.filter(p => p.merged_at).sort((a, b) => Date.parse(b.merged_at) - Date.parse(a.merged_at));
+            if (merged.length === 0) {
+              failures.push(`Playwright E2E: no merged PR introduced ${sha} — E2E cannot be resolved (E2E runs only on pull_request, keyed to the PR head). Deploy via a PR so E2E runs on the change, then deploy the resulting commit.`);
+            } else {
+              const pr = merged[0];
+              const headSha = pr.head.sha;
+              const prRuns = await github.paginate(github.rest.checks.listForRef, {
+                owner: context.repo.owner, repo: context.repo.repo, ref: headSha, per_page: 100,
+              });
+              const e2e = latestRun(prRuns, 'Playwright E2E');
+              if (!e2e) failures.push(`Playwright E2E: introducing PR #${pr.number} (head ${headSha}) has no E2E run — refuse (no evidence).`);
+              else if (e2e.status !== 'completed' || e2e.conclusion !== 'success') failures.push(`Playwright E2E: introducing PR #${pr.number} (head ${headSha}) E2E=${e2e.status}/${e2e.conclusion} — require success, refuse.`);
+              else core.info(`Playwright E2E: success on introducing PR #${pr.number} (head ${headSha}).`);
             }
-            if (failures.length) core.setFailed(`Deploy blocked by CI evidence for ${sha} (src_changed=${srcChanged}):\n${failures.join('\n')}`);
-            else core.info(`CI evidence passed for ${sha} (src_changed=${srcChanged})`);
+
+            if (failures.length) core.setFailed(`Deploy blocked by CI evidence for ${sha}:\n${failures.join('\n')}`);
+            else core.info(`CI evidence + E2E (via introducing PR) passed for ${sha}`);
 
       - uses: actions/setup-node@v4
         with:
