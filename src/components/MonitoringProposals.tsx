@@ -90,13 +90,17 @@ export function MonitoringProposals({ userId }: Props) {
       setProposals((data as MonitoringProposal[]) || []);
       setError(null);
 
-      // Fetch client names
-      const clientIds = [...new Set((data || []).map(p => p.client_id).filter(Boolean))];
-      if (clientIds.length > 0) {
+      // Fetch client names. NOTE: named proposalClientIds (NOT clientIds) — a local
+      // `const clientIds` here shadows the outer useTenantScopedClientIds() value used
+      // above at the `.in('client_id', clientIds)` filter, putting that reference in the
+      // temporal dead zone → "Cannot access 'clientIds' before initialization" on every
+      // load (silent since 2026-06-07 until the false-zero fix surfaced it). WO-LINT-NOT-ENFORCED.
+      const proposalClientIds = [...new Set((data || []).map(p => p.client_id).filter(Boolean))];
+      if (proposalClientIds.length > 0) {
         const { data: clients } = await supabase
           .from('clients')
           .select('id, name')
-          .in('id', clientIds);
+          .in('id', proposalClientIds);
         
         const names: Record<string, string> = {};
         (clients || []).forEach(c => { names[c.id] = c.name; });
