@@ -57,7 +57,34 @@ suppress expired items from the operator's live queue) — **before** it needs m
 review 786 items, 99% of which reference conditions that have already passed, is the wrong ask. Pair with the
 age/volume probe already scoped above so a *fresh* backlog surfaces while an *aged* one auto-decays.
 
-**Note — never-merged-to-main:** this WO was authored on `ad1ee060` (branch `fix/wo-entity-mention-
-contamination`) and was **not on `origin/main`** until this update — it existed in git history but not in the
-canonical backlog. Brought to main 2026-09-07 with the above. Sibling of the Deployed-Not-Committed class: a
-WO written but never landed is a promise no one can see (companion check for the backlog itself).
+## RULING 2026-09-07 (do NOT build now)
+
+Given 99% of the pending queue has passed its own `expires_at`, the queue needs an **expiry policy, not
+operator triage**:
+1. **Enforce `expires_at`** — a proposal past its expiry auto-decays to a **terminal `expired` state** (new
+   status value) with a **recorded reason** (e.g. `auto_expired: condition window passed`). Not a silent
+   delete; a recorded terminal transition, auditable.
+2. **Suppress expired from the live queue** — the operator-facing view shows only pending-and-still-valid;
+   expired rows are retained but out of the review surface.
+3. Pair with the age/volume probe already scoped above so a **fresh** backlog surfaces to a human while an
+   **aged** one auto-closes.
+Deferred — recorded, not built.
+
+## META-FINDING 2026-09-07 — a WO about silent queues sat silently on a branch
+
+This WO was authored **2026-09-01** (`ad1ee060`, branch `fix/wo-entity-mention-contamination`) and **never
+reached `origin/main`** until 2026-09-07 — it lived in git history on an unmerged branch, invisible to the
+canonical backlog. A work order about *queues that grow silently, sitting silently on a branch.* Same failure
+class as the queue it describes: a promise no one can see. This is the Deployed-Not-Committed / Registry-is-a-
+Promise class applied to the backlog itself.
+
+**Its session siblings are also stranded** — the whole `fix/wo-entity-mention-contamination` branch
+(`cbd6270b`) is unmerged, so these WO/incident docs are on the branch but NOT on `origin/main`:
+`WO-ENTITY-MENTION-CONTAMINATION`, `WO-ENTITY-PROVENANCE-GAP`, `WO-TEST-DATA-ISOLATION`,
+`WO-WILDFIRE-IGNITION-TIER` (backlog); `WO-CORRELATE-SIGNALS-TENANT-SCOPE`, `WO-PRODEE-FOLLOWUP-COMPLETE`
+(incidents — the specs for today's still-pending Tasks 5 & 6).
+
+**Broader:** the branch-vs-main sweep (2026-09-07) found ~30 branches carrying `docs/platform-operations`
+files never merged to main (months of temporal-integrity / decision-layer / classA / capability-registry /
+anon-surface-hardening docs). This WO's case is one instance of a repo-wide stranded-docs gap →
+`WO-STRANDED-DOCS-SWEEP`.
