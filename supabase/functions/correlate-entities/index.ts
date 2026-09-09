@@ -296,7 +296,7 @@ Deno.serve(async (req) => {
             if (relatedEntityIds.size > 0) {
               const seventyTwoHoursAgo = new Date(Date.now() - 72 * 3600000).toISOString();
               const { data: recentRelatedMentions } = await supabase
-                .from('entity_mentions')
+                .from('entity_mentions_real') // WO-ENTITY-MENTION-CONTAMINATION: seam (Phase 4D corroboration boost — exclude test)
                 .select('entity_id, signal_id')
                 .in('entity_id', Array.from(relatedEntityIds))
                 .gte('created_at', seventyTwoHoursAgo)

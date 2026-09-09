@@ -1425,6 +1425,7 @@ Generated: ${new Date().toISOString()}
         entity_tags: signal.entity_tags,
         location: signal.location,
         client_id: signal.client_id,
+        is_test: signal.is_test, // WO-ENTITY-MENTION-CONTAMINATION: let storyline-engine skip test signals
       });
       console.log(`[AI-Decision] Storyline: ${storylineResult.action} → ${storylineResult.storylineTitle || 'N/A'} (similarity: ${storylineResult.similarity})`);
     } catch (slErr) {

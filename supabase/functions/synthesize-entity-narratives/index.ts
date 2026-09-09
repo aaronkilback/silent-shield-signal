@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
 
     // ── 1. Find entities with recurring mentions in the window ─────────────
     const { data: mentionRows, error: mentionsErr } = await supabase
-      .from('entity_mentions')
+      .from('entity_mentions_real') // WO-ENTITY-MENTION-CONTAMINATION: seam (exclude test-provenance)
       .select('entity_id, signal_id, created_at')
       .gte('created_at', since)
       .not('signal_id', 'is', null);

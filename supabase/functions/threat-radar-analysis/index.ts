@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
     let entityMentions: any[] = [];
     if (signalIds.length > 0) {
       const { data: mentionsData } = await supabase
-        .from('entity_mentions')
+        .from('entity_mentions_real') // WO-ENTITY-MENTION-CONTAMINATION: seam (exclude test-provenance)
         .select('id, entity_id, confidence, context, detected_at, signal_id')
         .in('signal_id', signalIds)
         .gte('detected_at', timeframeCutoff)

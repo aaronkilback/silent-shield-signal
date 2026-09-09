@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
       .limit(200);
 
     const { data: entityMentions } = await supabaseClient
-      .from('entity_mentions')
+      .from('entity_mentions_real') // WO-ENTITY-MENTION-CONTAMINATION: seam (exclude test-provenance)
       .select('entity_id, confidence, context, detected_at, entities(name, type, threat_score)')
       .gte('detected_at', timeframeCutoff)
       .limit(100);

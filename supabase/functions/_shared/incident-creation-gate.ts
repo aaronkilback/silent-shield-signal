@@ -308,8 +308,10 @@ export async function countCorroboration(supabase: any, signal: any, windowDays 
     : [];
   if (entityIds.length === 0) return 0;
   const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+  // WO-ENTITY-MENTION-CONTAMINATION: read the seam, not the base table. A test-provenance mention
+  // must never corroborate a real signal into an incident. entity_mentions_real excludes is_test rows.
   const { data, error } = await supabase
-    .from('entity_mentions')
+    .from('entity_mentions_real')
     .select('signal_id')
     .in('entity_id', entityIds)
     .neq('signal_id', signal.id)

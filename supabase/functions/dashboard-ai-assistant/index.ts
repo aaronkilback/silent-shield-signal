@@ -508,6 +508,12 @@ const CONTAINMENT_DISABLED_TOOLS = new Set<string>([
   "get_global_learning_insights", // reads global_learning_insights (CONTAMINATED)
   "get_cross_tenant_patterns",    // cross-tenant by design; default-deny
   "query_expert_knowledge",       // reads expert_knowledge (CONTAMINATED — ingested tenant reports)
+  // WO-CORRELATE-SIGNALS-TENANT-SCOPE (2026-09-01): signal_contradictions is an OPERATOR-ONLY surface
+  // (cross-client pairing by design). This handler read it UNSCOPED under SERVICE_ROLE — a tenant-facing,
+  // RLS-bypassing read. Hard-disabled here (reusing the existing containment primitive) until a proper
+  // operator-only tool-gate exists. True operator-only gating is a NEW authorization primitive, tracked
+  // separately and deliberately NOT introduced inside this fix.
+  "get_signal_contradictions",
 ]);
 
 // Tools intentionally excluded from TENANT_SCOPED_TOOLS — these are global / system / external:
