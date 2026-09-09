@@ -74,6 +74,14 @@ Supabase keys updated and validated.
 - **When your finding contradicts the operator's report of what they observed, their observation wins** until you can explain the contradiction with evidence.
 - **Provenance:** three times on 2026-09-07 a confident conclusion was wrong — the SRC_RANK deployed state, the *"no live defect"* course-correction on `monitoring_proposals` (a real ~3-month TDZ crash the false-zero fix had just made visible), and the E2E pre-dispatch simulation (predicted admit; the gate refused on a same-SHA push-skip the partial model never replicated). Each was caught by **external review, not self-review**. Twin of Population-Before-Check (aperture) and the "one real run before done" discipline; this one governs **epistemic honesty in reporting**.
 
+## Merged-And-Running Standing Rule (2026-09-09 — RATIFIED)
+
+**A change is done when it is verified running in prod AND merged to `main`.** Deployed-Not-Committed covers only the first condition. This week proved the second is a separate failure mode: a change can run correctly in prod for days while `main` does not contain it, and nothing surfaces the gap — because deploys go from the **working tree**, not from `main`, and no check compares the deployed artifact to the default branch.
+
+- **The practical check the rule implies:** after any deploy, confirm the **deployed commit is an ancestor of `origin/main`** (`git merge-base --is-ancestor <deployed-sha> origin/main`), or the change is **not done**. A green deploy whose source lives only on a feature branch (or only in an uncommitted working tree) is a DR/parity gap masquerading as finished work.
+- **The two conditions are independent and both mandatory:** running-but-unmerged (this rule) is as incomplete as merged-but-unverified (Deployed-Not-Committed §2–4). Neither implies the other.
+- **Provenance:** 2026-09-01 to 09-07 — **twelve edge functions and four migrations ran in prod for a week while `main` did not contain them** (branch `fix/wo-entity-mention-contamination`, the WO-ENTITY-MENTION-CONTAMINATION / WO-CORRELATE-SIGNALS-TENANT-SCOPE workstream), surfaced only by accident during the stranded-docs sweep and landed via PR #211. Companion to **Deployed-Not-Committed** (running-state truth) — this one closes the *committed-to-the-default-branch* half. Branch-space twin of Registry-is-a-Promise.
+
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
 **No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.
