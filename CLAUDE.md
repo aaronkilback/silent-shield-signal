@@ -63,6 +63,17 @@ Supabase keys updated and validated.
 - **Provenance — four instances, all 2026-08-31, all found within one day:** no breach location read as "no breach" (`WO-BREACH-RUN-MARKER`); no sweep key read as "nothing searched" (`WO-SWEEP-CATEGORY-MAPPING`); `gate_failed` on an ineligible population read as a failed match (`WO-GATE-POPULATION-SCOPE`); P6 read a suppressed category as a clean not-found (`WO-LEGAL-FABRICATION`). The epistemic twins already in the synthesis layer: `not_assessed` vs `not_asserted` (did-not-look vs looked-and-found-nothing) and `not_applicable` vs failure.
 - Companion to **Population-Before-Check** (aperture), **Track-Every-Containment** (tracking), and **Deployed-Not-Committed** (running-state truth). This one governs **storage truth**.
 
+## Adversarial-Review Standing Rule (2026-09-07 — RATIFIED)
+
+**Before reporting a conclusion, argue against it.** Self-review is not enough; the falsification stance is mandatory before every reported conclusion.
+
+- **When you cannot reproduce a reported failure, the failure is still real until proven otherwise.** Say *"I could not reproduce"* and name what you could not see. **Never conclude "no defect" from a failed reproduction.**
+- **When a simulation or pre-check predicts an outcome, it must replicate the ACTUAL logic against LIVE data at the moment of the check.** A partial model is not a check.
+- **Absence of evidence in a grep, a list, or a ledger is not evidence of absence.** Say which aperture you searched and what it could not see.
+- **State what would falsify your conclusion.** If nothing would, the conclusion is an assumption, not a finding.
+- **When your finding contradicts the operator's report of what they observed, their observation wins** until you can explain the contradiction with evidence.
+- **Provenance:** three times on 2026-09-07 a confident conclusion was wrong — the SRC_RANK deployed state, the *"no live defect"* course-correction on `monitoring_proposals` (a real ~3-month TDZ crash the false-zero fix had just made visible), and the E2E pre-dispatch simulation (predicted admit; the gate refused on a same-SHA push-skip the partial model never replicated). Each was caught by **external review, not self-review**. Twin of Population-Before-Check (aperture) and the "one real run before done" discipline; this one governs **epistemic honesty in reporting**.
+
 ## Provenance Doctrine (2026-05-26, INC-XTEN — RATIFIED)
 
 **No artifact may exist without unambiguous ownership provenance.** Full ADR: `docs/platform-operations/architecture-decisions/provenance-contract.md`. Implementation is sequenced + gated (`docs/platform-operations/incidents/INC-XTEN-2026-05-25-trackB-sequencing-plan.md`); INC-XTEN stays OPEN until enforced.
