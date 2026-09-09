@@ -1316,6 +1316,10 @@ export interface PlatformFinding {
   firstSeenAt: string;
   lastSeenAt: string;
   occurrenceCount: number;
+  // WO-WATCHDOG-FINDING-TRIAGE: the operator ruling, read from the same platform_findings record the
+  // watchdog email now renders from. 'accepted' = suppress-with-ruling (carry the why, don't alarm).
+  rulingState: 'accepted' | 'disregarded' | null;
+  rulingNote: string | null;
 }
 
 export function useActiveFindings() {
@@ -1324,7 +1328,7 @@ export function useActiveFindings() {
     queryFn: async (): Promise<PlatformFinding[]> => {
       const { data } = await supabase
         .from("platform_findings")
-        .select("id, category, severity, title, analysis, plain_english, action, affected_agent, affected_job, first_seen_at, last_seen_at, occurrence_count")
+        .select("id, category, severity, title, analysis, plain_english, action, affected_agent, affected_job, first_seen_at, last_seen_at, occurrence_count, ruling_state, ruling_note")
         .is("resolved_at", null)
         .order("severity", { ascending: false })
         .order("last_seen_at", { ascending: false })
@@ -1343,6 +1347,8 @@ export function useActiveFindings() {
         firstSeenAt: row.first_seen_at,
         lastSeenAt: row.last_seen_at,
         occurrenceCount: row.occurrence_count,
+        rulingState: row.ruling_state ?? null,
+        rulingNote: row.ruling_note ?? null,
       }));
     },
     refetchInterval: 60_000,
