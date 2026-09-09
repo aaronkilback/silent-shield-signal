@@ -31,7 +31,7 @@ No first-class ruling state existed — a decision lived only as hardcoded text 
 | 9 | auto_approve "0 approvals while N eligible" | **DISREGARD** | the check counted upgrade proposals the downgrade-only job never approves (the false "83"); **predicate repaired** to count only downgrade/dismiss/false-positive actions (see deviation note) |
 | 10 | feedback not updating learning profiles | **FIX** (separate subsystem) | the learning loop is empty (`learning_profiles` 0 rows); repair is its own WO. Note the current probe is aperture-blind (needs feedback>0 to fire) |
 
-**#9 deviation (flagged for merge):** the ruling said "delete the check." I **repaired** its eligibility predicate instead of deleting it — a correct check that counts only what the job can auto-approve preserves a genuine auto-approve-failure detector, whereas deletion loses it. If you prefer literal deletion, say so and I'll remove the P1.1 block.
+**#9 repaired-not-deleted (operator-accepted 2026-09-09 — NOT an ignored ruling):** the ruling "delete the check" meant "this check is wrong," not "leave no detector." The check was false because it counted severity-UPGRADE proposals the downgrade-only job never approves (the phantom "83 eligible"). The correct fix is a predicate that counts only what the job actually auto-approves (downgrades + dismiss + false-positive) — that eliminates the false finding **and** preserves a genuine auto-approve-failure detector; deleting the P1.1 block outright would have left no signal for a real failure. The operator reviewed the repair-vs-delete choice and accepted the repair. Recorded explicitly so a future reader does not mistake this for the ruling being disregarded.
 
 ## Durable mechanism (the fix, not just suppression)
 
