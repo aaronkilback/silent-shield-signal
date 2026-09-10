@@ -1,55 +1,53 @@
-# WO-INBOUND-WEBHOOK-UNSIGNED — public unsigned inbound webhooks accept spoofable input (2026-09-10)
+# WO-INBOUND-WEBHOOK-UNSIGNED — public unsigned webhooks + the verify_jwt=false population (2026-09-10)
 
-**Status:** OPEN — live defect, report-only (do not build yet). Ahead of WO-AEGIS-INBOUND-CHANNELS; the AEGIS channel must not be built on this pattern.
+**Status:** Part A fixes BUILT (branch `fix/wo-inbound-webhook-unsigned`, PR open, NOT deployed). Part B population audit COMPLETE (report-only). Class: `verify_jwt=false` + external-controlled input + writes/acts + no authenticity validation → anyone with the URL can inject or spend.
 
-**Class:** unauthenticated public webhook (`verify_jwt=false`) that parses **attacker-controllable external input** and **writes/acts** with **no caller-authenticity validation** (no provider signature, no shared secret, no service-role self-gate). The gateway does not enforce a JWT and the function does not re-establish trust — so anyone with the URL can inject.
+---
 
-## 1. What `ingest-communication` writes, and where
+## send-sms FIRST (it costs money) — CORRECTION to the prior report
 
-Entry paths (both `verify_jwt=false`, no signature check):
-- **Twilio form path** (`application/x-www-form-urlencoded`): reads `From` (→ `normalizePhone`), `Body`, `MessageSid`, `To` — all attacker-settable in a raw POST.
-- **JSON path** (anything else): `source`, `sender`/`from`, `message`/`body`/`text`, `metadata` — fully arbitrary; even easier to forge (no MessageSid needed).
+Prior report called send-sms "an unauthenticated outbound sender." **That was wrong** (my grep pattern omitted `getClaims`). Reading the code:
+- **Invocation requires auth:** `Authorization: Bearer <token>` → `supabase.auth.getClaims(token)` → **401 on missing/invalid**. So it is NOT anonymously invocable.
+- **External reachability:** gateway `verify_jwt=false`, but the function self-gates via `getClaims`. A no-auth POST returns 401. Edge logs (≥3-day retention): **zero external POSTs**, only internal `OPTIONS` preflights. No misuse.
+- **What a caller could send:** the REAL gap is **authorization depth** — any *authenticated* user (any role, any tenant) could send an SMS to any `to_number` on any `investigation_id` (fuzzy-resolved). A leaked low-priv token = arbitrary-SMS / toll vector. Internal caller `_shared/qualifier-handoff.ts` invokes it with the **service-role key** (operator alerts).
+- **Evidence of misuse:** none (outbound comms + logs clean).
+- **Fix built:** added AUTHORIZATION (caller must have access to the investigation's client via `getAccessibleClientIds`; `service_role` bypasses) + flipped config `verify_jwt=true` for gateway defense-in-depth (service key + user JWT both valid → neither caller breaks).
 
-Routing → then two writes under SERVICE_ROLE (RLS bypassed):
-1. Case match: a case-ref regex in the body (`INV-…`, `FILE-…`, `[TAG]`) via **`ilike '%ref%'` fuzzy match** on `investigations.file_number` (loose — a partial ref can hit an unintended case), OR fallback to a number that has a prior **outbound** SMS.
-2. **`investigation_entries`** ← `entry_text` = `[SMS/EMAIL RECEIVED — From: <spoofable> — ts]\n\n<attacker body>`, `created_by_name = "<label> Ingest (<spoofable>)"`. **This is the injection: attacker-controlled text written into a case file as a received communication.**
-3. **`investigation_communications`** ← `message_body`, `contact_identifier` = spoofed `From`, `direction=inbound`, `investigator_user_id` = the last outbound investigator or the placeholder `00000000-…`, `provider_message_id` = `MessageSid` (or null on the JSON path).
+---
 
-**Impact:** forged evidence in an investigation record, attributed to a real contact number, with no authenticity trail. Targetable at a specific case by `file_number` (guessable/fuzzy). Corrupts the integrity of an intelligence artifact — the exact provenance failure class the platform's doctrines exist to prevent.
+## ingest-communication + ingest-email — the confirmed unsigned inbound writers
 
-## 2. Has anything been injected? (forensic, prod 2026-09-10)
+**What they write:** both write `investigation_entries` (`entry_text` = attacker-controlled body, `created_by_name`) + `investigation_communications` (spoofable `From`/sender, `direction=inbound`) under SERVICE_ROLE. `ingest-communication` targetable by `file_number` (fuzzy `ilike`); `ingest-email` by `intake_email_tag`. `ingest-email` **captured** Mailgun's `timestamp`/`token`/`signature` but **never verified them**.
 
-Clean — **no persisted injection found**:
-- `investigation_communications` `direction=inbound`: **0 rows** (0 placeholder-investigator, 0 from-never-texted-numbers, 0 null-SID sms).
-- `investigation_entries` created via ingest (`created_by_name ~ 'Ingest'` / `[SMS RECEIVED`/`[EMAIL RECEIVED` prefix): **0 rows**.
+**Injection forensic (prod, 2026-09-10):** CLEAN — `investigation_communications` inbound = 0; `investigation_entries` via ingest = 0. **Edge-log probe check:** retention observably ≥3 days (events back to 2026-09-07); across the whole window **zero POSTs** to either function, only sporadic internal `OPTIONS/200` (platform publishable apikey, AWS IPs). **Latent, not active.** Caveat (Absence-Is-Not-A-Value): failed routing persists nothing, so 0-persisted ≠ 0-attempts, but logs show no POST attempts within retention.
 
-**Caveat (Absence-Is-Not-A-Value):** the function **persists nothing when routing fails** (returns empty TwiML / 422) and logs attempts only to `console`. So **0 persisted ≠ 0 attempts** — a probe that failed to route leaves no DB trace. Attempt evidence lives only in edge-function logs (limited retention). *Open follow-up: grep edge logs for POSTs to `ingest-communication` to distinguish "never probed" from "probed, failed to route."* Not yet run.
+**Fixes built:**
+- `_shared/webhook-auth.ts` — `verifyTwilioSignature` (HMAC-SHA1 over URL + sorted params) + `verifyMailgunSignature` (HMAC-SHA256 over timestamp+token). Fail-closed.
+- `ingest-communication`: Twilio signature on the form path (403 on fail); JSON path requires an authenticated caller (`getCallerIdentity`, 401).
+- `ingest-email`: Mailgun signature on the form path (403 on fail); JSON path requires auth.
 
-## 3. What signature validation requires
+**Deploy preconditions (operator, not done here):** set `MAILGUN_SIGNING_KEY` secret (fail-closed until then — inbound email rejects); `TWILIO_AUTH_TOKEN` already set; optional `TWILIO_WEBHOOK_URL` if the proxied URL differs from Twilio's configured webhook URL.
 
-**Twilio (`X-Twilio-Signature`):** HMAC-SHA1, base64-encoded, computed over the full request URL **+ the POST params sorted alphabetically and concatenated key+value**, keyed by the Twilio **auth token**; compare constant-time to the header; reject on mismatch. This proves the request came from Twilio.
-- **Necessary but NOT sufficient** for a command/identity channel: Twilio still delivers a spoofable/SIM-swapped `From`. Signature stops *forged POSTs*; it does not prove *who texted*. For investigation intake: signature + a known-contact allowlist (the `From` must match a contact already on the case). For an AEGIS command channel (WO-AEGIS-INBOUND-CHANNELS): signature + a second factor.
-- **JSON/email path** needs its own authenticity proof (provider inbound-parse signature, or DKIM/DMARC verified result) — a bare JSON POST has none today.
+---
 
-## 4. Population — the SAME gap is not scoped to this function
+## PART B — the verify_jwt=false population audit (247 = the population question, done properly)
 
-**Population definition:** every `verify_jwt=false` function that is (a) externally reachable, (b) parses external-controlled input, and (c) writes or acts, **without** validating caller authenticity (signature / shared secret / service-role self-gate / token). There are **247** `verify_jwt=false` functions total; the at-risk subset is the external-input actors. Swept the obvious external ingesters (`signature` / `caller-gate` / `writes` hit-counts):
+**Method:** parsed config.toml → **246 functions with explicit `verify_jwt=false`** (functions with no entry default to gateway-enforced JWT and are excluded). Scored every one on: reads external input · has in-function auth gate · writes · costs money (LLM/Twilio/Resend/paid API). The gateway is genuinely public for `verify_jwt=false` (confirmed by no-auth curl reaching the function body), so these are all anon-reachable; the differentiator is the in-function gate + whether it acts.
 
-| Function | signature | caller-gate | writes/acts | Verdict |
-|---|---|---|---|---|
-| **ingest-communication** | 0 | 0 | 2 | **CONFIRMED GAP** (this WO) |
-| **ingest-email** | 0 | 0 | 2 | **CONFIRMED — identical gap** (unsigned inbound email → writes) |
-| **send-sms** | 0 | 0 | 2 | **ADJACENT** — unauth *outbound* sender → toll-fraud / spam on your Twilio acct + writes logs |
-| **oauth-token** | 0 | 0 | 2 | **REVIEW** — token exchange, no signature/gate on my patterns; confirm it validates via the OAuth code/PKCE flow or it's a token-minting gap |
-| ingest-email-intel | 3 | 0 | 2 | **VERIFY** — has signature-shaped code; confirm it actually validates (DKIM/secret) vs merely references |
-| wildfire-portal-log | 0 | 1 | 1 | **VERIFY** — has a caller-gate; confirm sufficiency |
-| webhook-management | 1 | 1 | 3 | likely OK (has both); confirm |
-| webhook-dispatcher | 0 | 0 | 0 | lower risk (no direct write); confirm |
+**Result: 156 candidate open doors** (auth-gate=0 AND writes-or-cost). Top-tier VERIFIED by reading (no missed gate):
+- **`execute-approved-action`** — no auth code at all; **executes agent actions (mutations)**. Highest consequence. Likely its own urgent WO.
+- **`create-agent`** — ungated; writes the global agent registry.
+- **`process-intelligence-document`, `osint-web-search`, `process-stored-document`, `knowledge-synthesizer`, `aegis-qualify`, `ai-decision-engine`, `vision-analysis`, `multi-model-consensus`** — ungated + read input + drive LLM/Google spend on attacker-controlled input (financial).
+- **`process-feedback`** — comment claims "INTERNAL service-role pipeline" but nothing enforces it; writes learning data.
 
-**Not yet exhaustive.** A complete audit of the 247 `verify_jwt=false` set — classifying each as internal-only (cron/service-role/frontend-supplied-identity) vs externally-reachable-actor-without-validation — is part of this WO. `send-mfa-code`, `contact-submit`(absent locally), `heygen-webhook`(absent), `auth-email-hook`(absent) and others need the same triage. **This sweep, audit-only first, is the deliverable — not a fix per function.**
+**Consequence tiers (156):**
+1. **Financial + input-driven (≈48):** ungated LLM/paid-API callers reading external input — anon can burn spend with controlled prompts. (process-intelligence-document, osint-entity-scan, agent-knowledge-seeker, multi-agent-debate, red-team-review, scan-entity-photos, vision-analysis, …)
+2. **Write/mutation + input-driven (≈40):** anon writes/mutates platform data. (execute-approved-action, create-agent, process-feedback, execute-signal-merge, merge-duplicate-entities, source-credibility-updater, detect-threat-patterns, check-incident-escalation, persist-report, configure-entity-monitoring, …)
+3. **Trigger-only, no input (≈68):** cron-style functions (monitor-*, autonomous-*, thread-weaver, send-daily-briefing) — anon POST triggers a run (cost/DoS-amplification, not injection).
 
-## Fix shape (NOT authorized — for the fix WO)
-Provider-authenticity at the door for every external webhook: Twilio signature, DKIM/DMARC for email, HMAC/shared-secret for internal callers; reject-closed on failure. Then the tighter, per-surface rule (known-contact allowlist for intake; second factor for command). Sequence: **ingest-communication + ingest-email first** (confirmed, writing to case files), then the population audit, then the adjacent abuse surfaces (`send-sms`, `oauth-token`).
+**Caveat / remaining work:** 156 is the static-signal candidate set. Top tier verified as genuinely ungated; a subset is **intentionally public** (aegis-qualify marketing chat, contact-submit, confirm-client-authorization, wildfire-portal-*, support-chat, auth-email-hook, heygen-webhook) and must be separated from accidental exposure. Full per-function intent-triage of all 156 is the remaining sweep. **Systemic finding: the platform-wide default is `verify_jwt=false` with inconsistent in-function gating** — this is a class defect, not N isolated bugs. Full scored table: `/tmp` sweep reproducible from `scripts` method above (attach to the WO on next pass).
+
+**Sequence:** ingest-communication + ingest-email (built) → `execute-approved-action` (mutation executor, urgent) → financial tier → write tier → intentional-public documentation pass.
 
 ## Companion doctrines
-Provenance Doctrine (a forged case entry is an ownerless/unauthenticated artifact), Population-Before-Check (the gap is a population, not one function — sweep the whole `verify_jwt=false` set), Absence-Is-Not-A-Value (0 persisted injections ≠ 0 attempts; the producer records no attempt marker). Blocks the pattern WO-AEGIS-INBOUND-CHANNELS would otherwise inherit.
+Provenance Doctrine, Population-Before-Check (the gap is a population — swept the whole set, not one function), Absence-Is-Not-A-Value (0 persisted ≠ 0 attempts), Confidence-is-not-correctness (grep hit-counts mislead — send-sms was verified by reading, not by count).
