@@ -38,6 +38,16 @@ create index if not exists idx_platform_findings_condition_key on public.platfor
 --    escalate_when_metric_gt = for accepted findings that should re-alarm past a threshold (e.g. the
 --                  incident-evidence ruling: quiet at n<=5, alarm again above).
 --    RLS-at-Creation: enabled, no policy → service-role/SECURITY-DEFINER writers only, closed to anon.
+--
+-- Why no policy (rationale for the check4 exemption below):
+--   finding_rulings is service-role-only — written and read exclusively via record_platform_finding
+--   under service role; the panel reads the DENORMALIZED ruling_state/ruling_note on platform_findings,
+--   never this table directly. RLS-on + no policy is the correct CLOSED state per RLS-at-Creation; a
+--   policy would only WIDEN access.
+-- INVALIDATION CONDITION (an exemption without its expiry becomes permanent cover): this holds ONLY
+--   while finding_rulings has no non-service-role reader. If any surface ever queries it directly under
+--   authenticated or anon, the exemption is VOID and a policy is required.
+-- @security-exempt(check4): finding_rulings service-role-only, deny-by-default, no non-service-role reader; void if ever read under authenticated/anon then a policy is required — 2026-09-09
 -- ─────────────────────────────────────────────────────────────────────────────
 create table if not exists public.finding_rulings (
   condition_key           text primary key,
