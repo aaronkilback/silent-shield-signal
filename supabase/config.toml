@@ -568,8 +568,12 @@ verify_jwt = false
 [functions.ingest-communication]
 verify_jwt = false
 
+# WO-INBOUND-WEBHOOK-UNSIGNED: gateway-level JWT enforcement (defense-in-depth on top of the in-function
+# getClaims gate). Both real callers present a valid JWT — the frontend a user session token, and
+# qualifier-handoff the service-role key (itself a valid JWT) — so neither breaks. Deploy must NOT pass
+# --no-verify-jwt for send-sms (per-function flag discipline, WO-SUPABASE-LINK-TRAP).
 [functions.send-sms]
-verify_jwt = false
+verify_jwt = true
 
 [functions.inbound-call-notify]
 verify_jwt = false

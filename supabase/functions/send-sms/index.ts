@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getAccessibleClientIds } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -121,6 +122,23 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log(`[SendSMS] Resolved to investigation ${investigation.file_number} (${investigation.id})`);
+
+    // WO-INBOUND-WEBHOOK-UNSIGNED — send-sms AUTHORIZATION (costs money per message).
+    // Authentication (getClaims above) proves you're logged in; it does NOT prove you may spend on
+    // THIS case. A user (any role/tenant) must have access to the investigation's client, or a leaked
+    // low-priv token becomes a toll-fraud / arbitrary-SMS vector. Trusted internal service-role callers
+    // (e.g. qualifier-handoff operator alerts) bypass this check.
+    const callerRole = (claimsData.claims.role as string) || "";
+    if (callerRole !== "service_role") {
+      const accessible = await getAccessibleClientIds(supabase, userId);
+      if (!investigation.client_id || !accessible.includes(investigation.client_id)) {
+        console.warn(`[SendSMS] REJECTED: user ${userId} has no access to investigation client ${investigation.client_id}`);
+        return new Response(
+          JSON.stringify({ error: "Forbidden: no access to this investigation" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    }
 
     // Get Twilio credentials
     const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID");

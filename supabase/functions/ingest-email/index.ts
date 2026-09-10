@@ -1,4 +1,5 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity } from "../_shared/supabase-client.ts";
+import { verifyMailgunSignature } from "../_shared/webhook-auth.ts";
 
 /**
  * Ingest Email Endpoint
@@ -69,9 +70,25 @@ Deno.serve(async (req: Request) => {
         signature: formData.get("signature")?.toString() || "",
         attachment_count: formData.get("attachment-count")?.toString() || "0",
       };
+      // WO-INBOUND-WEBHOOK-UNSIGNED: verify the Mailgun signature BEFORE any write. These fields were
+      // captured but never checked — an unsigned/forged POST otherwise injects into a case file.
+      // Fail closed (missing signing key or bad signature → reject).
+      const validSig = await verifyMailgunSignature(
+        metadata.timestamp, metadata.token, metadata.signature, Deno.env.get("MAILGUN_SIGNING_KEY"),
+      );
+      if (!validSig) {
+        console.warn("[IngestEmail] REJECTED: invalid or missing Mailgun signature (spoof/unsigned)");
+        return errorResponse("Forbidden", 403);
+      }
     }
-    // --- JSON body (manual forward / API) ---
+    // --- JSON body (manual forward / API) — REQUIRES an authenticated caller ---
     else {
+      // No provider signature on the JSON path, so it must not be anonymously reachable (fail closed).
+      const caller = await getCallerIdentity(req);
+      if (caller.kind === "unauthorized") {
+        console.warn("[IngestEmail] REJECTED: JSON path requires an authenticated caller");
+        return errorResponse("authentication required", 401);
+      }
       const body = await req.json();
       sender = body.from || body.sender || "";
       subject = body.subject || "";

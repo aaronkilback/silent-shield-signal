@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { verifyTwilioSignature } from "../_shared/webhook-auth.ts";
+import { getCallerIdentity } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,17 +67,39 @@ Deno.serve(async (req: Request) => {
     if (contentType.includes("application/x-www-form-urlencoded")) {
       source = "sms";
       const formData = await req.formData();
-      senderIdentifier = normalizePhone(formData.get("From")?.toString() || "");
-      messageBody = formData.get("Body")?.toString() || "";
+      // WO-INBOUND-WEBHOOK-UNSIGNED: verify the POST genuinely came from Twilio BEFORE any write.
+      // Fail closed — a forged/unsigned POST otherwise injects attacker text into an investigation.
+      const params: Record<string, string> = {};
+      for (const [k, v] of formData.entries()) params[k] = typeof v === "string" ? v : "";
+      const webhookUrl = Deno.env.get("TWILIO_WEBHOOK_URL") || req.url; // override for proxy/CDN URL rewrites
+      const validSig = await verifyTwilioSignature(
+        webhookUrl, params, req.headers.get("X-Twilio-Signature"), Deno.env.get("TWILIO_AUTH_TOKEN"),
+      );
+      if (!validSig) {
+        console.warn("[IngestComm] REJECTED: invalid or missing X-Twilio-Signature (spoof/unsigned)");
+        return new Response("Forbidden", { status: 403, headers: corsHeaders });
+      }
+      senderIdentifier = normalizePhone(params["From"] || "");
+      messageBody = params["Body"] || "";
       metadata = {
-        twilio_sid: formData.get("MessageSid")?.toString() || "",
+        twilio_sid: params["MessageSid"] || "",
         from: senderIdentifier,
-        to: formData.get("To")?.toString() || "",
-        num_media: formData.get("NumMedia")?.toString() || "0",
+        to: params["To"] || "",
+        num_media: params["NumMedia"] || "0",
       };
     }
-    // --- JSON body (email forward, manual, or API call) ---
+    // --- JSON body (email forward, manual, or API call) — REQUIRES an authenticated caller ---
     else {
+      // WO-INBOUND-WEBHOOK-UNSIGNED: the JSON path has no provider signature to verify, so it must not
+      // be anonymously reachable. Require a service-role or valid user token (fail closed).
+      const caller = await getCallerIdentity(req);
+      if (caller.kind === "unauthorized") {
+        console.warn("[IngestComm] REJECTED: JSON path requires an authenticated caller");
+        return new Response(
+          JSON.stringify({ error: "authentication required" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       const body = await req.json();
       source = body.source || "manual";
       senderIdentifier = body.sender || body.from || "";
