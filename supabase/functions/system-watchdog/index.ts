@@ -2633,7 +2633,7 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         ${severityIcon[analysis.severity] || '⚠️'} Fortress Watchdog Intelligence Report
       </h1>
       <p style="margin: 8px 0 0; font-size: 14px; color: #e0e0e0; line-height: 1.4;">${analysis.overallAssessment}</p>
-      ${typeof (analysis as any).openFindingsTotal === 'number' ? `<p style="margin: 6px 0 0; font-size: 12px; color: #9aa0a6;">Showing ${analysis.findings.length} of ${(analysis as any).openFindingsTotal} open findings (single-sourced with the neural-map from platform_findings). Any critical appears on all surfaces until resolved or allowlisted.</p>` : ''}
+      ${typeof (analysis as any).openFindingsTotal === 'number' ? `<p style="margin: 6px 0 0; font-size: 12px; color: #9aa0a6;">Showing ${analysis.findings.length} of ${(analysis as any).openFindingsTotal} open findings (single-sourced with the neural-map from platform_findings). The other ${((analysis as any).notShownFindings || []).length} are listed under &ldquo;Not shown&rdquo; below with the reason each is quiet — never a bare count.</p>` : ''}
       <p style="margin: 6px 0 0; font-size: 12px; color: #aaa;">${now} MT • Status: ${analysis.severity.toUpperCase()} ${resolved.length > 0 ? `• ${resolved.length} auto-resolved` : ''} ${chronic.length > 0 ? `• ${chronic.length} chronic` : ''}</p>
     </div>
     
@@ -2673,7 +2673,20 @@ function buildAlertEmail(analysis: AIAnalysis, telemetry: TelemetryData, remedia
         ${unresolved.map(f => renderFinding(f, f.severity === 'critical' ? '#fca5a5' : '#fcd34d', f.severity === 'critical' ? '#ef4444' : '#f59e0b', f.severity === 'critical' ? '#1a0505' : '#1a1005')).join('')}
       ` : ''}
 
-      ${/* Observations omitted from email — informational only, no action needed */ ''}
+      ${/* WO-WATCHDOG-FINDING-TRIAGE: open findings deliberately kept OUT of the alarm body —
+           ruled/accepted (suppressed-with-ruling) + info-level — are ENUMERATED here so a dropped
+           finding is never an invisible count. Each row states WHY it is quiet. */ ''}
+      ${((analysis as any).notShownFindings || []).length > 0 ? `
+        <h2 style="color: #6b7280; font-size: 13px; margin: 20px 0 10px; text-transform: uppercase; letter-spacing: 1.5px;">Not shown — ruled or below alert threshold (${((analysis as any).notShownFindings || []).length})</h2>
+        <ul style="margin: 0 0 8px; padding-left: 18px;">
+          ${((analysis as any).notShownFindings || []).map((f: any) => `
+            <li style="color: #8b9199; font-size: 11px; line-height: 1.6; margin-bottom: 4px;">
+              <span style="color:#6b7280; text-transform:uppercase; font-size:9px; letter-spacing:0.5px;">${String(f.severity || '').toUpperCase()}</span>
+              <strong style="color:#aeb4bc;">${f.title}</strong> — <span style="color:#6b7280;">${f.why}</span>
+            </li>
+          `).join('')}
+        </ul>
+      ` : ''}
 
       ${analysis.trendNote ? `
         <div style="background: #0f172a; border: 1px solid #1e3a5f; padding: 14px 18px; margin-top: 20px; border-radius: 4px;">
@@ -2940,6 +2953,9 @@ Deno.serve(async (req) => {
 
     if (beliefAge > 48) {
       findings.push({
+        // WO-WATCHDOG-FINDING-TRIAGE: stable condition key (title-independent). The frozen case
+        // carries an operator 'accepted' ruling (finding_rulings) → pinned low, ruling-aware.
+        conditionKey: frozen ? 'agent-learning:belief-writes-frozen' : 'agent-learning:belief-stalled',
         severity: frozen ? 'medium' : 'critical',
         category: 'Agent Learning',
         title: frozen
@@ -3076,6 +3092,9 @@ Deno.serve(async (req) => {
           const deferred = KNOWN_DEFERRED_SOCIAL[jobName];
           if (deferred) {
             behavioralFindings.push({
+              // WO-WATCHDOG-FINDING-TRIAGE: condition key per deferred job; carries an 'accepted'
+              // ruling. The structurally-broken loop below MUST skip these same jobs (no duplicate).
+              conditionKey: `behavioral:social-zero-signals:${jobName}`,
               category: 'behavioral_health',
               severity: 'low',
               title: `${jobName}: 0 signals — KNOWN LIMITATION (deferred by ruling)`,
@@ -3166,6 +3185,11 @@ Deno.serve(async (req) => {
           const noCron = bad.filter((p: any) => !p.has_cron).length;
           const neverRan = bad.filter((p: any) => p.has_cron && !p.ever_succeeded).length;
           behavioralFindings.push({
+            // WO-WATCHDOG-FINDING-TRIAGE: keyed so the ruling mechanism governs and the legacy
+            // containment-substring reclassification can no longer downgrade this aggregate finding
+            // to info just because one of its listed jobs matches a contained alias (the mis-severity
+            // that let 34 phantoms sit for 38 days). Registry-is-a-Promise: this is critical.
+            conditionKey: 'behavioral:registry-phantoms',
             category: 'behavioral_health', severity: 'critical',
             title: `Registry phantoms: ${bad.length} job(s) registered without a live cron or a successful run ever`,
             analysis: `${bad.length} cron_job_registry entries advertise a health expectation but ${noCron} have no live cron and ${neverRan} have never completed a run (name-mismatch, retired, or broken). The registry is a promise; these are unkept. Sample: ${bad.slice(0, 12).map((p: any) => p.job_name).join(', ')}${bad.length > 12 ? '…' : ''}.`,
@@ -3199,7 +3223,8 @@ Deno.serve(async (req) => {
           .in('publisher_kind', ['official', 'wire', 'outlet', 'advocacy', 'sensor', 'subject'])
           .eq('provenance_path', 'none');
         if ((unprov?.length ?? 0) > 0) {
-          behavioralFindings.push({ category: 'behavioral_health', severity: 'low',
+          behavioralFindings.push({ conditionKey: 'behavioral:provenance-coverage',
+            category: 'behavioral_health', severity: 'low',
             title: `Provenance coverage: ${unprov!.length} citable-identity source(s) unprovenanced (non-citable until a feed is recorded)`,
             analysis: `${unprov!.length} sources have a citable publisher_kind but provenance_path='none' — identity known, proof not recorded, so resolveCitation correctly drops them. Not a breach (identity != proof). Sample: ${unprov!.map((s: any) => s.name).slice(0, 12).join(', ')}. Record a feed/endpoint to make them citable.`,
             plainEnglish: `Some known publishers have no recorded feed, so we cannot cite them yet.`,
@@ -3251,7 +3276,9 @@ Deno.serve(async (req) => {
         }
         const nonCit = (actIncs ?? []).filter((i: any) => !citableSrcSig.has(i.signal_id));
         if (nonCit.length > 0) {
-          behavioralFindings.push({ category: 'behavioral_health', severity: 'low',
+          behavioralFindings.push({ conditionKey: 'behavioral:incident-noncitable-evidence',
+            metricValue: nonCit.length,
+            category: 'behavioral_health', severity: 'low',
             title: `Incident evidence: ${nonCit.length} active incident(s) with non-citable primary evidence`,
             analysis: `${nonCit.length} active incidents have a primary supporting signal that is non-citable (aggregator/none/internal). The exec-brief incident gate excludes these from the report body; surfaced for review of upstream incident creation.`,
             plainEnglish: `Some open incidents rest on evidence we cannot cite; they are kept out of client reports.`,
@@ -3448,6 +3475,12 @@ Deno.serve(async (req) => {
 
       for (const [jobName, runs] of monitorByJob) {
         if (runs.length < 3) continue;
+        // WO-WATCHDOG-FINDING-TRIAGE: jobs deferred-by-ruling emit a low, ruling-aware finding in the
+        // KNOWN_DEFERRED_SOCIAL loop above. Emitting the "NEVER produced — structurally broken" HIGH
+        // here for the SAME job was the duplicate (same condition, second title-keyed fingerprint,
+        // and this branch never consulted the deferral list). Skip them. Keep in sync with
+        // KNOWN_DEFERRED_SOCIAL above.
+        if (['monitor-social-hourly', 'monitor-social', 'monitor-instagram-2h', 'monitor-instagram'].includes(jobName)) continue;
         const totalSignals = runs.reduce(
           (sum: number, r: any) => sum + (r.result_summary?.signals_created ?? 0),
           0,
@@ -3489,6 +3522,11 @@ Deno.serve(async (req) => {
         // rather than the louder "never produced" alarm.
         const counterDrift = !heartbeatProduced && realSignalCount > 0;
         behavioralFindings.push({
+          // WO-WATCHDOG-FINDING-TRIAGE: distinct stable keys — counter-drift (a real instrumentation
+          // FIX item) is a different condition from never-produced, so they never collapse together.
+          conditionKey: counterDrift
+            ? `behavioral:heartbeat-counter-drift:${jobName}`
+            : `behavioral:monitor-zero-signals:${jobName}`,
           category: 'behavioral_health',
           severity: everProduced ? 'medium' : 'high',
           title: counterDrift
@@ -3746,6 +3784,7 @@ Deno.serve(async (req) => {
             // honest-capability ledger (alongside confidence-sparsity + learning-loop), not a
             // same-day actionable defect. Report as known-strategic (low), not high.
             behavioralFindings.push({
+              conditionKey: 'behavioral:fleet-dormant',
               category: 'behavioral_health',
               severity: 'low',
               title: `Agent fleet largely dormant: ${ranIn7d}/${fleetSize} ran in 7d — KNOWN STRATEGIC (capability ledger)`,
@@ -4114,12 +4153,42 @@ Deno.serve(async (req) => {
         );
 
         if (sumApproved24h === 0) {
-          const { count: eligibleCount } = await supabase
+          // WO-WATCHDOG-FINDING-TRIAGE (DISREGARD → repair, not delete): the job auto-approves ONLY
+          // safe-direction actions — flag_false_positive, dismiss_signal, and severity DOWNGRADES
+          // (severity_rank(proposed) < severity_rank(current), per migration 20260513000001). The old
+          // predicate counted ALL propose_severity_correction incl. UPGRADES as "eligible", firing
+          // "0 approvals while N eligible await" over the ~83 upgrade proposals the job is designed
+          // never to touch. That was a false finding ("never a finding" — operator ruling 2026-09-09).
+          // Repaired to count only what the job can actually auto-approve, so the detector stays
+          // valid for a genuine auto-approve failure instead of being deleted outright.
+          const cutoff = new Date(Date.now() - 24 * 3600000).toISOString();
+          const SEV_RANK: Record<string, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
+          const { count: fpDismissCount } = await supabase
             .from('agent_actions')
             .select('id', { count: 'exact', head: true })
             .eq('status', 'awaiting_approval')
-            .in('action_type', ['propose_severity_correction', 'flag_false_positive', 'dismiss_signal'])
-            .lt('created_at', new Date(Date.now() - 24 * 3600000).toISOString());
+            .in('action_type', ['flag_false_positive', 'dismiss_signal'])
+            .lt('created_at', cutoff);
+          const { data: propRows } = await supabase
+            .from('agent_actions')
+            .select('id, action_payload, context_signal_id')
+            .eq('status', 'awaiting_approval')
+            .eq('action_type', 'propose_severity_correction')
+            .lt('created_at', cutoff)
+            .not('context_signal_id', 'is', null);
+          let downgradeCount = 0;
+          const propSigIds = [...new Set((propRows ?? []).map((r: any) => r.context_signal_id).filter(Boolean))];
+          if (propSigIds.length) {
+            const { data: propSigs } = await supabase.from('signals').select('id, severity').in('id', propSigIds);
+            const sevById = new Map((propSigs ?? []).map((s: any) => [s.id, String(s.severity || '').toLowerCase()]));
+            for (const r of propRows ?? []) {
+              const proposed = String((r.action_payload as any)?.proposed_severity || '').toLowerCase();
+              const current = sevById.get(r.context_signal_id) || '';
+              // downgrade only: the job will never auto-approve an upgrade, so it is not "eligible"
+              if (proposed && current && (SEV_RANK[proposed] ?? 99) < (SEV_RANK[current] ?? -1)) downgradeCount++;
+            }
+          }
+          const eligibleCount = (fpDismissCount ?? 0) + downgradeCount;
 
           if (eligibleCount && eligibleCount > 0) {
             // Severity escalates with persistence
@@ -4145,9 +4214,9 @@ Deno.serve(async (req) => {
               title: `auto_approve_safe_actions: 0 approvals in 24h while ${eligibleCount} eligible actions await`,
               analysis: `cron 'agent-action-auto-approve-hourly' ran ${(approvedRows ?? []).length} times in last 24h, sum(approved_count)=0. ` +
                         `Across last 7d: ${weekRunCount} runs, total approvals ${sumWeek}. ` +
-                        `${eligibleCount} eligible actions (propose_severity_correction / flag_false_positive / dismiss_signal) aged >24h sit awaiting_approval.`,
-              plainEnglish: `The auto-approve job runs hourly and reports success but isn't approving anything. ${eligibleCount} actions that should auto-approve are stuck.`,
-              action: 'Investigate auto_approve_safe_actions predicate. Likely cause: INNER JOIN on context_signal_id excludes NULL-context rows.',
+                        `${eligibleCount} AUTO-APPROVABLE actions (flag_false_positive / dismiss_signal / severity DOWNGRADES only — upgrades excluded, the job never approves them) aged >24h sit awaiting_approval.`,
+              plainEnglish: `The auto-approve job runs hourly and reports success but isn't approving anything. ${eligibleCount} actions that the job is designed to auto-approve are stuck.`,
+              action: 'Investigate auto_approve_safe_actions — this counts only downgrade/dismiss actions the job actually approves, so a nonzero here is a genuine failure. Check the severity_rank downgrade predicate and the context_signal_id join (null-context path).',
             });
           }
         }
@@ -4619,12 +4688,23 @@ Deno.serve(async (req) => {
         // recurrence with a changed count/hours ("has 5 invocations", "895h") dedups to the
         // SAME row instead of creating a new one. Must match record_platform_finding()'s
         // internal formula byte-for-byte so the auto-resolve list below stays correct.
+        // WO-WATCHDOG-FINDING-TRIAGE: fingerprint on the STABLE condition_key, not the free-text
+        // title. A probe supplies f.conditionKey (title-independent); un-keyed probes fall back to
+        // the legacy (category|normalized-title|job) identity so their dedup behavior is unchanged.
+        // The RPC recomputes the same key internally — this local copy exists only for the
+        // auto-resolve list below, and must match the RPC's `sha256('ck:'||condition_key)` formula.
         const normTitle = String(f.title || '').substring(0, 100).replace(/[0-9]+/g, '#');
-        const fp = await sha256Sync(`${f.category || 'unknown'}|${normTitle}|${job ?? ''}`);
+        const conditionKey: string = f.conditionKey
+          ?? `${f.category || 'unknown'}|${normTitle}|${job ?? ''}`;
+        const fp = await sha256Sync(`ck:${conditionKey}`);
         fingerprintsThisRun.push(fp);
 
         // Reclassify contained-by-design subjects: downgrade high/critical → info + annotate WO ref.
-        const contained = matchContainment(String(f.title || ''), String(f.analysis || ''), job);
+        // A finding that carries an explicit conditionKey is governed by the finding_rulings
+        // mechanism (applied inside the RPC), NOT by this fuzzy substring reclassification — that
+        // over-broad match is what wrongly downgraded the aggregate registry-phantoms finding to
+        // info because one listed job matched a contained alias.
+        const contained = f.conditionKey ? null : matchContainment(String(f.title || ''), String(f.analysis || ''), job);
         const effSeverity = contained && (f.severity === 'critical' || f.severity === 'warning' || f.severity === 'high')
           ? 'info' : (f.severity || 'info');
         const effAnalysis = contained
@@ -4632,7 +4712,8 @@ Deno.serve(async (req) => {
           : (f.analysis ?? null);
 
         // Atomic insert-or-increment: occurrence_count now actually counts; last_seen_at
-        // moves; a recurring finding is re-opened (resolved_at cleared).
+        // moves; a recurring finding is re-opened (resolved_at cleared). condition_key +
+        // metric_value drive the ruling application inside record_platform_finding.
         await supabase.rpc('record_platform_finding', {
           p_category: f.category || 'unknown',
           p_severity: effSeverity,
@@ -4642,6 +4723,8 @@ Deno.serve(async (req) => {
           p_action: f.action ?? null,
           p_affected_agent: agent,
           p_affected_job: job,
+          p_condition_key: conditionKey,
+          p_metric_value: typeof f.metricValue === 'number' ? f.metricValue : null,
         }).then(() => null, (e: any) => console.warn('[Watchdog] record_platform_finding failed:', e?.message));
       }
 
@@ -4815,6 +4898,42 @@ Deno.serve(async (req) => {
     } else {
       console.log('[Watchdog] No auto-remediable issues found — skipping remediation phase');
     }
+
+    // WO-WATCHDOG-FINDING-TRIAGE: single-source the EMAIL from platform_findings (the same rows the
+    // neural-map panel reads), AFTER remediation so remediationStatus/resolved are already applied.
+    // This closes the two-producer drift: severity + membership now come from the persisted,
+    // ruling-aware records — the AI can no longer mint a parallel severity for a condition that
+    // already carries an operator ruling. Ruled-accepted + info findings are moved OUT of the alarm
+    // body into an enumerated "Not shown" list (title · severity · why); a dropped finding is never
+    // again a bare "N of M" count.
+    try {
+      const { data: openPf2 } = await supabase.from('platform_findings')
+        .select('title, severity, plain_english, analysis, action, affected_job, ruling_state, ruling_note, occurrence_count')
+        .is('resolved_at', null);
+      const aiByTitle = new Map((analysis.findings || []).map((f: any) => [String(f.title || '').toLowerCase(), f]));
+      const canonical = (openPf2 || []).map((pf: any) => {
+        const ai = aiByTitle.get(String(pf.title || '').toLowerCase());
+        return {
+          category: pf.affected_job || 'platform',
+          // an auto-fix this run wins over the stored severity so the "AUTO-FIXED" badge shows
+          severity: ai?.severity === 'resolved' ? 'resolved' : pf.severity,
+          title: pf.title, analysis: pf.analysis, plainEnglish: pf.plain_english, action: pf.action,
+          rulingState: pf.ruling_state ?? null, rulingNote: pf.ruling_note ?? null,
+          remediationStatus: ai?.remediationStatus,
+          remediation_result: (ai as any)?.remediation_result,
+          isRecurring: (pf.occurrence_count ?? 1) > 1,
+          canAutoRemediate: false, remediationAction: 'none',
+        };
+      });
+      (analysis as any).openFindingsTotal = canonical.length;
+      const notShown = canonical.filter((f: any) => f.rulingState === 'accepted' || f.severity === 'info');
+      (analysis as any).notShownFindings = notShown.map((f: any) => ({
+        title: f.title, severity: f.severity,
+        why: f.rulingState === 'accepted' ? `ruled/accepted — ${f.rulingNote || 'suppressed with ruling'}` : 'info-level',
+      }));
+      analysis.findings = canonical.filter((f: any) => f.rulingState !== 'accepted' && f.severity !== 'info');
+      console.log(`[Watchdog] email single-source: ${canonical.length} open; ${analysis.findings.length} shown; ${notShown.length} not-shown (enumerated)`);
+    } catch (_e) { /* best-effort — fall back to pre-rebuild analysis.findings */ }
 
     // Phase 5: Store learnings for future runs
     console.log('[Watchdog] 🧠 Phase 5: Storing learnings...');

@@ -42,7 +42,13 @@ export function WatchdogFindingsPanel({
     else setInternalExpanded((e) => !e);
   };
 
-  const hasIssues = platformWide.length > 0 || agentScopedCount > 0;
+  // WO-WATCHDOG-FINDING-TRIAGE: ruled/accepted findings are suppress-with-ruling — true things the
+  // operator has decided. They do NOT count as active alarms (that trained skimming), but they are
+  // NOT hidden: they render dimmed under a "Ruled" divider carrying the ruling, so a future reader
+  // sees why each is quiet. Same platform_findings record the watchdog email now reads.
+  const active = platformWide.filter((f) => f.rulingState !== "accepted");
+  const ruled = platformWide.filter((f) => f.rulingState === "accepted");
+  const hasIssues = active.length > 0 || agentScopedCount > 0 || ruled.length > 0;
 
   if (!hasIssues) {
     // Healthy state — render a compact, dimmed confirmation. Doesn't
@@ -59,11 +65,11 @@ export function WatchdogFindingsPanel({
   }
 
   const sevRank: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
-  const sortedPlatform = [...platformWide].sort(
+  const sortedPlatform = [...active].sort(
     (a, b) => (sevRank[b.severity] || 0) - (sevRank[a.severity] || 0),
   );
 
-  // Pick the worst severity across both buckets for the header tone.
+  // Pick the worst severity across active findings for the header tone (ruled items never set tone).
   const worstSeverity = sortedPlatform[0]?.severity || (agentScopedCount > 0 ? 'medium' : 'info');
   const headerTone =
     worstSeverity === 'critical' ? "bg-red-950/40 border-red-800/50 shadow-lg shadow-red-900/20" :
@@ -89,19 +95,22 @@ export function WatchdogFindingsPanel({
           Watchdog Findings
         </span>
         <span className="flex items-center gap-2 text-[10px] font-medium">
-          {platformWide.length > 0 && (
+          {active.length > 0 && (
             <span className={
               worstSeverity === 'critical' ? "text-red-300" :
               worstSeverity === 'high'     ? "text-amber-300" :
                                              "text-indigo-200"
             }>
-              {platformWide.length} platform
+              {active.length} platform
             </span>
           )}
           {agentScopedCount > 0 && (
             <span className="text-muted-foreground">
               {agentScopedCount} agent{agentScopedCount > 1 ? 's' : ''} affected
             </span>
+          )}
+          {ruled.length > 0 && (
+            <span className="text-slate-500">{ruled.length} ruled</span>
           )}
         </span>
         {expanded ? <ChevronUp className="w-3 h-3 text-muted-foreground" /> : <ChevronDown className="w-3 h-3 text-muted-foreground" />}
@@ -111,10 +120,18 @@ export function WatchdogFindingsPanel({
         <div className="border-t border-border/30 max-h-[360px] overflow-y-auto">
           {sortedPlatform.length === 0 ? (
             <div className="px-3 py-2 text-[11px] text-muted-foreground italic">
-              No platform-wide findings. Agent-scoped findings render on the constellation — hover an alerting node for detail.
+              No active platform-wide findings. Agent-scoped findings render on the constellation — hover an alerting node for detail.
             </div>
           ) : (
             sortedPlatform.map((f) => <FindingRow key={f.id} f={f} />)
+          )}
+          {ruled.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 border-t border-border/30 bg-black/20 text-[9px] uppercase tracking-widest text-slate-500 font-semibold">
+                Ruled — accepted ({ruled.length}) · decided, not a live finding
+              </div>
+              {ruled.map((f) => <FindingRow key={f.id} f={f} ruled />)}
+            </>
           )}
         </div>
       )}
@@ -122,7 +139,7 @@ export function WatchdogFindingsPanel({
   );
 }
 
-function FindingRow({ f }: { f: PlatformFinding }) {
+function FindingRow({ f, ruled = false }: { f: PlatformFinding; ruled?: boolean }) {
   const palette: Record<string, { fg: string; bg: string; border: string; Icon: typeof AlertCircle }> = {
     critical: { fg: "text-red-300",     bg: "bg-red-950/40",    border: "border-l-red-500",    Icon: AlertCircle  },
     high:     { fg: "text-amber-300",   bg: "bg-amber-950/30",  border: "border-l-amber-500",  Icon: AlertTriangle },
@@ -139,7 +156,7 @@ function FindingRow({ f }: { f: PlatformFinding }) {
                  : `${Math.round(ageMin / 1440)}d`;
 
   return (
-    <div className={`px-3 py-2 border-l-2 ${p.border} ${p.bg}`}>
+    <div className={`px-3 py-2 border-l-2 ${p.border} ${p.bg} ${ruled ? "opacity-60" : ""}`}>
       <div className="flex items-start gap-2">
         <Icon className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${p.fg}`} />
         <div className="flex-1 min-w-0">
@@ -159,9 +176,14 @@ function FindingRow({ f }: { f: PlatformFinding }) {
           {f.plainEnglish && (
             <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{f.plainEnglish}</div>
           )}
-          {f.action && (
+          {f.action && !ruled && (
             <div className="text-[10px] mt-1 leading-snug" style={{ color: "rgba(165,180,252,0.85)" }}>
               ↳ {f.action}
+            </div>
+          )}
+          {ruled && f.rulingNote && (
+            <div className="text-[10px] mt-1 leading-snug text-slate-400 italic">
+              ⚖ Ruled: {f.rulingNote}
             </div>
           )}
         </div>
