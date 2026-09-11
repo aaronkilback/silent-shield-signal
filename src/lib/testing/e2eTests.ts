@@ -5772,15 +5772,7 @@ export const systemHealthTests = {
         // Should respond (will fail auth but function is deployed)
       },
     },
-    {
-      name: 'ingest-communication function responds',
-      fn: async () => {
-        const { data, error } = await supabase.functions.invoke('ingest-communication', {
-          body: { source: 'test', message: 'ping', test_mode: true }
-        });
-        // Should respond (may return 422 for no case ref — that's correct behavior)
-      },
-    },
+    // ingest-communication test REMOVED 2026-09-11 — function retired (WO-INBOUND-WEBHOOK-UNSIGNED).
     {
       name: 'list-communications function responds',
       fn: async () => {
