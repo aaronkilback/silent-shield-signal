@@ -5,19 +5,24 @@
  * agent_actions_awaiting_approval queue. Loads the action row, validates
  * status, executes per action_type, marks the row 'executed' or 'failed'.
  *
- * Permission model:
- *   - Action must already have status='approved' (set by the frontend
- *     approval handler) OR status='awaiting_approval' (we promote it here).
- *   - The caller MUST be authenticated (verify_jwt=true on this function)
- *     and must have super_admin or analyst role — the JWT is checked by
- *     the gateway. This function trusts the caller's auth context for
- *     approved_by.
+ * Permission model (WO-INBOUND-WEBHOOK-UNSIGNED, 2026-09-11 — ENFORCED here, was not before):
+ *   - The docstring PREVIOUSLY claimed "verify_jwt=true … role checked by the gateway" and trusted
+ *     body.approver_user_id. NONE of that was true: config + deployed verify_jwt were FALSE, there was
+ *     no in-function auth at all, and the approver id came from the (forgeable) request body. Anyone
+ *     with the URL could approve/execute or reject ANY pending agent action and forge the approver.
+ *   - Now: gateway verify_jwt=true (config) + in-function getCallerIdentity (fail-closed 401), the
+ *     approver identity is DERIVED FROM THE TOKEN (not the body), and a user caller must hold an
+ *     approver role (super_admin/admin/analyst) AND have access to the action's client. Trusted
+ *     service_role callers bypass the user checks.
+ *   - Action must be status='awaiting_approval'; the executed payload is the STORED action_payload.
  *
  * Per-action executors live below. Adding a new propose-tier action means
  * adding a case here; the queue page UI is generic.
  */
 
-import { createServiceClient, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, handleCors, successResponse, errorResponse, getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
+
+const APPROVER_ROLES = new Set(["super_admin", "admin", "analyst"]);
 
 interface ExecuteInput {
   action_id: string;
@@ -32,13 +37,21 @@ Deno.serve(async (req) => {
 
   const supabase = createServiceClient();
   try {
+    // WO-INBOUND-WEBHOOK-UNSIGNED: authenticate BEFORE loading or mutating anything. Fail closed.
+    const caller = await getCallerIdentity(req);
+    if (caller.kind === 'unauthorized') {
+      return errorResponse(caller.error || 'authentication required', caller.status || 401);
+    }
+
     const body = await req.json().catch(() => ({})) as ExecuteInput;
-    if (!body?.action_id || !body?.approver_user_id || !body?.decision) {
-      return errorResponse('action_id, approver_user_id, decision are required', 400);
+    if (!body?.action_id || !body?.decision) {
+      return errorResponse('action_id and decision are required', 400);
     }
     if (body.decision !== 'approve' && body.decision !== 'reject') {
       return errorResponse('decision must be approve or reject', 400);
     }
+    // Approver identity is DERIVED FROM THE TOKEN, never the request body (kills forged attribution).
+    const approverId = caller.kind === 'user' ? caller.userId : (body.approver_user_id || 'service_role');
 
     // 1. Load the action
     const { data: action, error: loadError } = await supabase
@@ -51,11 +64,27 @@ Deno.serve(async (req) => {
       return errorResponse(`Action is in status='${action.status}', cannot ${body.decision}`, 409);
     }
 
+    // WO-INBOUND-WEBHOOK-UNSIGNED authorization — user callers must hold an approver role AND have
+    // access to the action's client. service_role callers are trusted internal and bypass.
+    if (caller.kind === 'user') {
+      const { data: roleRows } = await supabase.from('user_roles').select('role').eq('user_id', caller.userId);
+      const hasApproverRole = (roleRows ?? []).some((r: any) => APPROVER_ROLES.has(r.role));
+      if (!hasApproverRole) {
+        return errorResponse('Forbidden: approver role (super_admin/admin/analyst) required', 403);
+      }
+      if (action.client_id) {
+        const accessible = await getAccessibleClientIds(supabase, caller.userId);
+        if (!accessible.includes(action.client_id)) {
+          return errorResponse("Forbidden: no access to this action's client", 403);
+        }
+      }
+    }
+
     // 2. Reject path
     if (body.decision === 'reject') {
       await supabase.from('agent_actions').update({
         status: 'rejected',
-        rejected_by: body.approver_user_id,
+        rejected_by: approverId,
         rejected_at: new Date().toISOString(),
         rejection_reason: (body.rejection_reason || '').substring(0, 500),
         updated_at: new Date().toISOString(),
@@ -66,7 +95,7 @@ Deno.serve(async (req) => {
     // 3. Approve path: mark approved, then execute per action_type
     await supabase.from('agent_actions').update({
       status: 'approved',
-      approved_by: body.approver_user_id,
+      approved_by: approverId,
       approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', body.action_id);

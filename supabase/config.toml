@@ -781,8 +781,12 @@ verify_jwt = true
 [functions.detect-threat-patterns]
 verify_jwt = false
 
+# WO-INBOUND-WEBHOOK-UNSIGNED: was anonymously reachable (verify_jwt=false + no in-function auth) and
+# executed agent-action mutations with a forgeable approver. Gateway now enforces JWT (frontend sends a
+# user session token; no internal service-role caller to break). In-function auth + role/client authz
+# added. Deploy must NOT pass --no-verify-jwt for execute-approved-action.
 [functions.execute-approved-action]
-verify_jwt = false
+verify_jwt = true
 
 [functions.extract-predicted-events]
 verify_jwt = false

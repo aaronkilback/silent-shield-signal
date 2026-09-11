@@ -49,5 +49,13 @@ Prior report called send-sms "an unauthenticated outbound sender." **That was wr
 
 **Sequence:** ingest-communication + ingest-email (built) → `execute-approved-action` (mutation executor, urgent) → financial tier → write tier → intentional-public documentation pass.
 
+## execute-approved-action — the worst one (fixed 2026-09-11, same branch/PR)
+
+The Part B top-tier flag, investigated + fixed. **Deployed `verify_jwt=false` (v84), no in-function auth, docstring falsely claimed `verify_jwt=true` + role checks.** Anonymously reachable executor of the human-approval queue.
+- **What it executes:** only actions already `status='awaiting_approval'` (can't invent one); runs the STORED `action_payload`. Executors: `propose_severity_correction` → UPDATE `signals` severity/severity_score/triage_override (any direction); `notify_oncall_via_slack` → POST arbitrary stored message to the on-call Slack webhook (pages a human). Approve/reject both flip `agent_actions.status` and stamped `approved_by`/`rejected_by` from the **forgeable request body**. Net: an anon could auto-approve/execute or reject ANY pending action and forge the approver — defeating the entire approval control.
+- **External invocation:** edge logs across the observable window (24h + the 09-08 window) → **zero requests of any kind. No misuse.** Latent.
+- **Legit caller:** only `src/components/agents/AgentActionApprovalQueue.tsx` (frontend, user session JWT, passing `approver_user_id: user.id`). No internal service-role caller.
+- **Fix (built, no deploy):** gateway `verify_jwt=true`; in-function `getCallerIdentity` (401 fail-closed); **approver derived from the token, not the body** (kills forgery); user callers must hold an approver role (super_admin/admin/analyst via `user_roles`) AND have access to the action's `client_id` (`getAccessibleClientIds`); `service_role` bypasses. Nothing breaks: the frontend already sends the session JWT + the same user id.
+
 ## Companion doctrines
 Provenance Doctrine, Population-Before-Check (the gap is a population — swept the whole set, not one function), Absence-Is-Not-A-Value (0 persisted ≠ 0 attempts), Confidence-is-not-correctness (grep hit-counts mislead — send-sms was verified by reading, not by count).
