@@ -94,28 +94,32 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 2. Reject path
+    // 2. Reject path — WO race fix (#2): CONDITIONAL compare-and-swap. Only the transition FROM
+    // awaiting_approval succeeds; a concurrent decision / double-click changes 0 rows → 409, never twice.
     if (body.decision === 'reject') {
-      const { error: rejErr } = await supabase.from('agent_actions').update({
+      const { data: rejRows, error: rejErr } = await supabase.from('agent_actions').update({
         status: 'rejected',
         rejected_by: approverId,
         rejected_at: new Date().toISOString(),
         rejection_reason: (body.rejection_reason || '').substring(0, 500),
         updated_at: new Date().toISOString(),
-      }).eq('id', body.action_id);
+      }).eq('id', body.action_id).eq('status', 'awaiting_approval').select('id');
       if (rejErr) return errorResponse(`Failed to reject action: ${rejErr.message}`, 500);
+      if (!rejRows || rejRows.length !== 1) return errorResponse('Action already processed (concurrent decision)', 409);
       return successResponse({ status: 'rejected', action_id: body.action_id });
     }
 
-    // 3. Approve path: mark approved, then execute per action_type. WO finding E: fail loud — if the
-    // status transition doesn't land, do NOT proceed to execute (was previously unchecked).
-    const { error: apprErr } = await supabase.from('agent_actions').update({
+    // 3. Approve path — WO race fix (#2): CAS the transition on (id AND status='awaiting_approval');
+    // exactly ONE row must change, or another approver already claimed it (409, do NOT execute twice).
+    // This is the atomic lock — the prior "update by id only" let two approvers each execute.
+    const { data: apprRows, error: apprErr } = await supabase.from('agent_actions').update({
       status: 'approved',
       approved_by: approverId,
       approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq('id', body.action_id);
+    }).eq('id', body.action_id).eq('status', 'awaiting_approval').select('id');
     if (apprErr) return errorResponse(`Failed to mark action approved: ${apprErr.message}`, 500);
+    if (!apprRows || apprRows.length !== 1) return errorResponse('Action already processed (concurrent approval)', 409);
 
     let result: unknown = null;
     let executionStatus: 'executed' | 'failed' = 'executed';
@@ -123,7 +127,8 @@ Deno.serve(async (req) => {
     try {
       switch (action.action_type) {
         case 'propose_severity_correction':
-          result = await executeSeverityCorrection(supabase, action.action_payload);
+          // WO finding #1: bind the payload target to the action's authorized client scope.
+          result = await executeSeverityCorrection(supabase, action.action_payload, action.client_id);
           break;
         case 'notify_oncall_via_slack':
           result = await executeOncallSlackNotify(action.action_payload);
@@ -163,7 +168,7 @@ Deno.serve(async (req) => {
 
 // ── Executors ──────────────────────────────────────────────────────────────
 
-async function executeSeverityCorrection(supabase: any, payload: any) {
+async function executeSeverityCorrection(supabase: any, payload: any, actionClientId: string | null) {
   const signalId = payload?.signal_id;
   const proposedSeverity = payload?.proposed_severity;
   const evidence = payload?.evidence ?? '';
@@ -172,6 +177,20 @@ async function executeSeverityCorrection(supabase: any, payload: any) {
   }
   if (!['low', 'medium', 'high', 'critical'].includes(proposedSeverity)) {
     throw new Error(`Invalid severity '${proposedSeverity}'`);
+  }
+  // WO finding #1 — PAYLOAD-SCOPE BINDING (cross-tenant write prevention). The approver was authorized
+  // against action.client_id, NOT against payload.signal_id. The fleet generates these payloads and we
+  // have already found contaminated ones, so a payload pointing at another client's signal must be
+  // refused even though the ACTION passed authorization. A signal write must be client-scoped.
+  if (!actionClientId) {
+    throw new Error('refused: signal-targeting action has null client_id — must be client-scoped');
+  }
+  const { data: sig, error: sigErr } = await supabase
+    .from('signals').select('id, client_id').eq('id', signalId).maybeSingle();
+  if (sigErr) throw new Error(`target signal lookup failed: ${sigErr.message}`);
+  if (!sig) throw new Error(`target signal ${signalId} not found`);
+  if (sig.client_id !== actionClientId) {
+    throw new Error(`refused cross-tenant payload: signal ${signalId} belongs to client ${sig.client_id}, action scoped to ${actionClientId}`);
   }
   const severityScore = proposedSeverity === 'critical' ? 90
                       : proposedSeverity === 'high' ? 70
@@ -184,6 +203,7 @@ async function executeSeverityCorrection(supabase: any, payload: any) {
       triage_override: 'agent_proposed',
     })
     .eq('id', signalId)
+    .eq('client_id', actionClientId)  // belt-and-suspenders: physically cannot touch another client's signal
     .select('id, severity, severity_score')
     .single();
   if (error) throw new Error(`Update failed: ${error.message}`);

@@ -72,5 +72,18 @@ Self-review of the round-1 diff: the signature fix closed the *anonymous* door b
 - **F — live provider verification.** After deploy, inbound SMS AND inbound email must EACH be proven against a **real** Twilio/Mailgun request landing as an investigation entry. The HMACs are unproven end-to-end; a wrong URL/key fails closed silently. Not "done" until both are observed working post-deploy.
 - **G — `MAILGUN_SIGNING_KEY`** (webhook signing key, not API key) lands with the deploy or all inbound email 403s. `send-sms` + `execute-approved-action` deploy **without** `--no-verify-jwt`.
 
+## Independent review round 3 (2026-09-11) — 2 real found, 2 stale, fixed on #213
+
+An independent reviewer read the diff. Two genuine findings neither prior pass caught, both fixed:
+- **#1 — payload target unbound (genuine cross-tenant WRITE).** `execute-approved-action` authorized the caller against `action.client_id`, but `executeSeverityCorrection` updated `signals` by `payload.signal_id` with **no check the signal belongs to that client**. An approver for client A could execute an A-scoped action whose (fleet-generated, possibly contaminated) payload points at a signal in client B → write to B. **Fixed:** bind the payload to the authorized scope — refuse null-client signal actions, require `signal.client_id === action.client_id`, and scope the UPDATE with `.eq('client_id', action.client_id)`. Refusal → action marked `failed` with reason, never executed.
+- **#2 — double-execute race (TOCTOU).** Loaded on `status='awaiting_approval'` then updated by `id` only → two approvers / a double-click both pass the check and both execute. **Fixed:** the status transition is now a conditional compare-and-swap (`.eq('id').eq('status','awaiting_approval').select()`), must change exactly one row, else 409 — never executes twice. Applied to both approve and reject.
+- **#3 — `config.toml` had no `[functions.ingest-email]` entry** → a redeploy could default it to `verify_jwt=true` and block Mailgun. **Fixed:** explicit `verify_jwt=false` added (reachability gated by signature + JSON authz, not the gateway).
+
+**Two review findings were STALE** — the reviewer was given the round-1 (pre-`b4ff7e6c`) diff: the JSON-path authn-without-authz and the body-forgeable service-role approver were **already fixed** in `b4ff7e6c` (verified: `jsonCallerUserId` client-access check in both ingest fns; approver = `caller.userId`, never the body for a user). Not open.
+
+**Accepted (not fixed, by ruling):**
+- **Malformed-input 500s** — a non-JSON body to a JSON path throws → generic 500 after the auth gate. Accepted: it's post-gate, leaks nothing, writes nothing.
+- **Pre-signature body parsing** — `req.formData()` is read before signature verification (necessary — the params ARE the signed content). Accepted: parsing a form body before verifying is standard and does not write/act; the signature check gates every write.
+
 ## Companion doctrines
 Provenance Doctrine, Population-Before-Check (the gap is a population — swept the whole set, not one function), Absence-Is-Not-A-Value (0 persisted ≠ 0 attempts), Confidence-is-not-correctness (grep hit-counts mislead — send-sms was verified by reading, not by count).

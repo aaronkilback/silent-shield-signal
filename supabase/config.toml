@@ -568,6 +568,13 @@ verify_jwt = false
 [functions.ingest-communication]
 verify_jwt = false
 
+# WO-INBOUND-WEBHOOK-UNSIGNED (#3): explicit entry so a redeploy can't default it to verify_jwt=true and
+# block Mailgun (which sends no JWT). Must stay false — reachability is gated by the Mailgun signature
+# (form path) + authenticated-caller-with-client-access (JSON path), not by the gateway. Deploy must
+# confirm the DEPLOYED verify_jwt is false (part of the F live-verification precondition).
+[functions.ingest-email]
+verify_jwt = false
+
 # WO-INBOUND-WEBHOOK-UNSIGNED: gateway-level JWT enforcement (defense-in-depth on top of the in-function
 # getClaims gate). Both real callers present a valid JWT — the frontend a user session token, and
 # qualifier-handoff the service-role key (itself a valid JWT) — so neither breaks. Deploy must NOT pass
