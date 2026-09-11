@@ -568,8 +568,19 @@ verify_jwt = false
 [functions.ingest-communication]
 verify_jwt = false
 
-[functions.send-sms]
+# WO-INBOUND-WEBHOOK-UNSIGNED (#3): explicit entry so a redeploy can't default it to verify_jwt=true and
+# block Mailgun (which sends no JWT). Must stay false — reachability is gated by the Mailgun signature
+# (form path) + authenticated-caller-with-client-access (JSON path), not by the gateway. Deploy must
+# confirm the DEPLOYED verify_jwt is false (part of the F live-verification precondition).
+[functions.ingest-email]
 verify_jwt = false
+
+# WO-INBOUND-WEBHOOK-UNSIGNED: gateway-level JWT enforcement (defense-in-depth on top of the in-function
+# getClaims gate). Both real callers present a valid JWT — the frontend a user session token, and
+# qualifier-handoff the service-role key (itself a valid JWT) — so neither breaks. Deploy must NOT pass
+# --no-verify-jwt for send-sms (per-function flag discipline, WO-SUPABASE-LINK-TRAP).
+[functions.send-sms]
+verify_jwt = true
 
 [functions.inbound-call-notify]
 verify_jwt = false
@@ -777,8 +788,12 @@ verify_jwt = true
 [functions.detect-threat-patterns]
 verify_jwt = false
 
+# WO-INBOUND-WEBHOOK-UNSIGNED: was anonymously reachable (verify_jwt=false + no in-function auth) and
+# executed agent-action mutations with a forgeable approver. Gateway now enforces JWT (frontend sends a
+# user session token; no internal service-role caller to break). In-function auth + role/client authz
+# added. Deploy must NOT pass --no-verify-jwt for execute-approved-action.
 [functions.execute-approved-action]
-verify_jwt = false
+verify_jwt = true
 
 [functions.extract-predicted-events]
 verify_jwt = false

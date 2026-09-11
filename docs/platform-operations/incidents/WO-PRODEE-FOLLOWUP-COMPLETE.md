@@ -37,3 +37,16 @@ The fix at the time added **7 read tools** to `TENANT_SCOPED_TOOLS` (`get_recent
 
 ## Companion
 PROD-EE (2026-05-24). Sibling of WO-CORRELATE-SIGNALS-TENANT-SCOPE (same boundary, same clients, different mechanism). Tenant-isolation-audit-checklist (service-role reads need explicit tenant predicates — RLS does not save a SERVICE_ROLE caller). Population-Before-Check (the allowlist is the aperture; everything outside it is unchecked).
+
+## Classification pass — STARTED 2026-09-10, NOT COMPLETE (honest partial)
+
+Structural extraction from `dashboard-ai-assistant/index.ts`:
+- **`TENANT_SCOPED_TOOLS` = 92** (get the fail-closed gate + handler tenant filtering).
+- **`CONTAINMENT_DISABLED_TOOLS` = 4** (`get_cross_tenant_patterns`, `get_global_learning_insights`, `get_signal_contradictions`, `query_expert_knowledge`).
+- `handlers-signals-incidents.ts`: 14 tenant-table reads / 82 predicate refs — heavily scoped.
+
+**The clean unscoped-tool list is NOT yet produced — do NOT read this as "0 unscoped."** Two method walls, each of which would manufacture a false all-clear if ignored:
+1. **Case-label pollution:** a naive `case 'X':` sweep (145 labels) conflates the tool dispatcher with unrelated sub-switches (`dns_error`, `timeout`, `executive_summary`, `exposure_tier`, report-section/error enums) — the "not-gated remainder" is not a tool list.
+2. **Delegated handlers:** ~21 tools dispatch into `_shared/` (`aegis-tool-executor.ts`, `agent-tools-core.ts`, `agent-tools.ts`, `voice-tool-*.ts`, `handlers-signals-incidents.ts`); an inline-dispatcher scan cannot see their tenant-table access.
+
+**To finish properly (remaining):** (a) isolate the ONE real tool-dispatch switch + enumerate real tool names from the executor/registry; (b) subtract 92 gated + 4 disabled → ungated real-tool set; (c) trace each into its handler across the `_shared` tool files; (d) flag every handler reading a tenant-scoped table without a `client_id`/`tenant_id` predicate → the WO-PRODEE remediation scope. Not completed this session (ran A→B first per operator order; C is the remaining item).

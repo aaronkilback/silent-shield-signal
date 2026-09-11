@@ -1,4 +1,5 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
+import { verifyMailgunSignature } from "../_shared/webhook-auth.ts";
 
 /**
  * Ingest Email Endpoint
@@ -45,6 +46,9 @@ Deno.serve(async (req: Request) => {
     let bodyText = "";
     let recipientRaw = "";
     let metadata: Record<string, string> = {};
+    // WO-INBOUND-WEBHOOK-UNSIGNED (A): JSON-path user caller id, authorized post-routing against the
+    // case's client. Null on the Mailgun form path (signature-gated) and for service_role (bypass).
+    let jsonCallerUserId: string | null = null;
 
     // --- Mailgun webhook (multipart/form-data) ---
     if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
@@ -69,9 +73,26 @@ Deno.serve(async (req: Request) => {
         signature: formData.get("signature")?.toString() || "",
         attachment_count: formData.get("attachment-count")?.toString() || "0",
       };
+      // WO-INBOUND-WEBHOOK-UNSIGNED: verify the Mailgun signature BEFORE any write. These fields were
+      // captured but never checked — an unsigned/forged POST otherwise injects into a case file.
+      // Fail closed (missing signing key or bad signature → reject).
+      const validSig = await verifyMailgunSignature(
+        metadata.timestamp, metadata.token, metadata.signature, Deno.env.get("MAILGUN_SIGNING_KEY"),
+      );
+      if (!validSig) {
+        console.warn("[IngestEmail] REJECTED: invalid or missing Mailgun signature (spoof/unsigned)");
+        return errorResponse("Forbidden", 403);
+      }
     }
-    // --- JSON body (manual forward / API) ---
+    // --- JSON body (manual forward / API) — REQUIRES an authenticated caller ---
     else {
+      // No provider signature on the JSON path, so it must not be anonymously reachable (fail closed).
+      const caller = await getCallerIdentity(req);
+      if (caller.kind === "unauthorized") {
+        console.warn("[IngestEmail] REJECTED: JSON path requires an authenticated caller");
+        return errorResponse("authentication required", 401);
+      }
+      jsonCallerUserId = caller.kind === "user" ? caller.userId : null; // service_role bypasses client authz
       const body = await req.json();
       sender = body.from || body.sender || "";
       subject = body.subject || "";
@@ -104,6 +125,17 @@ Deno.serve(async (req: Request) => {
     if (!investigation) {
       console.log(`[IngestEmail] No investigation found for tag: ${tag}`);
       return errorResponse(`No investigation found for email tag: ${tag}`, 404);
+    }
+
+    // WO-INBOUND-WEBHOOK-UNSIGNED (A): a JSON-path USER caller must have access to the resolved case's
+    // client — authentication ≠ authorization. Mailgun form path is signature-gated (jsonCallerUserId
+    // null); service_role bypasses. Same standard as send-sms.
+    if (jsonCallerUserId) {
+      const accessible = await getAccessibleClientIds(supabase, jsonCallerUserId);
+      if (!investigation.client_id || !accessible.includes(investigation.client_id)) {
+        console.warn(`[IngestEmail] REJECTED: user ${jsonCallerUserId} lacks access to investigation client ${investigation.client_id}`);
+        return errorResponse("Forbidden: no access to this investigation's client", 403);
+      }
     }
 
     console.log(`[IngestEmail] Matched tag "${tag}" → case ${investigation.file_number}`);
