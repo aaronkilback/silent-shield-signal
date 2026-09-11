@@ -85,5 +85,21 @@ An independent reviewer read the diff. Two genuine findings neither prior pass c
 - **Malformed-input 500s** — a non-JSON body to a JSON path throws → generic 500 after the auth gate. Accepted: it's post-gate, leaks nothing, writes nothing.
 - **Pre-signature body parsing** — `req.formData()` is read before signature verification (necessary — the params ARE the signed content). Accepted: parsing a form body before verifying is standard and does not write/act; the signature check gates every write.
 
+## Deploy 2026-09-11 (#213 merged as b9725fd8) — 3 of 4 deployed + verified; F cannot run (no live providers)
+
+**Deployed to prod + four-point + Merged-And-Running verified (all from tree b9725fd8 = origin/main):**
+- `execute-approved-action` v84→**85**, verify_jwt=**true** (probe: gateway 401) — auth + role/client authz + null-client→super_admin + CAS + payload-scope binding all in the served bundle. **This is the one that mattered (live frontend consumer, was the anon mutation executor).**
+- `send-sms` v120→**121**, verify_jwt=**true** — authz block in bundle; gateway 401 on no-auth.
+- `ingest-communication` v115→**116**, verify_jwt=**false** — Twilio signature (form-no-sig probe → **403**) + JSON-path authz (json-no-auth → **401**).
+
+**Mailgun CANCELLED (operator, 2026-09-11).** `ingest-email` **NOT redeployed** — skipped by ruling. It is currently deployed **verify_jwt=true** (gateway-gated, anonymously unreachable; it had no config entry so its last deploy defaulted true). Config↔deployed divergence: the merged #3 sets config `verify_jwt=false`, deployed is `true`; harmless while unwired, and the merged fix fails closed without `MAILGUN_SIGNING_KEY` if ever redeployed. **Deployed-but-unwired, no provider.**
+
+**F (live provider proof) CANNOT RUN — and that is itself the finding:** the entire investigation-SMS/email comms path has **never carried real traffic** — inbound SMS 0, outbound SMS 0, `[SMS RECEIVED]` entries 0, ever. So:
+- F-email: void — Mailgun cancelled, no sender.
+- F-SMS: not runnable — Twilio's inbound Messaging webhook target is **unverifiable from here (external console)** and, given zero traffic ever, almost certainly **not wired**. Texting the number likely won't reach `ingest-communication`.
+- **The security fixes ARE live and verified** (the gates provably reject unauthorized/forged requests — 403/401 probes). What can't be proven is *functional intake*, because the feature has no live provider on either channel.
+
+**WIRE-OR-RETIRE decision (operator, not decided here):** the investigation SMS/email comms feature (`send-sms` outbound, `ingest-communication` inbound SMS, `ingest-email` inbound email) appears **dormant/unwired** — deployed and now hardened, but with no observed traffic and no live provider (Mailgun cancelled; Twilio inbound webhook unconfirmed). Each should either get a wired provider or be retired (delete the function + its config entry). The signature/authz hardening is correct and harmless regardless. AEGIS email channel provider (Cloudflare Email Routing likely) is a **separate** decision — not scoped here.
+
 ## Companion doctrines
 Provenance Doctrine, Population-Before-Check (the gap is a population — swept the whole set, not one function), Absence-Is-Not-A-Value (0 persisted ≠ 0 attempts), Confidence-is-not-correctness (grep hit-counts mislead — send-sms was verified by reading, not by count).
