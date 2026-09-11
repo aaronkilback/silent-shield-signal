@@ -530,6 +530,11 @@
     "added": "2026-07-31"
   },
   {
+    "function": "ingest-email",
+    "reason": "Mailgun inbound-email webhook \u2014 public by design (Mailgun sends no JWT). Reachability gated by Mailgun HMAC signature on the form path + authenticated-caller-with-client-access on the JSON path (WO-INBOUND-WEBHOOK-UNSIGNED). Surfaced to check1 by adding the explicit config entry it previously lacked.",
+    "added": "2026-09-11"
+  },
+  {
     "function": "ingest-email-intel",
     "reason": "LEGACY-UNREVIEWED \u2014 pending WO item 4 triage",
     "added": "2026-07-31"
