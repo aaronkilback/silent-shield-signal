@@ -51,7 +51,13 @@ Deno.serve(async (req) => {
       return errorResponse('decision must be approve or reject', 400);
     }
     // Approver identity is DERIVED FROM THE TOKEN, never the request body (kills forged attribution).
-    const approverId = caller.kind === 'user' ? caller.userId : (body.approver_user_id || 'service_role');
+    // approved_by/rejected_by are nullable uuid — a service_role caller may pass an explicit uuid, but
+    // a non-uuid/absent value falls back to NULL (never the literal 'service_role', which would fail
+    // the uuid column). WO finding E.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const approverId: string | null = caller.kind === 'user'
+      ? caller.userId
+      : (typeof body.approver_user_id === 'string' && UUID_RE.test(body.approver_user_id) ? body.approver_user_id : null);
 
     // 1. Load the action
     const { data: action, error: loadError } = await supabase
@@ -68,37 +74,48 @@ Deno.serve(async (req) => {
     // access to the action's client. service_role callers are trusted internal and bypass.
     if (caller.kind === 'user') {
       const { data: roleRows } = await supabase.from('user_roles').select('role').eq('user_id', caller.userId);
-      const hasApproverRole = (roleRows ?? []).some((r: any) => APPROVER_ROLES.has(r.role));
-      if (!hasApproverRole) {
+      const roles = (roleRows ?? []).map((r: any) => r.role as string);
+      if (!roles.some((r) => APPROVER_ROLES.has(r))) {
         return errorResponse('Forbidden: approver role (super_admin/admin/analyst) required', 403);
       }
       if (action.client_id) {
+        // client-scoped action → caller must have access to that client (same standard as send-sms).
         const accessible = await getAccessibleClientIds(supabase, caller.userId);
         if (!accessible.includes(action.client_id)) {
           return errorResponse("Forbidden: no access to this action's client", 403);
+        }
+      } else {
+        // WO finding D: a NULL-client action is platform/global-scoped (agents often emit these). It is
+        // bound to no tenant, so a tenant-scoped analyst must NOT approve/execute it — do NOT skip the
+        // check; require super_admin. Enforcing (not skipping) is the whole point.
+        if (!roles.includes('super_admin')) {
+          return errorResponse('Forbidden: null-client (platform-scoped) action requires super_admin', 403);
         }
       }
     }
 
     // 2. Reject path
     if (body.decision === 'reject') {
-      await supabase.from('agent_actions').update({
+      const { error: rejErr } = await supabase.from('agent_actions').update({
         status: 'rejected',
         rejected_by: approverId,
         rejected_at: new Date().toISOString(),
         rejection_reason: (body.rejection_reason || '').substring(0, 500),
         updated_at: new Date().toISOString(),
       }).eq('id', body.action_id);
+      if (rejErr) return errorResponse(`Failed to reject action: ${rejErr.message}`, 500);
       return successResponse({ status: 'rejected', action_id: body.action_id });
     }
 
-    // 3. Approve path: mark approved, then execute per action_type
-    await supabase.from('agent_actions').update({
+    // 3. Approve path: mark approved, then execute per action_type. WO finding E: fail loud — if the
+    // status transition doesn't land, do NOT proceed to execute (was previously unchecked).
+    const { error: apprErr } = await supabase.from('agent_actions').update({
       status: 'approved',
       approved_by: approverId,
       approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', body.action_id);
+    if (apprErr) return errorResponse(`Failed to mark action approved: ${apprErr.message}`, 500);
 
     let result: unknown = null;
     let executionStatus: 'executed' | 'failed' = 'executed';

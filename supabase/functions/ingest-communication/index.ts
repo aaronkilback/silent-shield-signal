@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { verifyTwilioSignature } from "../_shared/webhook-auth.ts";
-import { getCallerIdentity } from "../_shared/supabase-client.ts";
+import { getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -62,6 +62,10 @@ Deno.serve(async (req: Request) => {
     let senderIdentifier = "";
     let messageBody = "";
     let metadata: Record<string, string> = {};
+    // WO-INBOUND-WEBHOOK-UNSIGNED (A): set on the JSON path to the user caller's id; used AFTER routing
+    // to authorize against the resolved case's client. Null on the Twilio form path (signature-gated)
+    // and for service_role callers (trusted internal → bypass).
+    let jsonCallerUserId: string | null = null;
 
     // --- Twilio SMS Webhook (application/x-www-form-urlencoded) ---
     if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -100,6 +104,8 @@ Deno.serve(async (req: Request) => {
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
+      // user → must be authorized for the target case's client (checked post-routing); service_role bypasses
+      jsonCallerUserId = caller.kind === "user" ? caller.userId : null;
       const body = await req.json();
       source = body.source || "manual";
       senderIdentifier = body.sender || body.from || "";
@@ -196,6 +202,21 @@ Deno.serve(async (req: Request) => {
         }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // WO-INBOUND-WEBHOOK-UNSIGNED (A): authentication ≠ authorization. A JSON-path USER caller must have
+    // access to the RESOLVED case's client, or any logged-in user (any tenant) could inject into any
+    // case by naming its file_number. Same standard as send-sms. Twilio form path: jsonCallerUserId is
+    // null (provider-signature-gated). service_role: null (trusted internal → bypass).
+    if (jsonCallerUserId) {
+      const accessible = await getAccessibleClientIds(supabase, jsonCallerUserId);
+      if (!investigation.client_id || !accessible.includes(investigation.client_id)) {
+        console.warn(`[IngestComm] REJECTED: user ${jsonCallerUserId} lacks access to investigation client ${investigation.client_id}`);
+        return new Response(
+          JSON.stringify({ error: "Forbidden: no access to this investigation's client" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
 
     // Build entry text with source context

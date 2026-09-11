@@ -1,4 +1,4 @@
-import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity } from "../_shared/supabase-client.ts";
+import { createServiceClient, corsHeaders, handleCors, successResponse, errorResponse, getCallerIdentity, getAccessibleClientIds } from "../_shared/supabase-client.ts";
 import { verifyMailgunSignature } from "../_shared/webhook-auth.ts";
 
 /**
@@ -46,6 +46,9 @@ Deno.serve(async (req: Request) => {
     let bodyText = "";
     let recipientRaw = "";
     let metadata: Record<string, string> = {};
+    // WO-INBOUND-WEBHOOK-UNSIGNED (A): JSON-path user caller id, authorized post-routing against the
+    // case's client. Null on the Mailgun form path (signature-gated) and for service_role (bypass).
+    let jsonCallerUserId: string | null = null;
 
     // --- Mailgun webhook (multipart/form-data) ---
     if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
@@ -89,6 +92,7 @@ Deno.serve(async (req: Request) => {
         console.warn("[IngestEmail] REJECTED: JSON path requires an authenticated caller");
         return errorResponse("authentication required", 401);
       }
+      jsonCallerUserId = caller.kind === "user" ? caller.userId : null; // service_role bypasses client authz
       const body = await req.json();
       sender = body.from || body.sender || "";
       subject = body.subject || "";
@@ -121,6 +125,17 @@ Deno.serve(async (req: Request) => {
     if (!investigation) {
       console.log(`[IngestEmail] No investigation found for tag: ${tag}`);
       return errorResponse(`No investigation found for email tag: ${tag}`, 404);
+    }
+
+    // WO-INBOUND-WEBHOOK-UNSIGNED (A): a JSON-path USER caller must have access to the resolved case's
+    // client — authentication ≠ authorization. Mailgun form path is signature-gated (jsonCallerUserId
+    // null); service_role bypasses. Same standard as send-sms.
+    if (jsonCallerUserId) {
+      const accessible = await getAccessibleClientIds(supabase, jsonCallerUserId);
+      if (!investigation.client_id || !accessible.includes(investigation.client_id)) {
+        console.warn(`[IngestEmail] REJECTED: user ${jsonCallerUserId} lacks access to investigation client ${investigation.client_id}`);
+        return errorResponse("Forbidden: no access to this investigation's client", 403);
+      }
     }
 
     console.log(`[IngestEmail] Matched tag "${tag}" → case ${investigation.file_number}`);

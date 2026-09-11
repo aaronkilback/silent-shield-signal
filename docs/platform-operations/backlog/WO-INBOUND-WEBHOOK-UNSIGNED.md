@@ -57,5 +57,20 @@ The Part B top-tier flag, investigated + fixed. **Deployed `verify_jwt=false` (v
 - **Legit caller:** only `src/components/agents/AgentActionApprovalQueue.tsx` (frontend, user session JWT, passing `approver_user_id: user.id`). No internal service-role caller.
 - **Fix (built, no deploy):** gateway `verify_jwt=true`; in-function `getCallerIdentity` (401 fail-closed); **approver derived from the token, not the body** (kills forgery); user callers must hold an approver role (super_admin/admin/analyst via `user_roles`) AND have access to the action's `client_id` (`getAccessibleClientIds`); `service_role` bypasses. Nothing breaks: the frontend already sends the session JWT + the same user id.
 
+## Review round 2 (2026-09-11) — A/D/E fixed, B/C open, F/G are deploy gates
+
+Self-review of the round-1 diff: the signature fix closed the *anonymous* door but left the *cross-tenant authenticated* one — same class as the original defect. Fixed on #213:
+- **A — JSON-path authorization (both ingest functions).** The `else`/JSON branch was authn-only: any authenticated user (any tenant) could inject into any case by naming its `file_number`/`intake_email_tag`. Now a JSON-path **user** caller must have access to the resolved case's `client_id` (checked post-routing via `getAccessibleClientIds`); `service_role` bypasses; Twilio/Mailgun form paths are provider-signature-gated. Fail-closed on null client_id. Same standard as send-sms.
+- **D — execute-approved-action null-client.** The client check was *skipped* when `action.client_id` was null (agent actions are often null-client). Null-client = platform/global-scoped → now **requires super_admin** (enforced, not skipped); client-scoped still requires client access; `service_role` bypasses.
+- **E — approver fallback + unchecked update.** Service-caller `approverId` is now a validated uuid or **null** (never the literal `'service_role'` against a nullable-uuid column). Both reject- and approve-path status updates are error-checked (approve fails loud → 500, does not execute on a failed transition).
+
+**Open (tracked, NOT fixed):**
+- **B — replay protection.** Mailgun `timestamp` freshness + `token` dedup; short-window guard for Twilio. No replay defense today.
+- **C — Twilio `TWILIO_WEBHOOK_URL` fragility.** `req.url` behind the gateway may not equal Twilio's configured URL; fail-closed then rejects legit inbound. **Not verifiable from code — needs a live Twilio ping.**
+
+**Deploy preconditions (must be proven or intake silently breaks):**
+- **F — live provider verification.** After deploy, inbound SMS AND inbound email must EACH be proven against a **real** Twilio/Mailgun request landing as an investigation entry. The HMACs are unproven end-to-end; a wrong URL/key fails closed silently. Not "done" until both are observed working post-deploy.
+- **G — `MAILGUN_SIGNING_KEY`** (webhook signing key, not API key) lands with the deploy or all inbound email 403s. `send-sms` + `execute-approved-action` deploy **without** `--no-verify-jwt`.
+
 ## Companion doctrines
 Provenance Doctrine, Population-Before-Check (the gap is a population — swept the whole set, not one function), Absence-Is-Not-A-Value (0 persisted ≠ 0 attempts), Confidence-is-not-correctness (grep hit-counts mislead — send-sms was verified by reading, not by count).
