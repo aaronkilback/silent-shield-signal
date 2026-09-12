@@ -25,6 +25,10 @@ function normalizePhone(phone: string): string {
   return '+' + digits;
 }
 
+// Operator identity for operator_alert (same source dispatch-critical-sms uses: the operator's
+// verified MFA phone). ak@silentshieldsecurity.com.
+const OPERATOR_UID = "d7edb69f-66e8-4776-9e5d-7ac54b401cfb";
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -62,6 +66,69 @@ Deno.serve(async (req: Request) => {
       message,
       contact_name,
     } = body;
+
+    const callerRole = (claimsData.claims.role as string) || "";
+
+    // WO-INBOUND-WEBHOOK-UNSIGNED — operator_alert branch. The AEGIS lead qualifier (qualifier-handoff.ts,
+    // invoked by aegis-qualify / aegis-qualify-sweep with the SERVICE-ROLE key) fires a "New qualified
+    // lead" SMS to the operator with NO investigation. The prior code required investigation_id/to_number
+    // and returned 400 for every such call — which is why zero qualifier alerts had ever sent. Handle it
+    // here: SERVICE-ROLE ONLY (a user token must never be able to page the operator), sent to the
+    // operator's on-file number (same source as dispatch-critical-sms), no investigation, no comms log
+    // (the CRM side records callback_notified_at on success).
+    if (body.operator_alert === true) {
+      if (callerRole !== "service_role") {
+        return new Response(
+          JSON.stringify({ error: "Forbidden: operator_alert is service-role only" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      if (!message) {
+        return new Response(
+          JSON.stringify({ error: "Missing required field: message" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      const { data: op } = await supabase
+        .from("user_mfa_settings")
+        .select("phone_number, phone_verified")
+        .eq("user_id", OPERATOR_UID)
+        .maybeSingle();
+      const opPhone = op?.phone_number as string | undefined;
+      if (!opPhone) {
+        return new Response(
+          JSON.stringify({ error: "No operator phone on file" }),
+          { status: 412, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      const sid = Deno.env.get("TWILIO_ACCOUNT_SID");
+      const tok = Deno.env.get("TWILIO_AUTH_TOKEN");
+      const from = Deno.env.get("TWILIO_FROM_NUMBER");
+      if (!sid || !tok || !from) {
+        return new Response(
+          JSON.stringify({ error: "Twilio credentials not configured" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      const resp = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+        method: "POST",
+        headers: { "Authorization": "Basic " + btoa(`${sid}:${tok}`), "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ To: normalizePhone(opPhone), From: from, Body: String(message).slice(0, 320) }).toString(),
+      });
+      const result = await resp.json();
+      if (!resp.ok) {
+        console.error("[SendSMS] operator_alert Twilio error:", result);
+        return new Response(
+          JSON.stringify({ error: "Failed to send operator alert", details: result?.message }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      console.log(`[SendSMS] operator_alert sent (sid ${result.sid})`);
+      return new Response(
+        JSON.stringify({ success: true, operator_alert: true, message_sid: result.sid }),
+        { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     if (!investigation_id || !to_number || !message) {
       return new Response(
@@ -127,8 +194,7 @@ Deno.serve(async (req: Request) => {
     // Authentication (getClaims above) proves you're logged in; it does NOT prove you may spend on
     // THIS case. A user (any role/tenant) must have access to the investigation's client, or a leaked
     // low-priv token becomes a toll-fraud / arbitrary-SMS vector. Trusted internal service-role callers
-    // (e.g. qualifier-handoff operator alerts) bypass this check.
-    const callerRole = (claimsData.claims.role as string) || "";
+    // bypass this check. (callerRole computed once, above.)
     if (callerRole !== "service_role") {
       const accessible = await getAccessibleClientIds(supabase, userId);
       if (!investigation.client_id || !accessible.includes(investigation.client_id)) {
