@@ -105,12 +105,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     // R2 credentials (operator-provisioned; never hardcoded).
-    const accountId = Deno.env.get("R2_ACCOUNT_ID");
+    const r2Endpoint = (Deno.env.get("R2_ENDPOINT") ?? "").replace(/\/+$/, ""); // full S3 endpoint, no trailing slash
     const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID");
     const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
     const r2Bucket = Deno.env.get("R2_BUCKET");
-    if (!accountId || !accessKeyId || !secretAccessKey || !r2Bucket) {
-      const msg = "R2 not configured (need R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET)";
+    if (!r2Endpoint || !accessKeyId || !secretAccessKey || !r2Bucket) {
+      const msg = "R2 not configured (need R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET)";
       await failHeartbeat(supabase, hb, new Error(msg));
       return json({ error: msg }, 500);
     }
@@ -133,8 +133,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const aws = new AwsClient({ accessKeyId, secretAccessKey, region: "auto", service: "s3" });
-    const endpoint = `https://${accountId}.r2.cloudflarestorage.com`;
-    const r2Url = (key: string) => `${endpoint}/${encodeKey(`${r2Bucket}/${key}`)}`;
+    const r2Url = (key: string) => `${r2Endpoint}/${encodeKey(`${r2Bucket}/${key}`)}`;
 
     const t0 = Date.now();
     let scanned = 0, uploaded = 0, verified = 0, skipped = 0, failed = 0, bytesUploaded = 0;
