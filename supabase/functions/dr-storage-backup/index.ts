@@ -204,23 +204,22 @@ Deno.serve(async (req: Request) => {
           uploaded++;
           bytesUploaded += bytes.length;
 
-          // 3. Verified read-back — an INDEPENDENT HEAD, not the PUT response. Primary proof is the
-          // ETag (MD5 of stored bytes) matching what the PUT acked; both normalized so a weak etag
-          // from a compressed HEAD still matches the strong etag from the PUT. Size is asserted only
-          // when the HEAD response was not transfer-compressed (otherwise Content-Length is the
-          // gzip size, not the object size).
+          // 3. Verified read-back — an INDEPENDENT HEAD, not the PUT response. The ETag is R2's
+          // server-computed MD5 of the STORED bytes; a HEAD etag that equals the source's MD5 (or,
+          // failing a source etag, the PUT's) proves R2 now holds byte-identical content. That is
+          // the whole integrity proof. Content-Length is deliberately NOT gated on: R2 returns text
+          // objects gzip'd (weak etag — handled by normEtag) or chunked (no Content-Length at all),
+          // so a size compare only manufactures false negatives on data that is provably intact.
           const verify = await aws.fetch(r2Url(key), { method: "HEAD" });
           const putEtag = normEtag(put.headers.get("etag"));
           const headEtag = normEtag(verify.headers.get("etag"));
-          const okEtag = putEtag.length > 0 && putEtag === headEtag;
-          const compressed = !!verify.headers.get("content-encoding");
-          const okSize = compressed || Number(verify.headers.get("content-length")) === bytes.length;
-          if (verify.status === 200 && okEtag && okSize) {
+          const okEtag = headEtag.length > 0 && (headEtag === putEtag || (obj.etag.length > 0 && headEtag === obj.etag));
+          if (verify.status === 200 && okEtag) {
             verified++;
           } else {
             failed++;
             if (failures.length < MAX_FAILURES_RECORDED) {
-              failures.push({ bucket, name: obj.name, reason: `read-back mismatch status=${verify.status} okSize=${okSize} okEtag=${okEtag} put=${putEtag} head=${headEtag}` });
+              failures.push({ bucket, name: obj.name, reason: `read-back mismatch status=${verify.status} head=${headEtag} put=${putEtag} src=${obj.etag}` });
             }
           }
           prevName = obj.name;
