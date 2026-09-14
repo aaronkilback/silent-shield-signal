@@ -937,3 +937,8 @@ verify_jwt = true
 
 [functions.x-query-probe]
 verify_jwt = false
+
+# WO-DR-CADENCE-REBUILD: service-role-only, no static secret. Gateway JWT ON; server-side
+# refuses non-service-role. Redeploy WITHOUT --no-verify-jwt.
+[functions.dr-storage-backup]
+verify_jwt = true
