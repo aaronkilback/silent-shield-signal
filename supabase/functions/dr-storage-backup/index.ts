@@ -61,7 +61,17 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-interface ObjRec { name: string; size: number }
+// Normalize an S3/R2 ETag for comparison. Cloudflare returns a WEAK etag (W/"…") and a
+// compressed Content-Length when it transparently gzips a compressible response (text/html,
+// json, …) — Deno's fetch always sends Accept-Encoding: gzip and it cannot be overridden. So a
+// naive strong-etag / content-length compare FALSE-fails every text object even though the stored
+// bytes are byte-identical. Comparing the normalized etag (== the MD5 of the stored object) is
+// robust to transfer compression; size is only meaningful when the response was not compressed.
+function normEtag(e: string | null): string {
+  return (e ?? "").replace(/^W\//i, "").replace(/^"|"$/g, "").toLowerCase();
+}
+
+interface ObjRec { name: string; size: number; etag: string }
 
 // Recursively enumerate every object in a bucket via the Storage API (folders have id===null).
 // Returns full paths sorted ascending so the {after} cursor is stable across runs.
@@ -81,7 +91,7 @@ async function listBucket(supabase: ReturnType<typeof createServiceClient>, buck
       if (item.id === null || item.metadata == null) {
         out.push(...await listBucket(supabase, bucket, full)); // folder → recurse
       } else {
-        out.push({ name: full, size: Number(item.metadata?.size ?? 0) });
+        out.push({ name: full, size: Number(item.metadata?.size ?? 0), etag: normEtag(item.metadata?.eTag ?? "") });
       }
     }
     if (data.length < LIST_PAGE) break;
@@ -163,12 +173,21 @@ Deno.serve(async (req: Request) => {
         scanned++;
         const key = `${bucket}/${obj.name}`;
         try {
-          // Self-healing incremental: skip iff R2 already holds a same-size object.
+          // Self-healing incremental: skip iff R2 already holds a byte-identical object. Compare by
+          // ETag (== MD5 of stored content) which survives transfer compression; fall back to size
+          // only when the source etag is unavailable (e.g. multipart-uploaded source).
           const head = await aws.fetch(r2Url(key), { method: "HEAD" });
-          if (head.status === 200 && obj.size > 0 && Number(head.headers.get("content-length")) === obj.size) {
-            skipped++;
-            prevName = obj.name;
-            continue;
+          if (head.status === 200) {
+            const r2Etag = normEtag(head.headers.get("etag"));
+            const etagMatch = obj.etag.length > 0 && r2Etag === obj.etag;
+            const sizeMatch = obj.etag.length === 0 && obj.size > 0 &&
+              !head.headers.get("content-encoding") &&
+              Number(head.headers.get("content-length")) === obj.size;
+            if (etagMatch || sizeMatch) {
+              skipped++;
+              prevName = obj.name;
+              continue;
+            }
           }
 
           const dl = await supabase.storage.from(bucket).download(obj.name);
@@ -185,16 +204,23 @@ Deno.serve(async (req: Request) => {
           uploaded++;
           bytesUploaded += bytes.length;
 
-          // 3. Verified read-back — an INDEPENDENT HEAD, not the PUT response.
+          // 3. Verified read-back — an INDEPENDENT HEAD, not the PUT response. Primary proof is the
+          // ETag (MD5 of stored bytes) matching what the PUT acked; both normalized so a weak etag
+          // from a compressed HEAD still matches the strong etag from the PUT. Size is asserted only
+          // when the HEAD response was not transfer-compressed (otherwise Content-Length is the
+          // gzip size, not the object size).
           const verify = await aws.fetch(r2Url(key), { method: "HEAD" });
-          const okSize = Number(verify.headers.get("content-length")) === bytes.length;
-          const okEtag = !!put.headers.get("etag") && verify.headers.get("etag") === put.headers.get("etag");
-          if (verify.status === 200 && okSize && okEtag) {
+          const putEtag = normEtag(put.headers.get("etag"));
+          const headEtag = normEtag(verify.headers.get("etag"));
+          const okEtag = putEtag.length > 0 && putEtag === headEtag;
+          const compressed = !!verify.headers.get("content-encoding");
+          const okSize = compressed || Number(verify.headers.get("content-length")) === bytes.length;
+          if (verify.status === 200 && okEtag && okSize) {
             verified++;
           } else {
             failed++;
             if (failures.length < MAX_FAILURES_RECORDED) {
-              failures.push({ bucket, name: obj.name, reason: `read-back mismatch status=${verify.status} size=${okSize} etag=${okEtag}` });
+              failures.push({ bucket, name: obj.name, reason: `read-back mismatch status=${verify.status} okSize=${okSize} okEtag=${okEtag} put=${putEtag} head=${headEtag}` });
             }
           }
           prevName = obj.name;
