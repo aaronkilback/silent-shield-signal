@@ -58,6 +58,7 @@ export const RiskSnapshot = () => {
   const [riskLevels, setRiskLevels] = useState<RiskLevel[]>([]);
   const [expandedLevel, setExpandedLevel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signalCount, setSignalCount] = useState(0); // raw rows returned (distinct from recognized-severity total)
 
   useEffect(() => {
     if (selectedClientId) {
@@ -84,6 +85,7 @@ export const RiskSnapshot = () => {
 
     const signals = data || [];
     const total = signals.length;
+    setSignalCount(total); // raw rows — used to distinguish "no rows" from "rows with unrecognized severity"
 
     const levels: RiskLevel[] = ['critical', 'high', 'medium', 'low'].map(level => {
       const levelSignals = signals.filter(s => s.severity === level);
@@ -103,6 +105,19 @@ export const RiskSnapshot = () => {
   const criticalAndHigh = riskLevels
     .filter(level => level.level === "critical" || level.level === "high")
     .reduce((sum, level) => sum + level.count, 0);
+
+  // PR-A (WO-UNSCORED-SWEEP-FULL): this block previously rendered a hardcoded "87/100" + "ELEVATED"
+  // to every user regardless of data — an unconditional fabrication. Derive an honest threat level
+  // from the REAL 24h signal severities, or show an explicit empty state when there are no signals.
+  const criticalCount = riskLevels.find(l => l.level === "critical")?.count ?? 0;
+  const highCount = riskLevels.find(l => l.level === "high")?.count ?? 0;
+  const mediumCount = riskLevels.find(l => l.level === "medium")?.count ?? 0;
+  const threatLevel =
+    totalEvents === 0 ? null :
+    criticalCount > 0 ? { label: "CRITICAL", cls: "text-risk-critical border-risk-critical/50 bg-risk-critical/10" } :
+    highCount > 0 ? { label: "ELEVATED", cls: "text-risk-high border-risk-high/50 bg-risk-high/10" } :
+    mediumCount > 0 ? { label: "GUARDED", cls: "text-risk-medium border-risk-medium/50 bg-risk-medium/10" } :
+    { label: "NOMINAL", cls: "text-risk-low border-risk-low/50 bg-risk-low/10" };
 
   if (loading) {
     return (
@@ -132,6 +147,19 @@ export const RiskSnapshot = () => {
         </div>
       </div>
 
+      {totalEvents === 0 ? (
+        // Whole-block empty state — no buckets, no bars. Three distinct states, never collapsing
+        // "unknown severity" into "none" (Absence-Is-Not-A-Value):
+        //   no rows returned            → "No signals"
+        //   rows present, all severities unrecognized → "severity unclassified"
+        <div className="p-4 rounded-lg bg-secondary/50 border border-border">
+          <p className="text-sm text-muted-foreground">
+            {signalCount === 0
+              ? "No signals in the last 24 hours."
+              : `${signalCount} signal${signalCount === 1 ? "" : "s"} present, severity unclassified — nothing to rate yet.`}
+          </p>
+        </div>
+      ) : (
       <div className="space-y-6">
         <div className="p-4 rounded-lg bg-secondary/50 border border-border">
           <div className="flex items-center justify-between mb-2">
@@ -235,16 +263,17 @@ export const RiskSnapshot = () => {
           </h3>
           <div className="grid grid-cols-2 gap-4 mt-3">
             <div>
-              <p className="text-xs text-muted-foreground">Overall Score</p>
-              <p className="text-xl font-bold text-foreground font-mono">87/100</p>
+              <p className="text-xs text-muted-foreground">Priority Signals (24h)</p>
+              <p className="text-xl font-bold text-foreground font-mono">{criticalAndHigh}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Threat Level</p>
-              <Badge className="text-risk-high border-risk-high/50 bg-risk-high/10 mt-1">ELEVATED</Badge>
+              {threatLevel && <Badge className={`${threatLevel.cls} mt-1`}>{threatLevel.label}</Badge>}
             </div>
           </div>
         </div>
       </div>
+      )}
     </Card>
   );
 };
