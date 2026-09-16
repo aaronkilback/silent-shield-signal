@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { extractEdgeErrorMessage } from "@/lib/edge-error";
 import { useState } from "react";
 import { useTenant } from "@/hooks/useTenant";
 import { getClientNoun } from "@/lib/ui-profile";
@@ -46,7 +47,11 @@ export const ClientOnboarding = () => {
       toast.success(`${noun.singular} data uploaded successfully`);
     } catch (error) {
       console.error("Error uploading file:", error);
-      toast.error("Failed to upload file");
+      // HOTFIX-3: surface the writer's real 400 (e.g. tenant deleted / "Select a tenant"), not a generic retry.
+      const serverMsg = await extractEdgeErrorMessage(error);
+      if (serverMsg) toast.error(serverMsg);
+      else if ((error as Error)?.message === "NO_TENANT_SELECTED") toast.error("Select a tenant");
+      else toast.error("Failed to upload file");
     } finally {
       setLoading(false);
       e.target.value = "";
@@ -72,8 +77,7 @@ export const ClientOnboarding = () => {
     // The writer now 400s a super-admin who sends no tenant_id, and a stale/undefined currentTenant
     // is exactly how "Kyle Kane" misfiled into the wrong tenant. Fail in the UI before the round-trip.
     if (!currentTenant?.id) {
-      toast.error("Select a tenant before onboarding a client");
-      throw new Error("No tenant selected");
+      throw new Error("NO_TENANT_SELECTED");
     }
     for (const entry of data) {
       const { error } = await supabase.functions.invoke("process-client-onboarding", {
@@ -104,7 +108,11 @@ export const ClientOnboarding = () => {
       });
     } catch (error) {
       console.error("Error:", error);
-      toast.error(`Failed to onboard ${noun.singularLower}`);
+      // HOTFIX-3: surface the writer's real 400 (e.g. tenant deleted / "Select a tenant"), not a generic retry.
+      const serverMsg = await extractEdgeErrorMessage(error);
+      if (serverMsg) toast.error(serverMsg);
+      else if ((error as Error)?.message === "NO_TENANT_SELECTED") toast.error("Select a tenant");
+      else toast.error(`Failed to onboard ${noun.singularLower}`);
     } finally {
       setLoading(false);
     }
