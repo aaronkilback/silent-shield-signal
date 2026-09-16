@@ -110,19 +110,30 @@ export const ClientRiskSnapshot = () => {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium">Risk Score</span>
-                  <span className={`text-lg font-bold ${getRiskColor(client.risk_assessment?.risk_score || 0)}`}>
-                    {client.risk_assessment?.risk_score || 0}/100
-                  </span>
-                </div>
-                <Progress 
-                  value={client.risk_assessment?.risk_score || 0} 
-                  className="h-2"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {getRiskLevel(client.risk_assessment?.risk_score || 0)} Risk Level
-                </p>
+                {/* WO-CLIENT-ONBOARD-SCOPE step 1B: null risk_score = Unscored. No number, no bar, no
+                    colour, no level. The old `|| 0` rendered a fabricated "0/100" for unscored clients. */}
+                {typeof client.risk_assessment?.risk_score === "number" ? (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium">Risk Score</span>
+                      <span className={`text-lg font-bold ${getRiskColor(client.risk_assessment.risk_score)}`}>
+                        {client.risk_assessment.risk_score}/100
+                      </span>
+                    </div>
+                    <Progress
+                      value={client.risk_assessment.risk_score}
+                      className="h-2"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {getRiskLevel(client.risk_assessment.risk_score)} Risk Level
+                    </p>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Risk Score</span>
+                    <span className="text-sm text-muted-foreground">Unscored</span>
+                  </div>
+                )}
               </div>
 
               {client.industry && (

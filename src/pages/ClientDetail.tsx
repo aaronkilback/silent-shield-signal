@@ -174,9 +174,14 @@ const ClientDetail = () => {
     return null;
   }
 
-  const riskScore = client.risk_assessment?.risk_score || 50;
-  const riskLevel = riskScore >= 75 ? "Critical" : riskScore >= 50 ? "High" : riskScore >= 25 ? "Medium" : "Low";
-  const riskColor = riskScore >= 75 ? "text-red-500" : riskScore >= 50 ? "text-orange-500" : riskScore >= 25 ? "text-yellow-500" : "text-green-500";
+  // WO-CLIENT-ONBOARD-SCOPE step 1B: a null risk_score means UNSCORED (no attributed signals yet).
+  // Never coerce it to a number — the old `|| 50` fabricated a mid-risk score for unscored clients.
+  const rawScore = client.risk_assessment?.risk_score;
+  const riskScore: number | null = typeof rawScore === "number" ? rawScore : null;
+  const riskLevel = riskScore == null ? null
+    : riskScore >= 75 ? "Critical" : riskScore >= 50 ? "High" : riskScore >= 25 ? "Medium" : "Low";
+  const riskColor = riskScore == null ? "text-muted-foreground"
+    : riskScore >= 75 ? "text-red-500" : riskScore >= 50 ? "text-orange-500" : riskScore >= 25 ? "text-yellow-500" : "text-green-500";
 
   return (
     <div className="min-h-screen bg-background">
@@ -217,8 +222,14 @@ const ClientDetail = () => {
                     <Shield className={`w-5 h-5 ${riskColor}`} />
                     <span className="text-sm text-muted-foreground">Risk Score</span>
                   </div>
-                  <div className={`text-3xl font-bold ${riskColor}`}>{riskScore}</div>
-                  <div className="text-sm text-muted-foreground">{riskLevel} Risk</div>
+                  {riskScore != null ? (
+                    <>
+                      <div className={`text-3xl font-bold ${riskColor}`}>{riskScore}</div>
+                      <div className="text-sm text-muted-foreground">{riskLevel} Risk</div>
+                    </>
+                  ) : (
+                    <div className="text-xl font-semibold text-muted-foreground">Unscored</div>
+                  )}
                 </div>
                 <Button
                   variant="destructive"
@@ -258,14 +269,21 @@ const ClientDetail = () => {
               </div>
             </div>
 
-            {/* Risk Progress Bar */}
-            <div className="space-y-2">
+            {/* Risk Progress Bar — omitted entirely when unscored (no bar, no colour) */}
+            {riskScore != null ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Risk Assessment</span>
+                  <span className={`font-semibold ${riskColor}`}>{riskScore}%</span>
+                </div>
+                <Progress value={riskScore} className="h-2" />
+              </div>
+            ) : (
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Risk Assessment</span>
-                <span className={`font-semibold ${riskColor}`}>{riskScore}%</span>
+                <span className="font-semibold text-muted-foreground">Unscored</span>
               </div>
-              <Progress value={riskScore} className="h-2" />
-            </div>
+            )}
           </CardContent>
         </Card>
 
