@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     // regions); autonomous actions exclude operator-irrelevant types
     // (document ingestion, push-with-zero-recipients); active
     // sequences from Tier 1B added for the EMERGING PATTERNS section.
-    const { data: activeClients } = await supabase
+    const { data: activeClients, error: clientsErr } = await supabase
       .from('clients')
       .select('id, name, locations')
       .eq('status', 'active');
@@ -88,9 +88,12 @@ Deno.serve(async (req) => {
 
     // PR-B (WO-UNSCORED-SWEEP-FULL): if the load-bearing fetches errored, the posture must read
     // DATA UNAVAILABLE — never a green "NORMAL / 0/100" all-clear indistinguishable from a quiet day.
+    if (clientsErr) console.error('[daily-briefing] active-clients fetch failed:', clientsErr);
     if (sigErr) console.error('[daily-briefing] signals fetch failed:', sigErr);
     if (incErr) console.error('[daily-briefing] incidents fetch failed:', incErr);
-    const dataUnavailable = !!sigErr || !!incErr;
+    // Gap 1: an active-clients failure substitutes an empty ID list, so signals/incidents come back
+    // empty too — that must read as DATA UNAVAILABLE, not a quiet day.
+    const dataUnavailable = !!clientsErr || !!sigErr || !!incErr;
 
     // Filter signals for briefing quality: exclude historical, low-quality, and low-relevance
     const briefingSignals = (recentSignals || []).filter((s: any) => {
@@ -146,6 +149,9 @@ Deno.serve(async (req) => {
       open_p2_incidents: openP2Count,
       risk_score: computedRiskScore,
       data_unavailable: dataUnavailable,
+      // Gap 2: a successful fetch with nothing in-window is a DISTINCT state — not a NORMAL/0/100
+      // all-clear. (Distinct from data_unavailable, which is a failed fetch.)
+      empty_corpus: !dataUnavailable && briefingSignals.length === 0 && openIncidentsList.length === 0,
       autonomous_actions: (recentActions || []).length,
     };
 
@@ -443,9 +449,10 @@ function buildBriefingEmail(
   footerLine: string, feedbackBaseUrl: string
 ): string {
   // PR-B: DATA UNAVAILABLE is a distinct neutral posture — never a green all-clear on absent data.
-  const riskColor = metrics.data_unavailable ? '#64748b'
+  const riskColor = (metrics.data_unavailable || metrics.empty_corpus) ? '#64748b'
     : metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
   const riskLabel = metrics.data_unavailable ? 'DATA UNAVAILABLE'
+    : metrics.empty_corpus ? 'NO ACTIVITY IN WINDOW'
     : metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
 
   const thumbsUpUrl = `${feedbackBaseUrl}?f=positive&d=${dateContext.currentDateISO}`;
@@ -479,7 +486,7 @@ function buildBriefingEmail(
       <div style="display:flex; align-items:center; gap:10px;">
         <div style="width:10px; height:10px; background:${riskColor}; border-radius:50%;"></div>
         <span style="color:${riskColor}; font-weight:600; font-size:14px;">THREAT POSTURE: ${riskLabel}</span>
-        <span style="color:#64748b; font-size:13px; margin-left:auto;">Score: ${metrics.data_unavailable ? '—' : metrics.risk_score + '/100'}</span>
+        <span style="color:#64748b; font-size:13px; margin-left:auto;">Score: ${(metrics.data_unavailable || metrics.empty_corpus) ? '—' : metrics.risk_score + '/100'}</span>
       </div>
     </div>
     <div style="padding:20px 30px; display:flex; gap:12px; border-bottom:1px solid #334155;">
