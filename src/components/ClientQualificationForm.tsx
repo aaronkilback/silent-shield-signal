@@ -13,6 +13,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { extractEdgeErrorMessage } from "@/lib/edge-error";
 import { ArrowLeft, ArrowRight, CheckCircle2, Shield } from "lucide-react";
 import { useTenant } from "@/hooks/useTenant";
 
@@ -158,7 +159,10 @@ export const ClientQualificationForm = () => {
       setCurrentStep(1);
     } catch (error) {
       console.error("Error submitting qualification:", error);
-      toast.error("Failed to submit qualification. Please try again.");
+      // HOTFIX-3: a real 400 from the writer (e.g. the selected tenant was deleted) must surface its
+      // cause, not a generic retry. Read the server message from the FunctionsHttpError body.
+      const serverMsg = await extractEdgeErrorMessage(error);
+      toast.error(serverMsg ?? "Failed to submit qualification. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
