@@ -49,7 +49,14 @@ Deno.serve(async (req) => {
       const callerTenantIds = (memberships || [])
         .map((m: { tenant_id: string | null }) => m.tenant_id)
         .filter((id): id is string => !!id);
-      const { data: isSuper } = await supabase.rpc('is_super_admin', { _user_id: caller.userId });
+      // HOTFIX-2 (#219): the role lookup must FAIL CLOSED. If is_super_admin errors, an unknown
+      // role is NOT a non-super-admin — do not fall through to the membership path (that could let
+      // an unverified caller land a client via a single-membership guess). Refuse the write.
+      const { data: isSuper, error: roleErr } = await supabase.rpc('is_super_admin', { _user_id: caller.userId });
+      if (roleErr) {
+        console.error('[onboarding] is_super_admin lookup failed — failing closed:', roleErr);
+        return errorResponse('Could not verify caller role; refusing to create a client. Retry, or contact an operator.', 400);
+      }
 
       if (requestedTenantId) {
         if (isSuper === true || callerTenantIds.includes(requestedTenantId)) {

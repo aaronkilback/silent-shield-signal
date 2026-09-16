@@ -136,8 +136,15 @@ export const ClientQualificationForm = () => {
         onboarding_data: completeData,
       };
 
+      // HOTFIX-3 (#219): same tenant gate as Quick Entry. Without a selected tenant the writer 400s;
+      // surface that as "Select a tenant", not a generic retry, and skip the round-trip.
+      if (!currentTenant?.id) {
+        toast.error("Select a tenant");
+        return;
+      }
+
       const { error } = await supabase.functions.invoke("process-client-onboarding", {
-        body: { clientData, tenant_id: currentTenant?.id },
+        body: { clientData, tenant_id: currentTenant.id },
       });
 
       if (error) throw error;
@@ -801,8 +808,8 @@ export const ClientQualificationForm = () => {
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               ) : (
-                <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? "Submitting..." : "Submit Qualification"}
+                <Button type="submit" disabled={isSubmitting || !currentTenant?.id} title={!currentTenant?.id ? "Select a tenant first" : undefined}>
+                  {isSubmitting ? "Submitting..." : !currentTenant?.id ? "Select a tenant" : "Submit Qualification"}
                   <CheckCircle2 className="ml-2 h-4 w-4" />
                 </Button>
               )}
