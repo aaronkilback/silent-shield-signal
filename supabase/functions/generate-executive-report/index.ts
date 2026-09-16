@@ -737,9 +737,13 @@ Deno.serve(async (req) => {
       return 'LOW';
     }
 
-    const overallRiskLevel = getRiskLevel(
-      Math.max(surveillanceRisk, protestRisk, sabotageThreat, criticalThreatCount)
-    );
+    // PR-B (WO-UNSCORED-SWEEP-FULL): an EMPTY signal corpus for the period must NOT print a green
+    // "LOW" all-clear — that collapses "monitored, nothing found" and "nothing collected" into the
+    // same reassurance (Absence-Is-Not-A-Value). A fetch failure already throws above, so a zero-length
+    // corpus here means genuinely no reportable signals in-period → say INSUFFICIENT DATA explicitly.
+    const overallRiskLevel = freshSignals.length === 0
+      ? 'INSUFFICIENT DATA'
+      : getRiskLevel(Math.max(surveillanceRisk, protestRisk, sabotageThreat, criticalThreatCount));
 
     // Build evidence sources array for traceability
     const evidenceSources: EvidenceSource[] = [];
@@ -967,15 +971,19 @@ Provide exactly 3 impact ladders. Be specific and actionable. Use executive lang
 
     console.log('Generating impact ladders...');
     let impactLadders: ImpactLadder[] = [];
-    const impactResult = await callAiGatewayJson<ImpactLadder[]>({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are a strategic security advisor. Always respond with valid JSON only.' },
-        { role: 'user', content: impactPrompt }
-      ],
-      functionName: 'generate-executive-report',
-    });
-    if (impactResult.data) impactLadders = impactResult.data;
+    // PR-B gap 3: on an EMPTY corpus, skip the impact-ladder LLM entirely — do not manufacture
+    // "impact ladders" from zero signals. INSUFFICIENT DATA is unconditionally quiet.
+    if (freshSignals.length > 0) {
+      const impactResult = await callAiGatewayJson<ImpactLadder[]>({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a strategic security advisor. Always respond with valid JSON only.' },
+          { role: 'user', content: impactPrompt }
+        ],
+        functionName: 'generate-executive-report',
+      });
+      if (impactResult.data) impactLadders = impactResult.data;
+    }
 
     // Build reliability context once — injected into both AI prompts
     const reliabilityContext = getReliabilityFirstPrompt([]);
@@ -1064,15 +1072,21 @@ OUTPUT FORMAT RULES: Plain prose only. No markdown. No asterisks. No hash symbol
 
     console.log('Generating executive summary...');
     let executiveSummary = 'Analysis in progress...';
-    const summaryResult = await callAiGateway({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are a senior security intelligence analyst writing for C-level executives. You apply BLUF, Minto Pyramid, and structured analytical tradecraft. Use formal, precise, business-appropriate language.' },
-        { role: 'user', content: summaryPrompt }
-      ],
-      functionName: 'generate-executive-report',
-    });
-    if (summaryResult.content) executiveSummary = applyToneTransformation(summaryResult.content);
+    if (freshSignals.length === 0) {
+      // PR-B gap 3: EMPTY corpus → deterministic INSUFFICIENT DATA summary, NO LLM call. Never
+      // let the summary model narrate over zero signals (that is where an all-clear gets invented).
+      executiveSummary = `No reportable signals were collected for ${client.organization || client.name} in this period. Risk is not assessed — insufficient data. This is NOT an all-clear: confirm monitoring coverage and data flow before drawing any conclusion.`;
+    } else {
+      const summaryResult = await callAiGateway({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a senior security intelligence analyst writing for C-level executives. You apply BLUF, Minto Pyramid, and structured analytical tradecraft. Use formal, precise, business-appropriate language.' },
+          { role: 'user', content: summaryPrompt }
+        ],
+        functionName: 'generate-executive-report',
+      });
+      if (summaryResult.content) executiveSummary = applyToneTransformation(summaryResult.content);
+    }
     // E: cut the "Reliability Score: X% | Sources: N verified | External Intel: …"
     // line — the metric is not real yet (brief-quality ruling 2026-07-28).
     executiveSummary = executiveSummary
@@ -1385,11 +1399,17 @@ Rules: plain prose, no markdown, no asterisks, no headers. Total length UNDER 25
     // ═══════════════════════════════════════════════════════════════════════════
     const narrativeCriticalCount = narrativeSignals.filter((s: any) => s.severity === 'critical').length;
     const narrativeHighCount     = narrativeSignals.filter((s: any) => s.severity === 'high').length;
+    // PR-B gap 3: INSUFFICIENT DATA is UNCONDITIONALLY quiet — an empty corpus keeps the
+    // deterministic narrative path (never the LLM) regardless of incident counts. Only the LOW
+    // case still requires the zero-critical/high/incident conjunction.
     const isNarrativeQuietPeriod =
-      narrativeCriticalCount === 0
-      && narrativeHighCount === 0
-      && newIncidentsLast24h.length === 0
-      && (overallRiskLevel || '').toUpperCase() === 'LOW';
+      (overallRiskLevel || '').toUpperCase() === 'INSUFFICIENT DATA'
+      || (
+        narrativeCriticalCount === 0
+        && narrativeHighCount === 0
+        && newIncidentsLast24h.length === 0
+        && (overallRiskLevel || '').toUpperCase() === 'LOW'
+      );
 
     let narratives: Array<{ category: string; narrative: string; signals: any[] }> = [];
     if (isNarrativeQuietPeriod) {
