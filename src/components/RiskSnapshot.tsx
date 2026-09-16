@@ -58,6 +58,7 @@ export const RiskSnapshot = () => {
   const [riskLevels, setRiskLevels] = useState<RiskLevel[]>([]);
   const [expandedLevel, setExpandedLevel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signalCount, setSignalCount] = useState(0); // raw rows returned (distinct from recognized-severity total)
 
   useEffect(() => {
     if (selectedClientId) {
@@ -84,6 +85,7 @@ export const RiskSnapshot = () => {
 
     const signals = data || [];
     const total = signals.length;
+    setSignalCount(total); // raw rows — used to distinguish "no rows" from "rows with unrecognized severity"
 
     const levels: RiskLevel[] = ['critical', 'high', 'medium', 'low'].map(level => {
       const levelSignals = signals.filter(s => s.severity === level);
@@ -145,6 +147,19 @@ export const RiskSnapshot = () => {
         </div>
       </div>
 
+      {totalEvents === 0 ? (
+        // Whole-block empty state — no buckets, no bars. Three distinct states, never collapsing
+        // "unknown severity" into "none" (Absence-Is-Not-A-Value):
+        //   no rows returned            → "No signals"
+        //   rows present, all severities unrecognized → "severity unclassified"
+        <div className="p-4 rounded-lg bg-secondary/50 border border-border">
+          <p className="text-sm text-muted-foreground">
+            {signalCount === 0
+              ? "No signals in the last 24 hours."
+              : `${signalCount} signal${signalCount === 1 ? "" : "s"} present, severity unclassified — nothing to rate yet.`}
+          </p>
+        </div>
+      ) : (
       <div className="space-y-6">
         <div className="p-4 rounded-lg bg-secondary/50 border border-border">
           <div className="flex items-center justify-between mb-2">
@@ -246,22 +261,19 @@ export const RiskSnapshot = () => {
             <Activity className="w-4 h-4 text-primary" />
             Network Health Status
           </h3>
-          {threatLevel === null ? (
-            <p className="text-sm text-muted-foreground mt-3">No signals in the last 24 hours — nothing to assess.</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-4 mt-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Priority Signals (24h)</p>
-                <p className="text-xl font-bold text-foreground font-mono">{criticalAndHigh}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Threat Level</p>
-                <Badge className={`${threatLevel.cls} mt-1`}>{threatLevel.label}</Badge>
-              </div>
+          <div className="grid grid-cols-2 gap-4 mt-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Priority Signals (24h)</p>
+              <p className="text-xl font-bold text-foreground font-mono">{criticalAndHigh}</p>
             </div>
-          )}
+            <div>
+              <p className="text-xs text-muted-foreground">Threat Level</p>
+              {threatLevel && <Badge className={`${threatLevel.cls} mt-1`}>{threatLevel.label}</Badge>}
+            </div>
+          </div>
         </div>
       </div>
+      )}
     </Card>
   );
 };
