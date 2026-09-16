@@ -49,8 +49,8 @@ Deno.serve(async (req) => {
     const activeClientIds = (activeClients ?? []).map((c: any) => c.id);
 
     const [
-      { data: recentSignals },
-      { data: openIncidents },
+      { data: recentSignals, error: sigErr },
+      { data: openIncidents, error: incErr },
       { data: recentActions },
       { data: activeSequences },
     ] = await Promise.all([
@@ -85,6 +85,12 @@ Deno.serve(async (req) => {
         .order('last_event_at', { ascending: false })
         .limit(10),
     ]);
+
+    // PR-B (WO-UNSCORED-SWEEP-FULL): if the load-bearing fetches errored, the posture must read
+    // DATA UNAVAILABLE — never a green "NORMAL / 0/100" all-clear indistinguishable from a quiet day.
+    if (sigErr) console.error('[daily-briefing] signals fetch failed:', sigErr);
+    if (incErr) console.error('[daily-briefing] incidents fetch failed:', incErr);
+    const dataUnavailable = !!sigErr || !!incErr;
 
     // Filter signals for briefing quality: exclude historical, low-quality, and low-relevance
     const briefingSignals = (recentSignals || []).filter((s: any) => {
@@ -139,6 +145,7 @@ Deno.serve(async (req) => {
       open_p1_incidents: openP1Count,
       open_p2_incidents: openP2Count,
       risk_score: computedRiskScore,
+      data_unavailable: dataUnavailable,
       autonomous_actions: (recentActions || []).length,
     };
 
@@ -435,8 +442,11 @@ function buildBriefingEmail(
   dateContext: { currentDateFormatted: string; currentTime24h: string; currentTimezone: string; currentDateISO: string },
   footerLine: string, feedbackBaseUrl: string
 ): string {
-  const riskColor = metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
-  const riskLabel = metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
+  // PR-B: DATA UNAVAILABLE is a distinct neutral posture — never a green all-clear on absent data.
+  const riskColor = metrics.data_unavailable ? '#64748b'
+    : metrics.risk_score >= 70 ? '#dc2626' : metrics.risk_score >= 40 ? '#f59e0b' : '#059669';
+  const riskLabel = metrics.data_unavailable ? 'DATA UNAVAILABLE'
+    : metrics.risk_score >= 70 ? 'ELEVATED' : metrics.risk_score >= 40 ? 'MODERATE' : 'NORMAL';
 
   const thumbsUpUrl = `${feedbackBaseUrl}?f=positive&d=${dateContext.currentDateISO}`;
   const thumbsDownUrl = `${feedbackBaseUrl}?f=negative&d=${dateContext.currentDateISO}`;
@@ -469,7 +479,7 @@ function buildBriefingEmail(
       <div style="display:flex; align-items:center; gap:10px;">
         <div style="width:10px; height:10px; background:${riskColor}; border-radius:50%;"></div>
         <span style="color:${riskColor}; font-weight:600; font-size:14px;">THREAT POSTURE: ${riskLabel}</span>
-        <span style="color:#64748b; font-size:13px; margin-left:auto;">Score: ${metrics.risk_score}/100</span>
+        <span style="color:#64748b; font-size:13px; margin-left:auto;">Score: ${metrics.data_unavailable ? '—' : metrics.risk_score + '/100'}</span>
       </div>
     </div>
     <div style="padding:20px 30px; display:flex; gap:12px; border-bottom:1px solid #334155;">

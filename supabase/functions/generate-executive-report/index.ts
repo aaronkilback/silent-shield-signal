@@ -737,9 +737,13 @@ Deno.serve(async (req) => {
       return 'LOW';
     }
 
-    const overallRiskLevel = getRiskLevel(
-      Math.max(surveillanceRisk, protestRisk, sabotageThreat, criticalThreatCount)
-    );
+    // PR-B (WO-UNSCORED-SWEEP-FULL): an EMPTY signal corpus for the period must NOT print a green
+    // "LOW" all-clear — that collapses "monitored, nothing found" and "nothing collected" into the
+    // same reassurance (Absence-Is-Not-A-Value). A fetch failure already throws above, so a zero-length
+    // corpus here means genuinely no reportable signals in-period → say INSUFFICIENT DATA explicitly.
+    const overallRiskLevel = freshSignals.length === 0
+      ? 'INSUFFICIENT DATA'
+      : getRiskLevel(Math.max(surveillanceRisk, protestRisk, sabotageThreat, criticalThreatCount));
 
     // Build evidence sources array for traceability
     const evidenceSources: EvidenceSource[] = [];
@@ -1389,7 +1393,9 @@ Rules: plain prose, no markdown, no asterisks, no headers. Total length UNDER 25
       narrativeCriticalCount === 0
       && narrativeHighCount === 0
       && newIncidentsLast24h.length === 0
-      && (overallRiskLevel || '').toUpperCase() === 'LOW';
+      // PR-B: an empty corpus (INSUFFICIENT DATA) is by definition a quiet period — keep the
+      // deterministic narrative path and NEVER hand an empty signal set to the LLM.
+      && ['LOW', 'INSUFFICIENT DATA'].includes((overallRiskLevel || '').toUpperCase());
 
     let narratives: Array<{ category: string; narrative: string; signals: any[] }> = [];
     if (isNarrativeQuietPeriod) {
