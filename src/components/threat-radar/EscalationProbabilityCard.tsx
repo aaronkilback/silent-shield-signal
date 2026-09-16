@@ -13,6 +13,7 @@ interface EscalationProbabilityCardProps {
 }
 
 interface EscalationPrediction {
+  insufficientData: boolean; // PR-E: true when signalCount===0 — render "Insufficient data", never a %
   probability: number;
   timeframe: string;
   timeframeHours: number;
@@ -148,13 +149,19 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
           probability: Math.min(90, Math.round((count / signalCount) * 100 + probability * 0.5))
         }));
 
+      // PR-E rework (Codex): with ZERO signals this is unscored — the probability, risk level, and
+      // container colour must ALL be neutral, not just the number. Incidents alone (which otherwise
+      // drive a 60% container-orange under "Insufficient data") do NOT constitute an escalation
+      // estimate, and the reassuring "Normal baseline" factor must not appear over an empty input.
+      const insufficientData = signalCount === 0;
       return {
-        probability,
+        insufficientData,
+        probability: insufficientData ? 0 : probability,
         timeframe,
         timeframeHours,
         confidence,
-        topFactors,
-        riskLevel,
+        topFactors: insufficientData ? [] : topFactors,
+        riskLevel: insufficientData ? 'low' : riskLevel,
         trendDirection,
         hotspots,
       };
@@ -192,11 +199,11 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             <div className="flex items-center gap-2 p-2 rounded-lg bg-card border cursor-pointer hover:bg-accent/50 transition-colors">
               <Target className="h-4 w-4 text-orange-400" />
               <span className="text-sm font-medium">Escalation</span>
-              <Badge 
-                variant="outline" 
-                className={cn("text-xs", riskColors[prediction?.riskLevel || 'low'])}
+              <Badge
+                variant="outline"
+                className={cn("text-xs", prediction?.insufficientData ? "text-muted-foreground" : riskColors[prediction?.riskLevel || 'low'])}
               >
-                {prediction?.probability}%
+                {prediction?.insufficientData ? "Insufficient data" : `${prediction?.probability}%`}
               </Badge>
               <span className="text-xs text-muted-foreground">
                 {prediction?.timeframe}
@@ -206,7 +213,9 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
           <TooltipContent side="bottom" className="max-w-xs">
             <p className="font-medium">Escalation Probability</p>
             <p className="text-xs text-muted-foreground">
-              {prediction?.probability}% chance of incident escalation in the {prediction?.timeframe}.
+              {prediction?.insufficientData
+                ? "Insufficient data to estimate escalation — no signals in window."
+                : `${prediction?.probability}% chance of incident escalation in the ${prediction?.timeframe}.`}
             </p>
             {prediction?.topFactors[0] && (
               <p className="text-xs mt-1 text-primary">{prediction.topFactors[0]}</p>
@@ -225,11 +234,11 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             <Target className="h-5 w-5 text-orange-400" />
             <CardTitle className="text-lg">Escalation Probability</CardTitle>
           </div>
-          <Badge 
-            variant="outline" 
-            className={cn(riskColors[prediction?.riskLevel || 'low'])}
+          <Badge
+            variant="outline"
+            className={cn(prediction?.insufficientData ? "text-muted-foreground" : riskColors[prediction?.riskLevel || 'low'])}
           >
-            {prediction?.riskLevel?.toUpperCase()}
+            {prediction?.insufficientData ? "INSUFFICIENT DATA" : prediction?.riskLevel?.toUpperCase()}
           </Badge>
         </div>
       </CardHeader>
@@ -237,37 +246,45 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
         {/* Main Probability Display */}
         <div className={cn(
           "p-4 rounded-lg text-center border",
+          prediction?.insufficientData ? 'bg-muted/30 border-border/50' :
           prediction?.riskLevel === 'critical' ? 'bg-red-500/10 border-red-500/30' :
           prediction?.riskLevel === 'high' ? 'bg-orange-500/10 border-orange-500/30' :
           'bg-muted/30 border-border/50'
         )}>
-          <div className="flex items-center justify-center gap-2 mb-1">
-            <span className={cn("text-4xl font-bold", probabilityColor)}>
-              {prediction?.probability}%
-            </span>
-            {prediction?.trendDirection === 'increasing' && (
-              <ArrowUpRight className="h-6 w-6 text-red-400" />
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            chance of escalation in the <span className="font-medium">{prediction?.timeframe}</span>
-          </p>
-          <div className="flex items-center justify-center gap-2 mt-2">
-            <Clock className="h-3 w-3 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">
-              {prediction?.confidence}% confidence
-            </span>
-          </div>
+          {prediction?.insufficientData ? (
+            <p className="text-lg font-semibold text-muted-foreground py-3">Insufficient data</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-center gap-2 mb-1">
+                <span className={cn("text-4xl font-bold", probabilityColor)}>
+                  {prediction?.probability}%
+                </span>
+                {prediction?.trendDirection === 'increasing' && (
+                  <ArrowUpRight className="h-6 w-6 text-red-400" />
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                chance of escalation in the <span className="font-medium">{prediction?.timeframe}</span>
+              </p>
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <Clock className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  {prediction?.confidence}% confidence
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Progress Bar */}
+        {/* Progress Bar — hidden when unscored (no bar over an empty input) */}
+        {!prediction?.insufficientData && (
         <div className="space-y-1">
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>Low Risk</span>
             <span>Critical</span>
           </div>
-          <Progress 
-            value={prediction?.probability || 0} 
+          <Progress
+            value={prediction?.probability || 0}
             className={cn(
               "h-2",
               (prediction?.probability || 0) >= 50 && "[&>div]:bg-red-500",
@@ -275,8 +292,10 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             )}
           />
         </div>
+        )}
 
-        {/* Top Factors */}
+        {/* Top Factors — hidden when unscored (no reassuring "Normal baseline" over an empty input) */}
+        {(prediction?.topFactors?.length ?? 0) > 0 && (
         <div className="space-y-2">
           <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">
             <AlertTriangle className="h-3.5 w-3.5" />
@@ -291,6 +310,7 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             ))}
           </ul>
         </div>
+        )}
 
         {/* Hotspots */}
         {prediction?.hotspots && prediction.hotspots.length > 0 && (
