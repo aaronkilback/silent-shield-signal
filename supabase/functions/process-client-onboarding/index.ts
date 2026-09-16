@@ -57,7 +57,14 @@ Deno.serve(async (req) => {
         } else {
           return errorResponse('Not authorized to create a client in the requested tenant', 403);
         }
+      } else if (isSuper === true) {
+        // WO-CLIENT-ONBOARD-SCOPE step 2: a super-admin acts ACROSS tenants, so their own
+        // sole membership must NOT be an implicit target — that is exactly how "Kyle Kane"
+        // misfiled into Silent Shield Operations when the UI sent no tenant_id. Require an
+        // explicit selection; never fall through to the caller's home tenant.
+        return errorResponse('Select a tenant before creating a client', 400);
       } else if (callerTenantIds.length === 1) {
+        // Single-tenant (non-super) user: their sole membership is unambiguous.
         tenantId = callerTenantIds[0];
       }
     } else if (caller.kind === 'service_role') {
@@ -101,18 +108,22 @@ Deno.serve(async (req) => {
       onboarding_data: clientData,
     };
 
-    // Use AI to generate risk assessment via resilient gateway
+    // WO-CLIENT-ONBOARD-SCOPE step 1 (Finding 4): onboarding produces NO numeric risk score.
+    // A score is only meaningful once ATTRIBUTED SIGNALS exist; at onboard there are none, so
+    // risk_score is null and every surface renders "Unscored" (no colour, no bar). The LLM read of
+    // the profile is retained ONLY as free-text `analyst_notes` — it is never a score, level,
+    // colour, or bar. The previous hardcoded 50 fallback is removed: it manufactured a number from
+    // nothing (Row A showed exactly that — "Insufficient data" → 50).
+    //
+    // PROVENANCE FLAG (do not change here): this call still sends prospect identity + location to
+    // gpt-4o-mini. Whether prospect PII should leave Fortress for a model API is an open provenance
+    // question tracked in WO-CLIENT-ONBOARD-SCOPE; unchanged in this step.
     const aiResult = await callAiGateway({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
-          content: `You are a security risk analyst. Analyze client onboarding data and provide:
-- threat_profile: array of potential threats based on industry and assets
-- risk_score: 0-100 overall risk score
-- risk_factors: array of specific risk factors
-- recommendations: array of security recommendations
-Respond ONLY with valid JSON.`
+          content: `You are a security analyst. Given client onboarding data, write a brief prose note (max 120 words) on plausible security considerations for this profile. Do NOT output any score, rating, number, or level. Plain text only.`
         },
         {
           role: 'user',
@@ -122,22 +133,15 @@ Respond ONLY with valid JSON.`
       functionName: 'process-client-onboarding',
     });
 
-    let riskAssessment = {
-      threat_profile: ['General security threats'],
-      risk_score: 50,
-      risk_factors: ['Insufficient data for detailed assessment'],
-      recommendations: ['Complete comprehensive security audit'],
+    const analystNotes = (typeof aiResult.content === 'string' && aiResult.content.trim().length > 0)
+      ? aiResult.content.trim()
+      : null;
+
+    const riskAssessment = {
+      risk_score: null,          // no attributed signals at onboard → unscored; NEVER a fallback number
+      analyst_notes: analystNotes,
       generated_at: new Date().toISOString(),
     };
-
-    if (aiResult.content) {
-      try {
-        const parsed = JSON.parse(aiResult.content);
-        riskAssessment = { ...riskAssessment, ...parsed, generated_at: new Date().toISOString() };
-      } catch (e) {
-        console.error('Failed to parse AI response:', e);
-      }
-    }
 
     // Insert client with risk assessment
     const { data: client, error: clientError } = await supabase
@@ -145,7 +149,7 @@ Respond ONLY with valid JSON.`
       .insert({
         ...normalizedData,
         tenant_id: tenantId,
-        threat_profile: riskAssessment.threat_profile,
+        threat_profile: [],   // no LLM-derived threat "profile" masquerading as a level/colour
         risk_assessment: riskAssessment,
         status: 'onboarding',
       })
