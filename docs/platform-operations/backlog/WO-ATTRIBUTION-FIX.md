@@ -10,16 +10,23 @@ Prod evidence (operator subject `32750258-…`, read-only): entity `role`/`insti
 ## The fix
 **Split the two stages C1 conflated.** Discovery keeps recall (C1 unchanged — don't narrow queries, or the 2011 Olynyk case is never found). **Attribution reverses C1** — anchors may now REJECT.
 
+## Rework — Codex block (four fixes, 2026-09-16)
+1. **Independent-provenance exclusion (the core fix).** Every anchor carries `source` (the exact URL / store it was learned from). Before evaluating a candidate page, `resolveAttribution` **excludes any anchor whose `source` is that same page** — or is a page previously misattributed to the subject. **An anchor can never confirm the page it came from.** Without this the gate launders its own past errors: a wrong-person page that once became a "confirmed" finding would seed an anchor that re-confirms that same page forever. Confirmation must come from a *different* source than the page being judged.
+2. **Confirmation bar (bare location never confirms).** `confirmed` requires EITHER (a) **≥2 confirming anchors from ≥2 independent sources** (distinct source pages/stores after the exclusion above), OR (b) **exactly one STRONG anchor** — role **+ specific counterparty**, a verified email, a verified handle, an owned domain, or a data-broker PII record. A single WEAK anchor — bare `location`, employer-name-only, generic role — **never confirms** → `unattributed`. (Olynyk = strong compound `role:conservation_officer + case_party:Olynyk`; a name+city coincidence is one weak anchor → not confirmed.)
+3. **Hard-stop, no overwrite.** `unattributed`/`unresolved` hard-stop exactly like `contradicted` — `resolveAttribution` returns immediately and the item is written `is_finding=false`. The DB guard `fn_sei_item_gate` **rejects any later UPDATE** that would set `is_finding=true` on an item whose `attribution_state ∈ {unattributed, unresolved, contradicted}`. No downstream classifier (legal/media/…) can overwrite it. There is no code path from unattributed/unresolved to a finding — the fall-through is closed.
+4. **Executable activation guard.** The identity gate **refuses to run** for a subject whose `subject_identity_anchors` set has zero `verified` anchors (`if (verifiedAnchors.length === 0) abort('anchors not bootstrapped')`), and the gate feature flag **cannot be enabled** while any active subject has zero verified anchors (startup/deploy-time check). Ordering is enforced in code, not stated in prose — the gate literally cannot evaluate an unbootstrapped subject.
+
 ### Anchor model (`subject_identity_anchors`, new table, RLS-at-creation, owner-scoped)
-Assembled per scan from: `entities.attributes` (role/employer/specialty/location/email/handles/domains); `subject_learned_terms` (litigant/case_name/citation → `case_party`/`employer`); **prior `attribution_state='confirmed'` findings** (so a learned fact like "conservation officer" becomes a reusable anchor). POSITIVE anchors = subject identity facts; CONTRADICTING anchors = a *different verified* identity's facts.
+Assembled per scan from: `entities.attributes` (role/employer/specialty/location/email/handles/domains); `subject_learned_terms` (litigant/case_name/citation → `case_party`/`employer`); **prior `attribution_state='confirmed'` findings** (a learned fact like "conservation officer" becomes a reusable anchor). Each anchor row carries: `polarity` (positive/contradicting), `strength` (strong/weak), `source` (provenance URL/store), and `verified` (bool). POSITIVE anchors = subject identity facts; CONTRADICTING anchors = a *different verified* identity's facts.
 
 ### Decision rule — `resolveAttribution(subject, anchors, location)`
-| condition | verdict | persisted |
+Anchors are first filtered to those whose `source` ≠ this location's page (fix 1). Then:
+| condition (after independence filter) | verdict | persisted |
 |---|---|---|
-| ≥1 confirming anchor, no contradicting | **confirmed** → admit + record identifier | `attribution_state=confirmed`, `attribution_basis=confirming_anchor` |
-| ≥1 contradicting anchor (verified rival) | **contradicted** → reject/quarantine | `contradicted`, never a finding |
-| full name only, no corroborating anchor | **unattributed** → mention, never a finding | `unattributed`, `name_only` |
-| gate couldn't run (no anchors/no data) | **unresolved** → mention, explicit | `unresolved` (Absence-Is-Not-A-Value; never NULL-inferred) |
+| ≥1 contradicting anchor (verified rival) | **contradicted** → reject/quarantine, **return immediately** | `contradicted`, never a finding |
+| ≥2 confirming anchors from ≥2 independent sources, OR 1 STRONG anchor; no contradicting | **confirmed** → admit + record identifier | `attribution_state=confirmed`, `attribution_basis=confirming_anchor` |
+| only weak/self-sourced anchors, or full name only | **unattributed** → mention, never a finding, **hard-stop** | `unattributed`, `name_only` |
+| no verified anchors loaded / gate could not run | **unresolved** → mention, explicit, **hard-stop** | `unresolved` (Absence-Is-Not-A-Value; never NULL-inferred) |
 
 **Inversion:** a finding now requires BOTH `exposure_class='finding'` AND `attribution_state='confirmed'`. `exposure_class` = "adverse + corroborated?"; `attribution_state` = "is it the subject?" — orthogonal. This demotes the 5 fabricated `Kilback v. <noun>` cases to `unattributed`.
 
@@ -34,7 +41,11 @@ Gate 2 for non-legal categories tests the page against tokens derived from that 
 `subject_exposure_items`: `attribution_state`/`attribution_identifier`/`attribution_confidence`/`attribution_basis`. `subject_exposure_locations`: `confirming_anchors[]`/`contradicting_anchors[]` (per-location, auditable to source). Full DDL in the draft SQL.
 
 ### Code change points
-`_shared/subject-retrieval.ts` (`resolveAttribution` new; `verifyFindings` rejects `contradicted`, tags `unattributed`/`unresolved`, stops identity fail-open; `loadIdentityAnchors` new; thread state through `clusterFindings`/`persist`/`gateLocation`); `_shared/corroboration-gate.ts` (`findingEntityPresent` non-legal re-anchored to confirming anchors; new `gate_failed='gate2_identity'`); `entity-deep-scan/index.ts` (`isResultAboutEntity` returns `unresolved` not `true` when no anchors); DB `fn_sel_reclassify` + `fn_sei_item_gate` (item-level guard so contradicted→noise, unattributed/unresolved→not-finding) — **triggers must stay lockstep with the TS constants**.
+- `_shared/subject-retrieval.ts`: `resolveAttribution` new — **(a) filter out anchors whose `source` == the candidate page** (fix 1), **(b) apply the strong-or-≥2-independent bar** (fix 2), **(c) return immediately on contradicted/unattributed/unresolved** (fix 3); `verifyFindings` rejects `contradicted`, hard-tags `unattributed`/`unresolved` (no fail-open); `loadIdentityAnchors` new (loads `polarity/strength/source/verified`); **`assertAnchorsBootstrapped(subject)` abort guard at the top of the identity branch** (fix 4); thread state through `clusterFindings`/`persist`/`gateLocation`.
+- `_shared/corroboration-gate.ts`: `findingEntityPresent` non-legal re-anchored to a confirming anchor from an **independent source** (not the page's own title); new `gate_failed='gate2_identity'`.
+- `entity-deep-scan/index.ts`: `isResultAboutEntity` returns `unresolved` (not `true`) when no anchors.
+- **DB `fn_sei_item_gate`**: hard-stop guard — an item with `attribution_state ∈ {unattributed,unresolved,contradicted}` is forced `is_finding=false`/`exposure_class='noise'`, and **any UPDATE raising `is_finding` to true on such a row is rejected** (fix 3, non-overwritable at the storage layer). `fn_sel_reclassify` stays a pure counter. **Triggers must stay lockstep with the TS constants.**
+- **Activation guard (fix 4, executable):** a feature-flag/startup check that refuses to enable the gate while any active subject has zero `verified` anchors — see draft SQL `attribution_gate_enabled()` guard.
 
 ## RULING (2026-09-16, operator)
 **The anchor bootstrap ships BEFORE the attribution gate, always.** Nothing about the new gate deploys until the subject's anchors are seeded and verified. **The acceptance oracle below is a HARD GATE** (not advisory): one real re-run — Olynyk `confirmed`, the fabricated `Kilback v. <noun>` cases `unattributed`, any contradicting-anchor homonym `contradicted` — verified in SQL and **shown to the operator before the gate goes live**. This design + PR #223 stay **staged, no deploy, pending Codex**.

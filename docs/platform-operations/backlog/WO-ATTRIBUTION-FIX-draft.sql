@@ -105,6 +105,14 @@ create unique index if not exists uq_sia_subject_kind_value_polarity
 --    Note: environmental 'coordinate' anchors are producer-set on OWNED assets
 --    (client_geo_assets) — those are attribution_state='confirmed' by construction
 --    (the coordinate IS the subject's declared asset), so they are unaffected.
+--
+--    FIX 3 (non-overwritable): because this is a BEFORE INSERT OR UPDATE trigger that
+--    unconditionally re-forces is_finding:=false whenever attribution_state is in
+--    ('contradicted','unattributed','unresolved'), NO later UPDATE by any downstream
+--    classifier can leave is_finding=true on such a row — the trigger re-runs and
+--    corrects it on every write. (Optional belt-and-suspenders: RAISE EXCEPTION when
+--    OLD.attribution_state in the bad set AND NEW.is_finding is true, to make the
+--    attempted overwrite loud rather than silently corrected.)
 -- ----------------------------------------------------------------------------
 
 -- ----------------------------------------------------------------------------
@@ -112,3 +120,47 @@ create unique index if not exists uq_sia_subject_kind_value_polarity
 --    Draft only. Re-runs the identity gate over stored locations. Not applied.
 --    (Backfill is a separate, gated step per Population-Before-Check.)
 -- ----------------------------------------------------------------------------
+
+-- ----------------------------------------------------------------------------
+-- 7. subject_identity_anchors — the anchor store (FIX 1 provenance, FIX 2 strength).
+--    RLS-at-creation, owner-scoped, deny-by-default. Every anchor records its
+--    SOURCE so resolveAttribution can exclude self-sourced anchors (an anchor may
+--    not confirm the page it was learned from), and its STRENGTH so bare-location
+--    weak anchors can never single-handedly confirm.
+-- ----------------------------------------------------------------------------
+create table if not exists public.subject_identity_anchors (
+  id uuid primary key default gen_random_uuid(),
+  subject_entity_id uuid not null references public.entities(id) on delete cascade,
+  anchor_type text not null,                    -- role|employer|specialty|location|email|handle|domain|case_party|coordinate|data_broker
+  anchor_value text not null,
+  polarity text not null default 'positive' check (polarity in ('positive','contradicting')),
+  strength text not null default 'weak'    check (strength in ('strong','weak')),
+  -- strong = role+specific counterparty | verified email | verified handle | owned domain | data_broker PII
+  -- weak   = bare location | employer-name-only | generic role  (never confirms alone)
+  source text,                                  -- FIX 1: provenance URL/store the anchor was learned from
+  verified boolean not null default false,      -- FIX 4: only verified anchors let the gate run
+  learned_from text,                            -- 'entity_attributes'|'subject_learned_terms'|'prior_confirmed_finding'|'operator'
+  created_at timestamptz not null default now()
+);
+alter table public.subject_identity_anchors enable row level security;
+-- (owner/tenant-scoped read policy added with the entity's tenant; service-role writes only)
+create index if not exists idx_sia_subject on public.subject_identity_anchors(subject_entity_id) where verified;
+
+-- ----------------------------------------------------------------------------
+-- 8. Activation guard (FIX 4, executable) — the gate cannot run against an
+--    empty/unbootstrapped anchor set. Ordering enforced in code, not prose.
+-- ----------------------------------------------------------------------------
+create or replace function public.subject_has_verified_anchors(p_subject uuid)
+returns boolean language sql stable as $$
+  select exists (
+    select 1 from public.subject_identity_anchors
+    where subject_entity_id = p_subject and verified and polarity = 'positive'
+  );
+$$;
+-- The edge gate calls subject_has_verified_anchors(subject) at the top of the identity
+-- branch and ABORTS (no attribution, leaves items untouched) if it returns false.
+-- Deploy-time: the gate feature flag must not enable while any active subject with scan
+-- data has zero verified anchors — a startup assertion over the active-subject set:
+--   select bool_and(subject_has_verified_anchors(subject_entity_id))
+--   from (select distinct subject_entity_id from public.subject_exposure_items
+--         where superseded_at is null) s;   -- must be TRUE before enable
