@@ -13,6 +13,7 @@ interface EscalationProbabilityCardProps {
 }
 
 interface EscalationPrediction {
+  insufficientData: boolean; // PR-E: true when signalCount===0 — render "Insufficient data", never a %
   probability: number;
   timeframe: string;
   timeframeHours: number;
@@ -149,6 +150,9 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
         }));
 
       return {
+        // PR-E (WO-UNSCORED-SWEEP-FULL): a 15% baseline floor over ZERO signals reads as measured
+        // risk to a client regardless of intent. With no input, this is unscored — not a number.
+        insufficientData: signalCount === 0,
         probability,
         timeframe,
         timeframeHours,
@@ -192,11 +196,11 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             <div className="flex items-center gap-2 p-2 rounded-lg bg-card border cursor-pointer hover:bg-accent/50 transition-colors">
               <Target className="h-4 w-4 text-orange-400" />
               <span className="text-sm font-medium">Escalation</span>
-              <Badge 
-                variant="outline" 
-                className={cn("text-xs", riskColors[prediction?.riskLevel || 'low'])}
+              <Badge
+                variant="outline"
+                className={cn("text-xs", prediction?.insufficientData ? "text-muted-foreground" : riskColors[prediction?.riskLevel || 'low'])}
               >
-                {prediction?.probability}%
+                {prediction?.insufficientData ? "Insufficient data" : `${prediction?.probability}%`}
               </Badge>
               <span className="text-xs text-muted-foreground">
                 {prediction?.timeframe}
@@ -206,7 +210,9 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
           <TooltipContent side="bottom" className="max-w-xs">
             <p className="font-medium">Escalation Probability</p>
             <p className="text-xs text-muted-foreground">
-              {prediction?.probability}% chance of incident escalation in the {prediction?.timeframe}.
+              {prediction?.insufficientData
+                ? "Insufficient data to estimate escalation — no signals in window."
+                : `${prediction?.probability}% chance of incident escalation in the ${prediction?.timeframe}.`}
             </p>
             {prediction?.topFactors[0] && (
               <p className="text-xs mt-1 text-primary">{prediction.topFactors[0]}</p>
@@ -225,11 +231,11 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             <Target className="h-5 w-5 text-orange-400" />
             <CardTitle className="text-lg">Escalation Probability</CardTitle>
           </div>
-          <Badge 
-            variant="outline" 
-            className={cn(riskColors[prediction?.riskLevel || 'low'])}
+          <Badge
+            variant="outline"
+            className={cn(prediction?.insufficientData ? "text-muted-foreground" : riskColors[prediction?.riskLevel || 'low'])}
           >
-            {prediction?.riskLevel?.toUpperCase()}
+            {prediction?.insufficientData ? "INSUFFICIENT DATA" : prediction?.riskLevel?.toUpperCase()}
           </Badge>
         </div>
       </CardHeader>
@@ -241,33 +247,40 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
           prediction?.riskLevel === 'high' ? 'bg-orange-500/10 border-orange-500/30' :
           'bg-muted/30 border-border/50'
         )}>
-          <div className="flex items-center justify-center gap-2 mb-1">
-            <span className={cn("text-4xl font-bold", probabilityColor)}>
-              {prediction?.probability}%
-            </span>
-            {prediction?.trendDirection === 'increasing' && (
-              <ArrowUpRight className="h-6 w-6 text-red-400" />
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            chance of escalation in the <span className="font-medium">{prediction?.timeframe}</span>
-          </p>
-          <div className="flex items-center justify-center gap-2 mt-2">
-            <Clock className="h-3 w-3 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">
-              {prediction?.confidence}% confidence
-            </span>
-          </div>
+          {prediction?.insufficientData ? (
+            <p className="text-lg font-semibold text-muted-foreground py-3">Insufficient data</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-center gap-2 mb-1">
+                <span className={cn("text-4xl font-bold", probabilityColor)}>
+                  {prediction?.probability}%
+                </span>
+                {prediction?.trendDirection === 'increasing' && (
+                  <ArrowUpRight className="h-6 w-6 text-red-400" />
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                chance of escalation in the <span className="font-medium">{prediction?.timeframe}</span>
+              </p>
+              <div className="flex items-center justify-center gap-2 mt-2">
+                <Clock className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  {prediction?.confidence}% confidence
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Progress Bar */}
+        {/* Progress Bar — hidden when unscored (no bar over an empty input) */}
+        {!prediction?.insufficientData && (
         <div className="space-y-1">
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>Low Risk</span>
             <span>Critical</span>
           </div>
-          <Progress 
-            value={prediction?.probability || 0} 
+          <Progress
+            value={prediction?.probability || 0}
             className={cn(
               "h-2",
               (prediction?.probability || 0) >= 50 && "[&>div]:bg-red-500",
@@ -275,6 +288,7 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             )}
           />
         </div>
+        )}
 
         {/* Top Factors */}
         <div className="space-y-2">
