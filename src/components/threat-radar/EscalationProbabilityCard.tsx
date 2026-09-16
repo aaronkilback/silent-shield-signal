@@ -149,16 +149,19 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
           probability: Math.min(90, Math.round((count / signalCount) * 100 + probability * 0.5))
         }));
 
+      // PR-E rework (Codex): with ZERO signals this is unscored — the probability, risk level, and
+      // container colour must ALL be neutral, not just the number. Incidents alone (which otherwise
+      // drive a 60% container-orange under "Insufficient data") do NOT constitute an escalation
+      // estimate, and the reassuring "Normal baseline" factor must not appear over an empty input.
+      const insufficientData = signalCount === 0;
       return {
-        // PR-E (WO-UNSCORED-SWEEP-FULL): a 15% baseline floor over ZERO signals reads as measured
-        // risk to a client regardless of intent. With no input, this is unscored — not a number.
-        insufficientData: signalCount === 0,
-        probability,
+        insufficientData,
+        probability: insufficientData ? 0 : probability,
         timeframe,
         timeframeHours,
         confidence,
-        topFactors,
-        riskLevel,
+        topFactors: insufficientData ? [] : topFactors,
+        riskLevel: insufficientData ? 'low' : riskLevel,
         trendDirection,
         hotspots,
       };
@@ -243,6 +246,7 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
         {/* Main Probability Display */}
         <div className={cn(
           "p-4 rounded-lg text-center border",
+          prediction?.insufficientData ? 'bg-muted/30 border-border/50' :
           prediction?.riskLevel === 'critical' ? 'bg-red-500/10 border-red-500/30' :
           prediction?.riskLevel === 'high' ? 'bg-orange-500/10 border-orange-500/30' :
           'bg-muted/30 border-border/50'
@@ -290,7 +294,8 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
         </div>
         )}
 
-        {/* Top Factors */}
+        {/* Top Factors — hidden when unscored (no reassuring "Normal baseline" over an empty input) */}
+        {(prediction?.topFactors?.length ?? 0) > 0 && (
         <div className="space-y-2">
           <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">
             <AlertTriangle className="h-3.5 w-3.5" />
@@ -305,6 +310,7 @@ export function EscalationProbabilityCard({ clientId, compact = false }: Escalat
             ))}
           </ul>
         </div>
+        )}
 
         {/* Hotspots */}
         {prediction?.hotspots && prediction.hotspots.length > 0 && (
