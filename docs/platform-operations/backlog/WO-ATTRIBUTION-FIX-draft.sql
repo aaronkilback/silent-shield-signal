@@ -44,27 +44,10 @@ alter table public.subject_exposure_locations
 --    (New table; RLS-at-Creation; owner-scoped; named consumer = the gate +
 --     the report renderer's "resolved by" line.)
 -- ----------------------------------------------------------------------------
-create table if not exists public.subject_identity_anchors (
-  id uuid primary key default gen_random_uuid(),
-  subject_entity_id uuid not null,
-  client_id uuid,
-  tenant_id uuid,
-  anchor_kind text not null
-    check (anchor_kind in ('role','employer','location','email','handle','domain','case_party','established_fact')),
-  anchor_value text not null,          -- normalized (lowercased, trimmed)
-  polarity text not null default 'positive'
-    check (polarity in ('positive','contradicting')),
-  -- 'positive'      = an established identity fact of THE SUBJECT (confirms)
-  -- 'contradicting' = a fact of a KNOWN DIFFERENT person sharing the name (rejects)
-  source text not null,                -- 'entity_attributes' | 'learned_term' | 'prior_confirmed_finding' | 'operator'
-  source_ref uuid,                     -- scan_id / finding id / learned_term id
-  created_at timestamptz not null default now()
-);
-alter table public.subject_identity_anchors enable row level security;   -- RLS-at-Creation, deny-by-default; service-role writers bypass
--- Read policy: owner-scoped only (add when a non-service-role reader needs it; omitted here = closed).
-create index if not exists idx_sia_subject on public.subject_identity_anchors(subject_entity_id) where polarity='positive';
-create unique index if not exists uq_sia_subject_kind_value_polarity
-  on public.subject_identity_anchors(subject_entity_id, anchor_kind, anchor_value, polarity);
+-- CANONICAL DDL MOVED TO §7 (below). The earlier stub here used `anchor_kind` and lacked the
+-- `source`/`strength`/`verified`/`learned_from` columns that fixes 1/2/4 require; keeping two
+-- `create table` statements for the same table was incoherent. §7 is the single source of truth
+-- for subject_identity_anchors. (Removed 2026-09-16 during the four-fix rework.)
 
 -- ----------------------------------------------------------------------------
 -- 4. fn_sel_reclassify — MUST STAY LOCKSTEP with the TS gate.
