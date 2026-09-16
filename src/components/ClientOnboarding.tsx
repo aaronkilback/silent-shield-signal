@@ -68,6 +68,13 @@ export const ClientOnboarding = () => {
   };
 
   const processClientData = async (data: any[]) => {
+    // WO-CLIENT-ONBOARD-SCOPE step 2: never submit onboarding without an explicit tenant scope.
+    // The writer now 400s a super-admin who sends no tenant_id, and a stale/undefined currentTenant
+    // is exactly how "Kyle Kane" misfiled into the wrong tenant. Fail in the UI before the round-trip.
+    if (!currentTenant?.id) {
+      toast.error("Select a tenant before onboarding a client");
+      throw new Error("No tenant selected");
+    }
     for (const entry of data) {
       const { error } = await supabase.functions.invoke("process-client-onboarding", {
         body: { clientData: entry, tenant_id: currentTenant?.id },
@@ -137,7 +144,7 @@ export const ClientOnboarding = () => {
               <Button
                 type="button"
                 variant="outline"
-                disabled={loading}
+                disabled={loading || !currentTenant?.id}
                 onClick={() => document.getElementById("csv-upload")?.click()}
                 className="flex-1"
               >
@@ -147,7 +154,7 @@ export const ClientOnboarding = () => {
               <Button
                 type="button"
                 variant="outline"
-                disabled={loading}
+                disabled={loading || !currentTenant?.id}
                 onClick={() => document.getElementById("json-upload")?.click()}
                 className="flex-1"
               >
@@ -155,6 +162,9 @@ export const ClientOnboarding = () => {
                 Upload JSON
               </Button>
             </div>
+            {!currentTenant?.id && (
+              <p className="text-sm text-muted-foreground">Select a tenant before importing.</p>
+            )}
             <input
               id="csv-upload"
               type="file"
@@ -238,7 +248,10 @@ export const ClientOnboarding = () => {
                   rows={3}
                 />
               </div>
-              <Button type="submit" disabled={loading} className="w-full">
+              {!currentTenant?.id && (
+                <p className="text-sm text-muted-foreground">Select a tenant before onboarding.</p>
+              )}
+              <Button type="submit" disabled={loading || !currentTenant?.id} className="w-full">
                 {loading ? "Processing..." : "Onboard Client"}
               </Button>
             </form>
