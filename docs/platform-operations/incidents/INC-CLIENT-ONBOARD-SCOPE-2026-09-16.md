@@ -21,3 +21,6 @@ Deleted both client rows (no re-parent, per ruling):
 - **Step 1+2 (PR #219, deployed `process-client-onboarding` v122):** onboard writes `risk_assessment.risk_score = null` (50 fallback removed), LLM read kept only as `analyst_notes`, `threat_profile = []`; super-admin with no `tenant_id` → 400 "Select a tenant"; UI gates submit until `currentTenant?.id`.
 - **Provenance flag (open):** onboarding still sends prospect identity + location to gpt-4o-mini. Tracked, unchanged.
 - **Steps 3, 5, 6, 7:** pending per morning rulings (B/C/D then E, F-gated Step 7).
+
+## FINISH-HOTFIX — DONE (operator ruling 2026-09-16)
+Accepted the **prod served-bundle read-back** as acceptance proof: `version.json` source_commit_sha `a518a89b` (run 35093948362); "Unscored" present in the served `ClientDetail`/`Clients`/`Signals` lazy chunks (of 182); edge `process-client-onboarding` v123 read-back `roleErr→400` present, `risk_score:null` present, `risk_score:50` gone. **FINISH-HOTFIX marked done; the onboarding gate is LIFTED.** The staging null-vs-0 screenshot is **deferred, not required** — capture later on prod against a real unscored client, or after staging is rebuilt (WO-STAGING-REBUILD).
