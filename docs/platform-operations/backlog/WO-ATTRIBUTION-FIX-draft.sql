@@ -99,6 +99,22 @@ alter table public.subject_exposure_locations
 -- ----------------------------------------------------------------------------
 
 -- ----------------------------------------------------------------------------
+-- 5b. HARD-STOP AS A REAL CONSTRAINT (FIX 2 — not a comment, not a mutable trigger).
+--     A CHECK constraint is non-bypassable and version-independent: no classifier, trigger, or
+--     UPDATE can leave is_finding=true on an item whose identity is not resolved to the subject.
+--     Any statement that tries fails with a constraint violation (loud), rather than being silently
+--     corrected by a BEFORE trigger. This is the storage-layer guarantee the hard-stop needs.
+--     Added NOT VALID first (live rows never block the DDL), then validated after the backfill sets
+--     is_finding=false on the offending historical rows.
+-- ----------------------------------------------------------------------------
+alter table public.subject_exposure_items
+  add constraint chk_sei_finding_requires_confirmed_attribution
+  check (not (is_finding and attribution_state in ('unattributed','unresolved','contradicted')))
+  not valid;
+-- after the one-time reclassification (§6) forces is_finding=false on the bad-attribution rows:
+--   alter table public.subject_exposure_items validate constraint chk_sei_finding_requires_confirmed_attribution;
+
+-- ----------------------------------------------------------------------------
 -- 6. One-time reclassification of the EXISTING prod population (forward-safe).
 --    Draft only. Re-runs the identity gate over stored locations. Not applied.
 --    (Backfill is a separate, gated step per Population-Before-Check.)
@@ -120,7 +136,10 @@ create table if not exists public.subject_identity_anchors (
   strength text not null default 'weak'    check (strength in ('strong','weak')),
   -- strong = role+specific counterparty | verified email | verified handle | owned domain | data_broker PII
   -- weak   = bare location | employer-name-only | generic role  (never confirms alone)
-  source text,                                  -- FIX 1: provenance URL/store the anchor was learned from
+  source text not null check (length(trim(source)) > 0),  -- FIX 1: provenance is REQUIRED. A missing
+                                                -- source is rejected at write. The resolver treats an
+                                                -- anchor of unknown provenance as NON-INDEPENDENT — a
+                                                -- strong anchor with no source cannot confirm anything.
   verified boolean not null default false,      -- FIX 4: only verified anchors let the gate run
   learned_from text,                            -- 'entity_attributes'|'subject_learned_terms'|'prior_confirmed_finding'|'operator'
   created_at timestamptz not null default now()
@@ -140,10 +159,27 @@ returns boolean language sql stable as $$
     where subject_entity_id = p_subject and verified and polarity = 'positive'
   );
 $$;
--- The edge gate calls subject_has_verified_anchors(subject) at the top of the identity
--- branch and ABORTS (no attribution, leaves items untouched) if it returns false.
--- Deploy-time: the gate feature flag must not enable while any active subject with scan
--- data has zero verified anchors — a startup assertion over the active-subject set:
---   select bool_and(subject_has_verified_anchors(subject_entity_id))
---   from (select distinct subject_entity_id from public.subject_exposure_items
---         where superseded_at is null) s;   -- must be TRUE before enable
+-- The edge gate calls subject_has_verified_anchors(subject) at the top of the identity branch and
+-- ABORTS (no attribution, leaves items untouched) if it returns false.
+
+-- FIX 4 (executable, not prose): attribution_gate_enabled() is real code the edge reads before
+-- enabling the identity branch, and the deploy-time assertion below RAISES rather than commenting.
+create or replace function public.attribution_gate_enabled()
+returns boolean language sql stable as $$
+  -- TRUE only if EVERY active subject with scan data has at least one verified positive anchor.
+  select coalesce(bool_and(public.subject_has_verified_anchors(s.subject_entity_id)), true)
+  from (select distinct subject_entity_id
+        from public.subject_exposure_items
+        where superseded_at is null) s;
+$$;
+
+-- Deploy-time assertion — placed in the migration that flips the gate on; refuses an unbootstrapped gate:
+do $$
+begin
+  if not public.attribution_gate_enabled() then
+    raise exception 'WO-ATTRIBUTION-FIX: refusing to enable the attribution gate — % active subject(s) have zero verified anchors. Bootstrap anchors first (WO-ANCHOR-BOOTSTRAP-SPEC).',
+      (select count(*) from (select distinct subject_entity_id
+                             from public.subject_exposure_items where superseded_at is null) s
+        where not public.subject_has_verified_anchors(s.subject_entity_id));
+  end if;
+end $$;
